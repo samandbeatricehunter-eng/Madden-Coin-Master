@@ -1,0 +1,12 @@
+kind = "api"
+title = "Discord Bot"
+version = "1.0.0"
+id = "artifacts/discord-bot"
+
+[services.production]
+
+[services.production.run]
+args = ["pnpm", "--filter", "@workspace/discord-bot", "run", "start"]
+
+[services.production.run.env]
+NODE_ENV = "production"
