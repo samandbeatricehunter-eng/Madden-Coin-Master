@@ -1,8 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction } from "discord.js";
-import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import { getOrCreateUser, getUserBalance, deductBalance, addBalance } from "../lib/db-helpers.js";
+import { getOrCreateUser, getUserBalance, deductBalance, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed } from "../lib/embeds.js";
 
 export const data = new SlashCommandBuilder()
@@ -40,6 +37,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await deductBalance(interaction.user.id, amount);
   await addBalance(target.id, amount);
+
+  await logTransaction(
+    interaction.user.id,
+    -amount,
+    "sendcoins_sent",
+    `Sent to ${target.username}`,
+    target.id,
+  );
+  await logTransaction(
+    target.id,
+    amount,
+    "sendcoins_received",
+    `Received from ${interaction.user.username}`,
+    interaction.user.id,
+  );
 
   return interaction.editReply({
     embeds: [successEmbed("Coins Sent!", `You sent **${amount.toLocaleString()} coins** to ${target.toString()} 🪙`)],

@@ -5,6 +5,7 @@ import {
 import { db } from "@workspace/db";
 import { seasonsTable, seasonStatsTable, inventoryTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
+import { logTransaction } from "../lib/db-helpers.js";
 
 const MAX_SEASONS = 5;
 
@@ -157,6 +158,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
       .where(eq(usersTable.discordId, target.id));
 
+    await logTransaction(target.id, amount, "season_adjustment", "Season coin adjustment by commissioner", interaction.user.id);
+
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
@@ -170,18 +173,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (sub === "setbalance") {
     const target = interaction.options.getUser("user", true);
-    const amount = interaction.options.getInteger("amount", true);
+    const newAmount = interaction.options.getInteger("amount", true);
+
+    const current = await db.select({ balance: usersTable.balance }).from(usersTable).where(eq(usersTable.discordId, target.id)).limit(1);
+    const delta = newAmount - (current[0]?.balance ?? 0);
 
     await db.update(usersTable)
-      .set({ balance: amount, updatedAt: new Date() })
+      .set({ balance: newAmount, updatedAt: new Date() })
       .where(eq(usersTable.discordId, target.id));
+
+    await logTransaction(target.id, delta, "setbalance", `Balance set to ${newAmount.toLocaleString()} coins by commissioner`, interaction.user.id);
 
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(Colors.Green)
           .setTitle("✅ Balance Set")
-          .setDescription(`Set ${target.toString()}'s balance to **${amount.toLocaleString()} coins**.`)
+          .setDescription(`Set ${target.toString()}'s balance to **${newAmount.toLocaleString()} coins**.`)
           .setTimestamp(),
       ],
     });

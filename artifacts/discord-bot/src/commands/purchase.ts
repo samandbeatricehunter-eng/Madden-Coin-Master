@@ -8,7 +8,7 @@ import { legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTa
 import { eq, and, sql } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
-  getLegendPurchaseHistory, deductBalance, getInventoryCount,
+  getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, ATTRIBUTES } from "../lib/constants.js";
@@ -181,6 +181,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     await deductBalance(interaction.user.id, cost);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Legend purchase — ${legend.name} (${legend.position})`);
     const [purchase] = await db.insert(purchasesTable).values({
       discordId: interaction.user.id,
       seasonId: season.id,
@@ -226,6 +227,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     await deductBalance(interaction.user.id, cost);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Attribute upgrade — ${attributeName}${playerName ? ` for ${playerName}` : ""}`);
     await db.update(seasonStatsTable).set({
       attributesPurchased: sql`${seasonStatsTable.attributesPurchased} + 1`,
       speedPointsPurchased: attributeName === "Speed"
@@ -275,6 +277,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     await deductBalance(interaction.user.id, cost);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Dev upgrade (${devUpType}) — ${playerName} (${playerPosition})`);
     await db.update(seasonStatsTable)
       .set({ devUpsPurchased: sql`${seasonStatsTable.devUpsPurchased} + 1` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
@@ -320,6 +323,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     await deductBalance(interaction.user.id, cost);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Age reset — ${playerName} (${playerPosition})`);
     await db.update(seasonStatsTable)
       .set({ ageResetsPurchased: sql`${seasonStatsTable.ageResetsPurchased} + 1` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
@@ -360,12 +364,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
+    const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
     const invCount = await getInventoryCount(interaction.user.id, season.id);
     if (invCount.legends + invCount.customs >= LIMITS.maxLegendsPlusCustomPlayers) {
       return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}).`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Custom player (${tierLabel}) — ${playerName} (${playerPosition})`);
 
     const [purchase] = await db.insert(purchasesTable).values({
       discordId: interaction.user.id,

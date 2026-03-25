@@ -5,7 +5,7 @@ import {
 import { db } from "@workspace/db";
 import { purchasesTable, inventoryTable, legendsTable, usersTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { addBalance } from "../lib/db-helpers.js";
+import { addBalance, logTransaction } from "../lib/db-helpers.js";
 
 export const name = "interactionCreate";
 
@@ -155,6 +155,7 @@ async function handleButton(interaction: ButtonInteraction) {
 
     // Refund coins
     await addBalance(userId!, purchase.cost);
+    await logTransaction(userId!, purchase.cost, "purchase_refund", `Refund: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`, interaction.user.id);
 
     // If legend: decrement total legend purchases
     if (purchaseType === "legend") {

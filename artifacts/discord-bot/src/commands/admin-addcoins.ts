@@ -5,7 +5,7 @@ import {
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
-import { getOrCreateUser } from "../lib/db-helpers.js";
+import { getOrCreateUser, logTransaction } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("addcoins")
@@ -37,6 +37,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const newBalance = await db.select({ balance: usersTable.balance })
     .from(usersTable).where(eq(usersTable.discordId, target.id)).limit(1);
 
+  await logTransaction(
+    target.id,
+    amount,
+    "addcoins",
+    reason ? `Commissioner added coins — ${reason}` : "Commissioner added coins",
+    interaction.user.id,
+  );
+
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("✅ Coins Added")
@@ -47,13 +55,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     )
     .setTimestamp();
 
-  try {
-    await target.send(
-      `🪙 A commissioner added **${amount.toLocaleString()} coins** to your balance!\n` +
-      (reason ? `Reason: *${reason}*\n` : "") +
-      `New balance: **${newBalance[0]?.balance.toLocaleString() ?? "?"} coins**`
-    ).catch(() => {});
-  } catch (_) {}
+  await target.send(
+    `🪙 A commissioner added **${amount.toLocaleString()} coins** to your balance!\n` +
+    (reason ? `Reason: *${reason}*\n` : "") +
+    `New balance: **${newBalance[0]?.balance.toLocaleString() ?? "?"} coins**`
+  ).catch(() => {});
 
   return interaction.editReply({ embeds: [embed] });
 }

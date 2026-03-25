@@ -1,10 +1,26 @@
 import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
-  inventoryTable, legendsTable,
+  inventoryTable, legendsTable, coinTransactionsTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
+
+export async function logTransaction(
+  discordId: string,
+  amount: number,
+  type: "purchase" | "purchase_refund" | "addcoins" | "removecoins" | "sendcoins_sent" | "sendcoins_received" | "season_adjustment" | "setbalance",
+  description: string,
+  relatedUserId?: string,
+): Promise<void> {
+  await db.insert(coinTransactionsTable).values({
+    discordId,
+    amount,
+    type,
+    description,
+    relatedUserId: relatedUserId ?? null,
+  });
+}
 
 export async function getOrCreateUser(discordId: string, discordUsername: string): Promise<User> {
   const existing = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);

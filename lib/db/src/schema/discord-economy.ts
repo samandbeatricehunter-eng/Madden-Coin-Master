@@ -109,6 +109,27 @@ export const userRecordsTable = pgTable("user_records", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const txTypeEnum = pgEnum("tx_type", [
+  "purchase",
+  "purchase_refund",
+  "addcoins",
+  "removecoins",
+  "sendcoins_sent",
+  "sendcoins_received",
+  "season_adjustment",
+  "setbalance",
+]);
+
+export const coinTransactionsTable = pgTable("coin_transactions", {
+  id: serial("id").primaryKey(),
+  discordId: text("discord_id").notNull(),
+  amount: integer("amount").notNull(),
+  type: txTypeEnum("type").notNull(),
+  description: text("description").notNull(),
+  relatedUserId: text("related_user_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
 export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;
