@@ -45,9 +45,10 @@ export const seasonsTable = pgTable("seasons", {
   isActive: boolean("is_active").notNull().default(true),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   // Per-season overrides — null means use the default from constants.ts
-  attrCostOverride: integer("attr_cost_override"),
-  attrCapOverride: integer("attr_cap_override"),
-  speedCapOverride: integer("speed_cap_override"),
+  coreAttrCostOverride: integer("core_attr_cost_override"),
+  coreAttrCapOverride: integer("core_attr_cap_override"),
+  nonCoreAttrCostOverride: integer("non_core_attr_cost_override"),
+  nonCoreAttrCapOverride: integer("non_core_attr_cap_override"),
 });
 
 export const legendsTable = pgTable("legends", {
@@ -98,8 +99,8 @@ export const seasonStatsTable = pgTable("season_stats", {
   id: serial("id").primaryKey(),
   discordId: text("discord_id").notNull(),
   seasonId: integer("season_id").notNull(),
-  attributesPurchased: integer("attributes_purchased").notNull().default(0),
-  speedPointsPurchased: integer("speed_points_purchased").notNull().default(0),
+  coreAttrPurchased: integer("core_attr_purchased").notNull().default(0),
+  nonCoreAttrPurchased: integer("non_core_attr_purchased").notNull().default(0),
   devUpsPurchased: integer("dev_ups_purchased").notNull().default(0),
   ageResetsPurchased: integer("age_resets_purchased").notNull().default(0),
   legendsPurchasedThisSeason: integer("legends_purchased_this_season").notNull().default(0),

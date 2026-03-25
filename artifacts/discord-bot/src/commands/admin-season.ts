@@ -46,22 +46,28 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand(sub =>
     sub.setName("override")
-      .setDescription("Set attribute rule overrides for the current season (null = use defaults)")
+      .setDescription("Set attribute rule overrides for the current season (omit = keep current value)")
       .addIntegerOption(opt =>
-        opt.setName("attr_cost")
-          .setDescription("Cost per attribute upgrade this season (default: 40)")
+        opt.setName("core_attr_cost")
+          .setDescription("Cost per core attribute point this season (default: 25)")
           .setRequired(false)
           .setMinValue(1)
       )
       .addIntegerOption(opt =>
-        opt.setName("attr_cap")
-          .setDescription("Max attribute upgrades allowed this season (default: 20)")
+        opt.setName("core_attr_cap")
+          .setDescription("Max core attribute points this season (default: 16)")
           .setRequired(false)
           .setMinValue(1)
       )
       .addIntegerOption(opt =>
-        opt.setName("speed_cap")
-          .setDescription("Max Speed points allowed this season (default: 5)")
+        opt.setName("non_core_attr_cost")
+          .setDescription("Cost per non-core attribute point this season (default: 10)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("non_core_attr_cap")
+          .setDescription("Max non-core attribute points this season (default: 32)")
           .setRequired(false)
           .setMinValue(1)
       )
@@ -225,7 +231,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "override") {
     const clear = interaction.options.getBoolean("clear") ?? false;
 
-    // Fetch the active season
     const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
     const season = seasons[0];
     if (!season) {
@@ -236,7 +241,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (clear) {
       await db.update(seasonsTable)
-        .set({ attrCostOverride: null, attrCapOverride: null, speedCapOverride: null })
+        .set({ coreAttrCostOverride: null, coreAttrCapOverride: null, nonCoreAttrCostOverride: null, nonCoreAttrCapOverride: null })
         .where(eq(seasonsTable.id, season.id));
 
       return interaction.editReply({
@@ -244,38 +249,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           new EmbedBuilder()
             .setColor(Colors.Blue)
             .setTitle("🔄 Overrides Cleared — Season " + season.seasonNumber)
-            .setDescription("All attribute overrides have been removed. Default rules are now active:\n• Attribute cost: **40 coins**\n• Attribute cap: **20/season**\n• Speed cap: **5/season**")
+            .setDescription(
+              "All attribute overrides removed. Default rules are active:\n" +
+              "• **Core attributes** (Speed/Accel/Agility/COD/Strength/Jumping/Throw Power/Awareness/Stamina): **25 coins/pt**, cap **16/season**\n" +
+              "• **Non-core attributes** (all others): **10 coins/pt**, cap **32/season**"
+            )
             .setTimestamp(),
         ],
       });
     }
 
-    const attrCost  = interaction.options.getInteger("attr_cost");
-    const attrCap   = interaction.options.getInteger("attr_cap");
-    const speedCap  = interaction.options.getInteger("speed_cap");
+    const coreAttrCost    = interaction.options.getInteger("core_attr_cost");
+    const coreAttrCap     = interaction.options.getInteger("core_attr_cap");
+    const nonCoreAttrCost = interaction.options.getInteger("non_core_attr_cost");
+    const nonCoreAttrCap  = interaction.options.getInteger("non_core_attr_cap");
 
-    if (attrCost === null && attrCap === null && speedCap === null) {
+    if (coreAttrCost === null && coreAttrCap === null && nonCoreAttrCost === null && nonCoreAttrCap === null) {
       return interaction.editReply({
         embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Nothing to Change").setDescription("Provide at least one override value, or use `clear: True` to restore defaults.")],
       });
     }
 
     const updates: Record<string, number | null> = {};
-    if (attrCost  !== null) updates["attrCostOverride"]  = attrCost;
-    if (attrCap   !== null) updates["attrCapOverride"]   = attrCap;
-    if (speedCap  !== null) updates["speedCapOverride"]  = speedCap;
+    if (coreAttrCost    !== null) updates["coreAttrCostOverride"]    = coreAttrCost;
+    if (coreAttrCap     !== null) updates["coreAttrCapOverride"]     = coreAttrCap;
+    if (nonCoreAttrCost !== null) updates["nonCoreAttrCostOverride"] = nonCoreAttrCost;
+    if (nonCoreAttrCap  !== null) updates["nonCoreAttrCapOverride"]  = nonCoreAttrCap;
 
     await db.update(seasonsTable).set(updates as any).where(eq(seasonsTable.id, season.id));
 
-    // Fetch fresh season to build the display
     const updated = await db.select().from(seasonsTable).where(eq(seasonsTable.id, season.id)).limit(1);
     const s = updated[0]!;
 
     const { COSTS, LIMITS } = await import("../lib/constants.js");
     const lines = [
-      `**Attribute cost:** ${s.attrCostOverride !== null ? `~~${COSTS.attribute}~~ → **${s.attrCostOverride} coins** ⚠️ override` : `**${COSTS.attribute} coins** (default)`}`,
-      `**Attribute cap:** ${s.attrCapOverride !== null ? `~~${LIMITS.attributesPerSeason}~~ → **${s.attrCapOverride}/season** ⚠️ override` : `**${LIMITS.attributesPerSeason}/season** (default)`}`,
-      `**Speed cap:** ${s.speedCapOverride !== null ? `~~${LIMITS.speedPointsPerSeason}~~ → **${s.speedCapOverride}/season** ⚠️ override` : `**${LIMITS.speedPointsPerSeason}/season** (default)`}`,
+      `**Core attr cost:** ${s.coreAttrCostOverride !== null ? `~~${COSTS.core_attribute}~~ → **${s.coreAttrCostOverride} coins** ⚠️` : `**${COSTS.core_attribute} coins** (default)`}`,
+      `**Core attr cap:** ${s.coreAttrCapOverride !== null ? `~~${LIMITS.coreAttrPerSeason}~~ → **${s.coreAttrCapOverride}/season** ⚠️` : `**${LIMITS.coreAttrPerSeason}/season** (default)`}`,
+      `**Non-core attr cost:** ${s.nonCoreAttrCostOverride !== null ? `~~${COSTS.non_core_attribute}~~ → **${s.nonCoreAttrCostOverride} coins** ⚠️` : `**${COSTS.non_core_attribute} coins** (default)`}`,
+      `**Non-core attr cap:** ${s.nonCoreAttrCapOverride !== null ? `~~${LIMITS.nonCoreAttrPerSeason}~~ → **${s.nonCoreAttrCapOverride}/season** ⚠️` : `**${LIMITS.nonCoreAttrPerSeason}/season** (default)`}`,
     ];
 
     return interaction.editReply({
@@ -283,7 +294,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         new EmbedBuilder()
           .setColor(Colors.Orange)
           .setTitle(`⚙️ Season ${season.seasonNumber} Attribute Overrides Updated`)
-          .setDescription(lines.join("\n") + "\n\n*These overrides apply only to this season. When a new season starts, defaults are restored automatically.*")
+          .setDescription(lines.join("\n") + "\n\n*Overrides apply only to this season. Defaults restore when a new season starts.*")
           .setTimestamp(),
       ],
     });

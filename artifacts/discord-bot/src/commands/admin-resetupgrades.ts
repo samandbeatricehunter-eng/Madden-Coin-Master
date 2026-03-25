@@ -20,7 +20,9 @@ export const data = new SlashCommandBuilder()
       .setRequired(true)
       .addChoices(
         { name: "All upgrades (attributes, dev ups, age resets)", value: "all" },
-        { name: "Attributes only", value: "attributes" },
+        { name: "Core attributes only", value: "core_attr" },
+        { name: "Non-core attributes only", value: "non_core_attr" },
+        { name: "All attributes (core + non-core)", value: "attributes" },
         { name: "Dev Upgrades only", value: "dev_ups" },
         { name: "Age Resets only", value: "age_resets" },
       )
@@ -34,21 +36,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await getOrCreateUser(target.id, target.username);
   const season = await getOrCreateActiveSeason();
-  const stats = await getSeasonStats(target.id, season.id);
+  await getSeasonStats(target.id, season.id);
 
   const updates: Partial<{
-    attributesPurchased: number;
-    speedPointsPurchased: number;
+    coreAttrPurchased: number;
+    nonCoreAttrPurchased: number;
     devUpsPurchased: number;
     ageResetsPurchased: number;
   }> = {};
 
   const resetFields: string[] = [];
 
-  if (resetType === "all" || resetType === "attributes") {
-    updates.attributesPurchased = 0;
-    updates.speedPointsPurchased = 0;
-    resetFields.push("Attributes (including Speed)");
+  if (resetType === "all" || resetType === "attributes" || resetType === "core_attr") {
+    updates.coreAttrPurchased = 0;
+    if (resetType !== "non_core_attr") resetFields.push("Core Attributes");
+  }
+  if (resetType === "all" || resetType === "attributes" || resetType === "non_core_attr") {
+    updates.nonCoreAttrPurchased = 0;
+    if (resetType !== "core_attr") resetFields.push("Non-Core Attributes");
   }
   if (resetType === "all" || resetType === "dev_ups") {
     updates.devUpsPurchased = 0;

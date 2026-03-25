@@ -1,6 +1,7 @@
 export const COSTS = {
   legend: 1000,
-  attribute: 40,
+  core_attribute: 25,
+  non_core_attribute: 10,
   dev_up: 250,
   age_reset: 250,
   custom_player_gold: 300,
@@ -9,14 +10,28 @@ export const COSTS = {
 } as const;
 
 export const LIMITS = {
-  attributesPerSeason: 20,
-  speedPointsPerSeason: 5,
+  coreAttrPerSeason: 16,
+  nonCoreAttrPerSeason: 32,
   devUpsPerSeason: 2,
   ageResetsPerSeason: 2,
   legendsAllTime: 4,
   maxLegendsInInventory: 4,
   maxLegendsPlusCustomPlayers: 7,
 } as const;
+
+// Core attributes: Speed, Acceleration, Change of Direction, Agility, Strength,
+// Jumping, Throwing Power, Awareness, Stamina — all others are non-core.
+export const CORE_ATTRIBUTES = new Set([
+  "Speed",
+  "Acceleration",
+  "Change of Direction",
+  "Agility",
+  "Strength",
+  "Jumping",
+  "Throwing Power",
+  "Awareness",
+  "Stamina",
+]);
 
 export const ATTRIBUTES = [
   "Speed",

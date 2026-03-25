@@ -11,7 +11,7 @@ import {
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { COSTS, LIMITS, ATTRIBUTES } from "../lib/constants.js";
+import { COSTS, LIMITS, ATTRIBUTES, CORE_ATTRIBUTES } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
@@ -32,7 +32,7 @@ export const data = new SlashCommandBuilder()
   // ── Attribute ───────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("attribute")
-      .setDescription(`Upgrade an attribute (${COSTS.attribute} coins) — 20/season, Speed capped at 5`)
+      .setDescription("Upgrade an attribute — Core: 25 coins/cap 16 | Non-Core: 10 coins/cap 32")
       .addStringOption(opt =>
         opt.setName("attribute_name")
           .setDescription("Which attribute to upgrade?")
@@ -209,9 +209,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── /purchase attribute ─────────────────────────────────────────────────────
   if (sub === "attribute") {
     const rules = await getSeasonRules(season);
-    const cost = rules.attrCost;
-    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
-
     const attributeName = interaction.options.getString("attribute_name", true);
     const playerName = interaction.options.getString("player_name");
 
@@ -219,21 +216,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
     }
 
-    if (stats.attributesPurchased >= rules.attrCap) {
-      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${rules.attrCap} attribute upgrades** for this season.`)] });
-    }
+    const isCore = CORE_ATTRIBUTES.has(attributeName);
+    const cost    = isCore ? rules.coreAttrCost    : rules.nonCoreAttrCost;
+    const cap     = isCore ? rules.coreAttrCap     : rules.nonCoreAttrCap;
+    const used    = isCore ? stats.coreAttrPurchased : stats.nonCoreAttrPurchased;
+    const category = isCore ? "Core" : "Non-Core";
 
-    if (attributeName === "Speed" && stats.speedPointsPurchased >= rules.speedCap) {
-      return interaction.editReply({ embeds: [errorEmbed("Speed Cap Reached", `You've already used **${rules.speedCap} speed points** this season.`)] });
+    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
+
+    if (used >= cap) {
+      return interaction.editReply({
+        embeds: [errorEmbed(
+          `${category} Attribute Cap Reached`,
+          `You've used all **${cap} ${category.toLowerCase()} attribute upgrades** for this season.\n\n` +
+          (isCore
+            ? `Switch to a **non-core** attribute (${rules.nonCoreAttrCost} coins, ${Math.max(0, rules.nonCoreAttrCap - stats.nonCoreAttrPurchased)} remaining).`
+            : `Switch to a **core** attribute (${rules.coreAttrCost} coins, ${Math.max(0, rules.coreAttrCap - stats.coreAttrPurchased)} remaining).`)
+        )],
+      });
     }
 
     await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Attribute upgrade — ${attributeName}${playerName ? ` for ${playerName}` : ""}`);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Attribute upgrade (${category}) — ${attributeName}${playerName ? ` for ${playerName}` : ""}`);
     await db.update(seasonStatsTable).set({
-      attributesPurchased: sql`${seasonStatsTable.attributesPurchased} + 1`,
-      speedPointsPurchased: attributeName === "Speed"
-        ? sql`${seasonStatsTable.speedPointsPurchased} + 1`
-        : seasonStatsTable.speedPointsPurchased,
+      coreAttrPurchased: isCore
+        ? sql`${seasonStatsTable.coreAttrPurchased} + 1`
+        : seasonStatsTable.coreAttrPurchased,
+      nonCoreAttrPurchased: !isCore
+        ? sql`${seasonStatsTable.nonCoreAttrPurchased} + 1`
+        : seasonStatsTable.nonCoreAttrPurchased,
     }).where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
     const [purchase] = await db.insert(purchasesTable).values({
@@ -256,11 +267,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
 
     await sendCommissionerNotification(interaction, "attribute", purchase!.id, {
-      attributeName, playerName: playerName ?? "Not specified",
+      attributeName, playerName: playerName ?? "Not specified", category,
     });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Attribute Upgrade Submitted!", `**${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Upgrades used this season:** ${stats.attributesPurchased + 1}/${rules.attrCap}`)],
+      embeds: [pendingEmbed(
+        "Attribute Upgrade Submitted!",
+        `**${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} submitted!\n\n` +
+        `**Category:** ${category}\n` +
+        `**Cost:** ${cost} coins deducted.\n` +
+        `**${category} upgrades used this season:** ${used + 1}/${cap}`
+      )],
     });
   }
 

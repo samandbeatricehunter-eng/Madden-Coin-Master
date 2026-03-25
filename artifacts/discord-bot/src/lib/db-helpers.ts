@@ -87,9 +87,10 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
 export async function getSeasonRules(season: Season) {
   const { COSTS, LIMITS } = await import("./constants.js");
   return {
-    attrCost:  season.attrCostOverride  ?? COSTS.attribute,
-    attrCap:   season.attrCapOverride   ?? LIMITS.attributesPerSeason,
-    speedCap:  season.speedCapOverride  ?? LIMITS.speedPointsPerSeason,
+    coreAttrCost:    season.coreAttrCostOverride    ?? COSTS.core_attribute,
+    coreAttrCap:     season.coreAttrCapOverride     ?? LIMITS.coreAttrPerSeason,
+    nonCoreAttrCost: season.nonCoreAttrCostOverride ?? COSTS.non_core_attribute,
+    nonCoreAttrCap:  season.nonCoreAttrCapOverride  ?? LIMITS.nonCoreAttrPerSeason,
   };
 }
 

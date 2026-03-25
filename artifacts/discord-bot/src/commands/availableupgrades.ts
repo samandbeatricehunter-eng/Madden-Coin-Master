@@ -13,28 +13,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season = await getOrCreateActiveSeason();
   const stats = await getSeasonStats(interaction.user.id, season.id);
   const legendHistory = await getLegendPurchaseHistory(interaction.user.id);
-
   const rules = await getSeasonRules(season);
 
-  const attrsUsed = stats.attributesPurchased;
-  const attrsLeft = Math.max(0, rules.attrCap - attrsUsed);
-  const speedUsed = stats.speedPointsPurchased;
-  const speedLeft = Math.max(0, rules.speedCap - speedUsed);
-  const devUpsLeft = Math.max(0, LIMITS.devUpsPerSeason - stats.devUpsPurchased);
+  const coreUsed    = stats.coreAttrPurchased;
+  const coreLeft    = Math.max(0, rules.coreAttrCap - coreUsed);
+  const nonCoreUsed = stats.nonCoreAttrPurchased;
+  const nonCoreLeft = Math.max(0, rules.nonCoreAttrCap - nonCoreUsed);
+  const devUpsLeft  = Math.max(0, LIMITS.devUpsPerSeason - stats.devUpsPurchased);
   const ageResetsLeft = Math.max(0, LIMITS.ageResetsPerSeason - stats.ageResetsPurchased);
   const legendsLeft = Math.max(0, LIMITS.legendsAllTime - legendHistory.total);
 
-  const overrideNote = (season.attrCostOverride !== null || season.attrCapOverride !== null || season.speedCapOverride !== null)
-    ? "\n⚠️ *This season has custom attribute rules set by the commissioner.*"
-    : "";
+  const hasOverride = season.coreAttrCostOverride !== null || season.coreAttrCapOverride !== null ||
+                      season.nonCoreAttrCostOverride !== null || season.nonCoreAttrCapOverride !== null;
+  const overrideNote = hasOverride ? "\n⚠️ *This season has custom attribute rules set by the commissioner.*" : "";
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blurple)
     .setTitle(`📊 ${interaction.user.username}'s Upgrades — Season ${season.seasonNumber}`)
     .addFields(
       {
-        name: "⚡ Attribute Upgrades",
-        value: `Used: **${attrsUsed}/${rules.attrCap}** | Remaining: **${attrsLeft}**\nSpeed Points Used: **${speedUsed}/${rules.speedCap}** | Remaining: **${speedLeft}**\nCost per upgrade: **${rules.attrCost} coins**${overrideNote}`,
+        name: "⚡ Core Attribute Upgrades",
+        value:
+          `Used: **${coreUsed}/${rules.coreAttrCap}** | Remaining: **${coreLeft}**\n` +
+          `Cost: **${rules.coreAttrCost} coins/pt**\n` +
+          `*(Speed, Acceleration, Agility, COD, Strength, Jumping, Throw Power, Awareness, Stamina)*${overrideNote}`,
+        inline: false,
+      },
+      {
+        name: "🎯 Non-Core Attribute Upgrades",
+        value:
+          `Used: **${nonCoreUsed}/${rules.nonCoreAttrCap}** | Remaining: **${nonCoreLeft}**\n` +
+          `Cost: **${rules.nonCoreAttrCost} coins/pt**\n` +
+          `*(All other attributes)*`,
         inline: false,
       },
       {
