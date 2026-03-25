@@ -11,7 +11,7 @@ import {
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { COSTS, LIMITS, ATTRIBUTES, CORE_ATTRIBUTES } from "../lib/constants.js";
+import { COSTS, LIMITS, ATTRIBUTES, CORE_ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
@@ -41,8 +41,14 @@ export const data = new SlashCommandBuilder()
       )
       .addStringOption(opt =>
         opt.setName("player_name")
-          .setDescription("Optional: which player is receiving the upgrade?")
-          .setRequired(false)
+          .setDescription("Name of the player receiving the upgrade")
+          .setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player_position")
+          .setDescription("Player's position")
+          .setRequired(true)
+          .addChoices(...NFL_POSITIONS.map(p => ({ name: p, value: p })))
       )
   )
 
@@ -210,7 +216,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── /purchase attribute ─────────────────────────────────────────────────────
   if (sub === "attribute") {
     const attributeName = interaction.options.getString("attribute_name", true);
-    const playerName = interaction.options.getString("player_name");
+    const playerName = interaction.options.getString("player_name", true);
+    const playerPosition = interaction.options.getString("player_position", true);
 
     if (!ATTRIBUTES.includes(attributeName as any)) {
       return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
@@ -237,7 +244,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Attribute upgrade (${category}) — ${attributeName}${playerName ? ` for ${playerName}` : ""}`);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Attribute upgrade (${category}) — ${attributeName} for ${playerName} (${playerPosition})`);
     await db.update(seasonStatsTable).set({
       coreAttrPurchased: isCore
         ? sql`${seasonStatsTable.coreAttrPurchased} + 1`
@@ -254,7 +261,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       status: "pending",
       cost,
       attributeName,
-      playerName: playerName ?? null,
+      playerName,
+      playerPosition,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -263,17 +271,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       purchaseId: purchase!.id,
       itemType: "attribute",
       attributeName,
-      playerName: playerName ?? null,
+      playerName,
+      playerPosition,
     });
 
     await sendCommissionerNotification(interaction, "attribute", purchase!.id, {
-      attributeName, playerName: playerName ?? "Not specified", category,
+      attributeName, playerName, playerPosition, category,
     });
 
     return interaction.editReply({
       embeds: [pendingEmbed(
         "Attribute Upgrade Submitted!",
-        `**${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} submitted!\n\n` +
+        `**${attributeName}** upgrade for **${playerName}** (${playerPosition}) submitted!\n\n` +
         `**Category:** ${category}\n` +
         `**Cost:** ${cost} coins deducted.\n` +
         `**${category} upgrades used this season:** ${used + 1}/${cap}`
@@ -456,8 +465,8 @@ async function sendCommissionerNotification(
     title = "⚡ Attribute Upgrade Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-      `**Attribute:** ${details["attributeName"]}`,
-      `**Player:** ${details["playerName"] ?? "Not specified"}`,
+      `**Attribute:** ${details["attributeName"]} (${details["category"]})`,
+      `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",

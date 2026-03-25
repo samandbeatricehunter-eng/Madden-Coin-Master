@@ -90,6 +90,17 @@ export const ATTRIBUTES = [
   "Long Snap",
 ] as const;
 
+export const NFL_POSITIONS = [
+  "QB", "HB", "FB", "WR", "TE",
+  "LT", "LG", "C", "RG", "RT",
+  "LE", "RE", "DT",
+  "LOLB", "MLB", "ROLB",
+  "CB", "FS", "SS",
+  "K", "P", "KR", "PR", "LS",
+] as const;
+
+export type NFLPosition = typeof NFL_POSITIONS[number];
+
 export const DEV_UP_TYPES = ["Star", "Superstar"] as const;
 
 export const CUSTOM_PLAYER_TIERS = ["gold", "silver", "bronze"] as const;
