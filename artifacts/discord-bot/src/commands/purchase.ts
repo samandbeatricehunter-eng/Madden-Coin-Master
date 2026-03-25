@@ -488,9 +488,10 @@ async function sendCommissionerNotification(
   purchaseId: number,
   details: Record<string, string | number | undefined>,
 ) {
-  const channelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
-  const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased()) return;
+  try {
+    const channelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
 
   let title = "";
   let description = "";
@@ -574,4 +575,7 @@ async function sendCommissionerNotification(
   );
 
   await (channel as TextChannel).send({ embeds: [embed], components: [row] });
+  } catch (err) {
+    console.error("Commissioner notification failed (purchase still completed):", err);
+  }
 }
