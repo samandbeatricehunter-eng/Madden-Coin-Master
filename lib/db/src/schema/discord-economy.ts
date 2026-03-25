@@ -49,6 +49,8 @@ export const seasonsTable = pgTable("seasons", {
   coreAttrCapOverride: integer("core_attr_cap_override"),
   nonCoreAttrCostOverride: integer("non_core_attr_cost_override"),
   nonCoreAttrCapOverride: integer("non_core_attr_cap_override"),
+  devUpsCapOverride: integer("dev_ups_cap_override"),
+  ageResetsCapOverride: integer("age_resets_cap_override"),
 });
 
 export const legendsTable = pgTable("legends", {

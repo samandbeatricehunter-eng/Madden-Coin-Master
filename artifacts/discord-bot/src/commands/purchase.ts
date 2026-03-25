@@ -148,6 +148,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const season = await getOrCreateActiveSeason();
   const stats = await getSeasonStats(interaction.user.id, season.id);
+  const rules = await getSeasonRules(season);
 
   // ── /purchase legend ────────────────────────────────────────────────────────
   if (sub === "legend") {
@@ -208,7 +209,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── /purchase attribute ─────────────────────────────────────────────────────
   if (sub === "attribute") {
-    const rules = await getSeasonRules(season);
     const attributeName = interaction.options.getString("attribute_name", true);
     const playerName = interaction.options.getString("player_name");
 
@@ -290,8 +290,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const playerPosition = interaction.options.getString("player_position", true);
     const devUpType = interaction.options.getString("dev_type", true);
 
-    if (stats.devUpsPurchased >= LIMITS.devUpsPerSeason) {
-      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.devUpsPerSeason} dev upgrades** for this season.`)] });
+    if (stats.devUpsPurchased >= rules.devUpsCap) {
+      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${rules.devUpsCap} dev upgrades** for this season.`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
@@ -324,7 +324,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition, devUpType });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Dev Upgrade Submitted!", `**${devUpType}** dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${LIMITS.devUpsPerSeason}`)],
+      embeds: [pendingEmbed("Dev Upgrade Submitted!", `**${devUpType}** dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${rules.devUpsCap}`)],
     });
   }
 
@@ -336,8 +336,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const playerName = interaction.options.getString("player_name", true);
     const playerPosition = interaction.options.getString("player_position", true);
 
-    if (stats.ageResetsPurchased >= LIMITS.ageResetsPerSeason) {
-      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.ageResetsPerSeason} age resets** for this season.`)] });
+    if (stats.ageResetsPurchased >= rules.ageResetsCap) {
+      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${rules.ageResetsCap} age resets** for this season.`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
@@ -368,7 +368,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await sendCommissionerNotification(interaction, "age_reset", purchase!.id, { playerName, playerPosition });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Age Reset Submitted!", `Age reset for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Age resets used:** ${stats.ageResetsPurchased + 1}/${LIMITS.ageResetsPerSeason}`)],
+      embeds: [pendingEmbed("Age Reset Submitted!", `Age reset for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Age resets used:** ${stats.ageResetsPurchased + 1}/${rules.ageResetsCap}`)],
     });
   }
 
