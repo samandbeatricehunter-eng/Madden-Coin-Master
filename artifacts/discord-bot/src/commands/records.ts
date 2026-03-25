@@ -10,10 +10,9 @@ import { findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
 // ─── Power Ranking Formula ────────────────────────────────────────────────────
-// PR Score = (Wins × 3) + (Point Differential × 0.1) - (Losses × 1)
-// Swap calcPRScore() when user provides their formula.
+// PR Score = 60% × (Win-Loss Differential) + 40% × (Point Differential)
 function calcPRScore(wins: number, losses: number, pointDiff: number): number {
-  return wins * 3 + pointDiff * 0.1 - losses * 1;
+  return 0.6 * (wins - losses) + 0.4 * pointDiff;
 }
 
 function formatDiff(n: number): string {
@@ -189,7 +188,7 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
     .setColor(Colors.Gold)
     .setTitle(`🏈 Season ${season.seasonNumber} Power Rankings`)
     .setDescription(rows.join("\n"))
-    .setFooter({ text: "PR Score = (Wins × 3) + (Point Diff × 0.1) − (Losses × 1)" })
+    .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff)" })
     .setTimestamp();
 
   return interaction.editReply({ embeds: [embed] });
@@ -258,7 +257,7 @@ export async function executeAllTimePR(interaction: ChatInputCommandInteraction)
     .setColor(Colors.Purple)
     .setTitle("🏆 All-Time Power Rankings")
     .setDescription(rows.join("\n"))
-    .setFooter({ text: "PR Score = (Wins × 3) + (Point Diff × 0.1) − (Losses × 1)" })
+    .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff)" })
     .setTimestamp();
 
   return interaction.editReply({ embeds: [embed] });
