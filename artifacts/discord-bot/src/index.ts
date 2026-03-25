@@ -15,6 +15,7 @@ import * as adminSeason from "./commands/admin-season.js";
 import * as adminAddCoins from "./commands/admin-addcoins.js";
 import * as adminRemoveCoins from "./commands/admin-removecoins.js";
 import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
+import * as adminSetUser from "./commands/admin-setuser.js";
 import {
   addNewUserData, executeAddNewUser, autocompleteAddNewUser,
   deleteMemberData, executeDeleteMember, autocompleteDeleteMember,
@@ -52,6 +53,7 @@ const commands = [
   adminAddCoins,
   adminRemoveCoins,
   adminResetUpgrades,
+  adminSetUser,
   { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
   { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
   { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },

@@ -10,6 +10,7 @@ import * as adminSeason from "./commands/admin-season.js";
 import * as adminAddCoins from "./commands/admin-addcoins.js";
 import * as adminRemoveCoins from "./commands/admin-removecoins.js";
 import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
+import * as adminSetUser from "./commands/admin-setuser.js";
 import { addNewUserData, deleteMemberData } from "./commands/admin-team.js";
 import { updateRecordData, seasonPRData, allTimePRData } from "./commands/records.js";
 
@@ -24,6 +25,7 @@ if (!token || !clientId || !guildId) {
 const commands = [
   balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
+  adminSetUser,
 ].map(c => c.data.toJSON());
 
 commands.push(
