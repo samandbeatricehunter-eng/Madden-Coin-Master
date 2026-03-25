@@ -10,9 +10,8 @@ import * as adminSeason from "./commands/admin-season.js";
 import * as adminAddCoins from "./commands/admin-addcoins.js";
 import * as adminRemoveCoins from "./commands/admin-removecoins.js";
 import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
-import {
-  updateRecordData, seasonPRData, allTimePRData,
-} from "./commands/records.js";
+import { addNewUserData, deleteMemberData } from "./commands/admin-team.js";
+import { updateRecordData, seasonPRData, allTimePRData } from "./commands/records.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -27,8 +26,13 @@ const commands = [
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
 ].map(c => c.data.toJSON());
 
-// Add multi-export record commands
-commands.push(updateRecordData.toJSON(), seasonPRData.toJSON(), allTimePRData.toJSON());
+commands.push(
+  addNewUserData.toJSON(),
+  deleteMemberData.toJSON(),
+  updateRecordData.toJSON(),
+  seasonPRData.toJSON(),
+  allTimePRData.toJSON(),
+);
 
 const rest = new REST().setToken(token);
 

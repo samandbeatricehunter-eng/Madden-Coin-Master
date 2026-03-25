@@ -15,6 +15,10 @@ import * as adminSeason from "./commands/admin-season.js";
 import * as adminAddCoins from "./commands/admin-addcoins.js";
 import * as adminRemoveCoins from "./commands/admin-removecoins.js";
 import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
+import {
+  addNewUserData, executeAddNewUser,
+  deleteMemberData, executeDeleteMember,
+} from "./commands/admin-team.js";
 
 // Records / rankings
 import {
@@ -36,7 +40,6 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// Flat command modules with data + execute
 const commands = [
   balance,
   sendcoins,
@@ -49,7 +52,8 @@ const commands = [
   adminAddCoins,
   adminRemoveCoins,
   adminResetUpgrades,
-  // Inline wrappers for multi-export records file
+  { data: addNewUserData, execute: executeAddNewUser },
+  { data: deleteMemberData, execute: executeDeleteMember },
   { data: updateRecordData, execute: executeUpdateRecord },
   { data: seasonPRData, execute: executeSeasonPR },
   { data: allTimePRData, execute: executeAllTimePR },
@@ -59,7 +63,6 @@ for (const command of commands) {
   client.commands.set(command.data.name, command);
 }
 
-// Register events
 const events = [interactionCreate, ready];
 for (const event of events) {
   if ((event as any).once) {
@@ -69,7 +72,6 @@ for (const event of events) {
   }
 }
 
-// Initialize DB: ensure active season exists on startup
 async function init() {
   await getOrCreateActiveSeason();
   console.log("✅ Database initialized");

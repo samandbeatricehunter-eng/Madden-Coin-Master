@@ -6,10 +6,11 @@ import { db } from "@workspace/db";
 import { userRecordsTable, usersTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { findUserByTeam } from "../lib/user-data.js";
 
-// ─── Power Ranking Formula ───────────────────────────────────────────────────
+// ─── Power Ranking Formula ────────────────────────────────────────────────────
 // PR Score = (Wins × 3) + (Point Differential × 0.1) - (Losses × 1)
-// Higher is better. Swap this out when the user provides their formula.
+// Swap calcPRScore() when user provides their formula.
 function calcPRScore(wins: number, losses: number, pointDiff: number): number {
   return wins * 3 + pointDiff * 0.1 - losses * 1;
 }
@@ -24,13 +25,21 @@ function ordinal(n: number): string {
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]!);
 }
 
-// ── /updaterecord ─────────────────────────────────────────────────────────────
+/** Return "Team Name" if set, else "@username" */
+function displayName(username: string, team: string | null | undefined): string {
+  return team ? `${team}` : username;
+}
+
+// ── /updaterecord ──────────────────────────────────────────────────────────────
 export const updateRecordData = new SlashCommandBuilder()
   .setName("updaterecord")
   .setDescription("Commissioner: Update a player's win/loss record for the current season")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addUserOption(opt =>
-    opt.setName("user").setDescription("The player to update").setRequired(true)
+    opt.setName("user").setDescription("The player (or use team name below)").setRequired(false)
+  )
+  .addStringOption(opt =>
+    opt.setName("team").setDescription("Team name (alternative to @user)").setRequired(false)
   )
   .addStringOption(opt =>
     opt.setName("result")
@@ -43,44 +52,62 @@ export const updateRecordData = new SlashCommandBuilder()
   )
   .addIntegerOption(opt =>
     opt.setName("point_spread")
-      .setDescription("Point differential for this game (positive = won by this, negative = lost by this)")
+      .setDescription("Points scored margin (positive = they won by this, negative = lost by this)")
       .setRequired(true)
   );
 
 export async function executeUpdateRecord(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const target = interaction.options.getUser("user", true);
+  const targetUser = interaction.options.getUser("user");
+  const teamName = interaction.options.getString("team")?.trim();
   const result = interaction.options.getString("result", true) as "win" | "loss";
   const spread = interaction.options.getInteger("point_spread", true);
 
-  await getOrCreateUser(target.id, target.username);
+  if (!targetUser && !teamName) {
+    return interaction.editReply({ content: "❌ Please provide either a **@user** or a **team** name." });
+  }
+
+  let discordId: string;
+  let username: string;
+  let team: string | null = null;
+
+  if (teamName) {
+    const found = await findUserByTeam(teamName);
+    if (!found) {
+      return interaction.editReply({ content: `❌ No user found for team **${teamName}**.` });
+    }
+    discordId = found.discordId;
+    username = found.discordUsername;
+    team = found.team ?? null;
+  } else {
+    discordId = targetUser!.id;
+    username = targetUser!.username;
+    await getOrCreateUser(discordId, username);
+    const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+    team = row[0]?.team ?? null;
+  }
+
   const season = await getOrCreateActiveSeason();
 
-  // Upsert season record
   const existing = await db.select().from(userRecordsTable)
-    .where(and(
-      eq(userRecordsTable.discordId, target.id),
-      eq(userRecordsTable.seasonId, season.id),
-    )).limit(1);
+    .where(and(eq(userRecordsTable.discordId, discordId), eq(userRecordsTable.seasonId, season.id)))
+    .limit(1);
 
   if (existing.length > 0) {
-    await db.update(userRecordsTable)
-      .set({
-        wins: result === "win" ? sql`${userRecordsTable.wins} + 1` : userRecordsTable.wins,
-        losses: result === "loss" ? sql`${userRecordsTable.losses} + 1` : userRecordsTable.losses,
-        pointDifferential: sql`${userRecordsTable.pointDifferential} + ${spread}`,
-        discordUsername: target.username,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(userRecordsTable.discordId, target.id),
-        eq(userRecordsTable.seasonId, season.id),
-      ));
+    await db.update(userRecordsTable).set({
+      wins: result === "win" ? sql`${userRecordsTable.wins} + 1` : userRecordsTable.wins,
+      losses: result === "loss" ? sql`${userRecordsTable.losses} + 1` : userRecordsTable.losses,
+      pointDifferential: sql`${userRecordsTable.pointDifferential} + ${spread}`,
+      discordUsername: username,
+      team: team ?? undefined,
+      updatedAt: new Date(),
+    }).where(and(eq(userRecordsTable.discordId, discordId), eq(userRecordsTable.seasonId, season.id)));
   } else {
     await db.insert(userRecordsTable).values({
-      discordId: target.id,
-      discordUsername: target.username,
+      discordId,
+      discordUsername: username,
+      team: team ?? undefined,
       seasonId: season.id,
       wins: result === "win" ? 1 : 0,
       losses: result === "loss" ? 1 : 0,
@@ -89,13 +116,14 @@ export async function executeUpdateRecord(interaction: ChatInputCommandInteracti
   }
 
   const updated = await db.select().from(userRecordsTable)
-    .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
+    .where(and(eq(userRecordsTable.discordId, discordId), eq(userRecordsTable.seasonId, season.id)))
     .limit(1);
   const rec = updated[0]!;
+  const label = displayName(username, team);
 
   const embed = new EmbedBuilder()
     .setColor(result === "win" ? Colors.Green : Colors.Red)
-    .setTitle(`${result === "win" ? "✅ Win" : "❌ Loss"} Recorded — ${target.username}`)
+    .setTitle(`${result === "win" ? "✅ Win" : "❌ Loss"} Recorded — ${label}`)
     .addFields(
       { name: "Result", value: result === "win" ? "Win" : "Loss", inline: true },
       { name: "Spread", value: formatDiff(spread), inline: true },
@@ -106,7 +134,7 @@ export async function executeUpdateRecord(interaction: ChatInputCommandInteracti
   return interaction.editReply({ embeds: [embed] });
 }
 
-// ── /seasonpr ─────────────────────────────────────────────────────────────────
+// ── /seasonpr ──────────────────────────────────────────────────────────────────
 export const seasonPRData = new SlashCommandBuilder()
   .setName("seasonpr")
   .setDescription("View the current season power rankings for the full league");
@@ -115,9 +143,7 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
   await interaction.deferReply();
 
   const season = await getOrCreateActiveSeason();
-
-  const records = await db.select().from(userRecordsTable)
-    .where(eq(userRecordsTable.seasonId, season.id));
+  const records = await db.select().from(userRecordsTable).where(eq(userRecordsTable.seasonId, season.id));
 
   if (records.length === 0) {
     return interaction.editReply({
@@ -130,21 +156,18 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
     });
   }
 
-  // Rank by PR score
-  const ranked = records
-    .map(r => ({
-      ...r,
-      gamesPlayed: r.wins + r.losses,
-      prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
-    }))
-    .sort((a, b) => b.prScore - a.prScore);
+  const ranked = records.map(r => ({
+    ...r,
+    gamesPlayed: r.wins + r.losses,
+    prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
+    label: displayName(r.discordUsername, r.team),
+  })).sort((a, b) => b.prScore - a.prScore);
 
   const medals = ["🥇", "🥈", "🥉"];
-
   const rows = ranked.map((r, i) => {
-    const medal = medals[i] ?? `**${ordinal(i + 1)}**`;
+    const badge = medals[i] ?? `**${ordinal(i + 1)}**`;
     const winPct = r.gamesPlayed > 0 ? ((r.wins / r.gamesPlayed) * 100).toFixed(1) : "0.0";
-    return `${medal} **${r.discordUsername}** — ${r.wins}W-${r.losses}L | ${formatDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.prScore.toFixed(1)}`;
+    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${formatDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.prScore.toFixed(1)}`;
   });
 
   const embed = new EmbedBuilder()
@@ -157,7 +180,7 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
   return interaction.editReply({ embeds: [embed] });
 }
 
-// ── /alltimepr ────────────────────────────────────────────────────────────────
+// ── /alltimepr ─────────────────────────────────────────────────────────────────
 export const allTimePRData = new SlashCommandBuilder()
   .setName("alltimepr")
   .setDescription("View all-time records and power rankings across all seasons");
@@ -178,18 +201,23 @@ export async function executeAllTimePR(interaction: ChatInputCommandInteraction)
     });
   }
 
-  // Aggregate by player
-  const aggregated = new Map<string, { username: string; wins: number; losses: number; pointDifferential: number }>();
+  // Aggregate per discordId using the most recent team/username
+  const aggregated = new Map<string, {
+    username: string; team: string | null; wins: number; losses: number; pointDifferential: number;
+  }>();
+
   for (const rec of allRecords) {
-    const existing = aggregated.get(rec.discordId);
-    if (existing) {
-      existing.wins += rec.wins;
-      existing.losses += rec.losses;
-      existing.pointDifferential += rec.pointDifferential;
-      existing.username = rec.discordUsername; // use latest username
+    const ex = aggregated.get(rec.discordId);
+    if (ex) {
+      ex.wins += rec.wins;
+      ex.losses += rec.losses;
+      ex.pointDifferential += rec.pointDifferential;
+      ex.username = rec.discordUsername;
+      if (rec.team) ex.team = rec.team;
     } else {
       aggregated.set(rec.discordId, {
         username: rec.discordUsername,
+        team: rec.team ?? null,
         wins: rec.wins,
         losses: rec.losses,
         pointDifferential: rec.pointDifferential,
@@ -197,21 +225,18 @@ export async function executeAllTimePR(interaction: ChatInputCommandInteraction)
     }
   }
 
-  const ranked = Array.from(aggregated.entries())
-    .map(([discordId, r]) => ({
-      discordId,
-      ...r,
-      gamesPlayed: r.wins + r.losses,
-      prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
-    }))
-    .sort((a, b) => b.prScore - a.prScore);
+  const ranked = Array.from(aggregated.values()).map(r => ({
+    ...r,
+    gamesPlayed: r.wins + r.losses,
+    prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
+    label: displayName(r.username, r.team),
+  })).sort((a, b) => b.prScore - a.prScore);
 
   const medals = ["🥇", "🥈", "🥉"];
-
   const rows = ranked.map((r, i) => {
-    const medal = medals[i] ?? `**${ordinal(i + 1)}**`;
+    const badge = medals[i] ?? `**${ordinal(i + 1)}**`;
     const winPct = r.gamesPlayed > 0 ? ((r.wins / r.gamesPlayed) * 100).toFixed(1) : "0.0";
-    return `${medal} **${r.username}** — ${r.wins}W-${r.losses}L | ${formatDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.prScore.toFixed(1)}`;
+    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${formatDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.prScore.toFixed(1)}`;
   });
 
   const embed = new EmbedBuilder()
