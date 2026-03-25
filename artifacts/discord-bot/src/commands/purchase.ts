@@ -50,6 +50,12 @@ export const data = new SlashCommandBuilder()
           .setRequired(true)
           .addChoices(...NFL_POSITIONS.map(p => ({ name: p, value: p })))
       )
+      .addIntegerOption(opt =>
+        opt.setName("quantity")
+          .setDescription("How many attribute points to purchase (default: 1)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
   )
 
   // ── Dev Upgrade ─────────────────────────────────────────────────────────────
@@ -75,6 +81,12 @@ export const data = new SlashCommandBuilder()
           .setDescription("Player's position (e.g. QB, WR, CB)")
           .setRequired(true)
       )
+      .addIntegerOption(opt =>
+        opt.setName("quantity")
+          .setDescription("How many dev upgrades to purchase (default: 1)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
   )
 
   // ── Age Reset ───────────────────────────────────────────────────────────────
@@ -90,6 +102,12 @@ export const data = new SlashCommandBuilder()
         opt.setName("player_position")
           .setDescription("Player's position (e.g. QB, WR, CB)")
           .setRequired(true)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("quantity")
+          .setDescription("How many age resets to purchase (default: 1)")
+          .setRequired(false)
+          .setMinValue(1)
       )
   )
 
@@ -218,39 +236,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const attributeName = interaction.options.getString("attribute_name", true);
     const playerName = interaction.options.getString("player_name", true);
     const playerPosition = interaction.options.getString("player_position", true);
+    const quantity = interaction.options.getInteger("quantity") ?? 1;
 
     if (!ATTRIBUTES.includes(attributeName as any)) {
       return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
     }
 
     const isCore = CORE_ATTRIBUTES.has(attributeName);
-    const cost    = isCore ? rules.coreAttrCost    : rules.nonCoreAttrCost;
+    const costPer = isCore ? rules.coreAttrCost    : rules.nonCoreAttrCost;
     const cap     = isCore ? rules.coreAttrCap     : rules.nonCoreAttrCap;
     const used    = isCore ? stats.coreAttrPurchased : stats.nonCoreAttrPurchased;
     const category = isCore ? "Core" : "Non-Core";
+    const remaining = cap - used;
+    const totalCost = costPer * quantity;
 
-    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
-
-    if (used >= cap) {
+    if (quantity > remaining) {
       return interaction.editReply({
         embeds: [errorEmbed(
-          `${category} Attribute Cap Reached`,
-          `You've used all **${cap} ${category.toLowerCase()} attribute upgrades** for this season.\n\n` +
+          `Exceeds ${category} Attribute Cap`,
+          `You only have **${remaining} ${category.toLowerCase()} upgrade${remaining === 1 ? "" : "s"}** remaining this season (cap: ${cap}), but requested **${quantity}**.\n\n` +
           (isCore
-            ? `Switch to a **non-core** attribute (${rules.nonCoreAttrCost} coins, ${Math.max(0, rules.nonCoreAttrCap - stats.nonCoreAttrPurchased)} remaining).`
-            : `Switch to a **core** attribute (${rules.coreAttrCost} coins, ${Math.max(0, rules.coreAttrCap - stats.coreAttrPurchased)} remaining).`)
+            ? `Non-core upgrades available: **${Math.max(0, rules.nonCoreAttrCap - stats.nonCoreAttrPurchased)}** (${rules.nonCoreAttrCost} coins each).`
+            : `Core upgrades available: **${Math.max(0, rules.coreAttrCap - stats.coreAttrPurchased)}** (${rules.coreAttrCost} coins each).`)
         )],
       });
     }
 
-    await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Attribute upgrade (${category}) — ${attributeName} for ${playerName} (${playerPosition})`);
+    if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
+
+    await deductBalance(interaction.user.id, totalCost);
+    await logTransaction(interaction.user.id, -totalCost, "purchase", `Attribute upgrade (${category}) ×${quantity} — ${attributeName} for ${playerName} (${playerPosition})`);
     await db.update(seasonStatsTable).set({
       coreAttrPurchased: isCore
-        ? sql`${seasonStatsTable.coreAttrPurchased} + 1`
+        ? sql`${seasonStatsTable.coreAttrPurchased} + ${quantity}`
         : seasonStatsTable.coreAttrPurchased,
       nonCoreAttrPurchased: !isCore
-        ? sql`${seasonStatsTable.nonCoreAttrPurchased} + 1`
+        ? sql`${seasonStatsTable.nonCoreAttrPurchased} + ${quantity}`
         : seasonStatsTable.nonCoreAttrPurchased,
     }).where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
@@ -259,10 +280,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       seasonId: season.id,
       purchaseType: "attribute",
       status: "pending",
-      cost,
+      cost: totalCost,
       attributeName,
       playerName,
       playerPosition,
+      notes: quantity > 1 ? `qty:${quantity}` : null,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -273,40 +295,46 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       attributeName,
       playerName,
       playerPosition,
+      notes: quantity > 1 ? `qty:${quantity}` : null,
     });
 
     await sendCommissionerNotification(interaction, "attribute", purchase!.id, {
-      attributeName, playerName, playerPosition, category,
+      attributeName, playerName, playerPosition, category, quantity: String(quantity), costPer: String(costPer),
     });
 
     return interaction.editReply({
       embeds: [pendingEmbed(
         "Attribute Upgrade Submitted!",
-        `**${attributeName}** upgrade for **${playerName}** (${playerPosition}) submitted!\n\n` +
-        `**Category:** ${category}\n` +
-        `**Cost:** ${cost} coins deducted.\n` +
-        `**${category} upgrades used this season:** ${used + 1}/${cap}`
+        `**${attributeName} ×${quantity}** for **${playerName}** (${playerPosition}) submitted!\n\n` +
+        `**Category:** ${category} (${costPer} coins/pt)\n` +
+        `**Total Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
+        `**${category} upgrades used this season:** ${used + quantity}/${cap}`
       )],
     });
   }
 
   // ── /purchase devup ─────────────────────────────────────────────────────────
   if (sub === "devup") {
-    const cost = COSTS.dev_up;
-    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
-
     const playerName = interaction.options.getString("player_name", true);
     const playerPosition = interaction.options.getString("player_position", true);
     const devUpType = interaction.options.getString("dev_type", true);
+    const quantity = interaction.options.getInteger("quantity") ?? 1;
+    const costPer = COSTS.dev_up;
+    const totalCost = costPer * quantity;
+    const remaining = rules.devUpsCap - stats.devUpsPurchased;
 
-    if (stats.devUpsPurchased >= rules.devUpsCap) {
-      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${rules.devUpsCap} dev upgrades** for this season.`)] });
+    if (quantity > remaining) {
+      return interaction.editReply({
+        embeds: [errorEmbed("Dev Upgrade Limit Exceeded", `You only have **${remaining} dev upgrade${remaining === 1 ? "" : "s"}** remaining this season (cap: ${rules.devUpsCap}), but requested **${quantity}**.`)],
+      });
     }
 
-    await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Dev upgrade (${devUpType}) — ${playerName} (${playerPosition})`);
+    if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
+
+    await deductBalance(interaction.user.id, totalCost);
+    await logTransaction(interaction.user.id, -totalCost, "purchase", `Dev upgrade (${devUpType}) ×${quantity} — ${playerName} (${playerPosition})`);
     await db.update(seasonStatsTable)
-      .set({ devUpsPurchased: sql`${seasonStatsTable.devUpsPurchased} + 1` })
+      .set({ devUpsPurchased: sql`${seasonStatsTable.devUpsPurchased} + ${quantity}` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
     const [purchase] = await db.insert(purchasesTable).values({
@@ -314,10 +342,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       seasonId: season.id,
       purchaseType: "dev_up",
       status: "pending",
-      cost,
+      cost: totalCost,
       playerName,
       playerPosition,
-      notes: devUpType,
+      notes: `${devUpType}${quantity > 1 ? `;qty:${quantity}` : ""}`,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -327,32 +355,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       itemType: "dev_up",
       playerName,
       playerPosition,
-      notes: devUpType,
+      notes: `${devUpType}${quantity > 1 ? `;qty:${quantity}` : ""}`,
     });
 
-    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition, devUpType });
+    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition, devUpType, quantity: String(quantity), costPer: String(costPer) });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Dev Upgrade Submitted!", `**${devUpType}** dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${rules.devUpsCap}`)],
+      embeds: [pendingEmbed(
+        "Dev Upgrade Submitted!",
+        `**${devUpType}** dev upgrade ×${quantity} for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
+        `**Total Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
+        `**Dev upgrades used:** ${stats.devUpsPurchased + quantity}/${rules.devUpsCap}`
+      )],
     });
   }
 
   // ── /purchase agereset ──────────────────────────────────────────────────────
   if (sub === "agereset") {
-    const cost = COSTS.age_reset;
-    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
-
     const playerName = interaction.options.getString("player_name", true);
     const playerPosition = interaction.options.getString("player_position", true);
+    const quantity = interaction.options.getInteger("quantity") ?? 1;
+    const costPer = COSTS.age_reset;
+    const totalCost = costPer * quantity;
+    const remaining = rules.ageResetsCap - stats.ageResetsPurchased;
 
-    if (stats.ageResetsPurchased >= rules.ageResetsCap) {
-      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${rules.ageResetsCap} age resets** for this season.`)] });
+    if (quantity > remaining) {
+      return interaction.editReply({
+        embeds: [errorEmbed("Age Reset Limit Exceeded", `You only have **${remaining} age reset${remaining === 1 ? "" : "s"}** remaining this season (cap: ${rules.ageResetsCap}), but requested **${quantity}**.`)],
+      });
     }
 
-    await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Age reset — ${playerName} (${playerPosition})`);
+    if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
+
+    await deductBalance(interaction.user.id, totalCost);
+    await logTransaction(interaction.user.id, -totalCost, "purchase", `Age reset ×${quantity} — ${playerName} (${playerPosition})`);
     await db.update(seasonStatsTable)
-      .set({ ageResetsPurchased: sql`${seasonStatsTable.ageResetsPurchased} + 1` })
+      .set({ ageResetsPurchased: sql`${seasonStatsTable.ageResetsPurchased} + ${quantity}` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
     const [purchase] = await db.insert(purchasesTable).values({
@@ -360,9 +398,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       seasonId: season.id,
       purchaseType: "age_reset",
       status: "pending",
-      cost,
+      cost: totalCost,
       playerName,
       playerPosition,
+      notes: quantity > 1 ? `qty:${quantity}` : null,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -372,12 +411,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       itemType: "age_reset",
       playerName,
       playerPosition,
+      notes: quantity > 1 ? `qty:${quantity}` : null,
     });
 
-    await sendCommissionerNotification(interaction, "age_reset", purchase!.id, { playerName, playerPosition });
+    await sendCommissionerNotification(interaction, "age_reset", purchase!.id, { playerName, playerPosition, quantity: String(quantity), costPer: String(costPer) });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Age Reset Submitted!", `Age reset for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Age resets used:** ${stats.ageResetsPurchased + 1}/${rules.ageResetsCap}`)],
+      embeds: [pendingEmbed(
+        "Age Reset Submitted!",
+        `Age reset ×${quantity} for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
+        `**Total Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
+        `**Age resets used:** ${stats.ageResetsPurchased + quantity}/${rules.ageResetsCap}`
+      )],
     });
   }
 
@@ -462,30 +507,39 @@ async function sendCommissionerNotification(
     ].join("\n");
     buttonLabel = "✅ Added to Draft Pool";
   } else if (type === "attribute") {
+    const qty = parseInt(details["quantity"] ?? "1");
+    const costPer = details["costPer"];
     title = "⚡ Attribute Upgrade Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
       `**Attribute:** ${details["attributeName"]} (${details["category"]})`,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Quantity:** ${qty} point${qty > 1 ? "s" : ""} × ${costPer} coins = **${qty * parseInt(costPer ?? "0")} coins**`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",
     ].join("\n");
   } else if (type === "dev_up") {
+    const qty = parseInt(details["quantity"] ?? "1");
+    const costPer = details["costPer"];
     title = "📈 Dev Upgrade Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
       `**Upgrade Type:** ${details["devUpType"]}`,
+      `**Quantity:** ${qty} × ${costPer} coins = **${qty * parseInt(costPer ?? "0")} coins**`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",
     ].join("\n");
   } else if (type === "age_reset") {
+    const qty = parseInt(details["quantity"] ?? "1");
+    const costPer = details["costPer"];
     title = "🔄 Age Reset Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Quantity:** ${qty} reset${qty > 1 ? "s" : ""} × ${costPer} coins = **${qty * parseInt(costPer ?? "0")} coins**`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",
