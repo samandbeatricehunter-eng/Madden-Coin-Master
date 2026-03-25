@@ -96,6 +96,21 @@ export const seasonStatsTable = pgTable("season_stats", {
   legendsPurchasedThisSeason: integer("legends_purchased_this_season").notNull().default(0),
 });
 
+export const userRecordsTable = pgTable("user_records", {
+  id: serial("id").primaryKey(),
+  discordId: text("discord_id").notNull(),
+  discordUsername: text("discord_username").notNull(),
+  seasonId: integer("season_id").notNull(),
+  wins: integer("wins").notNull().default(0),
+  losses: integer("losses").notNull().default(0),
+  pointDifferential: integer("point_differential").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
+export type UserRecord = typeof userRecordsTable.$inferSelect;
+export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;
+
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertLegendSchema = createInsertSchema(legendsTable).omit({ id: true, addedAt: true });
 export const insertPurchaseSchema = createInsertSchema(purchasesTable).omit({ id: true, createdAt: true });

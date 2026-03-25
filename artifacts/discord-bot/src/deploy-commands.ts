@@ -7,6 +7,12 @@ import * as inventory from "./commands/inventory.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
 import * as adminLegend from "./commands/admin-legend.js";
 import * as adminSeason from "./commands/admin-season.js";
+import * as adminAddCoins from "./commands/admin-addcoins.js";
+import * as adminRemoveCoins from "./commands/admin-removecoins.js";
+import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
+import {
+  updateRecordData, seasonPRData, allTimePRData,
+} from "./commands/records.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -17,8 +23,12 @@ if (!token || !clientId || !guildId) {
 }
 
 const commands = [
-  balance, sendcoins, viewstore, purchase, inventory, availableupgrades, adminLegend, adminSeason,
+  balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
+  adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
 ].map(c => c.data.toJSON());
+
+// Add multi-export record commands
+commands.push(updateRecordData.toJSON(), seasonPRData.toJSON(), allTimePRData.toJSON());
 
 const rest = new REST().setToken(token);
 

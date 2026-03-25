@@ -2,7 +2,7 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+pnpm workspace monorepo using TypeScript. Hosts a Discord economy bot for a Madden League server.
 
 ## Stack
 
@@ -10,87 +10,100 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Node.js version**: 24
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
-- **API framework**: Express 5
+- **API framework**: Express 5 (api-server artifact)
 - **Database**: PostgreSQL + Drizzle ORM
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Discord**: discord.js v14
+- **Build**: esbuild (CJS bundle for api-server)
 
 ## Structure
 
 ```text
 artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
-├── lib/                    # Shared libraries
+├── artifacts/
+│   ├── api-server/         # Express API server (unused for bot but part of template)
+│   ├── mockup-sandbox/     # UI prototyping sandbox
+│   └── discord-bot/        # Discord economy bot (main artifact)
+├── lib/
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
 │   ├── api-zod/            # Generated Zod schemas from OpenAPI
 │   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+├── scripts/                # Utility scripts
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── tsconfig.json
+└── package.json
 ```
 
-## TypeScript & Composite Projects
+## Discord Bot
 
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
+### Setup
 
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
+1. Invite the bot to the server using the OAuth2 link (bot + applications.commands scope)
+2. Run `pnpm --filter @workspace/discord-bot run deploy-commands` to register slash commands
+3. The bot workflow runs automatically: `pnpm --filter @workspace/discord-bot run dev`
 
-## Root Scripts
+### User Commands
 
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
+| Command | Description |
+|---|---|
+| `/balance` | Check your coin balance |
+| `/sendcoins` | Send coins to another player |
+| `/viewstore` | See all available items and legends |
+| `/purchase` | Buy any item (legend, attribute, dev up, age reset, custom player) |
+| `/inventory` | See your current season inventory |
+| `/availableupgrades` | See how many upgrades you've used this season |
 
-## Packages
+### Admin Commands (Administrators only)
 
-### `artifacts/api-server` (`@workspace/api-server`)
+| Command | Description |
+|---|---|
+| `/addcoins` | Add coins to a user |
+| `/removecoins` | Remove coins from a user |
+| `/resetupgrades` | Reset a user's upgrade counts for the season |
+| `/legend add/list/edit/remove` | Manage the legend store |
+| `/season new/status/addcoins/setbalance` | Season management |
+| `/updaterecord` | Record a win or loss with point spread |
+| `/seasonpr` | Show current season power rankings |
+| `/alltimepr` | Show all-time power rankings |
 
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
+### Purchase Rules
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+- **Legends**: 1,000 coins | 4 max all-time per user | Max 4 in inventory | Max 7 combined legends+custom players
+- **Attributes**: 40 coins | 20/season | Speed capped at 5 pts/season
+- **Dev Upgrades**: 250 coins | 2/season | Star or Superstar type required
+- **Age Resets**: 250 coins | 2/season
+- **Custom Players**: Gold 300 / Silver 200 / Bronze 100 coins
 
-### `lib/db` (`@workspace/db`)
+### Power Ranking Formula (current)
 
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
+```
+PR Score = (Wins × 3) + (Point Differential × 0.1) - (Losses × 1)
+```
 
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
+Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the user provides their formula.
 
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
+## Database Schema (lib/db/src/schema/discord-economy.ts)
 
-### `lib/api-spec` (`@workspace/api-spec`)
+- `economy_users` — Discord users, balances, all-time legend count
+- `seasons` — Season tracking (active season)
+- `legends` — Available/purchased legends store
+- `purchases` — All purchase history with status (pending/approved/refunded)
+- `inventory` — Per-season user inventory
+- `season_stats` — Per-season upgrade usage counts
+- `user_records` — Per-season H2H wins/losses/point differential
 
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
+## Environment Variables Required
 
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
+- `DISCORD_TOKEN` — Bot token
+- `DISCORD_CLIENT_ID` — Application ID
+- `DISCORD_GUILD_ID` — Server ID
+- `DISCORD_COMMISSIONER_CHANNEL_ID` — Commissioner-only notification channel
+- `DATABASE_URL` — PostgreSQL connection string (auto-set by Replit)
 
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
+## Development
 
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+- Run bot: `pnpm --filter @workspace/discord-bot run dev`
+- Deploy commands: `pnpm --filter @workspace/discord-bot run deploy-commands`
+- Push DB schema: `pnpm --filter @workspace/db run push`
