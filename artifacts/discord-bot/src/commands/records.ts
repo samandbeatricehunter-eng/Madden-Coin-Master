@@ -46,15 +46,6 @@ export const updateRecordData = new SlashCommandBuilder()
   .setName("updaterecord")
   .setDescription("Commissioner: Update a player's win/loss record for the current season")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addUserOption(opt =>
-    opt.setName("user").setDescription("The player (or use team name below)").setRequired(false)
-  )
-  .addStringOption(opt =>
-    opt.setName("team")
-      .setDescription("NFL team name (alternative to @user)")
-      .setRequired(false)
-      .setAutocomplete(true)
-  )
   .addStringOption(opt =>
     opt.setName("result")
       .setDescription("Win or Loss?")
@@ -66,8 +57,17 @@ export const updateRecordData = new SlashCommandBuilder()
   )
   .addIntegerOption(opt =>
     opt.setName("point_spread")
-      .setDescription("Points scored margin (positive = they won by this, negative = lost by this)")
+      .setDescription("Points scored margin (positive = won by this many, negative = lost by this many)")
       .setRequired(true)
+  )
+  .addUserOption(opt =>
+    opt.setName("user").setDescription("The player (or use team name below)").setRequired(false)
+  )
+  .addStringOption(opt =>
+    opt.setName("team")
+      .setDescription("NFL team name (alternative to @user)")
+      .setRequired(false)
+      .setAutocomplete(true)
   );
 
 export async function executeUpdateRecord(interaction: ChatInputCommandInteraction) {
