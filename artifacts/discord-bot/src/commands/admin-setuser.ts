@@ -4,22 +4,22 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, seasonStatsTable, userRecordsTable } from "@workspace/db";
-import { eq, and, sum } from "drizzle-orm";
-import { getOrCreateActiveSeason, getOrCreateUser } from "../lib/db-helpers.js";
+import { eq, and, sum, sql } from "drizzle-orm";
+import { getOrCreateActiveSeason, getOrCreateUser, logTransaction } from "../lib/db-helpers.js";
 import { findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
-// Milestone thresholds — keep in sync with records.ts
-const WIN_MILESTONE_THRESHOLDS = [
-  { wins: 50, tier: 4 },
-  { wins: 25, tier: 3 },
-  { wins: 12, tier: 2 },
-  { wins: 5,  tier: 1 },
-];
+// Keep in sync with records.ts
+const WIN_MILESTONES = [
+  { wins: 5,  tier: 1, coins: 100,  emoji: "🎯", label: "5 All-Time Wins" },
+  { wins: 12, tier: 2, coins: 250,  emoji: "⭐", label: "12 All-Time Wins" },
+  { wins: 25, tier: 3, coins: 500,  emoji: "🔥", label: "25 All-Time Wins" },
+  { wins: 50, tier: 4, coins: 1000, emoji: "👑", label: "50 All-Time Wins" },
+] as const;
 
 /** Determine which milestone tier a given all-time win count qualifies for */
 function calcMilestoneTier(allTimeWins: number): number {
-  for (const m of WIN_MILESTONE_THRESHOLDS) {
+  for (const m of [...WIN_MILESTONES].reverse()) {
     if (allTimeWins >= m.wins) return m.tier;
   }
   return 0;
@@ -72,6 +72,12 @@ export const data = new SlashCommandBuilder()
       .setDescription("Set all-time Super Bowl wins (for bonus tier tracking)")
       .setRequired(false)
       .setMinValue(0)
+  )
+  // ── Milestone payout clarification (required when setting any win counts) ──
+  .addBooleanOption(opt =>
+    opt.setName("milestones_already_paid")
+      .setDescription("Have H2H win milestone bonuses already been paid out to this user before this bot?")
+      .setRequired(false)
   )
   // ── Season upgrade usage ───────────────────────────────────────────────────
   .addIntegerOption(opt =>
@@ -139,6 +145,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const superbowlWins    = interaction.options.getInteger("superbowl_wins");
   const superbowlLosses  = interaction.options.getInteger("superbowl_losses");
   const allTimeSbWins    = interaction.options.getInteger("all_time_sb_wins");
+  const milestonesAlreadyPaid = interaction.options.getBoolean("milestones_already_paid");
   const attributesUsed   = interaction.options.getInteger("attributes_used");
   const speedPointsUsed  = interaction.options.getInteger("speed_points_used");
   const devUpsUsed       = interaction.options.getInteger("dev_ups_used");
@@ -156,6 +163,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (noFieldProvided) {
     return interaction.editReply({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Nothing to Set").setDescription("Provide at least one value to update.")],
+    });
+  }
+
+  // ── Guard: wins being set but milestone intent not specified ──────────────
+  const settingWins = wins !== null || playoffWins !== null || superbowlWins !== null;
+  if (settingWins && milestonesAlreadyPaid === null) {
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Yellow)
+          .setTitle("⚠️ Milestone Payout Clarification Required")
+          .setDescription(
+            "You're manually setting win counts for this user.\n\n" +
+            "**Have H2H win milestone bonuses already been paid out to them** (before this bot took over)?\n\n" +
+            "Please re-run this command and set the **`milestones_already_paid`** option:\n" +
+            "• **`True`** — Milestones were already paid. Wins will be imported silently with no coin award.\n" +
+            "• **`False`** — Milestones have not been paid. Any owed milestone bonuses will be awarded now."
+          ),
+      ],
     });
   }
 
@@ -208,17 +234,45 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    // ── Silently update the milestone tier to match new all-time win total ───
-    // (no announcement — these wins pre-existed the bot)
-    if (wins !== null || playoffWins !== null || superbowlWins !== null) {
+    // ── Milestone handling based on admin's answer ─────────────────────────
+    if (settingWins) {
       const totals = await db.select({ totalWins: sum(userRecordsTable.wins) })
         .from(userRecordsTable).where(eq(userRecordsTable.discordId, discordId));
       const allTimeWins = Number(totals[0]?.totalWins ?? 0);
       const correctTier = calcMilestoneTier(allTimeWins);
-      await db.update(usersTable)
-        .set({ milestoneTierAwarded: correctTier, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, discordId));
-      changes.push(`🎯 **Milestone tier** synced to ${correctTier} (${allTimeWins} all-time wins — no payout issued)`);
+
+      if (milestonesAlreadyPaid === true) {
+        // Silent import — sync tier so future wins trigger correctly, no payout
+        await db.update(usersTable)
+          .set({ milestoneTierAwarded: correctTier, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, discordId));
+        changes.push(`🎯 **Milestone tier** silently synced to ${correctTier} (${allTimeWins} all-time wins — payouts already issued before bot)`);
+      } else {
+        // milestonesAlreadyPaid === false — award any owed milestones now
+        const userRow = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+        const currentTier = userRow[0]?.milestoneTierAwarded ?? 0;
+        let highestNewTier = currentTier;
+
+        for (const milestone of WIN_MILESTONES) {
+          if (allTimeWins >= milestone.wins && currentTier < milestone.tier) {
+            // Award this milestone
+            await db.update(usersTable)
+              .set({ balance: sql`${usersTable.balance} + ${milestone.coins}`, updatedAt: new Date() })
+              .where(eq(usersTable.discordId, discordId));
+            await logTransaction(discordId, milestone.coins, "addcoins", `Win milestone bonus — ${milestone.label} (retroactive import)`);
+            changes.push(`${milestone.emoji} **Milestone awarded:** ${milestone.label} → +${milestone.coins.toLocaleString()} coins`);
+            highestNewTier = Math.max(highestNewTier, milestone.tier);
+          }
+        }
+
+        await db.update(usersTable)
+          .set({ milestoneTierAwarded: highestNewTier, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, discordId));
+
+        if (highestNewTier === currentTier) {
+          changes.push(`🎯 **Milestone tier** stays at ${currentTier} (${allTimeWins} all-time wins — no new thresholds crossed)`);
+        }
+      }
     }
   }
 
@@ -255,7 +309,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setColor(Colors.Green)
         .setTitle(`✅ Stats Updated — ${label}`)
         .setDescription(changes.join("\n"))
-        .setFooter({ text: `Season ${season.seasonNumber} | Milestone payouts suppressed for manually set wins` })
+        .setFooter({ text: `Season ${season.seasonNumber}` })
         .setTimestamp(),
     ],
   });
