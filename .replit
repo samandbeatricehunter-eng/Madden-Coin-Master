@@ -9,7 +9,7 @@ id = "artifacts/mockup-sandbox"
 [deployment]
 router = "application"
 deploymentTarget = "gce"
-run = ["sh", "-c", "run"]
+run = ["sh", "-c", "pnpm --filter @workspace/discord-bot run start"]
 ignorePorts = true
 
 [deployment.postBuild]
