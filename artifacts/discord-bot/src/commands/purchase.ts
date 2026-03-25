@@ -8,7 +8,7 @@ import { legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTa
 import { eq, and, sql } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
-  getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction,
+  getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, ATTRIBUTES } from "../lib/constants.js";
@@ -208,7 +208,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── /purchase attribute ─────────────────────────────────────────────────────
   if (sub === "attribute") {
-    const cost = COSTS.attribute;
+    const rules = await getSeasonRules(season);
+    const cost = rules.attrCost;
     if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
     const attributeName = interaction.options.getString("attribute_name", true);
@@ -218,12 +219,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
     }
 
-    if (stats.attributesPurchased >= LIMITS.attributesPerSeason) {
-      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.attributesPerSeason} attribute upgrades** for this season.`)] });
+    if (stats.attributesPurchased >= rules.attrCap) {
+      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${rules.attrCap} attribute upgrades** for this season.`)] });
     }
 
-    if (attributeName === "Speed" && stats.speedPointsPurchased >= LIMITS.speedPointsPerSeason) {
-      return interaction.editReply({ embeds: [errorEmbed("Speed Cap Reached", `You've already used **${LIMITS.speedPointsPerSeason} speed points** this season.`)] });
+    if (attributeName === "Speed" && stats.speedPointsPurchased >= rules.speedCap) {
+      return interaction.editReply({ embeds: [errorEmbed("Speed Cap Reached", `You've already used **${rules.speedCap} speed points** this season.`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
@@ -259,7 +260,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Attribute Upgrade Submitted!", `**${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Upgrades used this season:** ${stats.attributesPurchased + 1}/${LIMITS.attributesPerSeason}`)],
+      embeds: [pendingEmbed("Attribute Upgrade Submitted!", `**${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Upgrades used this season:** ${stats.attributesPurchased + 1}/${rules.attrCap}`)],
     });
   }
 

@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors } from "discord.js";
-import { getOrCreateUser, getOrCreateActiveSeason, getSeasonStats, getLegendPurchaseHistory } from "../lib/db-helpers.js";
+import { getOrCreateUser, getOrCreateActiveSeason, getSeasonStats, getLegendPurchaseHistory, getSeasonRules } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
@@ -14,13 +14,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const stats = await getSeasonStats(interaction.user.id, season.id);
   const legendHistory = await getLegendPurchaseHistory(interaction.user.id);
 
+  const rules = await getSeasonRules(season);
+
   const attrsUsed = stats.attributesPurchased;
-  const attrsLeft = Math.max(0, LIMITS.attributesPerSeason - attrsUsed);
+  const attrsLeft = Math.max(0, rules.attrCap - attrsUsed);
   const speedUsed = stats.speedPointsPurchased;
-  const speedLeft = Math.max(0, LIMITS.speedPointsPerSeason - speedUsed);
+  const speedLeft = Math.max(0, rules.speedCap - speedUsed);
   const devUpsLeft = Math.max(0, LIMITS.devUpsPerSeason - stats.devUpsPurchased);
   const ageResetsLeft = Math.max(0, LIMITS.ageResetsPerSeason - stats.ageResetsPurchased);
   const legendsLeft = Math.max(0, LIMITS.legendsAllTime - legendHistory.total);
+
+  const overrideNote = (season.attrCostOverride !== null || season.attrCapOverride !== null || season.speedCapOverride !== null)
+    ? "\n⚠️ *This season has custom attribute rules set by the commissioner.*"
+    : "";
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blurple)
@@ -28,7 +34,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .addFields(
       {
         name: "⚡ Attribute Upgrades",
-        value: `Used: **${attrsUsed}/${LIMITS.attributesPerSeason}** | Remaining: **${attrsLeft}**\nSpeed Points Used: **${speedUsed}/${LIMITS.speedPointsPerSeason}** | Remaining: **${speedLeft}**`,
+        value: `Used: **${attrsUsed}/${rules.attrCap}** | Remaining: **${attrsLeft}**\nSpeed Points Used: **${speedUsed}/${rules.speedCap}** | Remaining: **${speedLeft}**\nCost per upgrade: **${rules.attrCost} coins**${overrideNote}`,
         inline: false,
       },
       {

@@ -40,6 +40,10 @@ export const seasonsTable = pgTable("seasons", {
   seasonNumber: integer("season_number").notNull().unique(),
   isActive: boolean("is_active").notNull().default(true),
   startedAt: timestamp("started_at").notNull().defaultNow(),
+  // Per-season overrides — null means use the default from constants.ts
+  attrCostOverride: integer("attr_cost_override"),
+  attrCapOverride: integer("attr_cap_override"),
+  speedCapOverride: integer("speed_cap_override"),
 });
 
 export const legendsTable = pgTable("legends", {

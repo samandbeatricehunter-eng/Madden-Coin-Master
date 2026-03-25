@@ -43,6 +43,33 @@ export const data = new SlashCommandBuilder()
       .setDescription("Set a user's coin balance")
       .addUserOption(opt => opt.setName("user").setDescription("The user").setRequired(true))
       .addIntegerOption(opt => opt.setName("amount").setDescription("New balance").setRequired(true).setMinValue(0))
+  )
+  .addSubcommand(sub =>
+    sub.setName("override")
+      .setDescription("Set attribute rule overrides for the current season (null = use defaults)")
+      .addIntegerOption(opt =>
+        opt.setName("attr_cost")
+          .setDescription("Cost per attribute upgrade this season (default: 40)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("attr_cap")
+          .setDescription("Max attribute upgrades allowed this season (default: 20)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("speed_cap")
+          .setDescription("Max Speed points allowed this season (default: 5)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addBooleanOption(opt =>
+        opt.setName("clear")
+          .setDescription("Set to True to clear ALL overrides and restore defaults")
+          .setRequired(false)
+      )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -190,6 +217,73 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .setColor(Colors.Green)
           .setTitle("✅ Balance Set")
           .setDescription(`Set ${target.toString()}'s balance to **${newAmount.toLocaleString()} coins**.`)
+          .setTimestamp(),
+      ],
+    });
+  }
+
+  if (sub === "override") {
+    const clear = interaction.options.getBoolean("clear") ?? false;
+
+    // Fetch the active season
+    const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+    const season = seasons[0];
+    if (!season) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Active Season").setDescription("No active season found.")],
+      });
+    }
+
+    if (clear) {
+      await db.update(seasonsTable)
+        .set({ attrCostOverride: null, attrCapOverride: null, speedCapOverride: null })
+        .where(eq(seasonsTable.id, season.id));
+
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Blue)
+            .setTitle("🔄 Overrides Cleared — Season " + season.seasonNumber)
+            .setDescription("All attribute overrides have been removed. Default rules are now active:\n• Attribute cost: **40 coins**\n• Attribute cap: **20/season**\n• Speed cap: **5/season**")
+            .setTimestamp(),
+        ],
+      });
+    }
+
+    const attrCost  = interaction.options.getInteger("attr_cost");
+    const attrCap   = interaction.options.getInteger("attr_cap");
+    const speedCap  = interaction.options.getInteger("speed_cap");
+
+    if (attrCost === null && attrCap === null && speedCap === null) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Nothing to Change").setDescription("Provide at least one override value, or use `clear: True` to restore defaults.")],
+      });
+    }
+
+    const updates: Record<string, number | null> = {};
+    if (attrCost  !== null) updates["attrCostOverride"]  = attrCost;
+    if (attrCap   !== null) updates["attrCapOverride"]   = attrCap;
+    if (speedCap  !== null) updates["speedCapOverride"]  = speedCap;
+
+    await db.update(seasonsTable).set(updates as any).where(eq(seasonsTable.id, season.id));
+
+    // Fetch fresh season to build the display
+    const updated = await db.select().from(seasonsTable).where(eq(seasonsTable.id, season.id)).limit(1);
+    const s = updated[0]!;
+
+    const { COSTS, LIMITS } = await import("../lib/constants.js");
+    const lines = [
+      `**Attribute cost:** ${s.attrCostOverride !== null ? `~~${COSTS.attribute}~~ → **${s.attrCostOverride} coins** ⚠️ override` : `**${COSTS.attribute} coins** (default)`}`,
+      `**Attribute cap:** ${s.attrCapOverride !== null ? `~~${LIMITS.attributesPerSeason}~~ → **${s.attrCapOverride}/season** ⚠️ override` : `**${LIMITS.attributesPerSeason}/season** (default)`}`,
+      `**Speed cap:** ${s.speedCapOverride !== null ? `~~${LIMITS.speedPointsPerSeason}~~ → **${s.speedCapOverride}/season** ⚠️ override` : `**${LIMITS.speedPointsPerSeason}/season** (default)`}`,
+    ];
+
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Orange)
+          .setTitle(`⚙️ Season ${season.seasonNumber} Attribute Overrides Updated`)
+          .setDescription(lines.join("\n") + "\n\n*These overrides apply only to this season. When a new season starts, defaults are restored automatically.*")
           .setTimestamp(),
       ],
     });

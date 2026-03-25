@@ -84,6 +84,15 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
   return { legends, customs, total: items.length };
 }
 
+export async function getSeasonRules(season: Season) {
+  const { COSTS, LIMITS } = await import("./constants.js");
+  return {
+    attrCost:  season.attrCostOverride  ?? COSTS.attribute,
+    attrCap:   season.attrCapOverride   ?? LIMITS.attributesPerSeason,
+    speedCap:  season.speedCapOverride  ?? LIMITS.speedPointsPerSeason,
+  };
+}
+
 export async function getLegendPurchaseHistory(discordId: string) {
   const purchases = await db.select().from(purchasesTable)
     .where(and(
