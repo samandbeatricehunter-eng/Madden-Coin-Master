@@ -31,6 +31,10 @@ export const usersTable = pgTable("economy_users", {
   team: text("team").unique(),
   balance: integer("balance").notNull().default(0),
   totalLegendPurchases: integer("total_legend_purchases").notNull().default(0),
+  // All-time tracking for milestone payouts
+  allTimeSuperbowlWins: integer("all_time_superbowl_wins").notNull().default(0),
+  // Which win milestone has been awarded: 0=none, 1=5W, 2=12W, 3=25W, 4=50W
+  milestoneTierAwarded: integer("milestone_tier_awarded").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -101,6 +105,8 @@ export const seasonStatsTable = pgTable("season_stats", {
   legendsPurchasedThisSeason: integer("legends_purchased_this_season").notNull().default(0),
 });
 
+export const gameTypeEnum = pgEnum("game_type", ["regular_season", "playoff", "superbowl"]);
+
 export const userRecordsTable = pgTable("user_records", {
   id: serial("id").primaryKey(),
   discordId: text("discord_id").notNull(),
@@ -110,7 +116,24 @@ export const userRecordsTable = pgTable("user_records", {
   wins: integer("wins").notNull().default(0),
   losses: integer("losses").notNull().default(0),
   pointDifferential: integer("point_differential").notNull().default(0),
+  // Separate playoff / superbowl tracking (still counted in wins/losses above)
+  playoffWins: integer("playoff_wins").notNull().default(0),
+  playoffLosses: integer("playoff_losses").notNull().default(0),
+  superbowlWins: integer("superbowl_wins").notNull().default(0),
+  superbowlLosses: integer("superbowl_losses").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Individual game log for /recentH2H
+export const gameLogTable = pgTable("game_log", {
+  id: serial("id").primaryKey(),
+  discordId: text("discord_id").notNull(),
+  seasonId: integer("season_id").notNull(),
+  result: text("result").notNull(), // "win" | "loss"
+  pointSpread: integer("point_spread").notNull(),
+  opponentLabel: text("opponent_label"), // team name or free text
+  gameType: gameTypeEnum("game_type").notNull().default("regular_season"),
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
 export const txTypeEnum = pgEnum("tx_type", [

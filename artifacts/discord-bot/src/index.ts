@@ -29,6 +29,7 @@ import {
   seasonPRData, executeSeasonPR,
   allTimePRData, executeAllTimePR,
 } from "./commands/records.js";
+import * as recentH2H from "./commands/recentH2H.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -58,6 +59,7 @@ const commands = [
   adminResetUpgrades,
   adminSetUser,
   adminTransactions,
+  recentH2H,
   { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
   { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
   { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },
