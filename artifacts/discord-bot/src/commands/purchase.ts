@@ -11,86 +11,151 @@ import {
   getLegendPurchaseHistory, deductBalance, getInventoryCount,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { COSTS, LIMITS, ATTRIBUTES, DEV_UP_TYPES, CUSTOM_PLAYER_TIERS } from "../lib/constants.js";
+import { COSTS, LIMITS, ATTRIBUTES } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
   .setDescription("Purchase an item from the store")
-  .addStringOption(opt =>
-    opt.setName("type")
-      .setDescription("What would you like to purchase?")
-      .setRequired(true)
-      .addChoices(
-        { name: "Legend (1,000 coins)", value: "legend" },
-        { name: "Attribute Upgrade (40 coins)", value: "attribute" },
-        { name: "Development Upgrade (250 coins)", value: "dev_up" },
-        { name: "Age Reset (250 coins)", value: "age_reset" },
-        { name: "Custom Player - Gold (300 coins)", value: "custom_player_gold" },
-        { name: "Custom Player - Silver (200 coins)", value: "custom_player_silver" },
-        { name: "Custom Player - Bronze (100 coins)", value: "custom_player_bronze" },
+
+  // ── Legend ──────────────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("legend")
+      .setDescription(`Buy a legend (${COSTS.legend.toLocaleString()} coins) — max 4 all-time`)
+      .addStringOption(opt =>
+        opt.setName("legend_name")
+          .setDescription("Select a legend from the store")
+          .setRequired(true)
+          .setAutocomplete(true)
       )
   )
-  .addStringOption(opt =>
-    opt.setName("legend_name")
-      .setDescription("For Legends: the exact legend name (use /viewstore to see available legends)")
-      .setRequired(false)
+
+  // ── Attribute ───────────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("attribute")
+      .setDescription(`Upgrade an attribute (${COSTS.attribute} coins) — 20/season, Speed capped at 5`)
+      .addStringOption(opt =>
+        opt.setName("attribute_name")
+          .setDescription("Which attribute to upgrade?")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player_name")
+          .setDescription("Optional: which player is receiving the upgrade?")
+          .setRequired(false)
+      )
   )
-  .addStringOption(opt =>
-    opt.setName("attribute")
-      .setDescription("For Attributes: which attribute? (start typing to search)")
-      .setRequired(false)
-      .setAutocomplete(true)
+
+  // ── Dev Upgrade ─────────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("devup")
+      .setDescription(`Dev upgrade a player (${COSTS.dev_up} coins) — 2/season, Star or Superstar only`)
+      .addStringOption(opt =>
+        opt.setName("dev_type")
+          .setDescription("Star or Superstar?")
+          .setRequired(true)
+          .addChoices(
+            { name: "Star", value: "Star" },
+            { name: "Superstar", value: "Superstar" },
+          )
+      )
+      .addStringOption(opt =>
+        opt.setName("player_name")
+          .setDescription("Player's name")
+          .setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player_position")
+          .setDescription("Player's position (e.g. QB, WR, CB)")
+          .setRequired(true)
+      )
   )
-  .addStringOption(opt =>
-    opt.setName("player_name")
-      .setDescription("For Dev Up / Age Reset / Custom Player: player name")
-      .setRequired(false)
+
+  // ── Age Reset ───────────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("agereset")
+      .setDescription(`Reset a player's age (${COSTS.age_reset} coins) — 2/season`)
+      .addStringOption(opt =>
+        opt.setName("player_name")
+          .setDescription("Player's name")
+          .setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player_position")
+          .setDescription("Player's position (e.g. QB, WR, CB)")
+          .setRequired(true)
+      )
   )
-  .addStringOption(opt =>
-    opt.setName("player_position")
-      .setDescription("For Dev Up / Age Reset / Custom Player: player position")
-      .setRequired(false)
-  )
-  .addStringOption(opt =>
-    opt.setName("dev_up_type")
-      .setDescription("For Dev Upgrades: Star or Superstar?")
-      .setRequired(false)
-      .addChoices(
-        { name: "Star", value: "Star" },
-        { name: "Superstar", value: "Superstar" },
+
+  // ── Custom Player ───────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("customplayer")
+      .setDescription("Create a custom player — Gold 300 / Silver 200 / Bronze 100 coins")
+      .addStringOption(opt =>
+        opt.setName("tier")
+          .setDescription("Player tier")
+          .setRequired(true)
+          .addChoices(
+            { name: "Gold (300 coins)", value: "custom_player_gold" },
+            { name: "Silver (200 coins)", value: "custom_player_silver" },
+            { name: "Bronze (100 coins)", value: "custom_player_bronze" },
+          )
+      )
+      .addStringOption(opt =>
+        opt.setName("player_name")
+          .setDescription("Player's name")
+          .setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player_position")
+          .setDescription("Player's position (e.g. QB, WR, CB)")
+          .setRequired(true)
       )
   );
 
+// ── Autocomplete ──────────────────────────────────────────────────────────────
 export async function autocomplete(interaction: AutocompleteInteraction) {
+  const sub = interaction.options.getSubcommand();
   const focused = interaction.options.getFocused().toLowerCase();
-  const matches = ATTRIBUTES.filter(a => a.toLowerCase().includes(focused)).slice(0, 25);
-  await interaction.respond(matches.map(a => ({ name: a, value: a })));
+
+  if (sub === "legend") {
+    const available = await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true));
+    const matches = available
+      .filter(l => l.name.toLowerCase().includes(focused))
+      .slice(0, 25)
+      .map(l => ({ name: `${l.name} — ${l.position} (${l.cost.toLocaleString()} coins)`, value: l.name }));
+    await interaction.respond(matches);
+    return;
+  }
+
+  if (sub === "attribute") {
+    const matches = ATTRIBUTES
+      .filter(a => a.toLowerCase().includes(focused))
+      .slice(0, 25)
+      .map(a => ({ name: a, value: a }));
+    await interaction.respond(matches);
+    return;
+  }
+
+  await interaction.respond([]);
 }
 
+// ── Execute ───────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const type = interaction.options.getString("type", true) as keyof typeof COSTS;
+  const sub = interaction.options.getSubcommand();
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const season = await getOrCreateActiveSeason();
   const stats = await getSeasonStats(interaction.user.id, season.id);
-  const cost = COSTS[type];
 
-  // Balance check
-  if (user.balance < cost) {
-    return interaction.editReply({
-      embeds: [errorEmbed("Insufficient Funds", `You need **${cost.toLocaleString()} coins** but only have **${user.balance.toLocaleString()} coins**. You're short by **${(cost - user.balance).toLocaleString()} coins**.`)],
-    });
-  }
+  // ── /purchase legend ────────────────────────────────────────────────────────
+  if (sub === "legend") {
+    const cost = COSTS.legend;
+    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
-  // --- LEGEND ---
-  if (type === "legend") {
-    const legendName = interaction.options.getString("legend_name");
-    if (!legendName) {
-      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please specify the **legend_name** you want to purchase. Use `/viewstore` to see available legends.")] });
-    }
+    const legendName = interaction.options.getString("legend_name", true);
 
-    // Check all-time limit
     const legendHistory = await getLegendPurchaseHistory(interaction.user.id);
     if (legendHistory.total >= LIMITS.legendsAllTime) {
       return interaction.editReply({
@@ -98,30 +163,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    // Find legend in store
     const legends = await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true));
     const legend = legends.find(l => l.name.toLowerCase() === legendName.toLowerCase());
     if (!legend) {
-      const availableNames = legends.map(l => l.name).join(", ");
+      const names = legends.map(l => l.name).join(", ");
       return interaction.editReply({
-        embeds: [errorEmbed("Legend Not Found", `**"${legendName}"** is not available in the store.\n\nAvailable legends: ${availableNames || "None currently"}\n\nUse \`/viewstore\` to see the full list.`)],
+        embeds: [errorEmbed("Legend Not Found", `**"${legendName}"** is not available.\n\nAvailable: ${names || "None currently — check back soon!"}\n\nUse \`/viewstore\` to browse.`)],
       });
     }
 
-    // Check inventory cap
     const invCount = await getInventoryCount(interaction.user.id, season.id);
     if (invCount.legends >= LIMITS.maxLegendsInInventory) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Inventory Full", `You already have **${LIMITS.maxLegendsInInventory} legends** in your inventory. You cannot hold more.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${LIMITS.maxLegendsInInventory} legends** in your inventory.`)] });
     }
     if (invCount.legends + invCount.customs >= LIMITS.maxLegendsPlusCustomPlayers) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}) for this season.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}).`)] });
     }
 
-    // Deduct and create purchase
     await deductBalance(interaction.user.id, cost);
     const [purchase] = await db.insert(purchasesTable).values({
       discordId: interaction.user.id,
@@ -134,16 +192,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       playerPosition: legend.position,
     }).returning();
 
-    // Update all-time legend count
     await db.update(usersTable)
       .set({ totalLegendPurchases: sql`${usersTable.totalLegendPurchases} + 1`, updatedAt: new Date() })
       .where(eq(usersTable.discordId, interaction.user.id));
 
-    // Send commissioner notification
     await sendCommissionerNotification(interaction, "legend", purchase!.id, {
-      legendId: legend.id,
-      legendName: legend.name,
-      legendPosition: legend.position,
+      legendId: legend.id, legendName: legend.name, legendPosition: legend.position,
     });
 
     return interaction.editReply({
@@ -151,46 +205,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  // --- ATTRIBUTE ---
-  if (type === "attribute") {
-    const attributeName = interaction.options.getString("attribute");
+  // ── /purchase attribute ─────────────────────────────────────────────────────
+  if (sub === "attribute") {
+    const cost = COSTS.attribute;
+    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
+
+    const attributeName = interaction.options.getString("attribute_name", true);
     const playerName = interaction.options.getString("player_name");
-    if (!attributeName) {
-      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please select an **attribute** to upgrade by typing in the attribute field.")] });
-    }
 
     if (!ATTRIBUTES.includes(attributeName as any)) {
-      return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Start typing in the attribute field to see options.`)] });
+      return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
     }
 
-    // Season limit
     if (stats.attributesPurchased >= LIMITS.attributesPerSeason) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.attributesPerSeason} attribute upgrades** for this season.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.attributesPerSeason} attribute upgrades** for this season.`)] });
     }
 
-    // Speed cap
     if (attributeName === "Speed" && stats.speedPointsPurchased >= LIMITS.speedPointsPerSeason) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Speed Cap Reached", `You've already used **${LIMITS.speedPointsPerSeason} speed points** this season.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Speed Cap Reached", `You've already used **${LIMITS.speedPointsPerSeason} speed points** this season.`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
-
-    // Update season stats
-    await db.update(seasonStatsTable)
-      .set({
-        attributesPurchased: sql`${seasonStatsTable.attributesPurchased} + 1`,
-        speedPointsPurchased: attributeName === "Speed"
-          ? sql`${seasonStatsTable.speedPointsPurchased} + 1`
-          : seasonStatsTable.speedPointsPurchased,
-      })
-      .where(and(
-        eq(seasonStatsTable.discordId, interaction.user.id),
-        eq(seasonStatsTable.seasonId, season.id),
-      ));
+    await db.update(seasonStatsTable).set({
+      attributesPurchased: sql`${seasonStatsTable.attributesPurchased} + 1`,
+      speedPointsPurchased: attributeName === "Speed"
+        ? sql`${seasonStatsTable.speedPointsPurchased} + 1`
+        : seasonStatsTable.speedPointsPurchased,
+    }).where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
     const [purchase] = await db.insert(purchasesTable).values({
       discordId: interaction.user.id,
@@ -202,7 +243,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       playerName: playerName ?? null,
     }).returning();
 
-    // Add to inventory
     await db.insert(inventoryTable).values({
       discordId: interaction.user.id,
       seasonId: season.id,
@@ -213,31 +253,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
 
     await sendCommissionerNotification(interaction, "attribute", purchase!.id, {
-      attributeName,
-      playerName: playerName ?? "Not specified",
+      attributeName, playerName: playerName ?? "Not specified",
     });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Attribute Upgrade Submitted!", `Your **${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} has been submitted.\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost.toLocaleString()} coins deducted.\n**Upgrades used this season:** ${stats.attributesPurchased + 1}/${LIMITS.attributesPerSeason}`)],
+      embeds: [pendingEmbed("Attribute Upgrade Submitted!", `**${attributeName}** upgrade${playerName ? ` for **${playerName}**` : ""} submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Upgrades used this season:** ${stats.attributesPurchased + 1}/${LIMITS.attributesPerSeason}`)],
     });
   }
 
-  // --- DEV UP ---
-  if (type === "dev_up") {
-    const playerName = interaction.options.getString("player_name");
-    const playerPosition = interaction.options.getString("player_position");
-    const devUpType = interaction.options.getString("dev_up_type");
-    if (!playerName || !playerPosition) {
-      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please specify both **player_name** and **player_position** for a Dev Upgrade.")] });
-    }
-    if (!devUpType) {
-      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please select a **dev_up_type** — either **Star** or **Superstar**.")] });
-    }
+  // ── /purchase devup ─────────────────────────────────────────────────────────
+  if (sub === "devup") {
+    const cost = COSTS.dev_up;
+    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
+
+    const playerName = interaction.options.getString("player_name", true);
+    const playerPosition = interaction.options.getString("player_position", true);
+    const devUpType = interaction.options.getString("dev_type", true);
 
     if (stats.devUpsPurchased >= LIMITS.devUpsPerSeason) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.devUpsPerSeason} dev upgrades** for this season.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.devUpsPerSeason} dev upgrades** for this season.`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
@@ -269,22 +303,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition, devUpType });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Dev Upgrade Submitted!", `**${devUpType}** dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost.toLocaleString()} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${LIMITS.devUpsPerSeason}`)],
+      embeds: [pendingEmbed("Dev Upgrade Submitted!", `**${devUpType}** dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${LIMITS.devUpsPerSeason}`)],
     });
   }
 
-  // --- AGE RESET ---
-  if (type === "age_reset") {
-    const playerName = interaction.options.getString("player_name");
-    const playerPosition = interaction.options.getString("player_position");
-    if (!playerName || !playerPosition) {
-      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please specify both **player_name** and **player_position** for an Age Reset.")] });
-    }
+  // ── /purchase agereset ──────────────────────────────────────────────────────
+  if (sub === "agereset") {
+    const cost = COSTS.age_reset;
+    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
+
+    const playerName = interaction.options.getString("player_name", true);
+    const playerPosition = interaction.options.getString("player_position", true);
 
     if (stats.ageResetsPurchased >= LIMITS.ageResetsPerSeason) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.ageResetsPerSeason} age resets** for this season.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Limit Reached", `You've used all **${LIMITS.ageResetsPerSeason} age resets** for this season.`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
@@ -314,26 +346,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await sendCommissionerNotification(interaction, "age_reset", purchase!.id, { playerName, playerPosition });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Age Reset Submitted!", `Age reset for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost.toLocaleString()} coins deducted.\n**Age resets used:** ${stats.ageResetsPurchased + 1}/${LIMITS.ageResetsPerSeason}`)],
+      embeds: [pendingEmbed("Age Reset Submitted!", `Age reset for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.\n**Age resets used:** ${stats.ageResetsPurchased + 1}/${LIMITS.ageResetsPerSeason}`)],
     });
   }
 
-  // --- CUSTOM PLAYER ---
-  if (type === "custom_player_gold" || type === "custom_player_silver" || type === "custom_player_bronze") {
-    const playerName = interaction.options.getString("player_name");
-    const playerPosition = interaction.options.getString("player_position");
-    const tier = type.replace("custom_player_", "") as "gold" | "silver" | "bronze";
+  // ── /purchase customplayer ──────────────────────────────────────────────────
+  if (sub === "customplayer") {
+    const tierValue = interaction.options.getString("tier", true) as "custom_player_gold" | "custom_player_silver" | "custom_player_bronze";
+    const playerName = interaction.options.getString("player_name", true);
+    const playerPosition = interaction.options.getString("player_position", true);
+    const cost = COSTS[tierValue];
+    const tier = tierValue.replace("custom_player_", "") as "gold" | "silver" | "bronze";
 
-    if (!playerName || !playerPosition) {
-      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please specify both **player_name** and **player_position** for a Custom Player.")] });
-    }
+    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
-    // Combined inventory cap
     const invCount = await getInventoryCount(interaction.user.id, season.id);
     if (invCount.legends + invCount.customs >= LIMITS.maxLegendsPlusCustomPlayers) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}) for this season.`)],
-      });
+      return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}).`)] });
     }
 
     await deductBalance(interaction.user.id, cost);
@@ -341,7 +370,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const [purchase] = await db.insert(purchasesTable).values({
       discordId: interaction.user.id,
       seasonId: season.id,
-      purchaseType: type,
+      purchaseType: tierValue,
       status: "pending",
       cost,
       playerName,
@@ -353,19 +382,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       discordId: interaction.user.id,
       seasonId: season.id,
       purchaseId: purchase!.id,
-      itemType: type,
+      itemType: tierValue,
       playerName,
       playerPosition,
       customPlayerTier: tier,
     });
 
     const tierName = tier.charAt(0).toUpperCase() + tier.slice(1);
-    await sendCommissionerNotification(interaction, type, purchase!.id, { playerName, playerPosition, tier: tierName });
+    await sendCommissionerNotification(interaction, tierValue, purchase!.id, { playerName, playerPosition, tier: tierName });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Custom Player Submitted!", `**${tierName}** custom player **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost.toLocaleString()} coins deducted.`)],
+      embeds: [pendingEmbed("Custom Player Submitted!", `**${tierName}** custom player **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.`)],
     });
   }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function insufficientFunds(interaction: ChatInputCommandInteraction, cost: number, balance: number) {
+  return interaction.editReply({
+    embeds: [errorEmbed("Insufficient Funds", `You need **${cost.toLocaleString()} coins** but only have **${balance.toLocaleString()} coins**. You're short by **${(cost - balance).toLocaleString()} coins**.`)],
+  });
 }
 
 async function sendCommissionerNotification(
