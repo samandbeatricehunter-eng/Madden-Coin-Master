@@ -2,6 +2,7 @@ import { Client, Collection, GatewayIntentBits } from "discord.js";
 import { getOrCreateActiveSeason } from "./lib/db-helpers.js";
 
 // User commands
+import * as help from "./commands/help.js";
 import * as balance from "./commands/balance.js";
 import * as sendcoins from "./commands/sendcoins.js";
 import * as viewstore from "./commands/viewstore.js";
@@ -42,6 +43,7 @@ const client = new Client({
 client.commands = new Collection();
 
 const commands = [
+  help,
   balance,
   sendcoins,
   viewstore,

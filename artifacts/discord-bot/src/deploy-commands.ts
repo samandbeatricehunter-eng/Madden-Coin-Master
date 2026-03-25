@@ -1,4 +1,5 @@
 import { REST, Routes } from "discord.js";
+import * as help from "./commands/help.js";
 import * as balance from "./commands/balance.js";
 import * as sendcoins from "./commands/sendcoins.js";
 import * as viewstore from "./commands/viewstore.js";
@@ -23,7 +24,7 @@ if (!token || !clientId || !guildId) {
 }
 
 const commands = [
-  balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
+  help, balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
   adminSetUser,
 ].map(c => c.data.toJSON());
