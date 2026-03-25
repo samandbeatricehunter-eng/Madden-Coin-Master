@@ -11,7 +11,7 @@ import {
   getLegendPurchaseHistory, deductBalance, getInventoryCount,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { COSTS, LIMITS, ATTRIBUTES, CUSTOM_PLAYER_TIERS } from "../lib/constants.js";
+import { COSTS, LIMITS, ATTRIBUTES, DEV_UP_TYPES, CUSTOM_PLAYER_TIERS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
@@ -50,6 +50,15 @@ export const data = new SlashCommandBuilder()
     opt.setName("player_position")
       .setDescription("For Dev Up / Age Reset / Custom Player: player position")
       .setRequired(false)
+  )
+  .addStringOption(opt =>
+    opt.setName("dev_up_type")
+      .setDescription("For Dev Upgrades: Star or Superstar?")
+      .setRequired(false)
+      .addChoices(
+        { name: "Star", value: "Star" },
+        { name: "Superstar", value: "Superstar" },
+      )
   );
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
@@ -217,8 +226,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (type === "dev_up") {
     const playerName = interaction.options.getString("player_name");
     const playerPosition = interaction.options.getString("player_position");
+    const devUpType = interaction.options.getString("dev_up_type");
     if (!playerName || !playerPosition) {
       return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please specify both **player_name** and **player_position** for a Dev Upgrade.")] });
+    }
+    if (!devUpType) {
+      return interaction.editReply({ embeds: [errorEmbed("Missing Info", "Please select a **dev_up_type** — either **Star** or **Superstar**.")] });
     }
 
     if (stats.devUpsPurchased >= LIMITS.devUpsPerSeason) {
@@ -240,6 +253,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       cost,
       playerName,
       playerPosition,
+      notes: devUpType,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -249,12 +263,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       itemType: "dev_up",
       playerName,
       playerPosition,
+      notes: devUpType,
     });
 
-    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition });
+    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition, devUpType });
 
     return interaction.editReply({
-      embeds: [pendingEmbed("Dev Upgrade Submitted!", `Dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost.toLocaleString()} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${LIMITS.devUpsPerSeason}`)],
+      embeds: [pendingEmbed("Dev Upgrade Submitted!", `**${devUpType}** dev upgrade for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost.toLocaleString()} coins deducted.\n**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${LIMITS.devUpsPerSeason}`)],
     });
   }
 
@@ -392,6 +407,7 @@ async function sendCommissionerNotification(
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Upgrade Type:** ${details["devUpType"]}`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",

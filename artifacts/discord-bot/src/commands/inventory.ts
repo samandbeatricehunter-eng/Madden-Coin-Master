@@ -56,7 +56,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (devUps.length > 0) {
     embed.addFields({
       name: `📈 Dev Upgrades (${devUps.length})`,
-      value: devUps.map(d => `• ${d.playerName ?? "Unknown"} (${d.playerPosition ?? "?"})`).join("\n"),
+      value: devUps.map(d => `• ${d.playerName ?? "Unknown"} (${d.playerPosition ?? "?"})${d.notes ? ` — ${d.notes}` : ""}`).join("\n"),
     });
   }
 

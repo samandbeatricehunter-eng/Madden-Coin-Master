@@ -81,6 +81,7 @@ export const inventoryTable = pgTable("inventory", {
   playerPosition: text("player_position"),
   attributeName: text("attribute_name"),
   customPlayerTier: customPlayerTierEnum("custom_player_tier"),
+  notes: text("notes"),
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
 
