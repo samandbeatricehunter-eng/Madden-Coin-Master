@@ -78,3 +78,40 @@ export const ATTRIBUTES = [
 export const DEV_UP_TYPES = ["Star", "Superstar"] as const;
 
 export const CUSTOM_PLAYER_TIERS = ["gold", "silver", "bronze"] as const;
+
+export const NFL_TEAMS = [
+  "Bears",
+  "Bengals",
+  "Bills",
+  "Broncos",
+  "Browns",
+  "Buccaneers",
+  "Cardinals",
+  "Chargers",
+  "Chiefs",
+  "Colts",
+  "Cowboys",
+  "Dolphins",
+  "Eagles",
+  "Falcons",
+  "Giants",
+  "Jaguars",
+  "Jets",
+  "Lions",
+  "Packers",
+  "Panthers",
+  "Patriots",
+  "Raiders",
+  "Rams",
+  "Ravens",
+  "Saints",
+  "Seahawks",
+  "Steelers",
+  "Texans",
+  "Titans",
+  "Vikings",
+  "Commanders",
+  "49ers",
+] as const;
+
+export type NFLTeam = typeof NFL_TEAMS[number];

@@ -16,13 +16,13 @@ import * as adminAddCoins from "./commands/admin-addcoins.js";
 import * as adminRemoveCoins from "./commands/admin-removecoins.js";
 import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
 import {
-  addNewUserData, executeAddNewUser,
-  deleteMemberData, executeDeleteMember,
+  addNewUserData, executeAddNewUser, autocompleteAddNewUser,
+  deleteMemberData, executeDeleteMember, autocompleteDeleteMember,
 } from "./commands/admin-team.js";
 
 // Records / rankings
 import {
-  updateRecordData, executeUpdateRecord,
+  updateRecordData, executeUpdateRecord, autocompleteUpdateRecord,
   seasonPRData, executeSeasonPR,
   allTimePRData, executeAllTimePR,
 } from "./commands/records.js";
@@ -52,9 +52,9 @@ const commands = [
   adminAddCoins,
   adminRemoveCoins,
   adminResetUpgrades,
-  { data: addNewUserData, execute: executeAddNewUser },
-  { data: deleteMemberData, execute: executeDeleteMember },
-  { data: updateRecordData, execute: executeUpdateRecord },
+  { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
+  { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
+  { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },
   { data: seasonPRData, execute: executeSeasonPR },
   { data: allTimePRData, execute: executeAllTimePR },
 ];

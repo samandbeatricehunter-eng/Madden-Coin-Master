@@ -1,12 +1,13 @@
 import {
-  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits,
+  SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction,
+  EmbedBuilder, Colors, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { userRecordsTable, usersTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { findUserByTeam } from "../lib/user-data.js";
+import { NFL_TEAMS } from "../lib/constants.js";
 
 // ─── Power Ranking Formula ────────────────────────────────────────────────────
 // PR Score = (Wins × 3) + (Point Differential × 0.1) - (Losses × 1)
@@ -30,6 +31,17 @@ function displayName(username: string, team: string | null | undefined): string 
   return team ? `${team}` : username;
 }
 
+// ── Shared autocomplete helper ─────────────────────────────────────────────────
+export async function autocompleteUpdateRecord(interaction: AutocompleteInteraction) {
+  const focused = interaction.options.getFocused();
+  const query = focused.toLowerCase();
+  const results = NFL_TEAMS
+    .filter(t => t.toLowerCase().startsWith(query))
+    .slice(0, 25)
+    .map(t => ({ name: t, value: t }));
+  await interaction.respond(results);
+}
+
 // ── /updaterecord ──────────────────────────────────────────────────────────────
 export const updateRecordData = new SlashCommandBuilder()
   .setName("updaterecord")
@@ -39,7 +51,10 @@ export const updateRecordData = new SlashCommandBuilder()
     opt.setName("user").setDescription("The player (or use team name below)").setRequired(false)
   )
   .addStringOption(opt =>
-    opt.setName("team").setDescription("Team name (alternative to @user)").setRequired(false)
+    opt.setName("team")
+      .setDescription("NFL team name (alternative to @user)")
+      .setRequired(false)
+      .setAutocomplete(true)
   )
   .addStringOption(opt =>
     opt.setName("result")
