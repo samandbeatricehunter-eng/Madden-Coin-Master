@@ -1,4 +1,5 @@
 import { Client, Collection, GatewayIntentBits } from "discord.js";
+import { createServer } from "http";
 import { getOrCreateActiveSeason } from "./lib/db-helpers.js";
 
 // User commands
@@ -79,6 +80,13 @@ for (const event of events) {
     client.on(event.name, (...args) => event.execute(...args as [any]));
   }
 }
+
+// ── Status HTTP server (required for Replit service registration) ─────────────
+const statusPort = parseInt(process.env["PORT"] ?? "8090");
+createServer((_, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ status: "online", bot: "REC League Econo-Bot" }));
+}).listen(statusPort, () => console.log(`✅ Status server on :${statusPort}`));
 
 async function init() {
   await getOrCreateActiveSeason();
