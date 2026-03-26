@@ -44,14 +44,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .limit(1);
   const record = recordRows[0];
 
-  // ── All-time H2H totals (sum across every season) ─────────────────────────
+  // ── All-time totals (sum across every season) ─────────────────────────────
   const allTimeRows = await db.select({
-    totalWins:   sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
-    totalLosses: sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
+    totalWins:         sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
+    totalLosses:       sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
+    totalPlayoffWins:  sql<string>`COALESCE(SUM(${userRecordsTable.playoffWins}), 0)`,
+    totalPlayoffLosses:sql<string>`COALESCE(SUM(${userRecordsTable.playoffLosses}), 0)`,
   }).from(userRecordsTable)
     .where(eq(userRecordsTable.discordId, interaction.user.id));
-  const allTimeH2HW = parseInt(allTimeRows[0]?.totalWins ?? "0", 10);
-  const allTimeH2HL = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
+  const allTimeH2HW     = parseInt(allTimeRows[0]?.totalWins ?? "0", 10);
+  const allTimeH2HL     = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
+  const allTimePlayoffW = parseInt(allTimeRows[0]?.totalPlayoffWins ?? "0", 10);
+  const allTimePlayoffL = parseInt(allTimeRows[0]?.totalPlayoffLosses ?? "0", 10);
 
   // ── Inventory (this season, non-legend items only) ───────────────────────
   const inventory = await db.select().from(inventoryTable)
@@ -122,12 +126,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setColor(Colors.Green)
     .setTitle("🏈 Season Record & Milestones")
     .addFields(
-      { name: "Season Record",         value: `**${wins}W – ${losses}L** (PD: ${pd > 0 ? "+" : ""}${pd})`, inline: true },
-      { name: "Playoff Record",        value: `${pWins}W – ${pLosses}L`, inline: true },
-      { name: "\u200b",                value: "\u200b", inline: true },
-      { name: "All-Time H2H Wins",     value: `**${allTimeH2HW}**`, inline: true },
-      { name: "All-Time H2H Losses",   value: `**${allTimeH2HL}**`, inline: true },
-      { name: "All-Time SB Wins",      value: `**${allTimeSB}**`, inline: true },
+      { name: "Season Record",            value: `**${wins}W – ${losses}L** (PD: ${pd > 0 ? "+" : ""}${pd})`, inline: true },
+      { name: "This Season Playoffs",    value: `${pWins}W – ${pLosses}L`, inline: true },
+      { name: "\u200b",                  value: "\u200b", inline: true },
+      { name: "All-Time H2H Wins",       value: `**${allTimeH2HW}**`, inline: true },
+      { name: "All-Time H2H Losses",     value: `**${allTimeH2HL}**`, inline: true },
+      { name: "\u200b",                  value: "\u200b", inline: true },
+      { name: "All-Time Playoff Wins",   value: `**${allTimePlayoffW}**`, inline: true },
+      { name: "All-Time Playoff Losses", value: `**${allTimePlayoffL}**`, inline: true },
+      { name: "All-Time SB Wins",        value: `**${allTimeSB}**`, inline: true },
       { name: "Highest Win Milestone", value: milestoneLabel, inline: true },
       { name: "Playoff Seed",          value: seedStr, inline: true },
     );
