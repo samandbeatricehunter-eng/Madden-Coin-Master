@@ -61,77 +61,93 @@ process.on("uncaughtException", (err) => {
 const token = process.env["DISCORD_TOKEN"];
 if (!token) throw new Error("DISCORD_TOKEN is required");
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
-}) as Client & { commands: Collection<string, any> };
-
-client.commands = new Collection();
-
-const commands = [
-  help,
-  balance,
-  sendcoins,
-  viewstore,
-  purchase,
-  inventory,
-  availableupgrades,
-  adminLegend,
-  adminSeason,
-  adminAddCoins,
-  adminRemoveCoins,
-  adminResetUpgrades,
-  adminSetUser,
-  adminTransactions,
-  recentH2H,
-  rules,
-  adminRules,
-  adminSetAdmin,
-  adminInventory,
-  reportscore,
-  interviewrequest,
-  advanceweek,
-  adminPlayoffs,
-  adminGotw,
-  adminPotw,
-  adminListUserTeams,
-  adminUserStats,
-  adminLegendVault,
-  userStats,
-  { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
-  { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
-  { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },
-  { data: seasonPRData, execute: executeSeasonPR },
-  { data: allTimePRData, execute: executeAllTimePR },
-];
-
-for (const command of commands) {
-  client.commands.set(command.data.name, command);
-}
-
-const events = [interactionCreate, ready];
-for (const event of events) {
-  if ((event as any).once) {
-    client.once(event.name, (...args) => event.execute(...args as [any]));
-  } else {
-    client.on(event.name, (...args) => event.execute(...args as [any]));
-  }
-}
-
-// ── Status HTTP server (required for Replit service registration) ─────────────
+// In development (no REPL_DEPLOYMENT set), the dev bot must be explicitly
+// enabled to avoid competing with the production bot on the same token.
+// Production deployments always connect (REPL_DEPLOYMENT=1 is set by Replit).
+const isProduction = process.env["REPL_DEPLOYMENT"] === "1";
+const devBotEnabled = process.env["DEV_BOT_ENABLED"] === "true";
 const statusPort = parseInt(process.env["PORT"] ?? "8090");
-createServer((_, res) => {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ status: "online", bot: "REC League Econo-Bot" }));
-}).listen(statusPort, () => console.log(`✅ Status server on :${statusPort}`));
 
-async function init() {
-  await getOrCreateActiveSeason();
-  console.log("✅ Database initialized");
+if (!isProduction && !devBotEnabled) {
+  // ── Standby mode: keep HTTP server alive but do NOT connect to Discord ────
+  console.log("⚠️  Dev bot is in standby — will not connect to Discord.");
+  console.log("    Set DEV_BOT_ENABLED=true to enable (avoid running alongside the production bot).");
+  createServer((_, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "standby", bot: "REC League Econo-Bot (dev disabled)" }));
+  }).listen(statusPort, () => console.log(`✅ Status server on :${statusPort} (standby — not connected to Discord)`));
+} else {
+  // ── Active mode: connect to Discord ───────────────────────────────────────
+  const client = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+  }) as Client & { commands: Collection<string, any> };
+
+  client.commands = new Collection();
+
+  const commands = [
+    help,
+    balance,
+    sendcoins,
+    viewstore,
+    purchase,
+    inventory,
+    availableupgrades,
+    adminLegend,
+    adminSeason,
+    adminAddCoins,
+    adminRemoveCoins,
+    adminResetUpgrades,
+    adminSetUser,
+    adminTransactions,
+    recentH2H,
+    rules,
+    adminRules,
+    adminSetAdmin,
+    adminInventory,
+    reportscore,
+    interviewrequest,
+    advanceweek,
+    adminPlayoffs,
+    adminGotw,
+    adminPotw,
+    adminListUserTeams,
+    adminUserStats,
+    adminLegendVault,
+    userStats,
+    { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
+    { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
+    { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },
+    { data: seasonPRData, execute: executeSeasonPR },
+    { data: allTimePRData, execute: executeAllTimePR },
+  ];
+
+  for (const command of commands) {
+    client.commands.set(command.data.name, command);
+  }
+
+  const events = [interactionCreate, ready];
+  for (const event of events) {
+    if ((event as any).once) {
+      client.once(event.name, (...args) => event.execute(...args as [any]));
+    } else {
+      client.on(event.name, (...args) => event.execute(...args as [any]));
+    }
+  }
+
+  createServer((_, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "online", bot: "REC League Econo-Bot" }));
+  }).listen(statusPort, () => console.log(`✅ Status server on :${statusPort}`));
+
+  async function init() {
+    await getOrCreateActiveSeason();
+    console.log("✅ Database initialized");
+  }
+
+  init()
+    .then(() => client.login(token))
+    .catch((err) => {
+      console.error("Failed to initialize:", err);
+      process.exit(1);
+    });
 }
-
-init()
-  .then(() => client.login(token))
-  .catch((err) => {
-    console.error("Failed to initialize:", err);
-    process.exit(1);
-  });
