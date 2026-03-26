@@ -7,7 +7,7 @@ import {
   usersTable, userRecordsTable, coinTransactionsTable,
   inventoryTable, purchasesTable, interviewRequestsTable,
 } from "@workspace/db";
-import { eq, and, desc, isNotNull } from "drizzle-orm";
+import { eq, and, desc, isNotNull, sql } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
 
@@ -59,6 +59,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .limit(1);
   const record = recordRows[0];
 
+  // ── All-time H2H totals (sum across every season) ─────────────────────────
+  const allTimeRows = await db.select({
+    totalWins:   sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
+    totalLosses: sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
+  }).from(userRecordsTable)
+    .where(eq(userRecordsTable.discordId, target.id));
+  const allTimeH2HW = parseInt(allTimeRows[0]?.totalWins ?? "0", 10);
+  const allTimeH2HL = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
+
   // ── Inventory (this season) ───────────────────────────────────────────────
   const inventory = await db.select().from(inventoryTable)
     .where(and(eq(inventoryTable.discordId, target.id), eq(inventoryTable.seasonId, season.id)));
@@ -109,8 +118,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const pWins       = record?.playoffWins ?? 0;
   const pLosses     = record?.playoffLosses ?? 0;
   const allTimeSB      = user.allTimeSuperbowlWins ?? 0;
-  const allTimeH2HW    = (user as any).allTimeH2HWins ?? 0;
-  const allTimeH2HL    = (user as any).allTimeH2HLosses ?? 0;
   const milestoneLabel = MILESTONE_LABELS[user.milestoneTierAwarded ?? 0] ?? "None";
 
   const playoffSeed = (user as any).playoffSeed;
