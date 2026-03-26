@@ -5,7 +5,7 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, coinTransactionsTable,
-  inventoryTable, purchasesTable, interviewRequestsTable,
+  inventoryTable, purchasesTable, interviewRequestsTable, seasonStatsTable,
 } from "@workspace/db";
 import { eq, and, desc, isNotNull, sql } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
@@ -160,9 +160,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const customs  = inventory.filter(i =>
     ["custom_player_gold", "custom_player_silver", "custom_player_bronze"].includes(i.itemType)
   );
-  const attrs   = pendingPurchases.filter(p => p.purchaseType === "attribute" && p.status === "approved");
-  const devUps  = pendingPurchases.filter(p => p.purchaseType === "dev_up" && p.status === "approved");
-  const ageRes  = pendingPurchases.filter(p => p.purchaseType === "age_reset" && p.status === "approved");
+  // ── Season upgrade counts — source of truth includes admin overrides ──────
+  const seasonStatsRows = await db.select().from(seasonStatsTable)
+    .where(and(eq(seasonStatsTable.discordId, target.id), eq(seasonStatsTable.seasonId, season.id)))
+    .limit(1);
+  const seasonStats = seasonStatsRows[0];
+  const coreAttrUsed    = seasonStats?.coreAttrPurchased    ?? 0;
+  const nonCoreAttrUsed = seasonStats?.nonCoreAttrPurchased ?? 0;
+  const devUpsUsed      = seasonStats?.devUpsPurchased      ?? 0;
+  const ageResetsUsed   = seasonStats?.ageResetsPurchased   ?? 0;
   const pendingCount = pendingPurchases.filter(p => p.status === "pending").length;
 
   const fmtLegend = (arr: typeof currentLegends) =>
@@ -180,9 +186,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       { name: `⚡ Current Season Legends (${currentLegends.length})`,         value: fmtLegend(currentLegends)   },
       { name: `🔒 Permanent Vault (${permanentLegends.length}/4)`,            value: fmtLegend(permanentLegends) },
       { name: `Custom Players (${customs.length})`,                           value: customStr },
-      { name: "Attribute Upgrades Approved", value: `${attrs.length}`,   inline: true },
-      { name: "Dev Upgrades Approved",       value: `${devUps.length}`,  inline: true },
-      { name: "Age Resets Approved",         value: `${ageRes.length}`,  inline: true },
+      { name: "Core Attr Pts Used",     value: `${coreAttrUsed}`,    inline: true },
+      { name: "Non-Core Attr Pts Used", value: `${nonCoreAttrUsed}`, inline: true },
+      { name: "\u200b",                 value: "\u200b",             inline: true },
+      { name: "Dev Upgrades Used",      value: `${devUpsUsed}`,      inline: true },
+      { name: "Age Resets Used",        value: `${ageResetsUsed}`,   inline: true },
+      { name: "\u200b",                 value: "\u200b",             inline: true },
       { name: "Pending Purchases",           value: `${pendingCount}`,   inline: true },
     );
 
