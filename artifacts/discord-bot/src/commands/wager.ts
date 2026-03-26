@@ -88,9 +88,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setTitle("⚔️ Wager Challenge!")
     .setDescription(`<@${interaction.user.id}> has challenged <@${opponent.id}> to a coin wager!`)
     .addFields(
-      { name: "💰 Stake",    value: `**${amount.toLocaleString()} coins** each (total pot: **${(amount * 2).toLocaleString()} coins**)` },
-      { name: "🏈 Matchup", value: `**${teamFor}** vs **${teamAgainst}**` },
-      { name: "📋 Status",  value: "⏳ Waiting for opponent to respond…" },
+      { name: "💰 Stake",                    value: `**${amount.toLocaleString()} coins** each (total pot: **${(amount * 2).toLocaleString()} coins**)` },
+      { name: `🏈 <@${interaction.user.id}> is taking`, value: `**${teamFor}**`,    inline: true },
+      { name: `🏈 <@${opponent.id}> is taking`,         value: `**${teamAgainst}**`, inline: true },
+      { name: "📋 Status",                  value: "⏳ Waiting for opponent to respond…" },
     )
     .setFooter({ text: `Wager #${wager.id}` })
     .setTimestamp();

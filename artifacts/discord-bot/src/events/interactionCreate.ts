@@ -680,9 +680,10 @@ async function handleButton(interaction: ButtonInteraction) {
       .setTitle("⚔️ Wager Active — Awaiting Result")
       .setDescription(`<@${wager.challengerId}> vs <@${wager.opponentId}>`)
       .addFields(
-        { name: "💰 Pot",     value: `**${wager.pot.toLocaleString()} coins** in holding` },
-        { name: "🏈 Matchup", value: `**${wager.teamFor}** vs **${wager.teamAgainst}**` },
-        { name: "📋 Status",  value: "🔒 Coins held — commissioner will declare the winner" },
+        { name: "💰 Pot",                             value: `**${wager.pot.toLocaleString()} coins** in holding` },
+        { name: `🏈 <@${wager.challengerId}> is taking`, value: `**${wager.teamFor}**`,    inline: true },
+        { name: `🏈 <@${wager.opponentId}> is taking`,   value: `**${wager.teamAgainst}**`, inline: true },
+        { name: "📋 Status",                          value: "🔒 Coins held — commissioner will declare the winner" },
       )
       .setFooter({ text: `Wager #${wagerId}` })
       .setTimestamp();
@@ -724,16 +725,16 @@ async function handleButton(interaction: ButtonInteraction) {
     } catch (err) { console.error("Failed to post wager to commissioner channel:", err); }
 
     // DM both players
-    for (const [uid, role, team] of [
-      [wager.challengerId, "challenger", wager.teamFor],
-      [wager.opponentId,   "opponent",   wager.teamAgainst],
+    for (const [uid, myTeam, theirTeam] of [
+      [wager.challengerId, wager.teamFor,    wager.teamAgainst],
+      [wager.opponentId,   wager.teamAgainst, wager.teamFor],
     ] as [string, string, string][]) {
       try {
         const u = await interaction.client.users.fetch(uid);
         await u.send(
           `⚔️ **Wager #${wagerId} is now active!**\n` +
           `**${wager.amount.toLocaleString()} coins** have been held from your balance.\n` +
-          `Matchup: **${wager.teamFor}** vs **${wager.teamAgainst}** — you are **${team}**.\n` +
+          `You are taking **${myTeam}** against **${theirTeam}**.\n` +
           `The commissioner will declare the winner once the game is played. The pot of **${wager.pot.toLocaleString()} coins** goes to the winner.`
         ).catch(() => {});
       } catch (_) {}
@@ -766,7 +767,10 @@ async function handleButton(interaction: ButtonInteraction) {
       .setColor(Colors.Red)
       .setTitle("❌ Wager Refused")
       .setDescription(`<@${wager.opponentId}> refused the wager challenge from <@${wager.challengerId}>.`)
-      .addFields({ name: "🏈 Matchup", value: `**${wager.teamFor}** vs **${wager.teamAgainst}**` })
+      .addFields(
+        { name: `🏈 <@${wager.challengerId}> was taking`, value: `**${wager.teamFor}**`,    inline: true },
+        { name: `🏈 <@${wager.opponentId}> was taking`,   value: `**${wager.teamAgainst}**`, inline: true },
+      )
       .setFooter({ text: `Wager #${wagerId}` })
       .setTimestamp();
 
@@ -831,15 +835,14 @@ async function handleButton(interaction: ButtonInteraction) {
       const winnerUser = await interaction.client.users.fetch(winnerId);
       await winnerUser.send(
         `🏆 **You won Wager #${wagerId}!**\n` +
-        `**${wager.pot.toLocaleString()} coins** have been added to your balance.\n` +
-        `Matchup: **${winnerTeam}** defeated **${loserTeam}**.`
+        `You took **${winnerTeam}** and they won — **${wager.pot.toLocaleString()} coins** have been added to your balance.`
       ).catch(() => {});
     } catch (_) {}
     try {
       const loserUser = await interaction.client.users.fetch(loserId);
       await loserUser.send(
         `📉 **Wager #${wagerId} result:** You lost.\n` +
-        `**${loserTeam}** lost to **${winnerTeam}**. Your **${wager.amount.toLocaleString()} coins** have been paid out to the winner.`
+        `You took **${loserTeam}** and they lost to **${winnerTeam}**. Your **${wager.amount.toLocaleString()} coins** have been paid out to the winner.`
       ).catch(() => {});
     } catch (_) {}
     return;
