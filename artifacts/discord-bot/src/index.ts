@@ -64,7 +64,7 @@ if (!token) throw new Error("DISCORD_TOKEN is required");
 // In development (no REPL_DEPLOYMENT set), the dev bot must be explicitly
 // enabled to avoid competing with the production bot on the same token.
 // Production deployments always connect (REPL_DEPLOYMENT=1 is set by Replit).
-const isProduction = process.env["REPL_DEPLOYMENT"] === "1";
+const isProduction = !!process.env["REPL_DEPLOYMENT"];
 const devBotEnabled = process.env["DEV_BOT_ENABLED"] === "true";
 const statusPort = parseInt(process.env["PORT"] ?? "8090");
 
