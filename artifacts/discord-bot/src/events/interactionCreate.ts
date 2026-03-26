@@ -556,12 +556,38 @@ async function handleButton(interaction: ButtonInteraction) {
     try {
       const headlinesChannel = await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
       if (headlinesChannel?.isTextBased()) {
+        const interviewUser = await db.select({ team: usersTable.team }).from(usersTable)
+          .where(eq(usersTable.discordId, interview.discordId)).limit(1);
+        const teamName = interviewUser[0]?.team ?? null;
+
+        const interviewee = await interaction.client.users.fetch(interview.discordId).catch(() => null);
+
         const headlinesEmbed = new EmbedBuilder()
           .setColor(Colors.Blurple)
-          .setTitle("🎙️ Post-Game Interview Approved!")
-          .setDescription(`<@${interview.discordId}>'s post-game interview has been approved!\n💰 **+${INTERVIEW_PAYOUT} coins** awarded.`)
-          .setFooter({ text: `Interview #${interviewId}` })
+          .setTitle("🎙️ Post-Game Interview")
+          .setDescription(
+            `**<@${interview.discordId}>**${teamName ? ` — ${teamName}` : ""}\n` +
+            `💰 **+${INTERVIEW_PAYOUT} coins** awarded.`
+          )
+          .addFields(
+            {
+              name: `❓ Q1: ${interview.question1 ?? ""}`,
+              value: interview.answer1 ?? "*No answer provided*",
+            },
+            {
+              name: `❓ Q2: ${interview.question2 ?? ""}`,
+              value: interview.answer2 ?? "*No answer provided*",
+            },
+            {
+              name: `❓ Q3: ${interview.question3 ?? ""}`,
+              value: interview.answer3 ?? "*No answer provided*",
+            },
+          )
+          .setFooter({ text: `Interview #${interviewId}${interview.week ? ` • ${interview.week}` : ""}` })
           .setTimestamp();
+
+        if (interviewee) headlinesEmbed.setThumbnail(interviewee.displayAvatarURL());
+
         await (headlinesChannel as TextChannel).send({ content: "@everyone", embeds: [headlinesEmbed] });
       }
     } catch (err) {
