@@ -218,6 +218,26 @@ export const coinTransactionsTable = pgTable("coin_transactions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const wagersTable = pgTable("wagers", {
+  id: serial("id").primaryKey(),
+  challengerId: text("challenger_id").notNull(),
+  challengerUsername: text("challenger_username").notNull(),
+  opponentId: text("opponent_id").notNull(),
+  opponentUsername: text("opponent_username").notNull(),
+  amount: integer("amount").notNull(),
+  pot: integer("pot").notNull(),
+  teamFor: text("team_for").notNull(),
+  teamAgainst: text("team_against").notNull(),
+  // pending | active | completed | refused | cancelled
+  status: text("status").notNull().default("pending"),
+  winnerId: text("winner_id"),
+  commissionerMessageId: text("commissioner_message_id"),
+  challengeMessageId: text("challenge_message_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: text("resolved_by"),
+});
+
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
 export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;

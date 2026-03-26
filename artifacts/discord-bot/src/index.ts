@@ -45,6 +45,7 @@ import * as adminListUserTeams from "./commands/admin-listuserteams.js";
 import * as adminUserStats from "./commands/admin-userstats.js";
 import * as adminLegendVault from "./commands/admin-legendvault.js";
 import * as userStats from "./commands/userstats.js";
+import * as wager from "./commands/wager.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -113,6 +114,7 @@ if (!isProduction && !devBotEnabled) {
     adminUserStats,
     adminLegendVault,
     userStats,
+    wager,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },

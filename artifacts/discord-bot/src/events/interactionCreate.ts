@@ -7,7 +7,7 @@ import {
 import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
-  payoutRequestsTable, interviewRequestsTable, userRecordsTable,
+  payoutRequestsTable, interviewRequestsTable, userRecordsTable, wagersTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
@@ -616,6 +616,232 @@ async function handleButton(interaction: ButtonInteraction) {
     await interaction.showModal(modal).catch((err: Error) => {
       if ((err as any).code !== 40060) console.error("showModal (deny) error:", err);
     });
+    return;
+  }
+
+  // ── Wager: opponent accepts ───────────────────────────────────────────────
+  if (action === "wager_accept") {
+    const wagerId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    const rows = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
+    const wager = rows[0];
+    if (!wager) { await interaction.followUp({ content: "❌ Wager not found.", ephemeral: true }); return; }
+    if (wager.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ This wager is no longer pending (status: **${wager.status}**).`, ephemeral: true });
+      return;
+    }
+    if (interaction.user.id !== wager.opponentId) {
+      await interaction.followUp({ content: "❌ Only the challenged player can accept this wager.", ephemeral: true });
+      return;
+    }
+
+    // Verify both users still have sufficient funds
+    const [challengerRow] = await db.select({ balance: usersTable.balance })
+      .from(usersTable).where(eq(usersTable.discordId, wager.challengerId)).limit(1);
+    const [opponentRow] = await db.select({ balance: usersTable.balance })
+      .from(usersTable).where(eq(usersTable.discordId, wager.opponentId)).limit(1);
+
+    const challengerBal = challengerRow?.balance ?? 0;
+    const opponentBal   = opponentRow?.balance   ?? 0;
+
+    if (challengerBal < wager.amount) {
+      await db.update(wagersTable).set({ status: "cancelled" }).where(eq(wagersTable.id, wagerId));
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Wager Cancelled")
+          .setDescription(`<@${wager.challengerId}> no longer has enough coins to cover this wager.\n**Wager #${wagerId}** has been cancelled.`)
+          .setTimestamp()],
+        components: [],
+      });
+      return;
+    }
+    if (opponentBal < wager.amount) {
+      await interaction.followUp({
+        content: `❌ You don't have enough coins. Balance: **${opponentBal.toLocaleString()}**, wager: **${wager.amount.toLocaleString()}**.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // Deduct from both — coins go into holding (tracked by wager record)
+    await addBalance(wager.challengerId, -wager.amount);
+    await logTransaction(wager.challengerId, -wager.amount, "removecoins",
+      `Wager #${wagerId} held: ${wager.teamFor} vs ${wager.teamAgainst}`, wager.opponentId);
+
+    await addBalance(wager.opponentId, -wager.amount);
+    await logTransaction(wager.opponentId, -wager.amount, "removecoins",
+      `Wager #${wagerId} held: ${wager.teamAgainst} vs ${wager.teamFor}`, wager.challengerId);
+
+    await db.update(wagersTable).set({ status: "active" }).where(eq(wagersTable.id, wagerId));
+
+    // Edit the challenge message to show active state
+    const activeEmbed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("⚔️ Wager Active — Awaiting Result")
+      .setDescription(`<@${wager.challengerId}> vs <@${wager.opponentId}>`)
+      .addFields(
+        { name: "💰 Pot",     value: `**${wager.pot.toLocaleString()} coins** in holding` },
+        { name: "🏈 Matchup", value: `**${wager.teamFor}** vs **${wager.teamAgainst}**` },
+        { name: "📋 Status",  value: "🔒 Coins held — commissioner will declare the winner" },
+      )
+      .setFooter({ text: `Wager #${wagerId}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [activeEmbed], components: [] });
+
+    // Post to commissioner channel with winner buttons
+    const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    const commEmbed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("⚔️ Wager — Declare Winner")
+      .addFields(
+        { name: "Player 1 (Challenger)", value: `<@${wager.challengerId}> — **${wager.teamFor}**`,  inline: true },
+        { name: "Player 2 (Opponent)",   value: `<@${wager.opponentId}> — **${wager.teamAgainst}**`, inline: true },
+        { name: "💰 Pot", value: `**${wager.pot.toLocaleString()} coins** → goes to winner`, inline: false },
+      )
+      .setFooter({ text: `Wager #${wagerId} • Click the winner below once the game is played` })
+      .setTimestamp();
+
+    const commRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`wager_winner:${wagerId}:${wager.challengerId}`)
+        .setLabel(`🏆 ${wager.teamFor} Wins`)
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`wager_winner:${wagerId}:${wager.opponentId}`)
+        .setLabel(`🏆 ${wager.teamAgainst} Wins`)
+        .setStyle(ButtonStyle.Primary),
+    );
+
+    try {
+      const commChannel = await interaction.client.channels.fetch(commChannelId);
+      if (commChannel?.isTextBased()) {
+        const commMsg = await (commChannel as any).send({ embeds: [commEmbed], components: [commRow] });
+        await db.update(wagersTable)
+          .set({ commissionerMessageId: commMsg.id })
+          .where(eq(wagersTable.id, wagerId));
+      }
+    } catch (err) { console.error("Failed to post wager to commissioner channel:", err); }
+
+    // DM both players
+    for (const [uid, role, team] of [
+      [wager.challengerId, "challenger", wager.teamFor],
+      [wager.opponentId,   "opponent",   wager.teamAgainst],
+    ] as [string, string, string][]) {
+      try {
+        const u = await interaction.client.users.fetch(uid);
+        await u.send(
+          `⚔️ **Wager #${wagerId} is now active!**\n` +
+          `**${wager.amount.toLocaleString()} coins** have been held from your balance.\n` +
+          `Matchup: **${wager.teamFor}** vs **${wager.teamAgainst}** — you are **${team}**.\n` +
+          `The commissioner will declare the winner once the game is played. The pot of **${wager.pot.toLocaleString()} coins** goes to the winner.`
+        ).catch(() => {});
+      } catch (_) {}
+    }
+    return;
+  }
+
+  // ── Wager: opponent refuses ───────────────────────────────────────────────
+  if (action === "wager_refuse") {
+    const wagerId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    const rows = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
+    const wager = rows[0];
+    if (!wager) { await interaction.followUp({ content: "❌ Wager not found.", ephemeral: true }); return; }
+    if (wager.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ This wager is no longer pending (status: **${wager.status}**).`, ephemeral: true });
+      return;
+    }
+    if (interaction.user.id !== wager.opponentId) {
+      await interaction.followUp({ content: "❌ Only the challenged player can refuse this wager.", ephemeral: true });
+      return;
+    }
+
+    await db.update(wagersTable)
+      .set({ status: "refused", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(wagersTable.id, wagerId));
+
+    const refusedEmbed = new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle("❌ Wager Refused")
+      .setDescription(`<@${wager.opponentId}> refused the wager challenge from <@${wager.challengerId}>.`)
+      .addFields({ name: "🏈 Matchup", value: `**${wager.teamFor}** vs **${wager.teamAgainst}**` })
+      .setFooter({ text: `Wager #${wagerId}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [refusedEmbed], components: [] });
+
+    // DM the challenger
+    try {
+      const challenger = await interaction.client.users.fetch(wager.challengerId);
+      await challenger.send(
+        `❌ <@${wager.opponentId}> (**${wager.opponentUsername}**) refused your wager challenge.\n` +
+        `Wager #${wagerId} (${wager.teamFor} vs ${wager.teamAgainst}) — no coins were deducted.`
+      ).catch(() => {});
+    } catch (_) {}
+    return;
+  }
+
+  // ── Wager: commissioner declares winner ───────────────────────────────────
+  if (action === "wager_winner") {
+    const wagerId  = parseInt(secondPart ?? "0", 10);
+    const winnerId = userId!;
+    await interaction.deferUpdate();
+
+    const rows = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
+    const wager = rows[0];
+    if (!wager) { await interaction.followUp({ content: "❌ Wager not found.", ephemeral: true }); return; }
+    if (wager.status !== "active") {
+      await interaction.followUp({ content: `⚠️ This wager is not active (status: **${wager.status}**).`, ephemeral: true });
+      return;
+    }
+
+    const loserId = winnerId === wager.challengerId ? wager.opponentId : wager.challengerId;
+    const winnerTeam = winnerId === wager.challengerId ? wager.teamFor : wager.teamAgainst;
+    const loserTeam  = winnerId === wager.challengerId ? wager.teamAgainst : wager.teamFor;
+
+    // Pay out the full pot to the winner
+    await addBalance(winnerId, wager.pot);
+    await logTransaction(winnerId, wager.pot, "addcoins",
+      `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, interaction.user.id);
+
+    await db.update(wagersTable)
+      .set({ status: "completed", winnerId, resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(wagersTable.id, wagerId));
+
+    // Edit the commissioner message
+    const resolvedEmbed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Wager Resolved")
+      .setDescription(`**${winnerTeam}** wins!\n<@${winnerId}> collects the pot of **${wager.pot.toLocaleString()} coins**.`)
+      .addFields(
+        { name: "🏆 Winner", value: `<@${winnerId}> (${winnerTeam})`, inline: true },
+        { name: "📉 Loser",  value: `<@${loserId}> (${loserTeam})`,  inline: true },
+        { name: "💰 Payout", value: `**${wager.pot.toLocaleString()} coins** → <@${winnerId}>`, inline: false },
+        { name: "🔖 Decided by", value: interaction.user.toString(), inline: false },
+      )
+      .setFooter({ text: `Wager #${wagerId}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [resolvedEmbed], components: [] });
+
+    // DM both players
+    try {
+      const winnerUser = await interaction.client.users.fetch(winnerId);
+      await winnerUser.send(
+        `🏆 **You won Wager #${wagerId}!**\n` +
+        `**${wager.pot.toLocaleString()} coins** have been added to your balance.\n` +
+        `Matchup: **${winnerTeam}** defeated **${loserTeam}**.`
+      ).catch(() => {});
+    } catch (_) {}
+    try {
+      const loserUser = await interaction.client.users.fetch(loserId);
+      await loserUser.send(
+        `📉 **Wager #${wagerId} result:** You lost.\n` +
+        `**${loserTeam}** lost to **${winnerTeam}**. Your **${wager.amount.toLocaleString()} coins** have been paid out to the winner.`
+      ).catch(() => {});
+    } catch (_) {}
     return;
   }
 
