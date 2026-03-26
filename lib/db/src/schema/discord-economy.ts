@@ -34,6 +34,7 @@ export const usersTable = pgTable("economy_users", {
   // All-time tracking for milestone payouts
   allTimeSuperbowlWins: integer("all_time_superbowl_wins").notNull().default(0),
   allTimeH2HWins: integer("all_time_h2h_wins").notNull().default(0),
+  allTimeH2HLosses: integer("all_time_h2h_losses").notNull().default(0),
   // Which win milestone has been awarded: 0=none, 1=5W, 2=12W, 3=25W, 4=50W
   milestoneTierAwarded: integer("milestone_tier_awarded").notNull().default(0),
   // Playoff seeding for current season (set by admin when advancing to wildcard)

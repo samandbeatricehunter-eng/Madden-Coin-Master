@@ -108,10 +108,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const pd          = record?.pointDifferential ?? 0;
   const pWins       = record?.playoffWins ?? 0;
   const pLosses     = record?.playoffLosses ?? 0;
-  const sbWins      = record?.superbowlWins ?? 0;
-  const sbLosses    = record?.superbowlLosses ?? 0;
-  const allTimeSB   = user.allTimeSuperbowlWins ?? 0;
-  const allTimeH2H  = (user as any).allTimeH2HWins ?? 0;
+  const allTimeSB      = user.allTimeSuperbowlWins ?? 0;
+  const allTimeH2HW    = (user as any).allTimeH2HWins ?? 0;
+  const allTimeH2HL    = (user as any).allTimeH2HLosses ?? 0;
   const milestoneLabel = MILESTONE_LABELS[user.milestoneTierAwarded ?? 0] ?? "None";
 
   const playoffSeed = (user as any).playoffSeed;
@@ -124,13 +123,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setColor(Colors.Green)
     .setTitle("🏈 Season Record & Milestones")
     .addFields(
-      { name: "Season Record",        value: `**${wins}W – ${losses}L** (PD: ${pd > 0 ? "+" : ""}${pd})`, inline: true },
-      { name: "Playoff Record",       value: `${pWins}W – ${pLosses}L`, inline: true },
-      { name: "Super Bowl",           value: `${sbWins}W – ${sbLosses}L`, inline: true },
-      { name: "All-Time H2H Wins",    value: `**${allTimeH2H}**`, inline: true },
-      { name: "All-Time SB Wins",     value: `**${allTimeSB}**`, inline: true },
-      { name: "Highest Milestone",    value: milestoneLabel, inline: true },
-      { name: "Playoff Seed",         value: seedStr },
+      { name: "Season Record",           value: `**${wins}W – ${losses}L** (PD: ${pd > 0 ? "+" : ""}${pd})`, inline: true },
+      { name: "Playoff Record",          value: `${pWins}W – ${pLosses}L`, inline: true },
+      { name: "\u200b",                  value: "\u200b", inline: true },
+      { name: "All-Time H2H Wins",       value: `**${allTimeH2HW}**`, inline: true },
+      { name: "All-Time H2H Losses",     value: `**${allTimeH2HL}**`, inline: true },
+      { name: "All-Time SB Wins",        value: `**${allTimeSB}**`, inline: true },
+      { name: "Highest Win Milestone",   value: milestoneLabel, inline: true },
+      { name: "Playoff Seed",            value: seedStr, inline: true },
     );
 
   // Embed 3: Inventory

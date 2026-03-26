@@ -426,6 +426,13 @@ async function handleButton(interaction: ButtonInteraction) {
           } catch (_) {}
         }
 
+        // ── Career H2H loss tracker ────────────────────────────────────────
+        if (loserId) {
+          await db.update(usersTable)
+            .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
+            .where(eq(usersTable.discordId, loserId));
+        }
+
         // ── Career H2H win milestone check ─────────────────────────────────
         if (winnerId && winnerData) {
           const prevWins    = winnerData.allTimeH2HWins ?? 0;
