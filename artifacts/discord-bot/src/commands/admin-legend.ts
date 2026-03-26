@@ -89,7 +89,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "list") {
     // Fetch all legends ever added (never deleted from this table)
     const legends = await db.select().from(legendsTable)
-      .orderBy(asc(legendsTable.position), asc(legendsTable.name));
+      .orderBy(asc(legendsTable.name));
 
     if (legends.length === 0) {
       return interaction.editReply({
@@ -153,6 +153,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       }
     }
+
+    // Sort each bucket: owned sections by owner name → position; store/unknown by position
+    const byOwnerThenPosition = (a: { legend: typeof legends[0]; owner: string }, b: { legend: typeof legends[0]; owner: string }) =>
+      a.owner.localeCompare(b.owner) || a.legend.position.localeCompare(b.legend.position) || a.legend.name.localeCompare(b.legend.name);
+    const byPosition = (a: typeof legends[0], b: typeof legends[0]) =>
+      a.position.localeCompare(b.position) || a.name.localeCompare(b.name);
+
+    ownedPermanent.sort(byOwnerThenPosition);
+    ownedCurrent.sort(byOwnerThenPosition);
+    inStore.sort(byPosition);
+    ownedUnknown.sort(byPosition);
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Gold)
