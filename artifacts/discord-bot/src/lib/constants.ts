@@ -92,7 +92,7 @@ export const ATTRIBUTES = [
 
 export const NFL_POSITIONS = [
   "QB", "HB", "FB", "WR", "TE",
-  "LT", "LG", "C", "RG", "RT",
+  "OL",   // All offensive linemen (LT, LG, C, RG, RT)
   "DL",   // All defensive linemen (DE, DT, LE, RE, NT)
   "LB",   // All linebackers (MLB, OLB, ILB, LOLB, ROLB)
   "DB",   // All defensive backs (CB, FS, SS)
