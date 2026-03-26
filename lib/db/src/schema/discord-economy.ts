@@ -80,6 +80,7 @@ export const purchasesTable = pgTable("purchases", {
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   approvedAt: timestamp("approved_at"),
+  draftTrackerMessageId: text("draft_tracker_message_id"),
 });
 
 export const inventoryTable = pgTable("inventory", {

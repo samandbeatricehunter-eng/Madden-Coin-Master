@@ -17,7 +17,8 @@ import {
 import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
 import { INTERVIEW_PAYOUT } from "../commands/interviewrequest.js";
 
-const HEADLINES_CHANNEL_ID = "1477717664804896899";
+const HEADLINES_CHANNEL_ID   = "1477717664804896899";
+const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
 
 export const name = "interactionCreate";
 
@@ -89,13 +90,52 @@ async function handleButton(interaction: ButtonInteraction) {
     try {
       const user = await interaction.client.users.fetch(userId!);
       let msg = "";
-      if (purchaseType === "legend")                     msg = `🏆 Your legend **${purchase.playerName}** has been added to the draft pool! Check \`/inventory\`.`;
-      else if (purchaseType === "attribute")             msg = `⚡ Your **${purchase.attributeName}** attribute upgrade has been applied!`;
-      else if (purchaseType === "dev_up")                msg = `📈 Your dev upgrade for **${purchase.playerName}** has been applied!`;
-      else if (purchaseType === "age_reset")             msg = `🔄 Your age reset for **${purchase.playerName}** has been applied!`;
+      if (purchaseType === "legend")                      msg = `🏆 Your legend **${purchase.playerName}** has been added to the draft pool! Check \`/inventory\`.`;
+      else if (purchaseType === "attribute")              msg = `⚡ Your **${purchase.attributeName}** attribute upgrade has been applied!`;
+      else if (purchaseType === "dev_up")                 msg = `📈 Your dev upgrade for **${purchase.playerName}** has been applied!`;
+      else if (purchaseType === "age_reset")              msg = `🔄 Your age reset for **${purchase.playerName}** has been applied!`;
       else if (purchaseType?.startsWith("custom_player")) msg = `🎨 Your custom player **${purchase.playerName}** has been applied!`;
       await user.send(`✅ **Purchase #${purchaseId} Approved!**\n${msg}`).catch(() => {});
     } catch (_) {}
+
+    // ── Draft tracker post (legend + custom player only) ──────────────────────
+    if (purchaseType === "legend" || purchaseType?.startsWith("custom_player")) {
+      try {
+        const draftChannel = await interaction.client.channels.fetch(DRAFT_TRACKER_CHANNEL_ID);
+        if (draftChannel?.isTextBased()) {
+          const tierLabel = purchaseType?.startsWith("custom_player")
+            ? ` (${purchaseType.replace("custom_player_", "").toUpperCase()} tier)`
+            : "";
+          const itemLabel = purchaseType === "legend" ? "Legend" : "Custom Player";
+
+          const draftEmbed = new EmbedBuilder()
+            .setColor(Colors.Gold)
+            .setTitle(`🏈 ${itemLabel} Purchase — Draft Tracker`)
+            .addFields(
+              { name: "Player",    value: `<@${userId}>`, inline: true },
+              { name: "Item",      value: `${purchase.playerName ?? "Unknown"}${tierLabel}`, inline: true },
+              { name: "Purchase",  value: `#${purchaseId}`, inline: true },
+            )
+            .setTimestamp();
+
+          const draftRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`draft_drafted:${purchaseId}`)
+              .setLabel("✅ Drafted")
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`draft_revoked:${purchaseId}`)
+              .setLabel("❌ Revoked")
+              .setStyle(ButtonStyle.Danger),
+          );
+
+          const draftMsg = await (draftChannel as any).send({ embeds: [draftEmbed], components: [draftRow] });
+          await db.update(purchasesTable)
+            .set({ draftTrackerMessageId: draftMsg.id })
+            .where(eq(purchasesTable.id, purchaseId));
+        }
+      } catch (err) { console.error("Failed to post to draft tracker channel:", err); }
+    }
     return;
   }
 
@@ -137,6 +177,63 @@ async function handleButton(interaction: ButtonInteraction) {
       const user = await interaction.client.users.fetch(userId!);
       await user.send(`🔄 **Purchase #${purchaseId} Refunded**\n**${purchase.cost.toLocaleString()} coins** returned to your balance.`).catch(() => {});
     } catch (_) {}
+    return;
+  }
+
+  // ── Draft tracker: drafted (remove message) ──────────────────────────────────
+  if (action === "draft_drafted") {
+    const purchaseId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+    try {
+      await interaction.message.delete();
+    } catch (err) { console.error("Failed to delete draft tracker message:", err); }
+    return;
+  }
+
+  // ── Draft tracker: revoked (refund + remove message) ─────────────────────────
+  if (action === "draft_revoked") {
+    const purchaseId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.id, purchaseId)).limit(1);
+    const purchase = purchases[0];
+    if (!purchase) { await interaction.followUp({ content: "❌ Purchase not found.", ephemeral: true }); return; }
+    if (purchase.status === "refunded") { await interaction.followUp({ content: "⚠️ Already refunded.", ephemeral: true }); return; }
+
+    const buyerId = purchase.discordId;
+
+    // Refund coins
+    await db.update(purchasesTable).set({ status: "refunded" }).where(eq(purchasesTable.id, purchaseId));
+    await addBalance(buyerId, purchase.cost);
+    await logTransaction(buyerId, purchase.cost, "purchase_refund",
+      `Draft revoked: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`,
+      interaction.user.id);
+
+    // Restore legend to store if applicable
+    if (purchase.purchaseType === "legend" && purchase.legendId) {
+      await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, purchase.legendId));
+      await db.update(usersTable)
+        .set({ totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, buyerId));
+    }
+
+    // Remove from inventory
+    await db.delete(inventoryTable).where(eq(inventoryTable.purchaseId, purchaseId));
+
+    // DM the buyer
+    try {
+      const buyer = await interaction.client.users.fetch(buyerId);
+      const itemLabel = purchase.playerName ?? purchase.purchaseType.replace(/_/g, " ");
+      await buyer.send(
+        `❌ **Your ${itemLabel} purchase (#${purchaseId}) has been revoked by the commissioner.**\n` +
+        `**${purchase.cost.toLocaleString()} coins** have been returned to your balance.`
+      ).catch(() => {});
+    } catch (_) {}
+
+    // Delete the draft tracker message
+    try {
+      await interaction.message.delete();
+    } catch (err) { console.error("Failed to delete draft tracker message after revoke:", err); }
     return;
   }
 
