@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { legendsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
   .setName("legend")
@@ -65,7 +65,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   if (sub === "list") {
-    const legends = await db.select().from(legendsTable).orderBy(legendsTable.id);
+    const legends = await db.select().from(legendsTable).orderBy(asc(legendsTable.position), asc(legendsTable.name));
 
     if (legends.length === 0) {
       return interaction.editReply({

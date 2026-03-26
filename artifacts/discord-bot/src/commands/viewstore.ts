@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors } from "discord.js";
 import { db } from "@workspace/db";
 import { legendsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { COSTS, LIMITS, ATTRIBUTES } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
@@ -11,7 +11,9 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const availableLegends = await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true));
+  const availableLegends = await db.select().from(legendsTable)
+    .where(eq(legendsTable.isAvailable, true))
+    .orderBy(asc(legendsTable.position), asc(legendsTable.name));
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)

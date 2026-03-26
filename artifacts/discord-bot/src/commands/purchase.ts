@@ -5,7 +5,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, asc } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
@@ -143,7 +143,9 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
   const focused = interaction.options.getFocused().toLowerCase();
 
   if (sub === "legend") {
-    const available = await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true));
+    const available = await db.select().from(legendsTable)
+      .where(eq(legendsTable.isAvailable, true))
+      .orderBy(asc(legendsTable.position), asc(legendsTable.name));
     const matches = available
       .filter(l => l.name.toLowerCase().includes(focused))
       .slice(0, 25)
