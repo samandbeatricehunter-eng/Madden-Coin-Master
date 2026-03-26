@@ -36,6 +36,7 @@ import * as adminRules from "./commands/admin-rules.js";
 import * as adminSetAdmin from "./commands/admin-setadmin.js";
 import * as adminInventory from "./commands/admin-inventory.js";
 import * as reportscore from "./commands/reportscore.js";
+import * as interviewrequest from "./commands/interviewrequest.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -71,6 +72,7 @@ const commands = [
   adminSetAdmin,
   adminInventory,
   reportscore,
+  interviewrequest,
   { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
   { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
   { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },

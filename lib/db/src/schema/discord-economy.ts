@@ -157,6 +157,19 @@ export const payoutRequestsTable = pgTable("payout_requests", {
   opponentScore: integer("opponent_score"),
   gameType: text("game_type").notNull(), // "h2h" | "cpu"
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied" | "tied"
+  interviewClaimed: boolean("interview_claimed").notNull().default(false),
+  denialReason: text("denial_reason"),
+  discordMessageId: text("discord_message_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: text("resolved_by"),
+});
+
+export const interviewRequestsTable = pgTable("interview_requests", {
+  id: serial("id").primaryKey(),
+  discordId: text("discord_id").notNull(),
+  payoutRequestId: integer("payout_request_id").notNull(),
+  status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied"
   denialReason: text("denial_reason"),
   discordMessageId: text("discord_message_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

@@ -50,13 +50,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ].join("\n"),
       },
       {
-        name: "🏆 Game Payouts",
+        name: "🏆 Game Payouts & Interviews",
         value: [
-          "`/reportscore h2h [opponent team] [your score] [their score]` — Report an H2H game result",
-          "  → Winner receives **50 coins**, loser receives **20 coins**. Ties receive nothing.",
-          "`/reportscore cpu [cpu team] [your score] [cpu score]` — Report a CPU game result",
-          "  → Win pays **20 coins**, loss pays nothing. Ties pay nothing.",
-          "  → All reports go to the commissioner for approval. H2H results count toward power rankings.",
+          "`/reportscore h2h [opponent team] [your score] [their score]` — Report an H2H game",
+          "  → Winner **+50 coins**, loser **+20 coins**. Ties pay nothing. Counts toward power rankings.",
+          "`/reportscore cpu [cpu team] [your score] [cpu score]` — Report a CPU game",
+          "  → Win pays **+20 coins**, loss/tie pays nothing. Does NOT count toward power rankings.",
+          "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
+          "  → One interview allowed per game reported. Must report a new score before submitting another.",
+          "  → All payouts require commissioner approval.",
         ].join("\n"),
       },
       {
