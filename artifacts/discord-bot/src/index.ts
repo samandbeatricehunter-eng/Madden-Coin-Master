@@ -43,6 +43,7 @@ import * as adminGotw from "./commands/admin-gotw.js";
 import * as adminPotw from "./commands/admin-potw.js";
 import * as adminListUserTeams from "./commands/admin-listuserteams.js";
 import * as adminUserStats from "./commands/admin-userstats.js";
+import * as adminLegendVault from "./commands/admin-legendvault.js";
 import * as userStats from "./commands/userstats.js";
 
 // Events
@@ -86,6 +87,7 @@ const commands = [
   adminPotw,
   adminListUserTeams,
   adminUserStats,
+  adminLegendVault,
   userStats,
   { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
   { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },

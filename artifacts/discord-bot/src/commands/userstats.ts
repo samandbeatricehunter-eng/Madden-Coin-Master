@@ -53,9 +53,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const allTimeH2HW = parseInt(allTimeRows[0]?.totalWins ?? "0", 10);
   const allTimeH2HL = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
 
-  // ── Inventory (this season) ───────────────────────────────────────────────
+  // ── Inventory (this season, non-legend items only) ───────────────────────
   const inventory = await db.select().from(inventoryTable)
     .where(and(eq(inventoryTable.discordId, interaction.user.id), eq(inventoryTable.seasonId, season.id)));
+
+  // ── Legend vault: current season + permanent ──────────────────────────────
+  const currentLegends = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "current");
+  const permanentLegends = await db.select().from(inventoryTable)
+    .where(and(
+      eq(inventoryTable.discordId, interaction.user.id),
+      eq(inventoryTable.itemType, "legend"),
+      sql`${inventoryTable.legendCategory} = 'permanent'`,
+    ));
 
   // ── Purchases (this season, approved) ────────────────────────────────────
   const seasonPurchases = await db.select().from(purchasesTable)
@@ -124,7 +133,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     );
 
   // Embed 3: Inventory
-  const legends  = inventory.filter(i => i.itemType === "legend");
   const customs  = inventory.filter(i =>
     ["custom_player_gold", "custom_player_silver", "custom_player_bronze"].includes(i.itemType)
   );
@@ -133,9 +141,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const ageRes   = seasonPurchases.filter(p => p.purchaseType === "age_reset"  && p.status === "approved");
   const pendingCount = seasonPurchases.filter(p => p.status === "pending").length;
 
-  const legendStr = legends.length > 0
-    ? legends.map(l => `• **${l.legendName ?? l.playerName ?? "?"}** (${l.playerPosition ?? "?"})`).join("\n")
-    : "*None*";
+  const fmtLegend = (arr: typeof currentLegends) =>
+    arr.length > 0
+      ? arr.map(l => `• **${l.legendName ?? l.playerName ?? "?"}** (${l.playerPosition ?? "?"})`).join("\n")
+      : "*None*";
   const customStr = customs.length > 0
     ? customs.map(c => `• **${c.playerName ?? "?"}** — ${c.customPlayerTier?.toUpperCase() ?? "?"}`).join("\n")
     : "*None*";
@@ -144,7 +153,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setColor(Colors.Gold)
     .setTitle("🎒 Season Inventory & Purchases")
     .addFields(
-      { name: `Legends (${legends.length})`,       value: legendStr },
+      { name: `⚡ Current Season Legends (${currentLegends.length})`,                             value: fmtLegend(currentLegends)   },
+      { name: `🔒 Permanent Vault (${permanentLegends.length}/4)`, value: fmtLegend(permanentLegends) },
       { name: `Custom Players (${customs.length})`, value: customStr },
       { name: "Attribute Upgrades",  value: `${attrs.length}`, inline: true },
       { name: "Dev Upgrades",        value: `${devUps.length}`, inline: true },

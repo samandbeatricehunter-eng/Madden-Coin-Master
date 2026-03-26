@@ -28,6 +28,7 @@ import * as adminGotw from "./commands/admin-gotw.js";
 import * as adminPotw from "./commands/admin-potw.js";
 import * as adminListUserTeams from "./commands/admin-listuserteams.js";
 import * as adminUserStats from "./commands/admin-userstats.js";
+import * as adminLegendVault from "./commands/admin-legendvault.js";
 import * as userStats from "./commands/userstats.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
@@ -43,7 +44,7 @@ const commands = [
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
   adminSetUser, adminTransactions, recentH2H, rules,
   adminRules, adminSetAdmin, adminInventory, reportscore, interviewrequest, advanceweek,
-  adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, userStats,
+  adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, adminLegendVault, userStats,
 ].map(c => c.data.toJSON());
 
 commands.push(

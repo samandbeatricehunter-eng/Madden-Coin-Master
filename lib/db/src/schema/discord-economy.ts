@@ -102,6 +102,9 @@ export const inventoryTable = pgTable("inventory", {
   attributeName: text("attribute_name"),
   customPlayerTier: customPlayerTierEnum("custom_player_tier"),
   notes: text("notes"),
+  // "current" = bought this season, not yet rolled over
+  // "permanent" = carried over from a past season, counts toward the 4-legend vault cap
+  legendCategory: text("legend_category").notNull().default("current"),
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
 

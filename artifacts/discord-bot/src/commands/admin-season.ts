@@ -3,9 +3,73 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, seasonStatsTable, inventoryTable, usersTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable } from "@workspace/db";
+import { eq, and, sql } from "drizzle-orm";
 import { logTransaction } from "../lib/db-helpers.js";
+
+const PERMANENT_CAP = 4;
+
+// Promote current-season legends → permanent for all users, enforcing the 4-cap.
+// Returns a summary of what happened.
+async function rolloverLegends(seasonId: number): Promise<string> {
+  const currentLegends = await db.select().from(inventoryTable)
+    .where(and(
+      eq(inventoryTable.seasonId, seasonId),
+      eq(inventoryTable.itemType, "legend"),
+      sql`${inventoryTable.legendCategory} = 'current'`,
+    ));
+
+  if (currentLegends.length === 0) return "No current-season legends to roll over.";
+
+  // Group by user
+  const byUser: Record<string, typeof currentLegends> = {};
+  for (const item of currentLegends) {
+    if (!byUser[item.discordId]) byUser[item.discordId] = [];
+    byUser[item.discordId]!.push(item);
+  }
+
+  let promoted = 0;
+  let returned = 0;
+
+  for (const [userId, legends] of Object.entries(byUser)) {
+    // Count existing permanent legends for this user
+    const countRows = await db.select({ c: sql<string>`COUNT(*)` })
+      .from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.discordId, userId),
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      ));
+    const existing = parseInt(countRows[0]?.c ?? "0", 10);
+    const slotsLeft = Math.max(0, PERMANENT_CAP - existing);
+
+    const toPromote = legends.slice(0, slotsLeft);
+    const toReturn  = legends.slice(slotsLeft);
+
+    for (const item of toPromote) {
+      await db.update(inventoryTable)
+        .set({ legendCategory: "permanent" })
+        .where(eq(inventoryTable.id, item.id));
+      promoted++;
+    }
+
+    for (const item of toReturn) {
+      // Return legend to store and remove from inventory
+      if (item.legendId) {
+        await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, item.legendId));
+      }
+      await db.delete(inventoryTable).where(eq(inventoryTable.id, item.id));
+      await db.update(usersTable)
+        .set({ totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, userId));
+      returned++;
+    }
+  }
+
+  const lines = [`• **${promoted}** legend(s) moved to permanent vaults.`];
+  if (returned > 0) lines.push(`• **${returned}** legend(s) returned to the store (vault full).`);
+  return lines.join("\n");
+}
 
 const MAX_SEASONS = 5;
 
@@ -43,6 +107,15 @@ export const data = new SlashCommandBuilder()
       .setDescription("Set a user's coin balance")
       .addUserOption(opt => opt.setName("user").setDescription("The user").setRequired(true))
       .addIntegerOption(opt => opt.setName("amount").setDescription("New balance").setRequired(true).setMinValue(0))
+  )
+  .addSubcommand(sub =>
+    sub.setName("franchise-reset")
+      .setDescription("⚠️ END-OF-FRANCHISE RESET: returns all legends to store, resets all coins, restarts at Season 1")
+      .addBooleanOption(o =>
+        o.setName("confirm")
+          .setDescription("Set to True to confirm this irreversible action")
+          .setRequired(true)
+      )
   )
   .addSubcommand(sub =>
     sub.setName("override")
@@ -96,7 +169,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (sub === "new") {
     const seasons = await db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1);
-    const currentNumber = seasons[0]?.seasonNumber ?? 0;
+    const currentSeason = seasons[0];
+    const currentNumber = currentSeason?.seasonNumber ?? 0;
     const nextNumber = currentNumber + 1;
 
     if (nextNumber > MAX_SEASONS) {
@@ -107,11 +181,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             .setTitle("🏁 Franchise Complete")
             .setDescription(
               `This franchise has reached its **${MAX_SEASONS}-season limit**.\n\n` +
-              `Season ${currentNumber} is the final season. No new seasons can be started.`
+              `Season ${currentNumber} is the final season. To reset the franchise (return all legends, reset coins, restart Season 1), run \`/season franchise-reset confirm:True\`.`
             ),
         ],
       });
     }
+
+    // Roll over current-season legends → permanent before closing the season
+    const rolloverMsg = currentSeason
+      ? await rolloverLegends(currentSeason.id)
+      : "No previous season to roll over.";
 
     await db.update(seasonsTable).set({ isActive: false });
     const [newSeason] = await db.insert(seasonsTable).values({ seasonNumber: nextNumber, isActive: true }).returning();
@@ -126,6 +205,68 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             `**Season ${newSeason!.seasonNumber} of ${MAX_SEASONS}** has begun!\n\n` +
             `All player inventories and purchase limits have been reset.\nCoin balances are unchanged.` +
             (isLast ? "\n\n⚠️ **This is the last season of the franchise.**" : "")
+          )
+          .addFields({ name: "🏅 Legend Vault Rollover", value: rolloverMsg })
+          .setTimestamp(),
+      ],
+    });
+  }
+
+  if (sub === "franchise-reset") {
+    const confirmed = interaction.options.getBoolean("confirm", true);
+    if (!confirmed) {
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Red)
+            .setTitle("❌ Franchise Reset Cancelled")
+            .setDescription("You must set `confirm: True` to execute the franchise reset."),
+        ],
+      });
+    }
+
+    // 1. Return ALL legend inventory items to the store
+    const allLegendItems = await db.select().from(inventoryTable)
+      .where(eq(inventoryTable.itemType, "legend"));
+
+    for (const item of allLegendItems) {
+      if (item.legendId) {
+        await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, item.legendId));
+      }
+    }
+
+    // 2. Clear all inventory
+    await db.delete(inventoryTable);
+
+    // 3. Reset all user balances and legend purchase counts (preserve all-time records)
+    await db.update(usersTable).set({
+      balance: 0,
+      totalLegendPurchases: 0,
+      playoffSeed: null,
+      playoffConference: null,
+      updatedAt: new Date(),
+    });
+
+    // 4. Deactivate all seasons and restart at Season 1
+    await db.update(seasonsTable).set({ isActive: false });
+    const existing1 = await db.select().from(seasonsTable).where(eq(seasonsTable.seasonNumber, 1)).limit(1);
+    if (existing1.length > 0) {
+      await db.update(seasonsTable).set({ isActive: true, currentWeek: "1" }).where(eq(seasonsTable.seasonNumber, 1));
+    } else {
+      await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true });
+    }
+
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("🔄 Franchise Reset Complete")
+          .setDescription(
+            "The 5-year franchise cycle has ended and a new one has begun.\n\n" +
+            `• **All legends** returned to the store\n` +
+            `• **All coin balances** reset to 0\n` +
+            `• **All-time records** preserved (wins, losses, milestones, SB wins)\n` +
+            `• Season restarted at **Season 1 of ${MAX_SEASONS}**`
           )
           .setTimestamp(),
       ],
