@@ -17,6 +17,9 @@ import { addNewUserData, deleteMemberData } from "./commands/admin-team.js";
 import { updateRecordData, seasonPRData, allTimePRData } from "./commands/records.js";
 import * as recentH2H from "./commands/recentH2H.js";
 import * as rules from "./commands/rules.js";
+import * as adminRules from "./commands/admin-rules.js";
+import * as adminSetAdmin from "./commands/admin-setadmin.js";
+import * as adminInventory from "./commands/admin-inventory.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -30,6 +33,7 @@ const commands = [
   help, balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
   adminSetUser, adminTransactions, recentH2H, rules,
+  adminRules, adminSetAdmin, adminInventory,
 ].map(c => c.data.toJSON());
 
 commands.push(

@@ -2,6 +2,7 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   PermissionFlagsBits,
 } from "discord.js";
+import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("help")
@@ -11,7 +12,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
 
-  const isAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+  const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+  const isDbAdmin = await isAdminUser(interaction.user.id);
+  const isAdmin = isDiscordAdmin || isDbAdmin;
 
   const memberEmbed = new EmbedBuilder()
     .setColor(Colors.Blue)
@@ -39,10 +42,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ].join("\n"),
       },
       {
-        name: "📊 Rankings",
+        name: "📊 Rankings & Records",
         value: [
           "`/seasonpr` — View the current season power rankings",
           "`/alltimepr` — View all-time power rankings across all seasons",
+          "`/recenth2h @user` — View a user's recent game history",
+        ].join("\n"),
+      },
+      {
+        name: "📋 League Rules",
+        value: [
+          "`/rules [section]` — Display a league rules section",
+          "`/rules [section] @user` — Share a rules section with a specific member",
         ].join("\n"),
       },
       {
@@ -70,9 +81,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "👤 User Management",
         value: [
-          "`/addnewuser @user [team] [starting_balance]` — Add a new user to a team slot (clears old owner's data)",
+          "`/addnewuser @user [team] [starting_balance]` — Add a new user to a team slot",
           "`/deletemember [team]` — Permanently delete all data for a team or user",
           "`/setuser [team]` — Manually set any stat for a user (coins, record, upgrades, etc.)",
+          "`/setadmin @user [true/false]` — Grant or revoke bot-admin status for a user",
         ].join("\n"),
       },
       {
@@ -83,12 +95,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ].join("\n"),
       },
       {
+        name: "📦 Inventory Management",
+        value: [
+          "`/admininventory view @user` — View all inventory items for a user (shows IDs)",
+          "`/admininventory remove [item_id] [reason]` — Delete an inventory item by ID",
+          "`/admininventory move [item_id] @user` — Transfer an inventory item to another user",
+        ].join("\n"),
+      },
+      {
         name: "🏆 Legends",
         value: [
           "`/legend add [name] [position] [cost]` — Add a legend to the store",
           "`/legend list` — View all legends (including sold ones)",
           "`/legend edit [id]` — Edit a legend's details",
           "`/legend remove [id]` — Remove a legend from the store",
+        ].join("\n"),
+      },
+      {
+        name: "📋 League Rules",
+        value: [
+          "`/adminrules list [section]` — Show current rules with numbered list",
+          "`/adminrules set [section] [#] [text]` — Edit a specific rule by number",
+          "`/adminrules add [section] [text]` — Append a new rule to a section",
+          "`/adminrules remove [section] [#]` — Remove a rule by number",
+          "`/adminrules reset [section]` — Reset a section to the default rules",
         ].join("\n"),
       },
       {
@@ -104,9 +134,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "📊 Records",
         value: [
-          "`/updaterecord [win/loss] [spread] [team/@user]` — Log a game result for the current season",
+          "`/updaterecord [win/loss] [spread] [team/@user]` — Log a game result",
           "`/seasonpr` — Post the current season power rankings",
           "`/alltimepr` — Post all-time power rankings",
+          "`/recenth2h @user` — View a user's recent game results",
         ].join("\n"),
       },
       {
@@ -120,7 +151,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         value: "PR Score = **60%** × (W−L) + **40%** × Point Differential",
       },
     )
-    .setFooter({ text: "Admin commands are only visible to server administrators." })
+    .setFooter({ text: "Admin commands are only visible to bot admins and server administrators." })
     .setTimestamp();
 
   return interaction.reply({

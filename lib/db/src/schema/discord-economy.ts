@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, serial, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -35,6 +35,7 @@ export const usersTable = pgTable("economy_users", {
   allTimeSuperbowlWins: integer("all_time_superbowl_wins").notNull().default(0),
   // Which win milestone has been awarded: 0=none, 1=5W, 2=12W, 3=25W, 4=50W
   milestoneTierAwarded: integer("milestone_tier_awarded").notNull().default(0),
+  isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -137,6 +138,13 @@ export const gameLogTable = pgTable("game_log", {
   opponentLabel: text("opponent_label"), // team name or free text
   gameType: gameTypeEnum("game_type").notNull().default("regular_season"),
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+});
+
+export const rulesTable = pgTable("rules", {
+  section: text("section").primaryKey(),
+  rules: json("rules").notNull().$type<string[]>(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by"),
 });
 
 export const txTypeEnum = pgEnum("tx_type", [
