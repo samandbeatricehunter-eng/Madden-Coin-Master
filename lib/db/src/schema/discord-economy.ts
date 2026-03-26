@@ -172,6 +172,7 @@ export const interviewRequestsTable = pgTable("interview_requests", {
   id: serial("id").primaryKey(),
   discordId: text("discord_id").notNull(),
   payoutRequestId: integer("payout_request_id").notNull(),
+  week: text("week"), // mirrors the linked payout request's week
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied"
   denialReason: text("denial_reason"),
   discordMessageId: text("discord_message_id"),

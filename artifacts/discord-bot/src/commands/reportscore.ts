@@ -92,6 +92,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season      = await getOrCreateActiveSeason();
   const currentWeek = (season as any).currentWeek ?? "1";
 
+  // ── Weekly game limit: one payout per user per week (H2H or CPU, not both) ──
+  const alreadyHasGame = await db.select({
+    id:       payoutRequestsTable.id,
+    gameType: payoutRequestsTable.gameType,
+  })
+    .from(payoutRequestsTable)
+    .where(and(
+      eq(payoutRequestsTable.week, currentWeek),
+      or(
+        eq(payoutRequestsTable.requesterId, interaction.user.id),
+        eq(payoutRequestsTable.opponentId,  interaction.user.id),
+      ),
+      inArray(payoutRequestsTable.status, ["pending", "approved"]),
+    ))
+    .limit(1);
+
+  if (alreadyHasGame.length > 0) {
+    const existing  = alreadyHasGame[0]!;
+    const typeLabel = existing.gameType === "cpu" ? "CPU" : "head-to-head";
+    await interaction.editReply({
+      content: [
+        `⚠️ **Weekly game limit reached — ${weekLabel(currentWeek)}.**`,
+        `You've already ${existing.gameType === "cpu" ? "submitted" : "been part of"} a **${typeLabel}** payout this week (Report #\`${existing.id}\`).`,
+        `Only one game payout is allowed per week. Wait for the week to advance.`,
+      ].join("\n"),
+    });
+    return;
+  }
+
   // ── H2H ─────────────────────────────────────────────────────────────────────
   if (sub === "h2h") {
     const opponentUser      = interaction.options.getUser("opponent", true);
