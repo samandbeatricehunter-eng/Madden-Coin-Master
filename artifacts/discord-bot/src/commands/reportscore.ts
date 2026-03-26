@@ -77,6 +77,8 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
 // ── Main execute ─────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
   const sub           = interaction.options.getSubcommand();
   const myScore       = interaction.options.getInteger("your_score", true);
   const oppScore      = interaction.options.getInteger("opponent_score", true);
@@ -91,7 +93,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const opponentDiscordId = opponentUser.id;
 
     if (opponentDiscordId === interaction.user.id) {
-      await interaction.reply({ content: "❌ You can't report a game against yourself.", ephemeral: true });
+      await interaction.editReply({ content: "❌ You can't report a game against yourself." });
       return;
     }
 
@@ -152,9 +154,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       console.error("Failed to post H2H score report:", err);
     }
 
-    await interaction.reply({
+    await interaction.editReply({
       content: `📨 Score report sent! (Request #\`${payoutId}\`)\n**${requesterTeam}** ${myScore} – ${oppScore} **${opponentTeam}**`,
-      ephemeral: true,
     });
     return;
   }
@@ -209,9 +210,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       console.error("Failed to post CPU score report:", err);
     }
 
-    await interaction.reply({
+    await interaction.editReply({
       content: `📨 CPU score report sent! (Request #\`${payoutId}\`)\n**${requesterTeam}** ${myScore} – ${oppScore} **${opponentTeam}**`,
-      ephemeral: true,
     });
   }
 }

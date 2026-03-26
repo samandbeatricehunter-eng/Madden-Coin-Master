@@ -14,6 +14,8 @@ export const data = new SlashCommandBuilder()
   .setDescription(`Submit a post-game interview to earn ${INTERVIEW_PAYOUT} coins — one per game reported`);
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
   const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
   const requester = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const requesterTeam = requester.team ?? interaction.user.username;
@@ -29,13 +31,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .limit(1);
 
   if (unclaimedReports.length === 0) {
-    await interaction.reply({
+    await interaction.editReply({
       content: [
         "❌ **No eligible game found.**",
         "You can only submit one interview per game.",
         "Report your next game with `/reportscore` to become eligible again.",
       ].join("\n"),
-      ephemeral: true,
     });
     return;
   }
@@ -98,8 +99,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     console.error("Failed to post interview request to commissioner channel:", err);
   }
 
-  await interaction.reply({
+  await interaction.editReply({
     content: `🎙️ Your post-game interview request has been sent! (Interview #\`${interviewId}\`)\nYou'll be notified once the commissioner reviews it.`,
-    ephemeral: true,
   });
 }

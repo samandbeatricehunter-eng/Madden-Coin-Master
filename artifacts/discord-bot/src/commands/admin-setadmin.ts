@@ -29,13 +29,15 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
   const isDbAdmin      = await isAdminUser(interaction.user.id);
 
   if (!isDiscordAdmin && !isDbAdmin) {
-    await interaction.reply({ content: "❌ You do not have permission to use admin commands.", ephemeral: true });
+    await interaction.editReply({ content: "❌ You do not have permission to use admin commands." });
     return;
   }
 
@@ -52,7 +54,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .where(eq(usersTable.isAdmin, true));
 
     if (admins.length === 0) {
-      await interaction.reply({ content: "📋 No bot admins are currently set.", ephemeral: true });
+      await interaction.editReply({ content: "📋 No bot admins are currently set." });
       return;
     }
 
@@ -67,7 +69,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setFooter({ text: `${admins.length} admin${admins.length === 1 ? "" : "s"}` })
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.editReply({ embeds: [embed] });
     return;
   }
 
@@ -76,7 +78,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const grantAdmin = sub === "grant";
 
   if (targetUser.id === interaction.user.id && !grantAdmin) {
-    await interaction.reply({ content: "❌ You can't revoke your own admin status.", ephemeral: true });
+    await interaction.editReply({ content: "❌ You can't revoke your own admin status." });
     return;
   }
 
@@ -86,16 +88,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .returning({ discordUsername: usersTable.discordUsername });
 
   if (result.length === 0) {
-    await interaction.reply({
+    await interaction.editReply({
       content: `❌ **${targetUser.username}** isn't registered in the league. They need to use a bot command first.`,
-      ephemeral: true,
     });
     return;
   }
 
   const action = grantAdmin ? "granted ✅" : "revoked ❌";
-  await interaction.reply({
+  await interaction.editReply({
     content: `🛡️ Bot-admin status **${action}** for **${targetUser.username}**.`,
-    ephemeral: true,
   });
 }
