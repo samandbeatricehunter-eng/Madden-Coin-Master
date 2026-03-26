@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable } from "@workspace/db";
+import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { logTransaction } from "../lib/db-helpers.js";
 
@@ -225,7 +225,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    // 1. Return ALL legend inventory items to the store
+    // 1. Return ALL owned legends to the store (preserve the legends catalog itself)
     const allLegendItems = await db.select().from(inventoryTable)
       .where(eq(inventoryTable.itemType, "legend"));
 
@@ -235,10 +235,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     }
 
-    // 2. Clear all inventory
+    // 2. Clear all inventory (upgrades, legends, custom players)
     await db.delete(inventoryTable);
 
-    // 3. Reset all user balances and legend purchase counts (preserve all-time records)
+    // 3. Clear all season W/L records
+    await db.delete(userRecordsTable);
+
+    // 4. Clear all per-season upgrade purchase counts
+    await db.delete(seasonStatsTable);
+
+    // 5. Clear the game log (individual match history)
+    await db.delete(gameLogTable);
+
+    // 6. Reset user balances and season-specific fields
+    //    Preserve: allTimeH2HWins, allTimeH2HLosses, allTimeSuperbowlWins, milestoneTierAwarded
     await db.update(usersTable).set({
       balance: 0,
       totalLegendPurchases: 0,
@@ -247,11 +257,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       updatedAt: new Date(),
     });
 
-    // 4. Deactivate all seasons and restart at Season 1
+    // 7. Deactivate all seasons and restart at Season 1 (clear any overrides)
     await db.update(seasonsTable).set({ isActive: false });
     const existing1 = await db.select().from(seasonsTable).where(eq(seasonsTable.seasonNumber, 1)).limit(1);
     if (existing1.length > 0) {
-      await db.update(seasonsTable).set({ isActive: true, currentWeek: "1" }).where(eq(seasonsTable.seasonNumber, 1));
+      await db.update(seasonsTable).set({
+        isActive: true,
+        currentWeek: "1",
+        coreAttrCostOverride: null,
+        coreAttrCapOverride: null,
+        nonCoreAttrCostOverride: null,
+        nonCoreAttrCapOverride: null,
+        devUpsCapOverride: null,
+        devUpsCostOverride: null,
+        ageResetsCapOverride: null,
+        ageResetsCostOverride: null,
+      }).where(eq(seasonsTable.seasonNumber, 1));
     } else {
       await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true });
     }
@@ -263,9 +284,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .setTitle("🔄 Franchise Reset Complete")
           .setDescription(
             "The 5-year franchise cycle has ended and a new one has begun.\n\n" +
-            `• **All legends** returned to the store\n` +
+            `• **All legends** returned to the store (catalog preserved)\n` +
             `• **All coin balances** reset to 0\n` +
-            `• **All-time records** preserved (wins, losses, milestones, SB wins)\n` +
+            `• **All inventory** cleared\n` +
+            `• **All season W/L records** cleared\n` +
+            `• **All upgrade purchase counts** cleared\n` +
+            `• **Game log** cleared\n` +
+            `• **All-time records preserved** (H2H wins/losses, SB wins, milestones)\n` +
             `• Season restarted at **Season 1 of ${MAX_SEASONS}**`
           )
           .setTimestamp(),
