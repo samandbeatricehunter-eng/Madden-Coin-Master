@@ -17,8 +17,9 @@ import {
 import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
 import { INTERVIEW_PAYOUT } from "../commands/interviewrequest.js";
 
-const HEADLINES_CHANNEL_ID   = "1477717664804896899";
+const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
+const GENERAL_CHANNEL_ID       = "1476321282868908052";
 
 export const name = "interactionCreate";
 
@@ -135,6 +136,21 @@ async function handleButton(interaction: ButtonInteraction) {
             .where(eq(purchasesTable.id, purchaseId));
         }
       } catch (err) { console.error("Failed to post to draft tracker channel:", err); }
+
+      // ── General channel announcement (legend only) ──────────────────────────
+      if (purchaseType === "legend") {
+        try {
+          const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID);
+          if (generalChannel?.isTextBased()) {
+            const announceEmbed = new EmbedBuilder()
+              .setColor(Colors.Gold)
+              .setTitle("🏆 Legend Purchased!")
+              .setDescription(`<@${userId}> just acquired **${purchase.playerName ?? "a Legend"}** from the store!`)
+              .setTimestamp();
+            await (generalChannel as any).send({ embeds: [announceEmbed] });
+          }
+        } catch (err) { console.error("Failed to post legend announcement to general channel:", err); }
+      }
     }
     return;
   }
