@@ -76,19 +76,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const available = legends.filter(l => l.isAvailable);
     const purchased = legends.filter(l => !l.isAvailable);
 
-    const embed = new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 All Legends").setTimestamp();
+    // Split lines into chunks that fit within Discord's 1024-char field limit
+    function chunkLines(lines: string[], label: string): { name: string; value: string }[] {
+      const fields: { name: string; value: string }[] = [];
+      let current: string[] = [];
+      let len = 0;
+      for (const line of lines) {
+        if (len + line.length + 1 > 1020 && current.length > 0) {
+          fields.push({ name: fields.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
+          current = [];
+          len = 0;
+        }
+        current.push(line);
+        len += line.length + 1;
+      }
+      if (current.length > 0) {
+        fields.push({ name: fields.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
+      }
+      return fields;
+    }
+
+    const embed = new EmbedBuilder().setColor(Colors.Gold).setTitle(`🏆 All Legends (${legends.length} total)`).setTimestamp();
 
     if (available.length > 0) {
-      embed.addFields({
-        name: "✅ Available in Store",
-        value: available.map(l => `**#${l.id}** — ${l.name} (${l.position})${l.description ? `\n  ↳ ${l.description}` : ""}`).join("\n"),
-      });
+      const lines = available.map(l => `**#${l.id}** — ${l.name} (${l.position})${l.description ? ` — ${l.description}` : ""}`);
+      embed.addFields(chunkLines(lines, `✅ Available in Store (${available.length})`));
+    } else {
+      embed.addFields({ name: "✅ Available in Store", value: "None currently available." });
     }
+
     if (purchased.length > 0) {
-      embed.addFields({
-        name: "❌ Purchased / Removed",
-        value: purchased.map(l => `**#${l.id}** — ${l.name} (${l.position})`).join("\n"),
-      });
+      const lines = purchased.map(l => `**#${l.id}** — ${l.name} (${l.position})`);
+      embed.addFields(chunkLines(lines, `❌ Purchased / Removed (${purchased.length})`));
     }
 
     return interaction.editReply({ embeds: [embed] });
