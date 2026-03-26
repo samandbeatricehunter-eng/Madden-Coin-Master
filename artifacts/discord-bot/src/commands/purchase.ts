@@ -319,7 +319,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const playerPosition = interaction.options.getString("player_position", true);
     const devUpType = interaction.options.getString("dev_type", true);
     const quantity = interaction.options.getInteger("quantity") ?? 1;
-    const costPer = COSTS.dev_up;
+    const costPer = rules.devUpsCost;
     const totalCost = costPer * quantity;
     const remaining = rules.devUpsCap - stats.devUpsPurchased;
 
@@ -375,7 +375,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const playerName = interaction.options.getString("player_name", true);
     const playerPosition = interaction.options.getString("player_position", true);
     const quantity = interaction.options.getInteger("quantity") ?? 1;
-    const costPer = COSTS.age_reset;
+    const costPer = rules.ageResetCost;
     const totalCost = costPer * quantity;
     const remaining = rules.ageResetsCap - stats.ageResetsPurchased;
 

@@ -92,8 +92,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                           season.nonCoreAttrCostOverride !== null || season.nonCoreAttrCapOverride !== null;
   const attrOverrideNote = hasAttrOverride ? "\n⚠️ *Custom attribute rules are active this season.*" : "";
 
-  const hasCapOverride = season.devUpsCapOverride !== null || season.ageResetsCapOverride !== null;
-  const capNote = hasCapOverride ? " *(season override)*" : "";
+  const hasDevOverride     = season.devUpsCapOverride !== null || season.devUpsCostOverride !== null;
+  const hasAgeResOverride  = season.ageResetsCapOverride !== null || season.ageResetsCostOverride !== null;
+  const devNote    = hasDevOverride    ? " *(season override)*" : "";
+  const ageResNote = hasAgeResOverride ? " *(season override)*" : "";
 
   const label = lookupOther ? `${username}'s` : "Your";
 
@@ -119,12 +121,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       },
       {
         name: "📈 Dev Upgrades",
-        value: `Used: **${stats.devUpsPurchased}/${rules.devUpsCap}** | Remaining: **${devUpsLeft}**${capNote}\nCost: **250 coins**`,
+        value: `Used: **${stats.devUpsPurchased}/${rules.devUpsCap}** | Remaining: **${devUpsLeft}**${devNote}\nCost: **${rules.devUpsCost} coins**`,
         inline: true,
       },
       {
         name: "🔄 Age Resets",
-        value: `Used: **${stats.ageResetsPurchased}/${rules.ageResetsCap}** | Remaining: **${ageResetsLeft}**${capNote}\nCost: **250 coins**`,
+        value: `Used: **${stats.ageResetsPurchased}/${rules.ageResetsCap}** | Remaining: **${ageResetsLeft}**${ageResNote}\nCost: **${rules.ageResetCost} coins**`,
         inline: true,
       },
       {

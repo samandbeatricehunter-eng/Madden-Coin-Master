@@ -178,7 +178,9 @@ export async function getSeasonRules(season: Season) {
     nonCoreAttrCost: season.nonCoreAttrCostOverride ?? COSTS.non_core_attribute,
     nonCoreAttrCap:  season.nonCoreAttrCapOverride  ?? LIMITS.nonCoreAttrPerSeason,
     devUpsCap:       season.devUpsCapOverride       ?? LIMITS.devUpsPerSeason,
+    devUpsCost:      season.devUpsCostOverride      ?? COSTS.dev_up,
     ageResetsCap:    season.ageResetsCapOverride    ?? LIMITS.ageResetsPerSeason,
+    ageResetCost:    season.ageResetsCostOverride   ?? COSTS.age_reset,
   };
 }
 

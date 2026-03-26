@@ -56,7 +56,9 @@ export const seasonsTable = pgTable("seasons", {
   nonCoreAttrCostOverride: integer("non_core_attr_cost_override"),
   nonCoreAttrCapOverride: integer("non_core_attr_cap_override"),
   devUpsCapOverride: integer("dev_ups_cap_override"),
+  devUpsCostOverride: integer("dev_ups_cost_override"),
   ageResetsCapOverride: integer("age_resets_cap_override"),
+  ageResetsCostOverride: integer("age_resets_cost_override"),
   currentWeek: text("current_week").notNull().default("1"),
 });
 
