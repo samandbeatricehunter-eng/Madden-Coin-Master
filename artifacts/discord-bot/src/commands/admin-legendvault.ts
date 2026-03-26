@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { inventoryTable, legendsTable, usersTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, ilike } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
 const PERMANENT_CAP = 4;
@@ -20,6 +20,14 @@ export const data = new SlashCommandBuilder()
   .setName("admin-legendvault")
   .setDescription("Manage a user's current-season and permanent legend vault (admin only)")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addSubcommand(sub =>
+    sub.setName("add")
+      .setDescription("Add a legend directly to a user's permanent vault (retroactive / commissioner use)")
+      .addUserOption(o => o.setName("user").setDescription("User to receive the legend").setRequired(true))
+      .addStringOption(o => o.setName("legend_name").setDescription("Name of the legend (e.g. Jerry Rice)").setRequired(true))
+      .addStringOption(o => o.setName("position").setDescription("Position (e.g. WR, QB, CB)").setRequired(true))
+      .addStringOption(o => o.setName("description").setDescription("Optional description for the store entry").setRequired(false))
+  )
   .addSubcommand(sub =>
     sub.setName("view")
       .setDescription("View all legend inventory for a user (shows item IDs)")
@@ -58,6 +66,88 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub    = interaction.options.getSubcommand();
   const target = interaction.options.getUser("user", true);
   const season = await getOrCreateActiveSeason();
+
+  // ── ADD (retroactive) ───────────────────────────────────────────────────────
+  if (sub === "add") {
+    const legendName = interaction.options.getString("legend_name", true).trim();
+    const position   = interaction.options.getString("position", true).trim().toUpperCase();
+    const description = interaction.options.getString("description") ?? undefined;
+
+    // Guard: user must exist in the system
+    const userRows = await db.select().from(usersTable).where(eq(usersTable.discordId, target.id)).limit(1);
+    if (!userRows[0]) {
+      await interaction.editReply({ content: `❌ <@${target.id}> doesn't have an economy account yet. Add them first.` });
+      return;
+    }
+
+    // Guard: permanent vault cap
+    const countRows = await db.select({ c: sql<string>`COUNT(*)` })
+      .from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.discordId, target.id),
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      ));
+    const permanentCount = parseInt(countRows[0]?.c ?? "0", 10);
+    if (permanentCount >= PERMANENT_CAP) {
+      await interaction.editReply({
+        content: `❌ <@${target.id}> already has **${permanentCount}/${PERMANENT_CAP}** permanent legends. Remove one first.`,
+      });
+      return;
+    }
+
+    // Find or create the legend in the store (case-insensitive name match)
+    let legendId: number;
+    let wasCreated = false;
+    const existing = await db.select().from(legendsTable).where(ilike(legendsTable.name, legendName)).limit(1);
+
+    if (existing[0]) {
+      legendId = existing[0].id;
+      // Make sure it's marked unavailable (it's being assigned to someone)
+      await db.update(legendsTable).set({ isAvailable: false }).where(eq(legendsTable.id, legendId));
+    } else {
+      // Create a new store entry for this legend
+      const [created] = await db.insert(legendsTable).values({
+        name: legendName,
+        position,
+        description: description ?? null,
+        isAvailable: false,
+      }).returning();
+      legendId = created!.id;
+      wasCreated = true;
+    }
+
+    // Add to permanent vault using season.id as the anchor season
+    await db.insert(inventoryTable).values({
+      discordId:      target.id,
+      seasonId:       season.id,
+      purchaseId:     0,            // 0 = admin-granted, no purchase record
+      itemType:       "legend",
+      legendId,
+      legendName,
+      playerPosition: position,
+      legendCategory: "permanent",
+    });
+
+    // Increment all-time legend purchase count
+    await db.update(usersTable)
+      .set({ totalLegendPurchases: sql`${usersTable.totalLegendPurchases} + 1`, updatedAt: new Date() })
+      .where(eq(usersTable.discordId, target.id));
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("🏅 Legend Added to Permanent Vault")
+      .addFields(
+        { name: "User",           value: `<@${target.id}>`, inline: true },
+        { name: "Legend",         value: `**${legendName}** (${position})`, inline: true },
+        { name: "Vault",          value: `${permanentCount + 1}/${PERMANENT_CAP}`, inline: true },
+        { name: "Store Entry",    value: wasCreated ? `✅ Created (ID ${legendId})` : `Existing (ID ${legendId})` },
+      )
+      .setFooter({ text: wasCreated ? "Legend was not in the store — a new entry was created and assigned." : "Legend found in store and assigned." });
+
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
 
   // ── VIEW ────────────────────────────────────────────────────────────────────
   if (sub === "view") {
