@@ -50,6 +50,14 @@ import * as userStats from "./commands/userstats.js";
 import * as interactionCreate from "./events/interactionCreate.js";
 import * as ready from "./events/ready.js";
 
+// ── Global crash protection ────────────────────────────────────────────────────
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection (bot kept alive):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception (bot kept alive):", err);
+});
+
 const token = process.env["DISCORD_TOKEN"];
 if (!token) throw new Error("DISCORD_TOKEN is required");
 

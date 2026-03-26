@@ -613,7 +613,9 @@ async function handleButton(interaction: ButtonInteraction) {
         .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500)
         .setPlaceholder("Explain why this interview request is being denied..."),
     ));
-    await interaction.showModal(modal);
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (deny) error:", err);
+    });
     return;
   }
 
@@ -671,7 +673,9 @@ async function handleButton(interaction: ButtonInteraction) {
       ),
     );
 
-    await interaction.showModal(modal);
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal error:", err);
+    });
     return;
   }
 }
