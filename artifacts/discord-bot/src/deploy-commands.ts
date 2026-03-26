@@ -16,6 +16,7 @@ import * as adminTransactions from "./commands/admin-transactions.js";
 import { addNewUserData, deleteMemberData } from "./commands/admin-team.js";
 import { updateRecordData, seasonPRData, allTimePRData } from "./commands/records.js";
 import * as recentH2H from "./commands/recentH2H.js";
+import * as rules from "./commands/rules.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -28,7 +29,7 @@ if (!token || !clientId || !guildId) {
 const commands = [
   help, balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
-  adminSetUser, adminTransactions, recentH2H,
+  adminSetUser, adminTransactions, recentH2H, rules,
 ].map(c => c.data.toJSON());
 
 commands.push(
