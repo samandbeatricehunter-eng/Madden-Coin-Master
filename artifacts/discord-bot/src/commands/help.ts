@@ -50,6 +50,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ].join("\n"),
       },
       {
+        name: "🏆 Game Payouts",
+        value: [
+          "`/requestpayout pvp @opponent [your score] [their score]` — Request a payout for a PvP game",
+          "  → Winner receives **50 coins**, loser receives **20 coins**. Ties receive nothing.",
+          "`/requestpayout cpu` — Request a **20-coin** payout for winning a CPU game",
+          "  → All payout requests are sent to the commissioner for approval.",
+        ].join("\n"),
+      },
+      {
         name: "📋 League Rules",
         value: [
           "`/rules [section]` — Display a league rules section",

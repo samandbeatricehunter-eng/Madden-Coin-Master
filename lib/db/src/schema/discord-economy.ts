@@ -147,6 +147,21 @@ export const rulesTable = pgTable("rules", {
   updatedBy: text("updated_by"),
 });
 
+export const payoutRequestsTable = pgTable("payout_requests", {
+  id: serial("id").primaryKey(),
+  requesterId: text("requester_id").notNull(),
+  opponentId: text("opponent_id"),
+  requesterScore: integer("requester_score"),
+  opponentScore: integer("opponent_score"),
+  gameType: text("game_type").notNull(), // "pvp" | "cpu"
+  status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied" | "tied"
+  denialReason: text("denial_reason"),
+  discordMessageId: text("discord_message_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: text("resolved_by"),
+});
+
 export const txTypeEnum = pgEnum("tx_type", [
   "purchase",
   "purchase_refund",
