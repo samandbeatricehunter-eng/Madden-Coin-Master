@@ -33,8 +33,12 @@ export const usersTable = pgTable("economy_users", {
   totalLegendPurchases: integer("total_legend_purchases").notNull().default(0),
   // All-time tracking for milestone payouts
   allTimeSuperbowlWins: integer("all_time_superbowl_wins").notNull().default(0),
+  allTimeH2HWins: integer("all_time_h2h_wins").notNull().default(0),
   // Which win milestone has been awarded: 0=none, 1=5W, 2=12W, 3=25W, 4=50W
   milestoneTierAwarded: integer("milestone_tier_awarded").notNull().default(0),
+  // Playoff seeding for current season (set by admin when advancing to wildcard)
+  playoffSeed: integer("playoff_seed"),         // 1–7 within their conference; null = not in playoffs
+  playoffConference: text("playoff_conference"), // "NFC" | "AFC" | null
   isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

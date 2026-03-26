@@ -95,5 +95,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     )
     .setTimestamp();
 
+  // Wildcard week reminder: admin must seed both conferences and award division bonuses
+  if (newWeek === "wildcard") {
+    embed.addFields({
+      name: "⚠️ Wildcard Week — Action Required",
+      value: [
+        "Before games begin, complete these steps:",
+        "**1.** `/admin-playoffs setnfcseeds` — Register NFC seeds 1–7",
+        "**2.** `/admin-playoffs setafcseeds` — Register AFC seeds 1–7",
+        "**3.** `/admin-playoffs divisionbonus` — Award +25 coins to all 8 division winners",
+        "",
+        "Seeds 1–4 in each conference earn **+75 coins/playoff win**.",
+        "Seeds 5–7 (wildcard entrants) earn **+100 coins/playoff win**.",
+        "All playoff losers receive **+50 coins** upon elimination.",
+      ].join("\n"),
+    });
+    embed.setColor(Colors.Yellow);
+  }
+
   await interaction.editReply({ embeds: [embed] });
 }

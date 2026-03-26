@@ -7,7 +7,7 @@ import {
 import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
-  payoutRequestsTable, interviewRequestsTable,
+  payoutRequestsTable, interviewRequestsTable, userRecordsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
@@ -21,6 +21,32 @@ import { weekLabel } from "../commands/advanceweek.js";
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
 const GENERAL_CHANNEL_ID       = "1476321282868908052";
+
+// ── Playoff + milestone constants ─────────────────────────────────────────────
+const PLAYOFF_WEEKS        = new Set(["wildcard", "divisional", "conference", "superbowl"]);
+const PLAYOFF_WIN_TOP4     = 75;   // Seeds 1-4 in their conference
+const PLAYOFF_WIN_WILDCARD = 100;  // Seeds 5-7 (wildcard entrants)
+const PLAYOFF_LOSS_BONUS   = 50;   // All playoff losers
+
+const SB_BONUSES: Record<number, number> = { 1: 250, 2: 500 };
+const SB_BONUS_3PLUS = 1000;
+
+const H2H_MILESTONES = [
+  { tier: 4, wins: 50, bonus: 1000 },
+  { tier: 3, wins: 25, bonus: 500  },
+  { tier: 2, wins: 12, bonus: 250  },
+  { tier: 1, wins: 5,  bonus: 100  },
+] as const;
+
+function checkMilestone(
+  totalWins: number,
+  currentTier: number,
+): { tier: number; wins: number; bonus: number } | null {
+  for (const m of H2H_MILESTONES) {
+    if (totalWins >= m.wins && currentTier < m.tier) return m;
+  }
+  return null;
+}
 
 export const name = "interactionCreate";
 
@@ -298,31 +324,150 @@ async function handleButton(interaction: ButtonInteraction) {
         const winnerTeam = requesterWon ? request.requesterTeam : request.opponentTeam;
         const loserTeam  = requesterWon ? request.opponentTeam  : request.requesterTeam;
 
-        if (winnerId) {
-          await addBalance(winnerId, H2H_WIN_PAYOUT);
-          await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
-            `H2H win payout vs ${loserTeam} (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)})`, interaction.user.id);
-          resultLines.push(`🏆 **${winnerTeam}** (winner) → +**${H2H_WIN_PAYOUT} coins**`);
-        }
-        if (loserId) {
-          await addBalance(loserId, H2H_LOSS_PAYOUT);
-          await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
-            `H2H loss payout vs ${winnerTeam} (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)})`, interaction.user.id);
-          resultLines.push(`🎮 **${loserTeam}** (loser) → +**${H2H_LOSS_PAYOUT} coins**`);
+        const isPlayoffGame   = PLAYOFF_WEEKS.has(request.week ?? "");
+        const isSuperBowlGame = request.week === "superbowl";
+        const gameLogType: "regular_season" | "playoff" | "superbowl" =
+          isSuperBowlGame ? "superbowl" : isPlayoffGame ? "playoff" : "regular_season";
+
+        // Fetch winner's full data (seed, milestones, SB wins) in one read
+        const winnerUserRows = winnerId
+          ? await db.select({
+              allTimeH2HWins:       usersTable.allTimeH2HWins,
+              allTimeSuperbowlWins: usersTable.allTimeSuperbowlWins,
+              milestoneTierAwarded: usersTable.milestoneTierAwarded,
+              playoffSeed:          usersTable.playoffSeed,
+            }).from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1)
+          : [];
+        const winnerData = winnerUserRows[0] ?? null;
+
+        // ── Determine payouts ──────────────────────────────────────────────
+        let winnerPayout: number;
+        let loserPayout: number;
+        if (isPlayoffGame) {
+          const seed   = winnerData?.playoffSeed ?? null;
+          const isTop4 = seed !== null && seed <= 4;
+          winnerPayout = isTop4 ? PLAYOFF_WIN_TOP4 : PLAYOFF_WIN_WILDCARD;
+          loserPayout  = PLAYOFF_LOSS_BONUS;
+        } else {
+          winnerPayout = H2H_WIN_PAYOUT;
+          loserPayout  = H2H_LOSS_PAYOUT;
         }
 
+        // ── Award base payouts ─────────────────────────────────────────────
+        const gameDesc = isPlayoffGame ? "Playoff" : "H2H";
+        if (winnerId) {
+          await addBalance(winnerId, winnerPayout);
+          await logTransaction(winnerId, winnerPayout, "addcoins",
+            `${gameDesc} win vs ${loserTeam} (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)})`, interaction.user.id);
+          resultLines.push(`🏆 **${winnerTeam}** (winner) → +**${winnerPayout} coins**`);
+        }
+        if (loserId) {
+          await addBalance(loserId, loserPayout);
+          await logTransaction(loserId, loserPayout, "addcoins",
+            `${gameDesc} loss vs ${winnerTeam} (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)})`, interaction.user.id);
+          resultLines.push(`🎮 **${loserTeam}** (loser) → +**${loserPayout} coins**`);
+        }
+
+        // ── Win/loss record totals ─────────────────────────────────────────
         await upsertH2HRecord(request.requesterId, season.id, requesterWon,  spread);
         if (request.opponentId) await upsertH2HRecord(request.opponentId, season.id, !requesterWon, -spread);
 
-        await appendGameLog(request.requesterId, season.id, requesterWon ? "win" : "loss", spread, request.opponentTeam ?? "Unknown");
-        if (request.opponentId) await appendGameLog(request.opponentId, season.id, requesterWon ? "loss" : "win", -spread, request.requesterTeam ?? "Unknown");
+        // ── Playoff-specific record counters ──────────────────────────────
+        if (isPlayoffGame && winnerId && loserId) {
+          const winnerSeasonRows = await db.select({ id: userRecordsTable.id })
+            .from(userRecordsTable)
+            .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)))
+            .limit(1);
+          const loserSeasonRows = await db.select({ id: userRecordsTable.id })
+            .from(userRecordsTable)
+            .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)))
+            .limit(1);
+
+          if (winnerSeasonRows.length > 0) {
+            if (isSuperBowlGame) {
+              await db.update(userRecordsTable)
+                .set({ superbowlWins: sql`${userRecordsTable.superbowlWins} + 1`, updatedAt: new Date() })
+                .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+            } else {
+              await db.update(userRecordsTable)
+                .set({ playoffWins: sql`${userRecordsTable.playoffWins} + 1`, updatedAt: new Date() })
+                .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+            }
+          }
+          if (loserSeasonRows.length > 0) {
+            if (isSuperBowlGame) {
+              await db.update(userRecordsTable)
+                .set({ superbowlLosses: sql`${userRecordsTable.superbowlLosses} + 1`, updatedAt: new Date() })
+                .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+            } else {
+              await db.update(userRecordsTable)
+                .set({ playoffLosses: sql`${userRecordsTable.playoffLosses} + 1`, updatedAt: new Date() })
+                .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+            }
+          }
+        }
+
+        // ── Super Bowl champion bonus ──────────────────────────────────────
+        if (isSuperBowlGame && winnerId && winnerData) {
+          const newSBWins = (winnerData.allTimeSuperbowlWins ?? 0) + 1;
+          await db.update(usersTable)
+            .set({ allTimeSuperbowlWins: sql`${usersTable.allTimeSuperbowlWins} + 1`, updatedAt: new Date() })
+            .where(eq(usersTable.discordId, winnerId));
+          const sbBonus = SB_BONUSES[newSBWins] ?? SB_BONUS_3PLUS;
+          await addBalance(winnerId, sbBonus);
+          await logTransaction(winnerId, sbBonus, "addcoins",
+            `Super Bowl champion bonus (career SB #${newSBWins})`, interaction.user.id);
+          resultLines.push(`🏆 **${winnerTeam}** Super Bowl champion bonus (career #${newSBWins}) → +**${sbBonus} coins**`);
+          try {
+            const u = await interaction.client.users.fetch(winnerId);
+            await u.send(
+              `🏆 **Super Bowl Champion!** Career SB win #${newSBWins} earns you **+${sbBonus} coins**! Legendary! 🎉`
+            ).catch(() => {});
+          } catch (_) {}
+        }
+
+        // ── Career H2H win milestone check ─────────────────────────────────
+        if (winnerId && winnerData) {
+          const prevWins    = winnerData.allTimeH2HWins ?? 0;
+          const newWins     = prevWins + 1;
+          const currentTier = winnerData.milestoneTierAwarded ?? 0;
+          await db.update(usersTable)
+            .set({ allTimeH2HWins: sql`${usersTable.allTimeH2HWins} + 1`, updatedAt: new Date() })
+            .where(eq(usersTable.discordId, winnerId));
+          const milestone = checkMilestone(newWins, currentTier);
+          if (milestone) {
+            await addBalance(winnerId, milestone.bonus);
+            await logTransaction(winnerId, milestone.bonus, "addcoins",
+              `Career H2H win milestone: ${milestone.wins} wins`, interaction.user.id);
+            await db.update(usersTable)
+              .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
+              .where(eq(usersTable.discordId, winnerId));
+            resultLines.push(`🎯 **${winnerTeam}** hit the **${milestone.wins}-win career milestone** → +**${milestone.bonus} bonus coins**!`);
+            try {
+              const u = await interaction.client.users.fetch(winnerId);
+              await u.send(
+                `🎯 **Win Milestone Reached!** You've hit **${milestone.wins} career H2H wins** — **+${milestone.bonus} bonus coins**! Keep it up! 🔥`
+              ).catch(() => {});
+            } catch (_) {}
+          }
+        }
+
+        // ── Game log ──────────────────────────────────────────────────────
+        await appendGameLog(request.requesterId, season.id, requesterWon ? "win" : "loss", spread, request.opponentTeam ?? "Unknown", gameLogType);
+        if (request.opponentId) await appendGameLog(request.opponentId, season.id, requesterWon ? "loss" : "win", -spread, request.requesterTeam ?? "Unknown", gameLogType);
 
         await db.update(payoutRequestsTable)
           .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
           .where(eq(payoutRequestsTable.id, payoutId));
 
-        if (winnerId) try { const u = await interaction.client.users.fetch(winnerId); await u.send(`🏆 H2H payout approved! **+${H2H_WIN_PAYOUT} coins** added. (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)} vs ${loserTeam})`).catch(() => {}); } catch (_) {}
-        if (loserId)  try { const u = await interaction.client.users.fetch(loserId);  await u.send(`🎮 H2H payout approved! **+${H2H_LOSS_PAYOUT} coins** added. (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)} vs ${winnerTeam})`).catch(() => {}); } catch (_) {}
+        if (winnerId) try {
+          const u = await interaction.client.users.fetch(winnerId);
+          await u.send(`🏆 ${gameDesc} win payout approved! **+${winnerPayout} coins** added. (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)} vs ${loserTeam})`).catch(() => {});
+        } catch (_) {}
+        if (loserId) try {
+          const u = await interaction.client.users.fetch(loserId);
+          await u.send(`🎮 ${gameDesc} loss payout approved! **+${loserPayout} coins** added. (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)} vs ${winnerTeam})`).catch(() => {});
+        } catch (_) {}
       }
 
     // ── CPU ────────────────────────────────────────────────────────────────────
