@@ -22,6 +22,7 @@ import * as adminSetAdmin from "./commands/admin-setadmin.js";
 import * as adminInventory from "./commands/admin-inventory.js";
 import * as reportscore from "./commands/reportscore.js";
 import * as interviewrequest from "./commands/interviewrequest.js";
+import * as advanceweek from "./commands/advanceweek.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -35,7 +36,7 @@ const commands = [
   help, balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
   adminSetUser, adminTransactions, recentH2H, rules,
-  adminRules, adminSetAdmin, adminInventory, reportscore, interviewrequest,
+  adminRules, adminSetAdmin, adminInventory, reportscore, interviewrequest, advanceweek,
 ].map(c => c.data.toJSON());
 
 commands.push(

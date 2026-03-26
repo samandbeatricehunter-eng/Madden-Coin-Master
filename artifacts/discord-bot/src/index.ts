@@ -37,6 +37,7 @@ import * as adminSetAdmin from "./commands/admin-setadmin.js";
 import * as adminInventory from "./commands/admin-inventory.js";
 import * as reportscore from "./commands/reportscore.js";
 import * as interviewrequest from "./commands/interviewrequest.js";
+import * as advanceweek from "./commands/advanceweek.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -73,6 +74,7 @@ const commands = [
   adminInventory,
   reportscore,
   interviewrequest,
+  advanceweek,
   { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
   { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
   { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },

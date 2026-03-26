@@ -52,6 +52,7 @@ export const seasonsTable = pgTable("seasons", {
   nonCoreAttrCapOverride: integer("non_core_attr_cap_override"),
   devUpsCapOverride: integer("dev_ups_cap_override"),
   ageResetsCapOverride: integer("age_resets_cap_override"),
+  currentWeek: text("current_week").notNull().default("1"),
 });
 
 export const legendsTable = pgTable("legends", {
@@ -157,6 +158,7 @@ export const payoutRequestsTable = pgTable("payout_requests", {
   requesterScore: integer("requester_score"),
   opponentScore: integer("opponent_score"),
   gameType: text("game_type").notNull(), // "h2h" | "cpu"
+  week: text("week"), // "1"-"18" | "wildcard" | "divisional" | "conference" | "superbowl" | "offseason"
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied" | "tied"
   interviewClaimed: boolean("interview_claimed").notNull().default(false),
   denialReason: text("denial_reason"),

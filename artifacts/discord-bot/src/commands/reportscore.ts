@@ -4,8 +4,9 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { payoutRequestsTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import { getOrCreateUser } from "../lib/db-helpers.js";
+import { eq, and, or, inArray } from "drizzle-orm";
+import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { weekLabel } from "./advanceweek.js";
 
 export const H2H_WIN_PAYOUT  = 50;
 export const H2H_LOSS_PAYOUT = 20;
@@ -87,6 +88,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const requesterTeam = requester.team ?? interaction.user.username;
 
+  // Get current league week
+  const season      = await getOrCreateActiveSeason();
+  const currentWeek = (season as any).currentWeek ?? "1";
+
   // ── H2H ─────────────────────────────────────────────────────────────────────
   if (sub === "h2h") {
     const opponentUser      = interaction.options.getUser("opponent", true);
@@ -94,6 +99,41 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (opponentDiscordId === interaction.user.id) {
       await interaction.editReply({ content: "❌ You can't report a game against yourself." });
+      return;
+    }
+
+    // ── Duplicate check: block if this matchup already has a pending/approved payout this week ──
+    const existing = await db.select({ id: payoutRequestsTable.id, status: payoutRequestsTable.status })
+      .from(payoutRequestsTable)
+      .where(and(
+        eq(payoutRequestsTable.week, currentWeek),
+        eq(payoutRequestsTable.gameType, "h2h"),
+        or(
+          and(
+            eq(payoutRequestsTable.requesterId, interaction.user.id),
+            eq(payoutRequestsTable.opponentId, opponentDiscordId),
+          ),
+          and(
+            eq(payoutRequestsTable.requesterId, opponentDiscordId),
+            eq(payoutRequestsTable.opponentId, interaction.user.id),
+          ),
+        ),
+        inArray(payoutRequestsTable.status, ["pending", "approved"]),
+      ))
+      .limit(1);
+
+    if (existing.length > 0) {
+      const dupe = existing[0]!;
+      const stateNote = dupe.status === "approved"
+        ? "already been **approved and paid**"
+        : "already been **submitted and is pending** commissioner review";
+      await interaction.editReply({
+        content: [
+          `⚠️ **Duplicate game detected — ${weekLabel(currentWeek)}.**`,
+          `A score report between you and ${opponentUser.toString()} has ${stateNote} this week.`,
+          `Score Report #\`${dupe.id}\` — contact a commissioner if there's a mistake.`,
+        ].join("\n"),
+      });
       return;
     }
 
@@ -122,6 +162,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       requesterScore: myScore,
       opponentScore:  oppScore,
       gameType:       "h2h",
+      week:           currentWeek,
       status:         "pending",
     }).returning();
 
@@ -131,10 +172,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setColor(Colors.Yellow)
       .setTitle("🏈 Score Report — H2H Game")
       .addFields(
-        { name: "Requester", value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
-        { name: "Opponent",  value: `${opponentUser.toString()} (${opponentTeam})`,      inline: true },
-        { name: "Final Score",          value: `**${requesterTeam}** ${myScore} – ${oppScore} **${opponentTeam}**` },
-        { name: "Payout if Approved",   value: payoutPreview },
+        { name: "Requester",  value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
+        { name: "Opponent",   value: `${opponentUser.toString()} (${opponentTeam})`,      inline: true },
+        { name: "Week",       value: weekLabel(currentWeek), inline: true },
+        { name: "Final Score",         value: `**${requesterTeam}** ${myScore} – ${oppScore} **${opponentTeam}**` },
+        { name: "Payout if Approved",  value: payoutPreview },
       )
       .setFooter({ text: `Request #${payoutId}` })
       .setTimestamp();
