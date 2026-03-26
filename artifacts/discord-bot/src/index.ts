@@ -35,7 +35,7 @@ import * as rules from "./commands/rules.js";
 import * as adminRules from "./commands/admin-rules.js";
 import * as adminSetAdmin from "./commands/admin-setadmin.js";
 import * as adminInventory from "./commands/admin-inventory.js";
-import * as requestpayout from "./commands/requestpayout.js";
+import * as reportscore from "./commands/reportscore.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -70,7 +70,7 @@ const commands = [
   adminRules,
   adminSetAdmin,
   adminInventory,
-  requestpayout,
+  reportscore,
   { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
   { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
   { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },

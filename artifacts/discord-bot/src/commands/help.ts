@@ -52,10 +52,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "🏆 Game Payouts",
         value: [
-          "`/requestpayout pvp @opponent [your score] [their score]` — Request a payout for a PvP game",
+          "`/reportscore h2h [opponent team] [your score] [their score]` — Report an H2H game result",
           "  → Winner receives **50 coins**, loser receives **20 coins**. Ties receive nothing.",
-          "`/requestpayout cpu` — Request a **20-coin** payout for winning a CPU game",
-          "  → All payout requests are sent to the commissioner for approval.",
+          "`/reportscore cpu [cpu team] [your score] [cpu score]` — Report a CPU game result",
+          "  → Win pays **20 coins**, loss pays nothing. Ties pay nothing.",
+          "  → All reports go to the commissioner for approval. H2H results count toward power rankings.",
         ].join("\n"),
       },
       {

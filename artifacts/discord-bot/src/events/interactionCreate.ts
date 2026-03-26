@@ -6,8 +6,11 @@ import {
 import { db } from "@workspace/db";
 import { purchasesTable, inventoryTable, legendsTable, usersTable, payoutRequestsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { addBalance, logTransaction } from "../lib/db-helpers.js";
-import { PVP_WIN_PAYOUT, PVP_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/requestpayout.js";
+import {
+  addBalance, logTransaction,
+  upsertH2HRecord, appendGameLog, getOrCreateActiveSeason,
+} from "../lib/db-helpers.js";
+import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
 
 export const name = "interactionCreate";
 
@@ -16,11 +19,7 @@ export async function execute(interaction: Interaction) {
     const client = interaction.client as any;
     const command = client.commands?.get(interaction.commandName);
     if (!command?.autocomplete) return;
-    try {
-      await command.autocomplete(interaction);
-    } catch (err) {
-      console.error("Autocomplete error:", err);
-    }
+    try { await command.autocomplete(interaction); } catch (err) { console.error("Autocomplete error:", err); }
     return;
   }
 
@@ -28,29 +27,19 @@ export async function execute(interaction: Interaction) {
     const client = interaction.client as any;
     const command = client.commands?.get(interaction.commandName);
     if (!command) return;
-
     try {
       await command.execute(interaction);
     } catch (err) {
       console.error(`Error executing command ${interaction.commandName}:`, err);
       const errorMsg = { content: "An error occurred while executing that command.", ephemeral: true };
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMsg).catch(() => {});
-      } else {
-        await interaction.reply(errorMsg).catch(() => {});
-      }
+      if (interaction.replied || interaction.deferred) await interaction.followUp(errorMsg).catch(() => {});
+      else await interaction.reply(errorMsg).catch(() => {});
     }
     return;
   }
 
-  if (interaction.isButton()) {
-    await handleButton(interaction);
-    return;
-  }
-
-  if (interaction.isModalSubmit()) {
-    await handleModal(interaction);
-  }
+  if (interaction.isButton()) { await handleButton(interaction); return; }
+  if (interaction.isModalSubmit()) { await handleModal(interaction); }
 }
 
 // ── Button handler ─────────────────────────────────────────────────────────────
@@ -64,47 +53,39 @@ async function handleButton(interaction: ButtonInteraction) {
 
     const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.id, purchaseId)).limit(1);
     const purchase = purchases[0];
-
-    if (!purchase) { await interaction.followUp({ content: "❌ Purchase not found.", ephemeral: true }); return; }
-    if (purchase.status === "approved") { await interaction.followUp({ content: "⚠️ This purchase has already been approved.", ephemeral: true }); return; }
-    if (purchase.status === "refunded") { await interaction.followUp({ content: "⚠️ This purchase was already refunded.", ephemeral: true }); return; }
+    if (!purchase)                  { await interaction.followUp({ content: "❌ Purchase not found.", ephemeral: true }); return; }
+    if (purchase.status === "approved") { await interaction.followUp({ content: "⚠️ Already approved.", ephemeral: true }); return; }
+    if (purchase.status === "refunded") { await interaction.followUp({ content: "⚠️ Already refunded.", ephemeral: true }); return; }
 
     await db.update(purchasesTable).set({ status: "approved", approvedAt: new Date() }).where(eq(purchasesTable.id, purchaseId));
 
     if (purchaseType === "legend" && purchase.legendId) {
       await db.insert(inventoryTable).values({
-        discordId: userId!,
-        seasonId: purchase.seasonId,
-        purchaseId: purchase.id,
-        itemType: "legend",
-        legendId: purchase.legendId,
-        legendName: purchase.playerName,
-        playerPosition: purchase.playerPosition,
+        discordId: userId!, seasonId: purchase.seasonId, purchaseId: purchase.id,
+        itemType: "legend", legendId: purchase.legendId,
+        legendName: purchase.playerName, playerPosition: purchase.playerPosition,
       });
       await db.update(legendsTable).set({ isAvailable: false }).where(eq(legendsTable.id, purchase.legendId));
     }
 
     const approvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle("✅ Applied In-Game")
-      .setDescription(`Purchase **#${purchaseId}** has been applied in-game.\n\nApproved by: ${interaction.user.toString()}`)
+      .setColor(Colors.Green).setTitle("✅ Applied In-Game")
+      .setDescription(`Purchase **#${purchaseId}** applied.\nApproved by: ${interaction.user.toString()}`)
       .setTimestamp();
-
     const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("approved_done").setLabel("✅ Applied").setStyle(ButtonStyle.Success).setDisabled(true),
     );
-
     await interaction.editReply({ embeds: [approvedEmbed], components: [disabledRow] });
 
     try {
       const user = await interaction.client.users.fetch(userId!);
-      let notifyMessage = "";
-      if (purchaseType === "legend") notifyMessage = `🏆 Your legend **${purchase.playerName}** has been added to the draft pool! Check your inventory with \`/inventory\`.`;
-      else if (purchaseType === "attribute") notifyMessage = `⚡ Your **${purchase.attributeName}** attribute upgrade has been applied in-game!`;
-      else if (purchaseType === "dev_up") notifyMessage = `📈 Your dev upgrade for **${purchase.playerName}** has been applied in-game!`;
-      else if (purchaseType === "age_reset") notifyMessage = `🔄 Your age reset for **${purchase.playerName}** has been applied in-game!`;
-      else if (purchaseType?.startsWith("custom_player")) notifyMessage = `🎨 Your custom player **${purchase.playerName}** has been applied in-game!`;
-      await user.send(`✅ **Purchase #${purchaseId} Approved!**\n${notifyMessage}`).catch(() => {});
+      let msg = "";
+      if (purchaseType === "legend") msg = `🏆 Your legend **${purchase.playerName}** has been added to the draft pool! Check \`/inventory\`.`;
+      else if (purchaseType === "attribute") msg = `⚡ Your **${purchase.attributeName}** attribute upgrade has been applied!`;
+      else if (purchaseType === "dev_up") msg = `📈 Your dev upgrade for **${purchase.playerName}** has been applied!`;
+      else if (purchaseType === "age_reset") msg = `🔄 Your age reset for **${purchase.playerName}** has been applied!`;
+      else if (purchaseType?.startsWith("custom_player")) msg = `🎨 Your custom player **${purchase.playerName}** has been applied!`;
+      await user.send(`✅ **Purchase #${purchaseId} Approved!**\n${msg}`).catch(() => {});
     } catch (_) {}
     return;
   }
@@ -115,140 +96,180 @@ async function handleButton(interaction: ButtonInteraction) {
 
     const purchases = await db.select().from(purchasesTable).where(eq(purchasesTable.id, purchaseId)).limit(1);
     const purchase = purchases[0];
-
-    if (!purchase) { await interaction.followUp({ content: "❌ Purchase not found.", ephemeral: true }); return; }
-    if (purchase.status === "refunded") { await interaction.followUp({ content: "⚠️ This purchase was already refunded.", ephemeral: true }); return; }
+    if (!purchase)                  { await interaction.followUp({ content: "❌ Purchase not found.", ephemeral: true }); return; }
+    if (purchase.status === "refunded") { await interaction.followUp({ content: "⚠️ Already refunded.", ephemeral: true }); return; }
 
     await db.update(purchasesTable).set({ status: "refunded" }).where(eq(purchasesTable.id, purchaseId));
     await addBalance(userId!, purchase.cost);
-    await logTransaction(userId!, purchase.cost, "purchase_refund", `Refund: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`, interaction.user.id);
+    await logTransaction(userId!, purchase.cost, "purchase_refund",
+      `Refund: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`,
+      interaction.user.id);
 
     if (purchaseType === "legend") {
       await db.update(usersTable)
         .set({ totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`, updatedAt: new Date() })
         .where(eq(usersTable.discordId, userId!));
     }
-
     await db.delete(inventoryTable).where(and(eq(inventoryTable.purchaseId, purchaseId), eq(inventoryTable.discordId, userId!)));
 
     const refundedEmbed = new EmbedBuilder()
-      .setColor(Colors.Red)
-      .setTitle("🔄 Purchase Refunded")
-      .setDescription(`Purchase **#${purchaseId}** has been refunded. **${purchase.cost.toLocaleString()} coins** returned.\n\nRefunded by: ${interaction.user.toString()}`)
+      .setColor(Colors.Red).setTitle("🔄 Purchase Refunded")
+      .setDescription(`Purchase **#${purchaseId}** refunded. **${purchase.cost.toLocaleString()} coins** returned.\nRefunded by: ${interaction.user.toString()}`)
       .setTimestamp();
-
     const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("refunded_done").setLabel("🔄 Refunded").setStyle(ButtonStyle.Danger).setDisabled(true),
     );
-
     await interaction.editReply({ embeds: [refundedEmbed], components: [disabledRow] });
 
     try {
       const user = await interaction.client.users.fetch(userId!);
-      await user.send(`🔄 **Purchase #${purchaseId} Refunded**\n**${purchase.cost.toLocaleString()} coins** have been returned to your balance.`).catch(() => {});
+      await user.send(`🔄 **Purchase #${purchaseId} Refunded**\n**${purchase.cost.toLocaleString()} coins** returned to your balance.`).catch(() => {});
     } catch (_) {}
     return;
   }
 
-  // ── Payout buttons ───────────────────────────────────────────────────────────
+  // ── Score report / payout buttons ────────────────────────────────────────────
   if (action === "payout_approve") {
     const payoutId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
     const rows = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, payoutId)).limit(1);
     const request = rows[0];
-
-    if (!request) { await interaction.followUp({ content: "❌ Payout request not found.", ephemeral: true }); return; }
+    if (!request) { await interaction.followUp({ content: "❌ Request not found.", ephemeral: true }); return; }
     if (request.status !== "pending") {
       await interaction.followUp({ content: `⚠️ This request has already been **${request.status}**.`, ephemeral: true });
       return;
     }
 
-    let resultLines: string[] = [];
+    const season      = await getOrCreateActiveSeason();
+    const resultLines: string[] = [];
+    const myScore  = request.requesterScore ?? 0;
+    const oppScore = request.opponentScore  ?? 0;
+    const spread   = myScore - oppScore;
+    const requesterWon = myScore > oppScore;
+    const isTie    = myScore === oppScore;
 
-    if (request.gameType === "pvp") {
-      const myScore  = request.requesterScore!;
-      const oppScore = request.opponentScore!;
-
-      if (myScore === oppScore) {
-        // Tie — no coins
+    // ── H2H ──────────────────────────────────────────────────────────────────
+    if (request.gameType === "h2h" || request.gameType === "pvp") {
+      if (isTie) {
         await db.update(payoutRequestsTable)
           .set({ status: "tied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
           .where(eq(payoutRequestsTable.id, payoutId));
 
-        resultLines.push("🤝 **Tie game** — no payout awarded to either player.");
+        // Log tie to game log for requester
+        await appendGameLog(request.requesterId, season.id, "loss", 0,
+          `[TIE] ${request.opponentTeam ?? "Unknown"}`);
 
+        // Log tie for opponent if known
+        if (request.opponentId) {
+          await appendGameLog(request.opponentId, season.id, "loss", 0,
+            `[TIE] ${request.requesterTeam ?? "Unknown"}`);
+        }
+
+        resultLines.push("🤝 **Tie game** — no payout awarded to either player.");
         for (const uid of [request.requesterId, request.opponentId].filter(Boolean) as string[]) {
           try {
             const u = await interaction.client.users.fetch(uid);
-            await u.send(`🤝 Your game was confirmed as a **tie** (${myScore}–${oppScore}). No payout is awarded for tied games.`).catch(() => {});
+            await u.send(`🤝 Your game vs **${uid === request.requesterId ? request.opponentTeam : request.requesterTeam}** was confirmed as a **tie** (${myScore}–${oppScore}). No payout for ties.`).catch(() => {});
           } catch (_) {}
         }
       } else {
-        const winnerId = myScore > oppScore ? request.requesterId : request.opponentId!;
-        const loserId  = myScore > oppScore ? request.opponentId! : request.requesterId;
-        const winScore = Math.max(myScore, oppScore);
-        const loseScore = Math.min(myScore, oppScore);
+        // Determine winner and loser
+        const winnerId = requesterWon ? request.requesterId : (request.opponentId ?? null);
+        const loserId  = requesterWon ? (request.opponentId ?? null) : request.requesterId;
+        const winnerTeam = requesterWon ? request.requesterTeam : request.opponentTeam;
+        const loserTeam  = requesterWon ? request.opponentTeam  : request.requesterTeam;
 
-        await addBalance(winnerId, PVP_WIN_PAYOUT);
-        await logTransaction(winnerId, PVP_WIN_PAYOUT, "addcoins", `PvP win payout (${winScore}–${loseScore})`, interaction.user.id);
-        await addBalance(loserId, PVP_LOSS_PAYOUT);
-        await logTransaction(loserId, PVP_LOSS_PAYOUT, "addcoins", `PvP participation payout (${loseScore}–${winScore})`, interaction.user.id);
+        // Pay winner
+        if (winnerId) {
+          await addBalance(winnerId, H2H_WIN_PAYOUT);
+          await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
+            `H2H win payout vs ${loserTeam} (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)})`, interaction.user.id);
+          resultLines.push(`🏆 **${winnerTeam}** (winner) → +**${H2H_WIN_PAYOUT} coins**`);
+        }
+        // Pay loser
+        if (loserId) {
+          await addBalance(loserId, H2H_LOSS_PAYOUT);
+          await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
+            `H2H loss payout vs ${winnerTeam} (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)})`, interaction.user.id);
+          resultLines.push(`🎮 **${loserTeam}** (loser) → +**${H2H_LOSS_PAYOUT} coins**`);
+        }
+
+        // Update H2H power ranking records
+        await upsertH2HRecord(request.requesterId, season.id, requesterWon,  spread);
+        if (request.opponentId) {
+          await upsertH2HRecord(request.opponentId, season.id, !requesterWon, -spread);
+        }
+
+        // Log to game log for requester
+        await appendGameLog(request.requesterId, season.id,
+          requesterWon ? "win" : "loss", spread,
+          request.opponentTeam ?? "Unknown");
+        // Log for opponent if known
+        if (request.opponentId) {
+          await appendGameLog(request.opponentId, season.id,
+            requesterWon ? "loss" : "win", -spread,
+            request.requesterTeam ?? "Unknown");
+        }
 
         await db.update(payoutRequestsTable)
           .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
           .where(eq(payoutRequestsTable.id, payoutId));
 
-        resultLines.push(
-          `🏆 Winner <@${winnerId}> → **+${PVP_WIN_PAYOUT} coins**`,
-          `🎮 <@${loserId}> → **+${PVP_LOSS_PAYOUT} coins**`,
-        );
-
-        try { const u = await interaction.client.users.fetch(winnerId); await u.send(`🏆 Your PvP payout was approved! **+${PVP_WIN_PAYOUT} coins** added to your balance.`).catch(() => {}); } catch (_) {}
-        try { const u = await interaction.client.users.fetch(loserId);  await u.send(`🎮 Your PvP payout was approved! **+${PVP_LOSS_PAYOUT} coins** added to your balance.`).catch(() => {}); } catch (_) {}
+        // DM winner
+        if (winnerId) try { const u = await interaction.client.users.fetch(winnerId); await u.send(`🏆 H2H payout approved! **+${H2H_WIN_PAYOUT} coins** added. (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)} vs ${loserTeam})`).catch(() => {}); } catch (_) {}
+        // DM loser
+        if (loserId) try { const u = await interaction.client.users.fetch(loserId); await u.send(`🎮 H2H payout approved! **+${H2H_LOSS_PAYOUT} coins** added. (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)} vs ${winnerTeam})`).catch(() => {}); } catch (_) {}
       }
+
+    // ── CPU ────────────────────────────────────────────────────────────────────
     } else if (request.gameType === "cpu") {
-      await addBalance(request.requesterId, CPU_WIN_PAYOUT);
-      await logTransaction(request.requesterId, CPU_WIN_PAYOUT, "addcoins", "CPU win payout", interaction.user.id);
+      const cpuResult = isTie ? "tied" : requesterWon ? "approved" : "approved";
+
+      if (requesterWon && !isTie) {
+        await addBalance(request.requesterId, CPU_WIN_PAYOUT);
+        await logTransaction(request.requesterId, CPU_WIN_PAYOUT, "addcoins",
+          `CPU win payout vs ${request.opponentTeam ?? "CPU"}`, interaction.user.id);
+        resultLines.push(`🤖 **${request.requesterTeam}** → +**${CPU_WIN_PAYOUT} coins** (CPU win)`);
+        try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`🤖 CPU win payout approved! **+${CPU_WIN_PAYOUT} coins** added. (${myScore}–${oppScore} vs ${request.opponentTeam})`).catch(() => {}); } catch (_) {}
+      } else if (isTie) {
+        resultLines.push("🤝 **Tie vs CPU** — no payout.");
+        try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`🤝 Your CPU game vs **${request.opponentTeam}** was confirmed as a tie (${myScore}–${oppScore}). No payout for ties.`).catch(() => {}); } catch (_) {}
+      } else {
+        resultLines.push(`❌ **Loss vs CPU** — no payout.`);
+        try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`Your CPU game vs **${request.opponentTeam}** was confirmed (${myScore}–${oppScore}). No payout for CPU losses.`).catch(() => {}); } catch (_) {}
+      }
+
+      // Always log the CPU game (win OR loss) — but not to power rankings
+      await appendGameLog(request.requesterId, season.id,
+        requesterWon ? "win" : "loss", spread,
+        `[CPU] ${request.opponentTeam ?? "CPU"}`);
 
       await db.update(payoutRequestsTable)
-        .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+        .set({ status: isTie ? "tied" : "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
         .where(eq(payoutRequestsTable.id, payoutId));
-
-      resultLines.push(`🤖 <@${request.requesterId}> → **+${CPU_WIN_PAYOUT} coins** for CPU win`);
-
-      try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`🤖 Your CPU win payout was approved! **+${CPU_WIN_PAYOUT} coins** added to your balance.`).catch(() => {}); } catch (_) {}
     }
 
     const resolvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle("✅ Payout Approved")
+      .setColor(Colors.Green).setTitle("✅ Score Report Processed")
       .setDescription(resultLines.join("\n") + `\n\nApproved by: ${interaction.user.toString()}`)
       .setTimestamp();
-
     const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("payout_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
+      new ButtonBuilder().setCustomId("payout_done").setLabel("✅ Processed").setStyle(ButtonStyle.Success).setDisabled(true),
     );
-
     await interaction.editReply({ embeds: [resolvedEmbed], components: [disabledRow] });
     return;
   }
 
   if (action === "payout_deny") {
     const payoutId = secondPart!;
-
     const modal = new ModalBuilder()
       .setCustomId(`payout_modal:${payoutId}`)
-      .setTitle("Deny Payout Request");
-
+      .setTitle("Deny Score Report");
     const reasonInput = new TextInputBuilder()
-      .setCustomId("reason")
-      .setLabel("Reason for denial")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(500)
-      .setPlaceholder("Explain why this payout is being denied...");
-
+      .setCustomId("reason").setLabel("Reason for denial").setStyle(TextInputStyle.Paragraph)
+      .setRequired(true).setMaxLength(500)
+      .setPlaceholder("Explain why this score report is being denied...");
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(reasonInput));
     await interaction.showModal(modal);
     return;
@@ -265,11 +286,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     const rows = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, payoutId)).limit(1);
     const request = rows[0];
-
-    if (!request) {
-      await interaction.reply({ content: "❌ Payout request not found.", ephemeral: true });
-      return;
-    }
+    if (!request) { await interaction.reply({ content: "❌ Request not found.", ephemeral: true }); return; }
     if (request.status !== "pending") {
       await interaction.reply({ content: `⚠️ This request has already been **${request.status}**.`, ephemeral: true });
       return;
@@ -283,21 +300,18 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     try {
       const requester = await interaction.client.users.fetch(request.requesterId);
       const gameDesc  = request.gameType === "cpu"
-        ? "CPU win"
-        : `PvP game (Score: ${request.requesterScore}–${request.opponentScore})`;
-      await requester.send(
-        `❌ **Your payout request for your ${gameDesc} was denied by a commissioner.**\n**Reason:** ${reason}`,
-      ).catch(() => {});
+        ? `CPU game vs ${request.opponentTeam ?? "CPU"} (${request.requesterScore}–${request.opponentScore})`
+        : `H2H game vs ${request.opponentTeam ?? "Unknown"} (${request.requesterScore}–${request.opponentScore})`;
+      await requester.send(`❌ **Your score report for your ${gameDesc} was denied.**\n**Reason:** ${reason}`).catch(() => {});
     } catch (_) {}
 
-    // Edit the original commissioner channel message
+    // Edit the original commissioner message
     try {
       const commChannel = await interaction.client.channels.fetch(process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!);
       if (commChannel?.isTextBased() && request.discordMessageId) {
         const msg = await (commChannel as any).messages.fetch(request.discordMessageId);
         const deniedEmbed = new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("❌ Payout Denied")
+          .setColor(Colors.Red).setTitle("❌ Score Report Denied")
           .setDescription(`**Denied by:** ${interaction.user.toString()}\n**Reason:** ${reason}`)
           .setTimestamp();
         const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -306,11 +320,11 @@ async function handleModal(interaction: ModalSubmitInteraction) {
         await msg.edit({ embeds: [deniedEmbed], components: [disabledRow] });
       }
     } catch (err) {
-      console.error("Failed to edit commissioner message after payout denial:", err);
+      console.error("Failed to edit commissioner message after denial:", err);
     }
 
     await interaction.reply({
-      content: `✅ Payout request **#${payoutId}** has been denied. The requester has been notified.`,
+      content: `✅ Score report **#${payoutId}** denied. The requester has been notified.`,
       ephemeral: true,
     });
   }

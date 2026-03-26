@@ -2,6 +2,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
   inventoryTable, legendsTable, coinTransactionsTable, rulesTable,
+  userRecordsTable, gameLogTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
@@ -179,6 +180,52 @@ export async function getSeasonRules(season: Season) {
     devUpsCap:       season.devUpsCapOverride       ?? LIMITS.devUpsPerSeason,
     ageResetsCap:    season.ageResetsCapOverride    ?? LIMITS.ageResetsPerSeason,
   };
+}
+
+export async function upsertH2HRecord(
+  discordId: string,
+  seasonId: number,
+  won: boolean,
+  pointSpread: number,
+): Promise<void> {
+  const userInfo = await db.select({ discordUsername: usersTable.discordUsername, team: usersTable.team })
+    .from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+  if (!userInfo[0]) return;
+
+  const existing = await db.select({ id: userRecordsTable.id })
+    .from(userRecordsTable)
+    .where(and(eq(userRecordsTable.discordId, discordId), eq(userRecordsTable.seasonId, seasonId)))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db.update(userRecordsTable).set({
+      wins:              won  ? sql`${userRecordsTable.wins}   + 1` : userRecordsTable.wins,
+      losses:            !won ? sql`${userRecordsTable.losses} + 1` : userRecordsTable.losses,
+      pointDifferential: sql`${userRecordsTable.pointDifferential} + ${pointSpread}`,
+      updatedAt: new Date(),
+    }).where(and(eq(userRecordsTable.discordId, discordId), eq(userRecordsTable.seasonId, seasonId)));
+  } else {
+    await db.insert(userRecordsTable).values({
+      discordId,
+      discordUsername: userInfo[0].discordUsername,
+      team:            userInfo[0].team ?? null,
+      seasonId,
+      wins:              won ? 1 : 0,
+      losses:            won ? 0 : 1,
+      pointDifferential: pointSpread,
+    });
+  }
+}
+
+export async function appendGameLog(
+  discordId: string,
+  seasonId: number,
+  result: "win" | "loss",
+  pointSpread: number,
+  opponentLabel: string,
+  gameType: "regular_season" | "playoff" | "superbowl" = "regular_season",
+): Promise<void> {
+  await db.insert(gameLogTable).values({ discordId, seasonId, result, pointSpread, opponentLabel, gameType });
 }
 
 export async function getLegendPurchaseHistory(discordId: string) {

@@ -150,10 +150,12 @@ export const rulesTable = pgTable("rules", {
 export const payoutRequestsTable = pgTable("payout_requests", {
   id: serial("id").primaryKey(),
   requesterId: text("requester_id").notNull(),
+  requesterTeam: text("requester_team"),
   opponentId: text("opponent_id"),
+  opponentTeam: text("opponent_team"),
   requesterScore: integer("requester_score"),
   opponentScore: integer("opponent_score"),
-  gameType: text("game_type").notNull(), // "pvp" | "cpu"
+  gameType: text("game_type").notNull(), // "h2h" | "cpu"
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied" | "tied"
   denialReason: text("denial_reason"),
   discordMessageId: text("discord_message_id"),
