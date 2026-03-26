@@ -2,6 +2,7 @@ import {
   Interaction, ButtonInteraction, EmbedBuilder, Colors,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction,
+  TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -15,6 +16,8 @@ import {
 } from "../lib/db-helpers.js";
 import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
 import { INTERVIEW_PAYOUT } from "../commands/interviewrequest.js";
+
+const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
 export const name = "interactionCreate";
 
@@ -290,6 +293,22 @@ async function handleButton(interaction: ButtonInteraction) {
         new ButtonBuilder().setCustomId("interview_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
       )],
     });
+
+    try {
+      const headlinesChannel = await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+      if (headlinesChannel?.isTextBased()) {
+        const headlinesEmbed = new EmbedBuilder()
+          .setColor(Colors.Blurple)
+          .setTitle("🎙️ Post-Game Interview Approved!")
+          .setDescription(`<@${interview.discordId}>'s post-game interview has been approved!\n💰 **+${INTERVIEW_PAYOUT} coins** awarded.`)
+          .setFooter({ text: `Interview #${interviewId}` })
+          .setTimestamp();
+        await (headlinesChannel as TextChannel).send({ content: "@everyone", embeds: [headlinesEmbed] });
+      }
+    } catch (err) {
+      console.error("Failed to post interview approval to headlines channel:", err);
+    }
+
     return;
   }
 
@@ -309,7 +328,9 @@ async function handleButton(interaction: ButtonInteraction) {
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
 async function handleModal(interaction: ModalSubmitInteraction) {
-  const [action, idStr] = interaction.customId.split(":");
+  const parts  = interaction.customId.split(":");
+  const action = parts[0]!;
+  const idStr  = parts[1];
 
   // ── Score report denial ──────────────────────────────────────────────────────
   if (action === "payout_modal") {
@@ -324,8 +345,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       return;
     }
 
-    // Release the interview claim so the user can submit another interview next game
-    // (denial = game not verified, so their interview slot is freed too)
     await db.update(payoutRequestsTable)
       .set({ status: "denied", denialReason: reason, resolvedAt: new Date(), resolvedBy: interaction.user.id, interviewClaimed: false })
       .where(eq(payoutRequestsTable.id, payoutId));
@@ -356,6 +375,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (err) { console.error("Failed to edit commissioner message after score denial:", err); }
 
     await interaction.reply({ content: `✅ Score report **#${payoutId}** denied. The requester has been notified.`, ephemeral: true });
+    return;
   }
 
   // ── Interview denial ─────────────────────────────────────────────────────────
@@ -375,7 +395,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       .set({ status: "denied", denialReason: reason, resolvedAt: new Date(), resolvedBy: interaction.user.id })
       .where(eq(interviewRequestsTable.id, interviewId));
 
-    // Release the interview slot so the user can interview after their next game
     await db.update(payoutRequestsTable)
       .set({ interviewClaimed: false })
       .where(eq(payoutRequestsTable.id, interview.payoutRequestId));
@@ -403,5 +422,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (err) { console.error("Failed to edit commissioner message after interview denial:", err); }
 
     await interaction.reply({ content: `✅ Interview **#${interviewId}** denied. The player has been notified and their slot has been reset.`, ephemeral: true });
+    return;
   }
 }
