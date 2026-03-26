@@ -3,8 +3,8 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { legendsTable } from "@workspace/db";
-import { eq, asc } from "drizzle-orm";
+import { legendsTable, inventoryTable, usersTable } from "@workspace/db";
+import { eq, asc, inArray } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
   .setName("legend")
@@ -19,7 +19,7 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand(sub =>
     sub.setName("list")
-      .setDescription("View all legends (available and purchased)")
+      .setDescription("View all legends — store, current-season owned, and permanent vaults")
   )
   .addSubcommand(sub =>
     sub.setName("edit")
@@ -36,11 +36,32 @@ export const data = new SlashCommandBuilder()
       .addIntegerOption(opt => opt.setName("id").setDescription("Legend ID to remove").setRequired(true))
   );
 
+// Split long line arrays into multiple embed fields to stay under Discord's 1024-char limit
+function chunkLines(lines: string[], label: string): { name: string; value: string }[] {
+  const fields: { name: string; value: string }[] = [];
+  let current: string[] = [];
+  let len = 0;
+  for (const line of lines) {
+    if (len + line.length + 1 > 1020 && current.length > 0) {
+      fields.push({ name: fields.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
+      current = [];
+      len = 0;
+    }
+    current.push(line);
+    len += line.length + 1;
+  }
+  if (current.length > 0) {
+    fields.push({ name: fields.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
+  }
+  return fields;
+}
+
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const sub = interaction.options.getSubcommand();
 
+  // ── ADD ────────────────────────────────────────────────────────────────────
   if (sub === "add") {
     const name = interaction.options.getString("name", true);
     const position = interaction.options.getString("position", true);
@@ -64,8 +85,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
+  // ── LIST ───────────────────────────────────────────────────────────────────
   if (sub === "list") {
-    const legends = await db.select().from(legendsTable).orderBy(asc(legendsTable.position), asc(legendsTable.name));
+    // Fetch all legends ever added (never deleted from this table)
+    const legends = await db.select().from(legendsTable)
+      .orderBy(asc(legendsTable.position), asc(legendsTable.name));
 
     if (legends.length === 0) {
       return interaction.editReply({
@@ -73,46 +97,104 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    const available = legends.filter(l => l.isAvailable);
-    const purchased = legends.filter(l => !l.isAvailable);
+    // Fetch all active legend inventory records
+    const inventoryRows = await db.select({
+      legendId: inventoryTable.legendId,
+      discordId: inventoryTable.discordId,
+      legendCategory: inventoryTable.legendCategory,
+      addedAt: inventoryTable.addedAt,
+    }).from(inventoryTable)
+      .where(eq(inventoryTable.itemType, "legend"));
 
-    // Split lines into chunks that fit within Discord's 1024-char field limit
-    function chunkLines(lines: string[], label: string): { name: string; value: string }[] {
-      const fields: { name: string; value: string }[] = [];
-      let current: string[] = [];
-      let len = 0;
-      for (const line of lines) {
-        if (len + line.length + 1 > 1020 && current.length > 0) {
-          fields.push({ name: fields.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
-          current = [];
-          len = 0;
+    // Resolve usernames for all owners
+    const ownerDiscordIds = [...new Set(inventoryRows.map(r => r.discordId))];
+    const userMap: Record<string, string> = {};
+    if (ownerDiscordIds.length > 0) {
+      const userRows = await db.select({
+        discordId: usersTable.discordId,
+        discordUsername: usersTable.discordUsername,
+      }).from(usersTable)
+        .where(inArray(usersTable.discordId, ownerDiscordIds));
+      for (const u of userRows) userMap[u.discordId] = u.discordUsername;
+    }
+
+    // Build ownership map: legendId → { category, owner }
+    // Sort by addedAt desc so the most recent record wins if there are duplicates
+    const sortedInv = inventoryRows.slice().sort((a, b) =>
+      new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime()
+    );
+    const ownershipMap = new Map<number, { category: string; owner: string }>();
+    for (const row of sortedInv) {
+      if (row.legendId !== null && row.legendId !== undefined && !ownershipMap.has(row.legendId)) {
+        ownershipMap.set(row.legendId, {
+          category: row.legendCategory ?? "current",
+          owner: userMap[row.discordId] ?? row.discordId,
+        });
+      }
+    }
+
+    // Bucket legends by their current status
+    const inStore: typeof legends = [];
+    const ownedCurrent: { legend: typeof legends[0]; owner: string }[] = [];
+    const ownedPermanent: { legend: typeof legends[0]; owner: string }[] = [];
+    const ownedUnknown: typeof legends = [];
+
+    for (const l of legends) {
+      if (l.isAvailable) {
+        inStore.push(l);
+      } else {
+        const info = ownershipMap.get(l.id);
+        if (!info) {
+          ownedUnknown.push(l);
+        } else if (info.category === "permanent") {
+          ownedPermanent.push({ legend: l, owner: info.owner });
+        } else {
+          ownedCurrent.push({ legend: l, owner: info.owner });
         }
-        current.push(line);
-        len += line.length + 1;
       }
-      if (current.length > 0) {
-        fields.push({ name: fields.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
-      }
-      return fields;
     }
 
-    const embed = new EmbedBuilder().setColor(Colors.Gold).setTitle(`🏆 All Legends (${legends.length} total)`).setTimestamp();
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle(`🏆 All Legends (${legends.length} total)`)
+      .setTimestamp();
 
-    if (available.length > 0) {
-      const lines = available.map(l => `**#${l.id}** — ${l.name} (${l.position})${l.description ? ` — ${l.description}` : ""}`);
-      embed.addFields(chunkLines(lines, `✅ Available in Store (${available.length})`));
+    // In Store
+    if (inStore.length > 0) {
+      const lines = inStore.map(l =>
+        `**#${l.id}** — ${l.name} (${l.position})${l.description ? ` — ${l.description}` : ""}`
+      );
+      embed.addFields(chunkLines(lines, `⬜ In Store (${inStore.length})`));
     } else {
-      embed.addFields({ name: "✅ Available in Store", value: "None currently available." });
+      embed.addFields({ name: "⬜ In Store", value: "*None available*" });
     }
 
-    if (purchased.length > 0) {
-      const lines = purchased.map(l => `**#${l.id}** — ${l.name} (${l.position})`);
-      embed.addFields(chunkLines(lines, `❌ Purchased / Removed (${purchased.length})`));
+    // Owned — current season
+    if (ownedCurrent.length > 0) {
+      const lines = ownedCurrent.map(({ legend: l, owner }) =>
+        `**#${l.id}** — ${l.name} (${l.position}) → **${owner}**`
+      );
+      embed.addFields(chunkLines(lines, `⚡ Owned — Current Season (${ownedCurrent.length})`));
+    }
+
+    // Owned — permanent vault
+    if (ownedPermanent.length > 0) {
+      const lines = ownedPermanent.map(({ legend: l, owner }) =>
+        `**#${l.id}** — ${l.name} (${l.position}) → **${owner}**`
+      );
+      embed.addFields(chunkLines(lines, `🔒 Owned — Permanent Vault (${ownedPermanent.length})`));
+    }
+
+    // Unknown (isAvailable=false but no inventory record — edge case)
+    if (ownedUnknown.length > 0) {
+      const lines = ownedUnknown.map(l => `**#${l.id}** — ${l.name} (${l.position})`);
+      embed.addFields(chunkLines(lines, `❓ Removed from Store (${ownedUnknown.length})`));
     }
 
     return interaction.editReply({ embeds: [embed] });
   }
 
+  // ── EDIT ───────────────────────────────────────────────────────────────────
   if (sub === "edit") {
     const id = interaction.options.getInteger("id", true);
     const name = interaction.options.getString("name");
@@ -147,6 +229,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
+  // ── REMOVE ─────────────────────────────────────────────────────────────────
   if (sub === "remove") {
     const id = interaction.options.getInteger("id", true);
     const [updated] = await db.update(legendsTable)
@@ -168,4 +251,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ],
     });
   }
+
+  return interaction.editReply({ content: "❌ Unknown subcommand." });
 }
