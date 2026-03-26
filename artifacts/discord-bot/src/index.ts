@@ -61,10 +61,9 @@ process.on("uncaughtException", (err) => {
 const token = process.env["DISCORD_TOKEN"];
 if (!token) throw new Error("DISCORD_TOKEN is required");
 
-// In development (no REPL_DEPLOYMENT set), the dev bot must be explicitly
-// enabled to avoid competing with the production bot on the same token.
-// Production deployments always connect (REPL_DEPLOYMENT=1 is set by Replit).
-const isProduction = !!process.env["REPL_DEPLOYMENT"];
+// Production deployments run via `pnpm run start`; the dev workflow uses `pnpm run dev`.
+// npm_lifecycle_event is set to the script name by npm/pnpm — this is the reliable signal.
+const isProduction = process.env["npm_lifecycle_event"] === "start" || !!process.env["REPL_DEPLOYMENT"];
 const devBotEnabled = process.env["DEV_BOT_ENABLED"] === "true";
 const statusPort = parseInt(process.env["PORT"] ?? "8090");
 
