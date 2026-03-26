@@ -240,3 +240,28 @@ export async function getLegendPurchaseHistory(discordId: string) {
   const refunded = purchases.filter(p => p.status === "refunded");
   return { total: approved.length, refunded: refunded.length, purchases };
 }
+
+/**
+ * Normalize all defensive positions to consolidated categories:
+ *   DL — all defensive linemen (LE, RE, DT, NT, DE, E)
+ *   LB — all linebackers (LOLB, MLB, ROLB, OLB, ILB)
+ *   DB — all defensive backs (CB, FS, SS, S, NCB)
+ *
+ * Safe to run on every startup — only updates rows that still have old names.
+ */
+export async function normalizeDefensivePositions(): Promise<void> {
+  const DL_SET = ["LE", "RE", "DT", "NT", "DE", "E"];
+  const LB_SET = ["LOLB", "MLB", "ROLB", "OLB", "ILB"];
+  const DB_SET = ["CB", "FS", "SS", "S", "NCB"];
+
+  const toSql = (vals: string[]) => vals.map(v => `'${v}'`).join(", ");
+
+  for (const [newPos, oldSet] of [["DL", DL_SET], ["LB", LB_SET], ["DB", DB_SET]] as const) {
+    const inClause = toSql(oldSet);
+    await db.execute(sql.raw(`UPDATE legends   SET position        = '${newPos}' WHERE position        IN (${inClause})`));
+    await db.execute(sql.raw(`UPDATE inventory SET player_position = '${newPos}' WHERE player_position IN (${inClause})`));
+    await db.execute(sql.raw(`UPDATE purchases SET player_position = '${newPos}' WHERE player_position IN (${inClause})`));
+  }
+
+  console.log("✅ Defensive positions normalized (DL / LB / DB)");
+}

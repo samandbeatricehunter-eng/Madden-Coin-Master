@@ -78,7 +78,7 @@ export const data = new SlashCommandBuilder()
       )
       .addStringOption(opt =>
         opt.setName("player_position")
-          .setDescription("Player's position (e.g. QB, WR, CB)")
+          .setDescription("Player's position (e.g. QB, WR, DL, LB, DB)")
           .setRequired(true)
       )
       .addIntegerOption(opt =>
@@ -100,7 +100,7 @@ export const data = new SlashCommandBuilder()
       )
       .addStringOption(opt =>
         opt.setName("player_position")
-          .setDescription("Player's position (e.g. QB, WR, CB)")
+          .setDescription("Player's position (e.g. QB, WR, DL, LB, DB)")
           .setRequired(true)
       )
       .addIntegerOption(opt =>
@@ -132,7 +132,7 @@ export const data = new SlashCommandBuilder()
       )
       .addStringOption(opt =>
         opt.setName("player_position")
-          .setDescription("Player's position (e.g. QB, WR, CB)")
+          .setDescription("Player's position (e.g. QB, WR, DL, LB, DB)")
           .setRequired(true)
       )
   );

@@ -1,6 +1,6 @@
 import { Client, Collection, GatewayIntentBits } from "discord.js";
 import { createServer } from "http";
-import { getOrCreateActiveSeason } from "./lib/db-helpers.js";
+import { getOrCreateActiveSeason, normalizeDefensivePositions } from "./lib/db-helpers.js";
 
 // User commands
 import * as help from "./commands/help.js";
@@ -141,6 +141,7 @@ if (!isProduction && !devBotEnabled) {
 
   async function init() {
     await getOrCreateActiveSeason();
+    await normalizeDefensivePositions();
     console.log("✅ Database initialized");
   }
 
