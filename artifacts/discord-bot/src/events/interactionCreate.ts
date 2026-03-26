@@ -9,13 +9,14 @@ import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   payoutRequestsTable, interviewRequestsTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
-  upsertH2HRecord, appendGameLog, getOrCreateActiveSeason,
+  upsertH2HRecord, appendGameLog, getOrCreateActiveSeason, getOrCreateUser,
 } from "../lib/db-helpers.js";
 import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
-import { INTERVIEW_PAYOUT } from "../commands/interviewrequest.js";
+import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
+import { weekLabel } from "../commands/advanceweek.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
@@ -437,6 +438,64 @@ async function handleButton(interaction: ButtonInteraction) {
     await interaction.showModal(modal);
     return;
   }
+
+  // ── Interview: open answer modal (player-facing) ──────────────────────────
+  if (action === "interview_answer") {
+    const targetUserId = secondPart!;    // the user who ran /interviewrequest
+    const indicesStr   = userId!;        // "i1,i2,i3" (3rd colon-split token)
+
+    if (interaction.user.id !== targetUserId) {
+      await interaction.reply({ content: "❌ This interview form isn't yours to fill out.", ephemeral: true });
+      return;
+    }
+
+    const indices = indicesStr.split(",").map(Number);
+    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
+    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
+    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
+
+    const truncLabel = (q: string) => q.length <= 45 ? q : q.slice(0, 42) + "...";
+
+    const modal = new ModalBuilder()
+      .setCustomId(`interview_answer_modal:${indicesStr}`)
+      .setTitle("🎙️ Post-Game Interview");
+
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("a1")
+          .setLabel(truncLabel(q1))
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMinLength(10)
+          .setMaxLength(1000)
+          .setPlaceholder("Type your answer here..."),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("a2")
+          .setLabel(truncLabel(q2))
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMinLength(10)
+          .setMaxLength(1000)
+          .setPlaceholder("Type your answer here..."),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("a3")
+          .setLabel(truncLabel(q3))
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMinLength(10)
+          .setMaxLength(1000)
+          .setPlaceholder("Type your answer here..."),
+      ),
+    );
+
+    await interaction.showModal(modal);
+    return;
+  }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -535,6 +594,139 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (err) { console.error("Failed to edit commissioner message after interview denial:", err); }
 
     await interaction.reply({ content: `✅ Interview **#${interviewId}** denied. The player has been notified and their slot has been reset.`, ephemeral: true });
+    return;
+  }
+
+  // ── Interview: submit answers (player-facing modal) ───────────────────────
+  if (action === "interview_answer_modal") {
+    const indicesStr = idStr!;
+    const indices    = indicesStr.split(",").map(Number);
+    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
+    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
+    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
+    const a1 = interaction.fields.getTextInputValue("a1");
+    const a2 = interaction.fields.getTextInputValue("a2");
+    const a3 = interaction.fields.getTextInputValue("a3");
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const requesterTeam = requester.team ?? interaction.user.username;
+    const season        = await getOrCreateActiveSeason();
+    const currentWeek   = (season as any).currentWeek ?? "1";
+    const weekDisplay   = weekLabel(currentWeek);
+    const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+
+    // Re-check: must have submitted a game this week
+    const gameThisWeek = await db.select({ id: payoutRequestsTable.id })
+      .from(payoutRequestsTable)
+      .where(and(
+        eq(payoutRequestsTable.requesterId, interaction.user.id),
+        eq(payoutRequestsTable.week, currentWeek),
+      ))
+      .limit(1);
+
+    if (gameThisWeek.length === 0) {
+      await interaction.editReply({ content: `❌ No game submitted for ${weekDisplay} yet. Report a game with \`/reportscore\` first.` });
+      return;
+    }
+
+    // Re-check: only one interview per week
+    const existingInterview = await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
+      .from(interviewRequestsTable)
+      .where(and(
+        eq(interviewRequestsTable.discordId, interaction.user.id),
+        eq(interviewRequestsTable.week, currentWeek),
+        inArray(interviewRequestsTable.status, ["pending", "approved"]),
+      ))
+      .limit(1);
+
+    if (existingInterview.length > 0) {
+      const dupe = existingInterview[0]!;
+      await interaction.editReply({
+        content: `⚠️ You already have an interview for ${weekDisplay} (Interview #\`${dupe.id}\`, status: **${dupe.status}**). Only one per week.`,
+      });
+      return;
+    }
+
+    // Get the linked score report
+    const linkedReport = gameThisWeek[0]!;
+    const fullReports  = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, linkedReport.id)).limit(1);
+    const report       = fullReports[0];
+
+    // Mark score report as interview claimed
+    await db.update(payoutRequestsTable)
+      .set({ interviewClaimed: true })
+      .where(eq(payoutRequestsTable.id, linkedReport.id));
+
+    // Create the interview record with questions + answers
+    const [interview] = await db.insert(interviewRequestsTable).values({
+      discordId:       interaction.user.id,
+      payoutRequestId: linkedReport.id,
+      week:            currentWeek,
+      status:          "pending",
+      question1:       q1,
+      question2:       q2,
+      question3:       q3,
+      answer1:         a1,
+      answer2:         a2,
+      answer3:         a3,
+    }).returning();
+
+    const interviewId   = interview!.id;
+    const gameTypeLabel = (report?.gameType ?? "cpu") === "cpu" ? "CPU Game" : "H2H Game";
+    const myTeam        = report?.requesterTeam ?? requesterTeam;
+    const oppTeam       = report?.opponentTeam  ?? "Unknown";
+    const myScore       = report?.requesterScore ?? "?";
+    const oppScore      = report?.opponentScore  ?? "?";
+
+    // ── Commissioner embed with all 3 Q&A pairs ──────────────────────────────
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blurple)
+      .setTitle("🎙️ Post-Game Interview")
+      .addFields(
+        { name: "Player",    value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
+        { name: "Week",      value: weekDisplay,   inline: true },
+        { name: "Game Type", value: gameTypeLabel, inline: true },
+        { name: "Game",      value: `**${myTeam}** ${myScore} – ${oppScore} **${oppTeam}**` },
+        { name: `Q1: ${q1.slice(0, 200)}`, value: a1.slice(0, 1000) },
+        { name: `Q2: ${q2.slice(0, 200)}`, value: a2.slice(0, 1000) },
+        { name: `Q3: ${q3.slice(0, 200)}`, value: a3.slice(0, 1000) },
+        { name: "Payout if Approved", value: `+**${INTERVIEW_PAYOUT} coins**` },
+      )
+      .setFooter({ text: `Interview #${interviewId} • Score Report #${linkedReport.id}` })
+      .setTimestamp();
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`interview_approve:${interviewId}`)
+        .setLabel("✅ Approve Interview")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`interview_deny:${interviewId}`)
+        .setLabel("❌ Deny")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    try {
+      const channel = await interaction.client.channels.fetch(commChannelId);
+      if (channel?.isTextBased()) {
+        const msg = await (channel as any).send({ embeds: [embed], components: [row] });
+        await db.update(interviewRequestsTable)
+          .set({ discordMessageId: msg.id })
+          .where(eq(interviewRequestsTable.id, interviewId));
+      }
+    } catch (err) {
+      console.error("Failed to post interview to commissioner channel:", err);
+    }
+
+    await interaction.editReply({
+      content: [
+        `✅ **Interview submitted for ${weekDisplay}!** (Interview #\`${interviewId}\`)`,
+        `Your answers have been sent to the commissioner for review.`,
+        `You'll get a DM once it's approved or denied.`,
+      ].join("\n"),
+    });
     return;
   }
 }

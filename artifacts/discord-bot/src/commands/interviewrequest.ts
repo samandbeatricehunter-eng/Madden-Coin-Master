@@ -1,6 +1,6 @@
 import {
-  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  SlashCommandBuilder, ChatInputCommandInteraction, Colors,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { payoutRequestsTable, interviewRequestsTable } from "@workspace/db";
@@ -10,14 +10,14 @@ import { weekLabel } from "./advanceweek.js";
 
 export const INTERVIEW_PAYOUT = 10;
 
-const INTERVIEW_QUESTIONS: string[] = [
+export const INTERVIEW_QUESTIONS: string[] = [
   // Game recap
   "Walk us through the turning point of that game — when did you feel the momentum shift?",
   "What was the one play you knew was going to define how this game ended?",
   "You had full control of the clock late. How did you manage the situation mentally?",
   "Take us inside the locker room. What was the message at halftime?",
   "How did you adjust your game plan after the first few drives?",
-  "There were a couple moments that looked like the game could slip away. What kept you composed?",
+  "There were moments that looked like the game could slip away. What kept you composed?",
   "What did your defense show today that you haven't seen from them all season?",
   "Talk about your offensive line tonight — how much does their performance set the tone?",
   "You found some big plays in the passing game. What coverages were you attacking and why?",
@@ -39,8 +39,8 @@ const INTERVIEW_QUESTIONS: string[] = [
 
   // Strategy / coaching
   "You went for it on fourth down twice today. Walk us through those decisions.",
-  "Your two-minute offense has been elite. Is that something you drill specifically or does it come naturally to your team?",
-  "Was there a coverage or defensive scheme you wish you had attacked differently?",
+  "Your two-minute offense has been elite. Is that something you drill specifically or does it come naturally?",
+  "Was there a coverage or scheme you wish you had attacked differently in this game?",
   "Talk about your red zone offense — what's the philosophy when you get inside the twenty?",
   "You made a personnel decision late in the game that raised some eyebrows. Explain your thinking.",
 
@@ -61,7 +61,7 @@ const INTERVIEW_QUESTIONS: string[] = [
   "If you could fix one thing about how your season has gone so far, what would it be?",
   "How are you managing your roster's stamina and mental health this deep into the season?",
   "Do you study power rankings or do you block that noise out entirely?",
-  "What does a championship look like for this team — is it even on your radar right now or are you week-to-week?",
+  "What does a championship look like for this team — is it even on your radar or are you week-to-week?",
   "Who in the league do you respect the most, and why?",
   "If you played yourself at your best from a few seasons ago, who wins?",
   "Give us a bold prediction for how the rest of the season plays out — yours or the league's.",
@@ -69,8 +69,13 @@ const INTERVIEW_QUESTIONS: string[] = [
   "If today's result gets talked about a year from now, what do you want people to remember about it?",
 ];
 
-function pickQuestion(): string {
-  return INTERVIEW_QUESTIONS[Math.floor(Math.random() * INTERVIEW_QUESTIONS.length)]!;
+export function pickThreeIndices(): [number, number, number] {
+  const indices = new Set<number>();
+  while (indices.size < 3) {
+    indices.add(Math.floor(Math.random() * INTERVIEW_QUESTIONS.length));
+  }
+  const [a, b, c] = [...indices];
+  return [a!, b!, c!];
 }
 
 export const data = new SlashCommandBuilder()
@@ -80,20 +85,15 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
   const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const requesterTeam = requester.team ?? interaction.user.username;
 
-  // Get current league week
   const season      = await getOrCreateActiveSeason();
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
 
   // ── Rule 1: Must have submitted a game score this week ────────────────────
-  const gameThisWeek = await db.select({
-    id:       payoutRequestsTable.id,
-    gameType: payoutRequestsTable.gameType,
-  })
+  const gameThisWeek = await db.select({ id: payoutRequestsTable.id })
     .from(payoutRequestsTable)
     .where(and(
       eq(payoutRequestsTable.requesterId, interaction.user.id),
@@ -105,7 +105,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({
       content: [
         `❌ **No game submitted for ${weekDisplay} yet.**`,
-        `You need to report a game with \`/reportscore\` before requesting an interview for this week.`,
+        `You need to report a game with \`/reportscore\` before requesting an interview this week.`,
       ].join("\n"),
     });
     return;
@@ -129,89 +129,43 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({
       content: [
         `⚠️ **Interview already submitted for ${weekDisplay}.**`,
-        `Your interview request has ${stateLabel} (Interview #\`${dupe.id}\`).`,
+        `Your interview has ${stateLabel} (Interview #\`${dupe.id}\`).`,
         `Only one interview is allowed per week.`,
       ].join("\n"),
     });
     return;
   }
 
-  // ── Draw a random question ────────────────────────────────────────────────
-  const question = pickQuestion();
+  // ── Pick 3 unique questions ───────────────────────────────────────────────
+  const [i1, i2, i3] = pickThreeIndices();
+  const q1 = INTERVIEW_QUESTIONS[i1]!;
+  const q2 = INTERVIEW_QUESTIONS[i2]!;
+  const q3 = INTERVIEW_QUESTIONS[i3]!;
+  const indicesStr = `${i1},${i2},${i3}`;
 
-  // ── Mark the linked score report and create the interview request ─────────
-  const linkedReport = gameThisWeek[0]!;
-
-  await db.update(payoutRequestsTable)
-    .set({ interviewClaimed: true })
-    .where(eq(payoutRequestsTable.id, linkedReport.id));
-
-  const [interview] = await db.insert(interviewRequestsTable).values({
-    discordId:       interaction.user.id,
-    payoutRequestId: linkedReport.id,
-    week:            currentWeek,
-    status:          "pending",
-  }).returning();
-
-  const interviewId = interview!.id;
-
-  // Build game context from the linked score report
-  const fullReport = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, linkedReport.id)).limit(1);
-  const report = fullReport[0];
-
-  const gameTypeLabel = (report?.gameType ?? "cpu") === "cpu" ? "CPU Game" : "H2H Game";
-  const myTeam   = report?.requesterTeam ?? requesterTeam;
-  const oppTeam  = report?.opponentTeam  ?? "Unknown";
-  const myScore  = report?.requesterScore ?? "?";
-  const oppScore = report?.opponentScore  ?? "?";
-
-  // ── Commissioner embed ────────────────────────────────────────────────────
+  // ── Show questions + Submit button (DB record created on modal submit) ────
   const embed = new EmbedBuilder()
     .setColor(Colors.Blurple)
-    .setTitle("🎙️ Post-Game Interview Request")
-    .addFields(
-      { name: "Player",    value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
-      { name: "Week",      value: weekDisplay,  inline: true },
-      { name: "Game Type", value: gameTypeLabel, inline: true },
-      { name: "Game",      value: `**${myTeam}** ${myScore} – ${oppScore} **${oppTeam}**` },
-      { name: "🎤 Interview Question", value: `*${question}*` },
-      { name: "Payout if Approved", value: `+**${INTERVIEW_PAYOUT} coins**` },
+    .setTitle("🎙️ Post-Game Interview")
+    .setDescription(
+      `Here are your **3 interview questions** for **${weekDisplay}**.\n` +
+      `Click **Submit Your Answers** to fill them in — you'll have time to type each one.\n\n` +
+      `*Questions are selected randomly from a pool of ${INTERVIEW_QUESTIONS.length}.*`,
     )
-    .setFooter({ text: `Interview #${interviewId} • linked to Score Report #${linkedReport.id}` })
+    .addFields(
+      { name: "Q1", value: q1 },
+      { name: "Q2", value: q2 },
+      { name: "Q3", value: q3 },
+    )
+    .setFooter({ text: `${requesterTeam} • ${weekDisplay}` })
     .setTimestamp();
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`interview_approve:${interviewId}`)
-      .setLabel("✅ Approve Interview")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`interview_deny:${interviewId}`)
-      .setLabel("❌ Deny")
-      .setStyle(ButtonStyle.Danger),
+      .setCustomId(`interview_answer:${interaction.user.id}:${indicesStr}`)
+      .setLabel("📝 Submit Your Answers")
+      .setStyle(ButtonStyle.Primary),
   );
 
-  try {
-    const channel = await interaction.client.channels.fetch(commChannelId);
-    if (channel?.isTextBased()) {
-      const msg = await (channel as any).send({ embeds: [embed], components: [row] });
-      await db.update(interviewRequestsTable)
-        .set({ discordMessageId: msg.id })
-        .where(eq(interviewRequestsTable.id, interviewId));
-    }
-  } catch (err) {
-    console.error("Failed to post interview request to commissioner channel:", err);
-  }
-
-  // ── User confirmation with question ──────────────────────────────────────
-  await interaction.editReply({
-    content: [
-      `🎙️ **Interview request submitted for ${weekDisplay}!** (Interview #\`${interviewId}\`)`,
-      ``,
-      `**Your question:**`,
-      `> *${question}*`,
-      ``,
-      `Answer this in the server and you'll be notified once the commissioner reviews your request.`,
-    ].join("\n"),
-  });
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
