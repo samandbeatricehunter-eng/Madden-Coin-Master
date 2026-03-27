@@ -89,8 +89,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "📋 League Rules",
         value: [
-          "`/rules [section]` — Display a league rules section",
-          "`/rules [section] @user` — Share a rules section with a specific member",
+          "`/rules [section]` — Display all rules in a section",
+          "`/rules [section] [rule_number]` — Quote a single rule from a section",
+          "`/rules [section] [rule_number] @user` — Share a specific rule with a member (posts publicly)",
         ].join("\n"),
       },
     )
@@ -143,11 +144,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "📋 League Rules",
         value: [
+          "`/adminrules new-section [key] [title]` — Create a new custom rules section",
           "`/adminrules list [section]` — Show current rules with numbered entries",
           "`/adminrules set [section] [#] [text]` — Edit a specific rule by number",
           "`/adminrules add [section] [text]` — Append a new rule to a section",
           "`/adminrules remove [section] [#]` — Remove a rule by number",
-          "`/adminrules reset [section]` — Reset a section to the default rules",
+          "`/adminrules reset [section]` — Reset a built-in section to defaults, or clear a custom section",
         ].join("\n"),
       },
       {

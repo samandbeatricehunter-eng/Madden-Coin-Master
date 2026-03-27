@@ -1,7 +1,7 @@
 import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
-  inventoryTable, legendsTable, coinTransactionsTable, rulesTable,
+  inventoryTable, legendsTable, coinTransactionsTable, rulesTable, rulesSectionsTable,
   userRecordsTable, gameLogTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
@@ -82,6 +82,23 @@ export async function setRules(section: string, rules: string[], updatedBy: stri
       target: rulesTable.section,
       set: { rules, updatedBy, updatedAt: new Date() },
     });
+}
+
+/** Returns all sections — built-in hardcoded ones merged with any custom ones stored in DB. */
+export async function getAllSections(): Promise<Record<string, { title: string; color: number }>> {
+  const customRows = await db.select().from(rulesSectionsTable);
+  const merged: Record<string, { title: string; color: number }> = { ...SECTION_META };
+  for (const row of customRows) {
+    merged[row.key] = { title: row.title, color: row.color };
+  }
+  return merged;
+}
+
+/** Create or update a custom section entry in the DB. */
+export async function createSection(key: string, title: string, color = 0x3498db): Promise<void> {
+  await db.insert(rulesSectionsTable)
+    .values({ key, title, color })
+    .onConflictDoUpdate({ target: rulesSectionsTable.key, set: { title, color } });
 }
 
 export async function isAdminUser(discordId: string): Promise<boolean> {

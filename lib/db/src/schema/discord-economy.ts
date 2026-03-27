@@ -165,6 +165,13 @@ export const rulesTable = pgTable("rules", {
   updatedBy: text("updated_by"),
 });
 
+export const rulesSectionsTable = pgTable("rules_sections", {
+  key: text("key").primaryKey(),
+  title: text("title").notNull(),
+  color: integer("color").notNull().default(0x3498db),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const payoutRequestsTable = pgTable("payout_requests", {
   id: serial("id").primaryKey(),
   requesterId: text("requester_id").notNull(),
