@@ -15,7 +15,7 @@ import {
   upsertH2HRecord, appendGameLog, getOrCreateActiveSeason, getOrCreateUser,
 } from "../lib/db-helpers.js";
 import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
-import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
+import { INTERVIEW_PAYOUT, getQuestionPool } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
@@ -851,7 +851,11 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Interview: open answer modal (player-facing) ──────────────────────────
   if (action === "interview_answer") {
     const targetUserId = secondPart!;    // the user who ran /interviewrequest
-    const indicesStr   = userId!;        // "i1,i2,i3" (3rd colon-split token)
+    // New format: interview_answer:userId:poolType:i1,i2,i3
+    // Old format: interview_answer:userId:i1,i2,i3  (backwards compat)
+    const isNewFormat  = userId === "r" || userId === "l";
+    const poolType     = isNewFormat ? (userId as "r" | "l") : "r";
+    const indicesStr   = isNewFormat ? purchaseType! : userId!;
 
     if (interaction.user.id !== targetUserId) {
       await interaction.reply({ content: "❌ This interview form isn't yours to fill out.", ephemeral: true });
@@ -859,14 +863,15 @@ async function handleButton(interaction: ButtonInteraction) {
     }
 
     const indices = indicesStr.split(",").map(Number);
-    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
-    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
-    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
+    const pool = getQuestionPool(poolType);
+    const q1 = pool[indices[0]!]!;
+    const q2 = pool[indices[1]!]!;
+    const q3 = pool[indices[2]!]!;
 
     const truncLabel = (q: string) => q.length <= 45 ? q : q.slice(0, 42) + "...";
 
     const modal = new ModalBuilder()
-      .setCustomId(`interview_answer_modal:${indicesStr}`)
+      .setCustomId(`interview_answer_modal:${poolType}:${indicesStr}`)
       .setTitle("🎙️ Post-Game Interview");
 
     modal.addComponents(
@@ -1010,11 +1015,16 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
   // ── Interview: submit answers (player-facing modal) ───────────────────────
   if (action === "interview_answer_modal") {
-    const indicesStr = idStr!;
+    // New format: interview_answer_modal:poolType:i1,i2,i3
+    // Old format: interview_answer_modal:i1,i2,i3  (backwards compat)
+    const isNewFormat = idStr === "r" || idStr === "l";
+    const poolType    = isNewFormat ? (idStr as "r" | "l") : "r";
+    const indicesStr  = isNewFormat ? parts[2]! : idStr!;
     const indices    = indicesStr.split(",").map(Number);
-    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
-    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
-    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
+    const pool = getQuestionPool(poolType);
+    const q1 = pool[indices[0]!]!;
+    const q2 = pool[indices[1]!]!;
+    const q3 = pool[indices[2]!]!;
     const a1 = interaction.fields.getTextInputValue("a1");
     const a2 = interaction.fields.getTextInputValue("a2");
     const a3 = interaction.fields.getTextInputValue("a3");

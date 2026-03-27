@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { payoutRequestsTable, interviewRequestsTable } from "@workspace/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
 
@@ -69,10 +69,55 @@ export const INTERVIEW_QUESTIONS: string[] = [
   "If today's result gets talked about a year from now, what do you want people to remember about it?",
 ];
 
-export function pickThreeIndices(): [number, number, number] {
+// Loss-specific questions — only shown when the user's most recent game report was an H2H loss.
+export const LOSS_INTERVIEW_QUESTIONS: string[] = [
+  "Be honest—did you win this game, or did your opponent lose it for you?",
+  "At what point did you realize things were slipping, and why couldn't you stop it?",
+  "There were some questionable decisions out there—do you put that on coaching or execution?",
+  "Is this a one-off performance, or is this starting to become a pattern for your team?",
+  "You've talked a lot about accountability—who needs to look in the mirror most after this one?",
+  "Did you feel outcoached tonight?",
+  "From the outside, it looked like a lack of discipline—would you agree with that assessment?",
+  "How frustrating is it knowing you had chances to take control and didn't capitalize?",
+  "Do you think your opponent exposed something that other teams are going to start targeting?",
+  "There were moments where the energy looked flat—what was going on with the team mentally?",
+  "Is this team as good as you thought it was coming into the game?",
+  "You've got big expectations this season—did this performance fall short of that standard?",
+  "Were you surprised by anything your opponent did, or were you just not prepared?",
+  "How much pressure is starting to build on this team after a performance like this?",
+  "If you had to send a message to the league after tonight, what would it be—because this didn't look like a statement game.",
+  "Do you feel like this result says more about your team—or your opponent?",
+  "Was this a case of being outplayed, or just outworked?",
+  "How much of this falls on leadership in the locker room?",
+  "Did you underestimate your opponent coming into this game?",
+  "There were some costly mistakes—are those correctable, or are they deeper issues?",
+  "At what point does this become a concern instead of just a bad game?",
+  "Do you think your game plan actually gave you a chance to win tonight?",
+  "How do you respond to critics who say this team can't handle pressure moments?",
+  "Was there a turning point where you felt momentum completely shift?",
+  "Do you feel like the team stayed composed, or did emotions get the best of you?",
+  "Is this loss going to linger, or can this group realistically turn the page quickly?",
+  "You've emphasized execution all season—why didn't it show up when it mattered most?",
+  "Did anything you saw tonight shake your confidence in this team?",
+  "Are you still confident this team can compete with the top teams in the league?",
+  "If you faced this same opponent again tomorrow, what would you do differently?",
+];
+
+/**
+ * Returns the full question pool based on whether this is a loss interview.
+ * "l" (loss) = regular + loss questions combined.
+ * "r" (regular) = regular questions only.
+ */
+export function getQuestionPool(poolType: "r" | "l"): string[] {
+  return poolType === "l"
+    ? [...INTERVIEW_QUESTIONS, ...LOSS_INTERVIEW_QUESTIONS]
+    : INTERVIEW_QUESTIONS;
+}
+
+export function pickThreeIndices(poolSize: number): [number, number, number] {
   const indices = new Set<number>();
   while (indices.size < 3) {
-    indices.add(Math.floor(Math.random() * INTERVIEW_QUESTIONS.length));
+    indices.add(Math.floor(Math.random() * poolSize));
   }
   const [a, b, c] = [...indices];
   return [a!, b!, c!];
@@ -93,12 +138,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const weekDisplay = weekLabel(currentWeek);
 
   // ── Rule 1: Must have submitted a game score this week ────────────────────
-  const gameThisWeek = await db.select({ id: payoutRequestsTable.id })
+  const gameThisWeek = await db
+    .select({
+      id: payoutRequestsTable.id,
+      gameType: payoutRequestsTable.gameType,
+      requesterScore: payoutRequestsTable.requesterScore,
+      opponentScore: payoutRequestsTable.opponentScore,
+    })
     .from(payoutRequestsTable)
     .where(and(
       eq(payoutRequestsTable.requesterId, interaction.user.id),
       eq(payoutRequestsTable.week, currentWeek),
     ))
+    .orderBy(desc(payoutRequestsTable.createdAt))
     .limit(1);
 
   if (gameThisWeek.length === 0) {
@@ -136,33 +188,49 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Pick 3 unique questions ───────────────────────────────────────────────
-  const [i1, i2, i3] = pickThreeIndices();
-  const q1 = INTERVIEW_QUESTIONS[i1]!;
-  const q2 = INTERVIEW_QUESTIONS[i2]!;
-  const q3 = INTERVIEW_QUESTIONS[i3]!;
+  // ── Determine if most recent game was an H2H loss ─────────────────────────
+  const recentGame = gameThisWeek[0]!;
+  const isH2HLoss  =
+    recentGame.gameType === "h2h" &&
+    recentGame.requesterScore !== null &&
+    recentGame.opponentScore  !== null &&
+    recentGame.requesterScore < recentGame.opponentScore;
+
+  // "l" = combined pool (regular + loss questions), "r" = regular pool only
+  const poolType: "r" | "l" = isH2HLoss ? "l" : "r";
+  const pool = getQuestionPool(poolType);
+
+  // ── Pick 3 unique questions from the appropriate pool ─────────────────────
+  const [i1, i2, i3] = pickThreeIndices(pool.length);
+  const q1 = pool[i1]!;
+  const q2 = pool[i2]!;
+  const q3 = pool[i3]!;
   const indicesStr = `${i1},${i2},${i3}`;
+
+  const lossNote = isH2HLoss
+    ? `\n\n*After an H2H loss, questions may be drawn from the post-loss pool (${pool.length} total questions available).*`
+    : `\n\n*Questions are selected randomly from a pool of ${pool.length}.*`;
 
   // ── Show questions + Submit button (DB record created on modal submit) ────
   const embed = new EmbedBuilder()
-    .setColor(Colors.Blurple)
+    .setColor(isH2HLoss ? Colors.Red : Colors.Blurple)
     .setTitle("🎙️ Post-Game Interview")
     .setDescription(
       `Here are your **3 interview questions** for **${weekDisplay}**.\n` +
-      `Click **Submit Your Answers** to fill them in — you'll have time to type each one.\n\n` +
-      `*Questions are selected randomly from a pool of ${INTERVIEW_QUESTIONS.length}.*`,
+      `Click **Submit Your Answers** to fill them in — you'll have time to type each one.` +
+      lossNote,
     )
     .addFields(
       { name: "Q1", value: q1 },
       { name: "Q2", value: q2 },
       { name: "Q3", value: q3 },
     )
-    .setFooter({ text: `${requesterTeam} • ${weekDisplay}` })
+    .setFooter({ text: `${requesterTeam} • ${weekDisplay}${isH2HLoss ? " • Post-Loss Interview" : ""}` })
     .setTimestamp();
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`interview_answer:${interaction.user.id}:${indicesStr}`)
+      .setCustomId(`interview_answer:${interaction.user.id}:${poolType}:${indicesStr}`)
       .setLabel("📝 Submit Your Answers")
       .setStyle(ButtonStyle.Primary),
   );
