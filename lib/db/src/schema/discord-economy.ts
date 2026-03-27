@@ -59,6 +59,10 @@ export const seasonsTable = pgTable("seasons", {
   devUpsCostOverride: integer("dev_ups_cost_override"),
   ageResetsCapOverride: integer("age_resets_cap_override"),
   ageResetsCostOverride: integer("age_resets_cost_override"),
+  legendCostOverride: integer("legend_cost_override"),
+  customGoldCostOverride: integer("custom_gold_cost_override"),
+  customSilverCostOverride: integer("custom_silver_cost_override"),
+  customBronzeCostOverride: integer("custom_bronze_cost_override"),
   currentWeek: text("current_week").notNull().default("1"),
   // JSON array of attribute names that count as "core" this season — null = use default from constants
   coreAttributesOverride: text("core_attributes_override"),

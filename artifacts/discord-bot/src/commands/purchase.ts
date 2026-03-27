@@ -180,7 +180,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── /purchase legend ────────────────────────────────────────────────────────
   if (sub === "legend") {
-    const cost = COSTS.legend;
+    const cost = rules.legendCost;
     if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
     const legendName = interaction.options.getString("legend_name", true);
@@ -435,8 +435,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const tierValue = interaction.options.getString("tier", true) as "custom_player_gold" | "custom_player_silver" | "custom_player_bronze";
     const playerName = interaction.options.getString("player_name", true);
     const playerPosition = interaction.options.getString("player_position", true);
-    const cost = COSTS[tierValue];
     const tier = tierValue.replace("custom_player_", "") as "gold" | "silver" | "bronze";
+    const cost = tier === "gold" ? rules.customGoldCost : tier === "silver" ? rules.customSilverCost : rules.customBronzeCost;
 
     if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 

@@ -169,6 +169,30 @@ export const data = new SlashCommandBuilder()
           .setRequired(false)
           .setMinValue(1)
       )
+      .addIntegerOption(opt =>
+        opt.setName("legend_cost")
+          .setDescription("Coin cost per legend (default: 1000)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("custom_gold_cost")
+          .setDescription("Coin cost for a Gold custom player (default: 300)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("custom_silver_cost")
+          .setDescription("Coin cost for a Silver custom player (default: 200)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("custom_bronze_cost")
+          .setDescription("Coin cost for a Bronze custom player (default: 100)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
       .addBooleanOption(opt =>
         opt.setName("clear")
           .setDescription("Set to True to clear ALL overrides and restore defaults")
@@ -309,6 +333,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         devUpsCostOverride: null,
         ageResetsCapOverride: null,
         ageResetsCostOverride: null,
+        legendCostOverride: null,
+        customGoldCostOverride: null,
+        customSilverCostOverride: null,
+        customBronzeCostOverride: null,
       }).where(eq(seasonsTable.seasonNumber, 1));
     } else {
       await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true });
@@ -461,6 +489,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           nonCoreAttrCostOverride: null, nonCoreAttrCapOverride: null,
           devUpsCapOverride: null, devUpsCostOverride: null,
           ageResetsCapOverride: null, ageResetsCostOverride: null,
+          legendCostOverride: null,
+          customGoldCostOverride: null, customSilverCostOverride: null, customBronzeCostOverride: null,
           coreAttributesOverride: null,
         })
         .where(eq(seasonsTable.id, season.id));
@@ -476,6 +506,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               "• **Non-core attrs**: 10 coins/pt, cap 32/season\n" +
               "• **Dev upgrades**: 100 coins, 2/season\n" +
               "• **Age resets**: 100 coins, 2/season\n" +
+              "• **Legends**: 1000 coins\n" +
+              "• **Custom players**: Gold 300 / Silver 200 / Bronze 100 coins\n" +
               "• **Core attribute list**: restored to defaults"
             )
             .setTimestamp(),
@@ -483,31 +515,40 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    const coreAttrCost    = interaction.options.getInteger("core_attr_cost");
-    const coreAttrCap     = interaction.options.getInteger("core_attr_cap");
-    const nonCoreAttrCost = interaction.options.getInteger("non_core_attr_cost");
-    const nonCoreAttrCap  = interaction.options.getInteger("non_core_attr_cap");
-    const devUpsCap       = interaction.options.getInteger("dev_ups_cap");
-    const devUpsCost      = interaction.options.getInteger("dev_ups_cost");
-    const ageResetsCap    = interaction.options.getInteger("age_resets_cap");
-    const ageResetsCost   = interaction.options.getInteger("age_resets_cost");
+    const coreAttrCost     = interaction.options.getInteger("core_attr_cost");
+    const coreAttrCap      = interaction.options.getInteger("core_attr_cap");
+    const nonCoreAttrCost  = interaction.options.getInteger("non_core_attr_cost");
+    const nonCoreAttrCap   = interaction.options.getInteger("non_core_attr_cap");
+    const devUpsCap        = interaction.options.getInteger("dev_ups_cap");
+    const devUpsCost       = interaction.options.getInteger("dev_ups_cost");
+    const ageResetsCap     = interaction.options.getInteger("age_resets_cap");
+    const ageResetsCost    = interaction.options.getInteger("age_resets_cost");
+    const legendCost       = interaction.options.getInteger("legend_cost");
+    const customGoldCost   = interaction.options.getInteger("custom_gold_cost");
+    const customSilverCost = interaction.options.getInteger("custom_silver_cost");
+    const customBronzeCost = interaction.options.getInteger("custom_bronze_cost");
 
     if (coreAttrCost === null && coreAttrCap === null && nonCoreAttrCost === null && nonCoreAttrCap === null
-        && devUpsCap === null && devUpsCost === null && ageResetsCap === null && ageResetsCost === null) {
+        && devUpsCap === null && devUpsCost === null && ageResetsCap === null && ageResetsCost === null
+        && legendCost === null && customGoldCost === null && customSilverCost === null && customBronzeCost === null) {
       return interaction.editReply({
         embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Nothing to Change").setDescription("Provide at least one override value, or use `clear: True` to restore defaults.")],
       });
     }
 
     const updates: Record<string, number | null> = {};
-    if (coreAttrCost    !== null) updates["coreAttrCostOverride"]    = coreAttrCost;
-    if (coreAttrCap     !== null) updates["coreAttrCapOverride"]     = coreAttrCap;
-    if (nonCoreAttrCost !== null) updates["nonCoreAttrCostOverride"] = nonCoreAttrCost;
-    if (nonCoreAttrCap  !== null) updates["nonCoreAttrCapOverride"]  = nonCoreAttrCap;
-    if (devUpsCap       !== null) updates["devUpsCapOverride"]       = devUpsCap;
-    if (devUpsCost      !== null) updates["devUpsCostOverride"]      = devUpsCost;
-    if (ageResetsCap    !== null) updates["ageResetsCapOverride"]    = ageResetsCap;
-    if (ageResetsCost   !== null) updates["ageResetsCostOverride"]   = ageResetsCost;
+    if (coreAttrCost     !== null) updates["coreAttrCostOverride"]    = coreAttrCost;
+    if (coreAttrCap      !== null) updates["coreAttrCapOverride"]     = coreAttrCap;
+    if (nonCoreAttrCost  !== null) updates["nonCoreAttrCostOverride"] = nonCoreAttrCost;
+    if (nonCoreAttrCap   !== null) updates["nonCoreAttrCapOverride"]  = nonCoreAttrCap;
+    if (devUpsCap        !== null) updates["devUpsCapOverride"]       = devUpsCap;
+    if (devUpsCost       !== null) updates["devUpsCostOverride"]      = devUpsCost;
+    if (ageResetsCap     !== null) updates["ageResetsCapOverride"]    = ageResetsCap;
+    if (ageResetsCost    !== null) updates["ageResetsCostOverride"]   = ageResetsCost;
+    if (legendCost       !== null) updates["legendCostOverride"]      = legendCost;
+    if (customGoldCost   !== null) updates["customGoldCostOverride"]  = customGoldCost;
+    if (customSilverCost !== null) updates["customSilverCostOverride"] = customSilverCost;
+    if (customBronzeCost !== null) updates["customBronzeCostOverride"] = customBronzeCost;
 
     await db.update(seasonsTable).set(updates as any).where(eq(seasonsTable.id, season.id));
 
@@ -524,6 +565,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Dev upgrade cost:** ${s.devUpsCostOverride !== null ? `~~${COSTS.dev_up}~~ → **${s.devUpsCostOverride} coins** ⚠️` : `**${COSTS.dev_up} coins** (default)`}`,
       `**Age reset cap:** ${s.ageResetsCapOverride !== null ? `~~${LIMITS.ageResetsPerSeason}~~ → **${s.ageResetsCapOverride}/season** ⚠️` : `**${LIMITS.ageResetsPerSeason}/season** (default)`}`,
       `**Age reset cost:** ${s.ageResetsCostOverride !== null ? `~~${COSTS.age_reset}~~ → **${s.ageResetsCostOverride} coins** ⚠️` : `**${COSTS.age_reset} coins** (default)`}`,
+      `**Legend cost:** ${s.legendCostOverride !== null ? `~~${COSTS.legend}~~ → **${s.legendCostOverride} coins** ⚠️` : `**${COSTS.legend} coins** (default)`}`,
+      `**Custom Gold cost:** ${s.customGoldCostOverride !== null ? `~~${COSTS.custom_player_gold}~~ → **${s.customGoldCostOverride} coins** ⚠️` : `**${COSTS.custom_player_gold} coins** (default)`}`,
+      `**Custom Silver cost:** ${s.customSilverCostOverride !== null ? `~~${COSTS.custom_player_silver}~~ → **${s.customSilverCostOverride} coins** ⚠️` : `**${COSTS.custom_player_silver} coins** (default)`}`,
+      `**Custom Bronze cost:** ${s.customBronzeCostOverride !== null ? `~~${COSTS.custom_player_bronze}~~ → **${s.customBronzeCostOverride} coins** ⚠️` : `**${COSTS.custom_player_bronze} coins** (default)`}`,
     ];
 
     return interaction.editReply({
