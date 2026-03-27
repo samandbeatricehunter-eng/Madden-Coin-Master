@@ -21,7 +21,7 @@ export const data = new SlashCommandBuilder()
   // ── Legend ──────────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("legend")
-      .setDescription(`Buy a legend (${COSTS.legend.toLocaleString()} coins) — max 4 all-time`)
+      .setDescription("Buy a legend — see /viewstore for current price (max 4 all-time)")
       .addStringOption(opt =>
         opt.setName("legend_name")
           .setDescription("Select a legend from the store")
@@ -33,7 +33,7 @@ export const data = new SlashCommandBuilder()
   // ── Attribute ───────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("attribute")
-      .setDescription("Upgrade an attribute — Core: 25 coins/cap 16 | Non-Core: 10 coins/cap 32")
+      .setDescription("Upgrade an attribute — see /viewstore for current prices and caps")
       .addStringOption(opt =>
         opt.setName("attribute_name")
           .setDescription("Which attribute to upgrade?")
@@ -62,7 +62,7 @@ export const data = new SlashCommandBuilder()
   // ── Dev Upgrade ─────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("devup")
-      .setDescription(`Dev upgrade a player (${COSTS.dev_up} coins) — 2/season, Star or Superstar only`)
+      .setDescription("Dev upgrade a player (Star or Superstar only) — see /viewstore for current price and cap")
       .addStringOption(opt =>
         opt.setName("dev_type")
           .setDescription("Star or Superstar?")
@@ -93,7 +93,7 @@ export const data = new SlashCommandBuilder()
   // ── Age Reset ───────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("agereset")
-      .setDescription(`Reset a player's age (${COSTS.age_reset} coins) — 2/season`)
+      .setDescription("Reset a player's age — see /viewstore for current price and cap")
       .addStringOption(opt =>
         opt.setName("player_name")
           .setDescription("Player's name")
@@ -115,15 +115,15 @@ export const data = new SlashCommandBuilder()
   // ── Custom Player ───────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("customplayer")
-      .setDescription("Create a custom player — Gold 300 / Silver 200 / Bronze 100 coins")
+      .setDescription("Create a custom player — see /viewstore for current tier prices")
       .addStringOption(opt =>
         opt.setName("tier")
-          .setDescription("Player tier")
+          .setDescription("Player tier (see /viewstore for current prices)")
           .setRequired(true)
           .addChoices(
-            { name: "Gold (300 coins)", value: "custom_player_gold" },
-            { name: "Silver (200 coins)", value: "custom_player_silver" },
-            { name: "Bronze (100 coins)", value: "custom_player_bronze" },
+            { name: "Gold", value: "custom_player_gold" },
+            { name: "Silver", value: "custom_player_silver" },
+            { name: "Bronze", value: "custom_player_bronze" },
           )
       )
       .addStringOption(opt =>

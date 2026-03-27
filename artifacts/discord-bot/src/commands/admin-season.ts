@@ -153,7 +153,7 @@ export const data = new SlashCommandBuilder()
       )
       .addIntegerOption(opt =>
         opt.setName("dev_ups_cost")
-          .setDescription("Coin cost per dev upgrade (default: 100)")
+          .setDescription("Coin cost per dev upgrade (default: 250)")
           .setRequired(false)
           .setMinValue(1)
       )
@@ -165,7 +165,7 @@ export const data = new SlashCommandBuilder()
       )
       .addIntegerOption(opt =>
         opt.setName("age_resets_cost")
-          .setDescription("Coin cost per age reset (default: 100)")
+          .setDescription("Coin cost per age reset (default: 250)")
           .setRequired(false)
           .setMinValue(1)
       )
@@ -504,8 +504,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               "All overrides removed. Default rules are now active:\n" +
               "• **Core attrs**: 25 coins/pt, cap 16/season\n" +
               "• **Non-core attrs**: 10 coins/pt, cap 32/season\n" +
-              "• **Dev upgrades**: 100 coins, 2/season\n" +
-              "• **Age resets**: 100 coins, 2/season\n" +
+              "• **Dev upgrades**: 250 coins, 2/season\n" +
+              "• **Age resets**: 250 coins, 2/season\n" +
               "• **Legends**: 1000 coins\n" +
               "• **Custom players**: Gold 300 / Silver 200 / Bronze 100 coins\n" +
               "• **Core attribute list**: restored to defaults"
