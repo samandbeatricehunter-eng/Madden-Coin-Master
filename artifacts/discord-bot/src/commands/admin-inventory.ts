@@ -39,6 +39,7 @@ async function checkAdmin(interaction: ChatInputCommandInteraction): Promise<boo
 export const data = new SlashCommandBuilder()
   .setName("admininventory")
   .setDescription("Admin: view, remove, or transfer inventory items for any user")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
     sub.setName("view")
       .setDescription("View all inventory items for a user (shows item IDs)")

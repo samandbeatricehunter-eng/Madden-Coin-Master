@@ -9,9 +9,10 @@ import { eq, and, sql, asc } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
+  getCoreAttributes,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { COSTS, LIMITS, ATTRIBUTES, CORE_ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
+import { COSTS, LIMITS, ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
@@ -175,6 +176,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season = await getOrCreateActiveSeason();
   const stats = await getSeasonStats(interaction.user.id, season.id);
   const rules = await getSeasonRules(season);
+  const coreAttributes = getCoreAttributes(season);
 
   // ── /purchase legend ────────────────────────────────────────────────────────
   if (sub === "legend") {
@@ -244,7 +246,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
     }
 
-    const isCore = CORE_ATTRIBUTES.has(attributeName);
+    const isCore = coreAttributes.has(attributeName);
     const costPer = isCore ? rules.coreAttrCost    : rules.nonCoreAttrCost;
     const cap     = isCore ? rules.coreAttrCap     : rules.nonCoreAttrCap;
     const used    = isCore ? stats.coreAttrPurchased : stats.nonCoreAttrPurchased;

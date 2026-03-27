@@ -9,6 +9,7 @@ import { isAdminUser } from "../lib/db-helpers.js";
 export const data = new SlashCommandBuilder()
   .setName("setadmin")
   .setDescription("Manage bot-admin status for league members")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
     sub.setName("grant")
       .setDescription("Grant bot-admin status to a user")

@@ -20,6 +20,7 @@ export function weekLabel(week: string): string {
 export const data = new SlashCommandBuilder()
   .setName("advanceweek")
   .setDescription("Advance or set the current league week (admin only)")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addStringOption(opt =>
     opt.setName("week")
       .setDescription("The week to set")

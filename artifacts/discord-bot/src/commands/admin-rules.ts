@@ -16,6 +16,7 @@ const SECTION_CHOICES = [
 export const data = new SlashCommandBuilder()
   .setName("adminrules")
   .setDescription("Admin: manage the displayed league rules")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
     sub.setName("list")
       .setDescription("List all rules in a section with their numbers")

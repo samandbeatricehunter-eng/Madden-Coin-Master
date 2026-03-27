@@ -170,6 +170,27 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
   return { legends, customs, total: items.length };
 }
 
+/**
+ * Return the effective set of "core" attribute names for a given season.
+ * If the season has a coreAttributesOverride, that list is used (1–10 attrs).
+ * Otherwise the default CORE_ATTRIBUTES constant is returned.
+ */
+export function getCoreAttributes(season: { coreAttributesOverride?: string | null }): Set<string> {
+  if (season.coreAttributesOverride) {
+    try {
+      const parsed = JSON.parse(season.coreAttributesOverride);
+      if (Array.isArray(parsed) && parsed.length >= 1) return new Set(parsed as string[]);
+    } catch {
+      // fall through to default
+    }
+  }
+  // Inline the defaults to avoid circular async import issues
+  return new Set([
+    "Speed", "Acceleration", "Change of Direction", "Agility", "Strength",
+    "Jumping", "Throwing Power", "Awareness", "Stamina",
+  ]);
+}
+
 export async function getSeasonRules(season: Season) {
   const { COSTS, LIMITS } = await import("./constants.js");
   return {

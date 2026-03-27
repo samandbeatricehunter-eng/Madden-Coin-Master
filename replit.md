@@ -44,7 +44,7 @@ artifacts-monorepo/
 2. Run `pnpm --filter @workspace/discord-bot run deploy-commands` to register slash commands
 3. The bot workflow runs automatically: `pnpm --filter @workspace/discord-bot run dev`
 
-### User Commands
+### Public Commands
 
 | Command | Description |
 |---|---|
@@ -54,8 +54,18 @@ artifacts-monorepo/
 | `/purchase` | Buy any item (legend, attribute, dev up, age reset, custom player) |
 | `/inventory` | See your current season inventory |
 | `/availableupgrades` | See how many upgrades you've used this season |
+| `/teamlist` | Show all league members and their NFL team assignments |
+| `/openteams` | Show which NFL teams are not yet claimed |
+| `/reportscore` | Report a game score |
+| `/interviewrequest` | Submit a post-game interview for coin reward |
+| `/wager` | Challenge another user to a coin wager |
+| `/userstats` | See your season and all-time stats |
+| `/rules` | View league rules |
+| `/help` | Get help with bot commands |
 
-### Admin Commands (Administrators only)
+### Admin Commands (Discord Administrators only)
+
+All admin-facing commands now have Discord-level permission restrictions — they are invisible to non-admins.
 
 | Command | Description |
 |---|---|
@@ -63,10 +73,18 @@ artifacts-monorepo/
 | `/removecoins` | Remove coins from a user |
 | `/resetupgrades` | Reset a user's upgrade counts for the season |
 | `/legend add/list/edit/remove` | Manage the legend store |
-| `/season new/status/addcoins/setbalance` | Season management |
+| `/season new/status/addcoins/setbalance/override/core-attrs` | Season management incl. per-season override of all costs, caps, and core attribute list |
 | `/updaterecord` | Record a win or loss with point spread |
 | `/seasonpr` | Show current season power rankings |
 | `/alltimepr` | Show all-time power rankings |
+| `/setuser` | Link a Discord user to an NFL team |
+| `/clearteam` | Unlink a user from their team and clear their season W/L records |
+| `/adminrules` | Edit league rules by section |
+| `/admininventory` | View/remove/transfer any user's inventory items |
+| `/setadmin` | Grant/revoke bot-admin status |
+| `/advanceweek` | Set the current league week |
+| `/admin-gotw` / `/admin-potw` | Set GOTW/POTW bonuses |
+| `/admin-playoffs` | Manage playoff seeding |
 
 ### Purchase Rules
 
@@ -86,13 +104,16 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 
 ## Database Schema (lib/db/src/schema/discord-economy.ts)
 
-- `economy_users` — Discord users, balances, all-time legend count
-- `seasons` — Season tracking (active season)
-- `legends` — Available/purchased legends store
+- `economy_users` — Discord users, balances, all-time legend count, team, playoff info
+- `seasons` — Season tracking; supports per-season overrides for all costs, caps, and core attribute list (`coreAttributesOverride` is JSON text)
+- `legends` — Available/purchased legends store (permanent catalog, `isAvailable` controls store)
 - `purchases` — All purchase history with status (pending/approved/refunded)
 - `inventory` — Per-season user inventory
 - `season_stats` — Per-season upgrade usage counts
 - `user_records` — Per-season H2H wins/losses/point differential
+- `coin_transactions` — Full transaction history
+- `game_log` — Individual match log (score, winner, loser, etc.)
+- `wagers` — Active and resolved coin wagers between users
 
 ## Environment Variables Required
 

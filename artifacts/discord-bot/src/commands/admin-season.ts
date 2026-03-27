@@ -1,11 +1,12 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits,
+  PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { logTransaction } from "../lib/db-helpers.js";
+import { ATTRIBUTES } from "../lib/constants.js";
 
 const PERMANENT_CAP = 4;
 
@@ -151,8 +152,20 @@ export const data = new SlashCommandBuilder()
           .setMinValue(1)
       )
       .addIntegerOption(opt =>
+        opt.setName("dev_ups_cost")
+          .setDescription("Coin cost per dev upgrade (default: 100)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
         opt.setName("age_resets_cap")
           .setDescription("Max age resets per season (default: 2)")
+          .setRequired(false)
+          .setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("age_resets_cost")
+          .setDescription("Coin cost per age reset (default: 100)")
           .setRequired(false)
           .setMinValue(1)
       )
@@ -161,7 +174,31 @@ export const data = new SlashCommandBuilder()
           .setDescription("Set to True to clear ALL overrides and restore defaults")
           .setRequired(false)
       )
-  );
+  )
+  .addSubcommand(sub => {
+    let s = sub
+      .setName("core-attrs")
+      .setDescription("Set which attributes count as Core this season (1–10). Omit to reset to defaults.")
+      .addStringOption(opt =>
+        opt.setName("attr1")
+          .setDescription("Core attribute #1 (required — provide at least one)")
+          .setRequired(true)
+          .setAutocomplete(true)
+      );
+    for (let i = 2; i <= 10; i++) {
+      s = s.addStringOption(opt =>
+        opt.setName(`attr${i}`)
+          .setDescription(`Core attribute #${i}`)
+          .setRequired(false)
+          .setAutocomplete(true)
+      );
+    }
+    return s.addBooleanOption(opt =>
+      opt.setName("reset")
+        .setDescription("Set to True to restore the default core attribute list instead of saving")
+        .setRequired(false)
+    );
+  });
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
@@ -422,7 +459,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .set({
           coreAttrCostOverride: null, coreAttrCapOverride: null,
           nonCoreAttrCostOverride: null, nonCoreAttrCapOverride: null,
-          devUpsCapOverride: null, ageResetsCapOverride: null,
+          devUpsCapOverride: null, devUpsCostOverride: null,
+          ageResetsCapOverride: null, ageResetsCostOverride: null,
+          coreAttributesOverride: null,
         })
         .where(eq(seasonsTable.id, season.id));
 
@@ -435,8 +474,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               "All overrides removed. Default rules are now active:\n" +
               "• **Core attrs**: 25 coins/pt, cap 16/season\n" +
               "• **Non-core attrs**: 10 coins/pt, cap 32/season\n" +
-              "• **Dev upgrades**: 2/season\n" +
-              "• **Age resets**: 2/season"
+              "• **Dev upgrades**: 100 coins, 2/season\n" +
+              "• **Age resets**: 100 coins, 2/season\n" +
+              "• **Core attribute list**: restored to defaults"
             )
             .setTimestamp(),
         ],
@@ -448,10 +488,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const nonCoreAttrCost = interaction.options.getInteger("non_core_attr_cost");
     const nonCoreAttrCap  = interaction.options.getInteger("non_core_attr_cap");
     const devUpsCap       = interaction.options.getInteger("dev_ups_cap");
+    const devUpsCost      = interaction.options.getInteger("dev_ups_cost");
     const ageResetsCap    = interaction.options.getInteger("age_resets_cap");
+    const ageResetsCost   = interaction.options.getInteger("age_resets_cost");
 
     if (coreAttrCost === null && coreAttrCap === null && nonCoreAttrCost === null && nonCoreAttrCap === null
-        && devUpsCap === null && ageResetsCap === null) {
+        && devUpsCap === null && devUpsCost === null && ageResetsCap === null && ageResetsCost === null) {
       return interaction.editReply({
         embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Nothing to Change").setDescription("Provide at least one override value, or use `clear: True` to restore defaults.")],
       });
@@ -463,7 +505,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (nonCoreAttrCost !== null) updates["nonCoreAttrCostOverride"] = nonCoreAttrCost;
     if (nonCoreAttrCap  !== null) updates["nonCoreAttrCapOverride"]  = nonCoreAttrCap;
     if (devUpsCap       !== null) updates["devUpsCapOverride"]       = devUpsCap;
+    if (devUpsCost      !== null) updates["devUpsCostOverride"]      = devUpsCost;
     if (ageResetsCap    !== null) updates["ageResetsCapOverride"]    = ageResetsCap;
+    if (ageResetsCost   !== null) updates["ageResetsCostOverride"]   = ageResetsCost;
 
     await db.update(seasonsTable).set(updates as any).where(eq(seasonsTable.id, season.id));
 
@@ -476,18 +520,92 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Core attr cap:** ${s.coreAttrCapOverride !== null ? `~~${LIMITS.coreAttrPerSeason}~~ → **${s.coreAttrCapOverride}/season** ⚠️` : `**${LIMITS.coreAttrPerSeason}/season** (default)`}`,
       `**Non-core attr cost:** ${s.nonCoreAttrCostOverride !== null ? `~~${COSTS.non_core_attribute}~~ → **${s.nonCoreAttrCostOverride} coins** ⚠️` : `**${COSTS.non_core_attribute} coins** (default)`}`,
       `**Non-core attr cap:** ${s.nonCoreAttrCapOverride !== null ? `~~${LIMITS.nonCoreAttrPerSeason}~~ → **${s.nonCoreAttrCapOverride}/season** ⚠️` : `**${LIMITS.nonCoreAttrPerSeason}/season** (default)`}`,
-      `**Dev upgrades cap:** ${s.devUpsCapOverride !== null ? `~~${LIMITS.devUpsPerSeason}~~ → **${s.devUpsCapOverride}/season** ⚠️` : `**${LIMITS.devUpsPerSeason}/season** (default)`}`,
-      `**Age resets cap:** ${s.ageResetsCapOverride !== null ? `~~${LIMITS.ageResetsPerSeason}~~ → **${s.ageResetsCapOverride}/season** ⚠️` : `**${LIMITS.ageResetsPerSeason}/season** (default)`}`,
+      `**Dev upgrade cap:** ${s.devUpsCapOverride !== null ? `~~${LIMITS.devUpsPerSeason}~~ → **${s.devUpsCapOverride}/season** ⚠️` : `**${LIMITS.devUpsPerSeason}/season** (default)`}`,
+      `**Dev upgrade cost:** ${s.devUpsCostOverride !== null ? `~~${COSTS.dev_up}~~ → **${s.devUpsCostOverride} coins** ⚠️` : `**${COSTS.dev_up} coins** (default)`}`,
+      `**Age reset cap:** ${s.ageResetsCapOverride !== null ? `~~${LIMITS.ageResetsPerSeason}~~ → **${s.ageResetsCapOverride}/season** ⚠️` : `**${LIMITS.ageResetsPerSeason}/season** (default)`}`,
+      `**Age reset cost:** ${s.ageResetsCostOverride !== null ? `~~${COSTS.age_reset}~~ → **${s.ageResetsCostOverride} coins** ⚠️` : `**${COSTS.age_reset} coins** (default)`}`,
     ];
 
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(Colors.Orange)
-          .setTitle(`⚙️ Season ${season.seasonNumber} Attribute Overrides Updated`)
+          .setTitle(`⚙️ Season ${season.seasonNumber} Overrides Updated`)
           .setDescription(lines.join("\n") + "\n\n*Overrides apply only to this season. Defaults restore when a new season starts.*")
           .setTimestamp(),
       ],
     });
   }
+
+  if (sub === "core-attrs") {
+    const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+    const season = seasons[0];
+    if (!season) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Active Season").setDescription("No active season found.")],
+      });
+    }
+
+    const reset = interaction.options.getBoolean("reset") ?? false;
+    if (reset) {
+      await db.update(seasonsTable).set({ coreAttributesOverride: null }).where(eq(seasonsTable.id, season.id));
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Blue)
+            .setTitle(`🔄 Core Attributes Reset — Season ${season.seasonNumber}`)
+            .setDescription("Core attribute list restored to default:\n" + [...new Set(["Speed","Acceleration","Change of Direction","Agility","Strength","Jumping","Throwing Power","Awareness","Stamina"])].map(a => `• ${a}`).join("\n"))
+            .setTimestamp(),
+        ],
+      });
+    }
+
+    const chosen: string[] = [];
+    for (let i = 1; i <= 10; i++) {
+      const val = interaction.options.getString(i === 1 ? "attr1" : `attr${i}`);
+      if (val) chosen.push(val);
+    }
+
+    const invalid = chosen.filter(a => !ATTRIBUTES.includes(a as any));
+    if (invalid.length > 0) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Invalid Attribute(s)").setDescription(`These are not valid attributes: **${invalid.join(", ")}**\n\nUse the autocomplete list when typing each attribute.`)],
+      });
+    }
+
+    const unique = [...new Set(chosen)];
+    if (unique.length === 0) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Attributes Provided").setDescription("You must provide at least 1 attribute (`attr1` is required).")],
+      });
+    }
+
+    await db.update(seasonsTable).set({ coreAttributesOverride: JSON.stringify(unique) }).where(eq(seasonsTable.id, season.id));
+
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle(`✅ Core Attributes Set — Season ${season.seasonNumber}`)
+          .setDescription(
+            `**${unique.length}** attribute${unique.length === 1 ? "" : "s"} now count as Core this season:\n` +
+            unique.map(a => `• ${a}`).join("\n") +
+            "\n\nAll other attributes are Non-Core. Use `/season override clear: True` or `/season core-attrs reset: True` to restore defaults."
+          )
+          .setTimestamp(),
+      ],
+    });
+  }
+}
+
+export async function autocomplete(interaction: AutocompleteInteraction) {
+  const sub = interaction.options.getSubcommand(false);
+  if (sub !== "core-attrs") return;
+
+  const focused = interaction.options.getFocused().toLowerCase();
+  const choices = ATTRIBUTES
+    .filter(a => a.toLowerCase().includes(focused))
+    .slice(0, 25)
+    .map(a => ({ name: a, value: a }));
+  await interaction.respond(choices);
 }
