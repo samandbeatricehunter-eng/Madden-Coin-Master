@@ -249,6 +249,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       requesterScore: myScore,
       opponentScore:  oppScore,
       gameType:       "cpu",
+      week:           currentWeek,
       status:         "pending",
     }).returning();
 
