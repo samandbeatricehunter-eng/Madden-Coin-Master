@@ -34,6 +34,7 @@ import * as wager from "./commands/wager.js";
 import * as teamlist from "./commands/teamlist.js";
 import * as openteams from "./commands/openteams.js";
 import * as adminClearteam from "./commands/admin-clearteam.js";
+import * as adminResetWeek from "./commands/admin-resetweek.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -49,7 +50,7 @@ const commands = [
   adminSetUser, adminTransactions, recentH2H, rules,
   adminRules, adminSetAdmin, adminInventory, reportscore, interviewrequest, advanceweek,
   adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, adminLegendVault, userStats, wager,
-  teamlist, openteams, adminClearteam,
+  teamlist, openteams, adminClearteam, adminResetWeek,
 ].map(c => c.data.toJSON());
 
 commands.push(

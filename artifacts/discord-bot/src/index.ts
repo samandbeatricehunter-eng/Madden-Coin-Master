@@ -49,6 +49,7 @@ import * as wager from "./commands/wager.js";
 import * as teamlist from "./commands/teamlist.js";
 import * as openteams from "./commands/openteams.js";
 import * as adminClearteam from "./commands/admin-clearteam.js";
+import * as adminResetWeek from "./commands/admin-resetweek.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -121,6 +122,7 @@ if (!isProduction && !devBotEnabled) {
     teamlist,
     openteams,
     adminClearteam,
+    adminResetWeek,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },
