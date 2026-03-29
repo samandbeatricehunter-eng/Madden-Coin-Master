@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { payoutRequestsTable, interviewRequestsTable } from "@workspace/db";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, or, inArray, desc } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
 
@@ -137,17 +137,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
 
-  // ── Rule 1: Must have submitted a game score this week ────────────────────
+  // ── Rule 1: Must have a game score this week (either as reporter or opponent) ─
   const gameThisWeek = await db
     .select({
-      id: payoutRequestsTable.id,
-      gameType: payoutRequestsTable.gameType,
+      id:             payoutRequestsTable.id,
+      gameType:       payoutRequestsTable.gameType,
+      requesterId:    payoutRequestsTable.requesterId,
+      opponentId:     payoutRequestsTable.opponentId,
       requesterScore: payoutRequestsTable.requesterScore,
-      opponentScore: payoutRequestsTable.opponentScore,
+      opponentScore:  payoutRequestsTable.opponentScore,
     })
     .from(payoutRequestsTable)
     .where(and(
-      eq(payoutRequestsTable.requesterId, interaction.user.id),
+      or(
+        eq(payoutRequestsTable.requesterId, interaction.user.id),
+        eq(payoutRequestsTable.opponentId,  interaction.user.id),
+      ),
       eq(payoutRequestsTable.week, currentWeek),
     ))
     .orderBy(desc(payoutRequestsTable.createdAt))
@@ -156,8 +161,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (gameThisWeek.length === 0) {
     await interaction.editReply({
       content: [
-        `❌ **No game submitted for ${weekDisplay} yet.**`,
-        `You need to report a game with \`/reportscore\` before requesting an interview this week.`,
+        `❌ **No game on record for ${weekDisplay} yet.**`,
+        `A game score involving you must be submitted with \`/reportscore\` before you can request an interview this week.`,
       ].join("\n"),
     });
     return;
@@ -188,13 +193,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Determine if most recent game was an H2H loss ─────────────────────────
-  const recentGame = gameThisWeek[0]!;
-  const isH2HLoss  =
-    recentGame.gameType === "h2h" &&
-    recentGame.requesterScore !== null &&
-    recentGame.opponentScore  !== null &&
-    recentGame.requesterScore < recentGame.opponentScore;
+  // ── Determine if most recent game was an H2H loss (from this user's POV) ──
+  const recentGame   = gameThisWeek[0]!;
+  const isRequester  = recentGame.requesterId === interaction.user.id;
+  const myScore      = isRequester ? (recentGame.requesterScore ?? 0) : (recentGame.opponentScore ?? 0);
+  const theirScore   = isRequester ? (recentGame.opponentScore ?? 0) : (recentGame.requesterScore ?? 0);
+  const isH2HLoss    = recentGame.gameType === "h2h" && myScore < theirScore;
 
   // "l" = combined pool (regular + loss questions), "r" = regular pool only
   const poolType: "r" | "l" = isH2HLoss ? "l" : "r";

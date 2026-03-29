@@ -9,7 +9,7 @@ import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   payoutRequestsTable, interviewRequestsTable, userRecordsTable, wagersTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, or, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
   upsertH2HRecord, appendGameLog, getOrCreateActiveSeason, getOrCreateUser,
@@ -328,6 +328,15 @@ async function handleButton(interaction: ButtonInteraction) {
         const isSuperBowlGame = request.week === "superbowl";
         const gameLogType: "regular_season" | "playoff" | "superbowl" =
           isSuperBowlGame ? "superbowl" : isPlayoffGame ? "playoff" : "regular_season";
+
+        // ── Ensure both players exist in usersTable (opponent may never have used the bot) ──
+        for (const uid of [winnerId, loserId].filter(Boolean) as string[]) {
+          const existing = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.discordId, uid)).limit(1);
+          if (existing.length === 0) {
+            const discordUser = await interaction.client.users.fetch(uid).catch(() => null);
+            await db.insert(usersTable).values({ discordId: uid, discordUsername: discordUser?.username ?? "Unknown" });
+          }
+        }
 
         // Fetch winner's full data (seed, milestones, SB wins) in one read
         const winnerUserRows = winnerId
@@ -1038,17 +1047,20 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const weekDisplay   = weekLabel(currentWeek);
     const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
 
-    // Re-check: must have submitted a game this week
+    // Re-check: must have a game this week (as requester OR opponent)
     const gameThisWeek = await db.select({ id: payoutRequestsTable.id })
       .from(payoutRequestsTable)
       .where(and(
-        eq(payoutRequestsTable.requesterId, interaction.user.id),
+        or(
+          eq(payoutRequestsTable.requesterId, interaction.user.id),
+          eq(payoutRequestsTable.opponentId,  interaction.user.id),
+        ),
         eq(payoutRequestsTable.week, currentWeek),
       ))
       .limit(1);
 
     if (gameThisWeek.length === 0) {
-      await interaction.editReply({ content: `❌ No game submitted for ${weekDisplay} yet. Report a game with \`/reportscore\` first.` });
+      await interaction.editReply({ content: `❌ No game on record for ${weekDisplay} yet. Report a game with \`/reportscore\` first.` });
       return;
     }
 
