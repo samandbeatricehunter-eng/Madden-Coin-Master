@@ -289,9 +289,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           payoutLines.push(`🤖 **${humanTeam}** +${CPU_WIN_PAYOUT} coins *(CPU win vs ${cpuTeam} ${humanScore}–${cpuScore})*`);
         }
 
-        // Update season record (wins/losses/PD) for CPU games
-        await upsertH2HRecord(humanUser.discordId, season.id, humanWon && !isTie, spread);
-
+        // CPU games do NOT update user_records or power rankings — H2H only.
+        // Only log to game_log for personal history.
         await appendGameLog(humanUser.discordId, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuTeam}`);
       }
 
