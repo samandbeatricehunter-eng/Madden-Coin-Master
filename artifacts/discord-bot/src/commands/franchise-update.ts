@@ -110,15 +110,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     zip.extractAllTo(extractDir, true);
 
     // ── Read JSON files ───────────────────────────────────────────────────────
-    const teamsJson     = readJsonFile(extractDir, "teams.json");
-    const schedulesJson = readJsonFile(extractDir, "schedules.json");
-    const rostersJson   = readJsonFile(extractDir, "rosters.json");
+    const teamsResult     = readJsonFile(extractDir, "teams.json");
+    const schedulesResult = readJsonFile(extractDir, "schedules.json");
+    const rostersResult   = readJsonFile(extractDir, "rosters.json");
+
+    const teamsJson     = teamsResult?.data     ?? null;
+    const schedulesJson = schedulesResult?.data  ?? null;
+    const rostersJson   = rostersResult?.data    ?? null;
+
+    // ── Log all JSON files found in the ZIP for debugging ────────────────────
+    const zipFileList = listJsonFilenames(extractDir);
+    console.log(`[franchiseupdate] ZIP contents:\n${zipFileList}`);
+    console.log(`[franchiseupdate] Matched: teams=${teamsResult?.matchedFile ?? "NOT FOUND"}, schedules=${schedulesResult?.matchedFile ?? "NOT FOUND"}, rosters=${rostersResult?.matchedFile ?? "NOT FOUND"}`);
 
     if (!teamsJson) {
-      return interaction.editReply({ content: "❌ `teams.json` not found in the ZIP. Make sure you're uploading a valid Madden franchise export." });
+      return interaction.editReply({
+        content: `❌ No teams file found in the ZIP (looked for any filename containing "teams").\n\n**Files found in ZIP:**\n${zipFileList}`,
+      });
     }
     if (!schedulesJson) {
-      return interaction.editReply({ content: "❌ `schedules.json` not found in the ZIP. Make sure you're uploading a valid Madden franchise export." });
+      return interaction.editReply({
+        content: `❌ No schedule file found in the ZIP (looked for any filename containing "schedule").\n\n**Files found in ZIP:**\n${zipFileList}`,
+      });
     }
 
     // ── Build teamId → { name, nickname, userName } map ──────────────────────
@@ -568,7 +581,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Other weeks (skipped):** ${gamesWrongWeek}`,
       `**CPU vs CPU (skipped):** ${gamesCpuVsCpu}`,
       `**Unregistered team (skipped):** ${gamesUnregistered}`,
-      `**Roster players synced:** ${rostersSynced > 0 ? rostersSynced : "none (rosters.json not in ZIP)"}`,
+      `**Roster players synced:** ${rostersSynced > 0 ? rostersSynced : "none (rosters.json not found in ZIP)"}`,
+      `**ZIP files matched:** teams=\`${teamsResult?.matchedFile ?? "N/A"}\` schedules=\`${schedulesResult?.matchedFile ?? "N/A"}\` rosters=\`${rostersResult?.matchedFile ?? "not found"}\``,
     ];
     if (skippedHumanTeams.size > 0) {
       summaryParts.push(`**Unregistered teams:** ${[...skippedHumanTeams].join(", ")}`);
@@ -651,24 +665,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 }
 
-// ── Utility: find a file recursively in a directory ───────────────────────────
-function findFile(dir: string, name: string): string | null {
+// ── Utility: collect all file paths recursively ───────────────────────────────
+function listAllFiles(dir: string, results: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const nested = findFile(full, name);
-      if (nested) return nested;
-    } else if (entry.name.toLowerCase() === name.toLowerCase()) {
-      return full;
-    }
+    if (entry.isDirectory()) listAllFiles(full, results);
+    else results.push(full);
   }
-  return null;
+  return results;
 }
 
-function readJsonFile(dir: string, name: string): any | null {
+// Find a file by exact name match first, then by keyword contained in name.
+// Returns the first match, preferring exact over partial.
+function findFile(dir: string, nameOrKeyword: string): string | null {
+  const all = listAllFiles(dir);
+  const lower = nameOrKeyword.toLowerCase();
+  // 1. exact match (e.g. "schedules.json")
+  const exact = all.find(f => path.basename(f).toLowerCase() === lower);
+  if (exact) return exact;
+  // 2. partial match: strip extension and trailing 's' so "schedules" matches "leagueSchedule.json", etc.
+  const keyword = lower.replace(/\.json$/, "").replace(/s$/, ""); // "schedules" → "schedule"
+  const partial = all.find(f => path.basename(f).toLowerCase().includes(keyword) && f.endsWith(".json"));
+  return partial ?? null;
+}
+
+function readJsonFile(dir: string, name: string): { data: any; matchedFile: string } | null {
   const found = findFile(dir, name);
   if (!found) return null;
-  try { return JSON.parse(fs.readFileSync(found, "utf-8")); } catch { return null; }
+  try {
+    const data = JSON.parse(fs.readFileSync(found, "utf-8"));
+    return { data, matchedFile: path.basename(found) };
+  } catch { return null; }
+}
+
+// Return a human-readable list of all JSON filenames found in the ZIP directory
+function listJsonFilenames(dir: string): string {
+  const files = listAllFiles(dir).filter(f => f.endsWith(".json"));
+  if (files.length === 0) return "*(no .json files found)*";
+  return files.map(f => `• \`${path.relative(dir, f)}\``).join("\n");
 }
 
 // ── Utility: iterate games from a Madden schedule structure ──────────────────
