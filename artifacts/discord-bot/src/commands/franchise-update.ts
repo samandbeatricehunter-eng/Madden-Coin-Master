@@ -156,6 +156,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return interaction.editReply({ content: "❌ No regular-season schedule (`schedules.reg`) found in `schedules.json`. Make sure you're uploading a valid Madden franchise export." });
     }
 
+    // ── Pre-load all processed game IDs into memory (one query, not N) ─────────
+    const allProcessed = await db
+      .select({ gameId: franchiseProcessedGamesTable.gameId })
+      .from(franchiseProcessedGamesTable);
+    const processedSet = new Set(allProcessed.map(r => r.gameId));
+
     let gamesProcessed    = 0;
     let gamesDuplicate    = 0;
     let gamesCpuVsCpu     = 0;
@@ -183,13 +189,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const rawId   = game.gameId != null ? String(game.gameId) : null;
       const gameId  = rawId ?? `wk${game.weekIndex ?? "?"}-h${homeId}-a${awayId}-${homeScore}-${awayScore}`;
 
-      // Dedup check
-      const already = await db
-        .select({ gameId: franchiseProcessedGamesTable.gameId })
-        .from(franchiseProcessedGamesTable)
-        .where(eq(franchiseProcessedGamesTable.gameId, gameId))
-        .limit(1);
-      if (already.length > 0) { gamesDuplicate++; continue; }
+      // Dedup check — in-memory, no DB round-trip per game
+      if (processedSet.has(gameId)) { gamesDuplicate++; continue; }
 
       const homeIsHuman = homeTeamData.userName !== "CPU";
       const awayIsHuman = awayTeamData.userName !== "CPU";
@@ -301,10 +302,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         await appendGameLog(humanUser.discordId, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuTeam}`);
       }
 
-      // Mark game as processed
+      // Mark game as processed (DB + in-memory set for within-upload dedup)
       await db.insert(franchiseProcessedGamesTable)
         .values({ gameId })
         .onConflictDoNothing();
+      processedSet.add(gameId);
 
       // ── Record participation (used for interview eligibility) ──────────────
       const currentWeek: string = (season as any).currentWeek ?? "1";
