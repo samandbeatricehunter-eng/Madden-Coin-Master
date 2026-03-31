@@ -40,6 +40,7 @@ import * as nextopp from "./commands/nextopp.js";
 import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js";
 import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
 import * as endofseasonpayout from "./commands/endofseasonpayout.js";
+import * as myRoster from "./commands/my-roster.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -58,6 +59,7 @@ const commands = [
   teamlist, openteams, adminClearteam, adminResetWeek, franchiseUpdate,
   seasonschedule, nextopp,
   adminRollbackFranchise, adminSetStatTier, endofseasonpayout,
+  myRoster,
 ].map(c => c.data.toJSON());
 
 commands.push(

@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable } from "@workspace/db";
+import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable, franchiseRostersTable } from "@workspace/db";
 import { eq, sql, and, max } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
@@ -112,6 +112,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // ── Read JSON files ───────────────────────────────────────────────────────
     const teamsJson     = readJsonFile(extractDir, "teams.json");
     const schedulesJson = readJsonFile(extractDir, "schedules.json");
+    const rostersJson   = readJsonFile(extractDir, "rosters.json");
 
     if (!teamsJson) {
       return interaction.editReply({ content: "❌ `teams.json` not found in the ZIP. Make sure you're uploading a valid Madden franchise export." });
@@ -145,10 +146,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (u.team) teamToUser.set(u.team.toLowerCase().trim(), { discordId: u.discordId, discordUsername: u.discordUsername, team: u.team });
     }
 
-    // Try full name first ("las vegas raiders"), fall back to nickname ("raiders")
-    function findUser(maddenFullName: string, maddenNickname: string) {
+    // Try full name first ("las vegas raiders"), fall back to nickname ("raiders") if provided
+    function findUser(maddenFullName: string, maddenNickname?: string) {
       return teamToUser.get(maddenFullName.toLowerCase().trim())
-          ?? teamToUser.get(maddenNickname.toLowerCase().trim())
+          ?? (maddenNickname ? teamToUser.get(maddenNickname.toLowerCase().trim()) : null)
           ?? null;
     }
 
@@ -400,6 +401,82 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
     await Promise.all(scheduleUpserts);
 
+    // ── Sync rosters from rosters.json ────────────────────────────────────────
+    let rostersSynced = 0;
+    if (rostersJson) {
+      // The export wraps players under a key; try a few common shapes
+      const rawPlayers: any[] =
+        Array.isArray(rostersJson) ? rostersJson :
+        Array.isArray(rostersJson.rosters) ? rostersJson.rosters :
+        Array.isArray(rostersJson.players) ? rostersJson.players :
+        Object.values(rostersJson).filter(v => v && typeof v === "object" && !Array.isArray(v) && (v as any).firstName != null);
+
+      const rosterUpserts: Promise<any>[] = [];
+      for (const p of rawPlayers) {
+        if (!p || typeof p !== "object") continue;
+        const teamId = Number(p.teamId ?? p.teamIndex ?? p.rosterId ?? -1);
+        if (teamId < 0) continue;
+
+        const rawId  = p.playerId ?? p.rosterId ?? p.id;
+        const playerId = rawId != null ? Number(rawId) : null;
+        if (playerId == null || isNaN(playerId)) continue;
+
+        const teamData = teamMap.get(teamId);
+        if (!teamData) continue;
+
+        const user = findUser(teamData.name, teamData.nickname);
+
+        // overall can be an integer or an object with per-type ratings
+        let overall = 0;
+        if (typeof p.overallRating === "number") overall = p.overallRating;
+        else if (typeof p.overallRatings === "number") overall = p.overallRatings;
+        else if (p.overallRating != null) overall = Number(p.overallRating);
+        else if (p.overall != null) overall = Number(p.overall);
+
+        const devTrait = p.devTrait != null ? Number(p.devTrait) : 0;
+
+        rosterUpserts.push(
+          db.insert(franchiseRostersTable)
+            .values({
+              seasonId:  season.id,
+              teamId,
+              teamName:  teamData.name,
+              discordId: user?.discordId ?? null,
+              playerId,
+              firstName: (p.firstName ?? "").trim(),
+              lastName:  (p.lastName  ?? "").trim(),
+              position:  (p.position  ?? p.pos ?? "").trim().toUpperCase(),
+              overall,
+              devTrait,
+              age:       p.age != null ? Number(p.age) : null,
+              jerseyNum: p.jerseyNum != null ? Number(p.jerseyNum) : null,
+              importedAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: [
+                franchiseRostersTable.seasonId,
+                franchiseRostersTable.teamId,
+                franchiseRostersTable.playerId,
+              ],
+              set: {
+                teamName:  teamData.name,
+                discordId: user?.discordId ?? null,
+                firstName: (p.firstName ?? "").trim(),
+                lastName:  (p.lastName  ?? "").trim(),
+                position:  (p.position  ?? p.pos ?? "").trim().toUpperCase(),
+                overall,
+                devTrait,
+                age:       p.age != null ? Number(p.age) : null,
+                jerseyNum: p.jerseyNum != null ? Number(p.jerseyNum) : null,
+                importedAt: new Date(),
+              },
+            })
+        );
+        rostersSynced++;
+      }
+      await Promise.all(rosterUpserts);
+    }
+
     // ── Auto-post weekly results to general channel ────────────────────────────
     // Always derive the current week from persisted DB data so re-imports work correctly.
     try {
@@ -445,7 +522,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             embeds: [
               new EmbedBuilder()
                 .setColor(Colors.Gold)
-                .setTitle(`🏈 Week ${currentCompletedWeek} Results`)
+                .setTitle(`🏈 Week ${currentCompletedWeek + 1} Results`)
                 .setDescription(lines.join("\n"))
                 .setTimestamp(),
             ],
@@ -491,6 +568,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Other weeks (skipped):** ${gamesWrongWeek}`,
       `**CPU vs CPU (skipped):** ${gamesCpuVsCpu}`,
       `**Unregistered team (skipped):** ${gamesUnregistered}`,
+      `**Roster players synced:** ${rostersSynced > 0 ? rostersSynced : "none (rosters.json not in ZIP)"}`,
     ];
     if (skippedHumanTeams.size > 0) {
       summaryParts.push(`**Unregistered teams:** ${[...skippedHumanTeams].join(", ")}`);

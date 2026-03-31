@@ -288,6 +288,27 @@ export const franchiseScheduleTable = pgTable("franchise_schedule", {
     .on(t.seasonId, t.weekIndex, t.homeTeamId, t.awayTeamId),
 }));
 
+// Stores player roster data imported from each franchise ZIP
+export const franchiseRostersTable = pgTable("franchise_rosters", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  teamId:    integer("team_id").notNull(),
+  teamName:  text("team_name").notNull(),
+  discordId: text("discord_id"),                   // null if CPU team
+  playerId:  integer("player_id").notNull(),
+  firstName: text("first_name").notNull().default(""),
+  lastName:  text("last_name").notNull().default(""),
+  position:  text("position").notNull().default(""),
+  overall:   integer("overall").notNull().default(0),
+  devTrait:  integer("dev_trait").notNull().default(0),  // 0=Normal 1=Impact 2=Star 3=Superstar 4=X-Factor
+  age:       integer("age"),
+  jerseyNum: integer("jersey_num"),
+  importedAt: timestamp("imported_at").notNull().defaultNow(),
+}, (t) => ({
+  uniquePlayer: uniqueIndex("franchise_roster_player_season_idx")
+    .on(t.seasonId, t.teamId, t.playerId),
+}));
+
 // ── End-of-season stat payout tier configuration ──────────────────────────────
 // Each row defines one tier (1-4) for one stat category in a season.
 // For "higher is better" stats (offense, def INTs): threshold = minimum value to qualify.
