@@ -1,0 +1,398 @@
+import {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  ChatInputCommandInteraction,
+  PermissionFlagsBits,
+} from "discord.js";
+import axios from "axios";
+import fs from "fs";
+import path from "path";
+import AdmZip from "adm-zip";
+import dotenv from "dotenv";
+import { drizzle } from "drizzle-orm/node-postgres";
+import pkg from "pg";
+import { pgTable, text, integer } from "drizzle-orm/pg-core";
+import { eq } from "drizzle-orm";
+
+dotenv.config();
+const { Pool } = pkg;
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+const db = drizzle(pool);
+
+const GENERAL_CHANNEL_ID = "1476321282868908052";
+const DATA_DIR = "./data/raw";
+
+// ==========================
+// DB SCHEMA
+// ==========================
+const teamsTable = pgTable("teams", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  user: text("user"),
+  discordId: text("discord_id"),
+  wins: integer("wins"),
+  losses: integer("losses"),
+  pf: integer("pf"),
+  pa: integer("pa"),
+  coins: integer("coins"),
+});
+
+const processedGames = pgTable("processed_games", {
+  gameId: text("game_id").primaryKey(),
+});
+
+const rankingsTable = pgTable("rankings", {
+  team: text("team").primaryKey(),
+  rank: integer("rank"),
+});
+
+const usersTable = pgTable("users", {
+  username: text("username").primaryKey(),
+  discordId: text("discord_id"),
+  coins: integer("coins"),
+});
+
+// ==========================
+// LOAD JSON
+// ==========================
+function loadJSON(file: string) {
+  return JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), "utf-8"));
+}
+
+// ==========================
+// PARSE + STORE
+// ==========================
+async function parseFranchise() {
+  const tData = loadJSON("teams.json");
+  const schedules = loadJSON("schedules.json");
+
+  const teamMap: Record<string, any> = {};
+
+  Object.values(tData).forEach((t: any) => {
+    const id = t.teamId ?? t.teamIndex;
+
+    teamMap[id] = {
+      id,
+      name: `${t.cityName} ${t.teamName}`,
+      user: t.userName || "CPU",
+      discordId: null,
+      wins: 0,
+      losses: 0,
+      pf: 0,
+      pa: 0,
+      coins: 0,
+    };
+  });
+
+  const season = Object.values(schedules.reg)[0] as any;
+
+  for (const week of Object.values(season)) {
+    for (const game of Object.values(week as any)) {
+      if (!game.homeTeamId || !game.awayTeamId) continue;
+      if (game.status !== 3) continue;
+
+      const gameId =
+        game.gameId ||
+        `${game.weekIndex}-${game.homeTeamId}-${game.awayTeamId}`;
+
+      const exists = await db
+        .select()
+        .from(processedGames)
+        .where(eq(processedGames.gameId, gameId));
+
+      if (exists.length > 0) continue;
+
+      const home = teamMap[game.homeTeamId];
+      const away = teamMap[game.awayTeamId];
+
+      home.pf += game.homeScore;
+      home.pa += game.awayScore;
+      away.pf += game.awayScore;
+      away.pa += game.homeScore;
+
+      if (game.homeScore > game.awayScore) {
+        home.wins++;
+        away.losses++;
+      } else {
+        away.wins++;
+        home.losses++;
+      }
+
+      const isUserGame =
+        home.user !== "CPU" && away.user !== "CPU";
+
+      if (isUserGame) {
+        if (game.homeScore > game.awayScore) {
+          home.coins += 50;
+          away.coins += 20;
+        } else {
+          away.coins += 50;
+          home.coins += 20;
+        }
+      } else {
+        const userTeam = home.user !== "CPU" ? home : away;
+        const win =
+          (home.user !== "CPU" && game.homeScore > game.awayScore) ||
+          (away.user !== "CPU" && game.awayScore > game.homeScore);
+
+        if (win) userTeam.coins += 20;
+      }
+
+      await db.insert(processedGames).values({ gameId });
+    }
+  }
+
+  for (const t of Object.values(teamMap)) {
+    await db.insert(teamsTable).values(t as any).onConflictDoUpdate({
+      target: teamsTable.id,
+      set: t as any,
+    });
+  }
+
+  return { teamMap, schedules };
+}
+
+// ==========================
+// POWER RANKINGS (UPDATED)
+// ==========================
+function computeRankings(teams: any[]) {
+  return teams
+    .filter((t) => t.user !== "CPU")
+    .map((t) => {
+      const winPct =
+        t.wins + t.losses > 0 ? t.wins / (t.wins + t.losses) : 0;
+      const pd = t.pf - t.pa;
+
+      const score = winPct * 0.6 + (pd / 100) * 0.4;
+
+      return { ...t, pd, score };
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
+// ==========================
+// HELPERS
+// ==========================
+function mention(userId: string | null) {
+  return userId ? `<@${userId}>` : "";
+}
+
+function getTeamByUser(teams: any[], discordId: string) {
+  return teams.find((t) => t.discordId === discordId);
+}
+
+// ==========================
+// COMMANDS
+// ==========================
+async function handleUpdate(interaction: ChatInputCommandInteraction) {
+  const attachment = interaction.options.getAttachment("file");
+  if (!attachment || !attachment.name.endsWith(".zip")) {
+    return interaction.reply({ content: "❌ Upload ZIP", ephemeral: true });
+  }
+
+  await interaction.reply("📥 Processing...");
+
+  const zipPath = "./data/upload.zip";
+
+  const res = await axios({
+    url: attachment.url,
+    method: "GET",
+    responseType: "stream",
+  });
+
+  const writer = fs.createWriteStream(zipPath);
+  res.data.pipe(writer);
+  await new Promise((r) => writer.on("finish", r));
+
+  fs.rmSync(DATA_DIR, { recursive: true, force: true });
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+
+  const zip = new AdmZip(zipPath);
+  zip.extractAllTo(DATA_DIR, true);
+
+  const { teamMap, schedules } = await parseFranchise();
+
+  const teams = Object.values(teamMap);
+
+  const payouts = teams
+    .filter((t: any) => t.user !== "CPU" && t.coins > 0)
+    .map((t: any) => `💰 **${t.name}** (+${t.coins})`);
+
+  const rankings = computeRankings(teams);
+
+  await interaction.followUp("✅ Update complete.");
+
+  if (payouts.length) {
+    await interaction.channel?.send(
+      `**💰 Coin Payouts**\n${payouts.join("\n")}`
+    );
+  }
+
+  const rankingText = rankings
+    .map(
+      (t, i) =>
+        `**${i + 1}. ${t.name}** ${t.wins}-${t.losses} | PD: ${t.pd}`
+    )
+    .join("\n");
+
+  await interaction.channel?.send(
+    `**🏆 H2H POWER RANKINGS**\n@everyone\n\n${rankingText}`
+  );
+
+  await postWeeklySchedule(schedules, interaction.client);
+}
+
+// ==========================
+// WEEKLY SCHEDULE POST
+// ==========================
+async function postWeeklySchedule(schedules: any, client: Client) {
+  const season = Object.values(schedules.reg)[0] as any;
+
+  const currentWeek = Object.values(season).find((week: any) =>
+    Object.values(week).some((g: any) => g.status !== 3)
+  );
+
+  if (!currentWeek) return;
+
+  const lines: string[] = [];
+
+  Object.values(currentWeek).forEach((g: any) => {
+    const away = g.awayTeamId;
+    const home = g.homeTeamId;
+    lines.push(`Week ${g.weekIndex}: Team ${away} VS Team ${home}`);
+  });
+
+  const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
+  if (channel && channel.isTextBased()) {
+    channel.send(`**📅 WEEKLY MATCHUPS**\n${lines.join("\n")}`);
+  }
+}
+
+// ==========================
+// SEASON SCHEDULE (PRIVATE)
+// ==========================
+async function handleSeasonSchedule(interaction: ChatInputCommandInteraction) {
+  const schedules = loadJSON("schedules.json");
+  const teams = await db.select().from(teamsTable);
+
+  const userTeam = getTeamByUser(teams, interaction.user.id);
+  if (!userTeam) {
+    return interaction.reply({ content: "❌ No team found", ephemeral: true });
+  }
+
+  const season = Object.values(schedules.reg)[0] as any;
+  const lines: string[] = [];
+
+  Object.values(season).forEach((week: any) => {
+    Object.values(week).forEach((g: any) => {
+      if (
+        g.homeTeamId === userTeam.id ||
+        g.awayTeamId === userTeam.id
+      ) {
+        lines.push(
+          `Week ${g.weekIndex}: ${g.awayTeamId} VS ${g.homeTeamId}`
+        );
+      }
+    });
+  });
+
+  await interaction.reply({
+    content: `**📅 Your Season Schedule**\n${lines.join("\n")}`,
+    ephemeral: true,
+  });
+}
+
+// ==========================
+// NEXT OPPONENT
+// ==========================
+async function handleNextOpp(interaction: ChatInputCommandInteraction) {
+  const schedules = loadJSON("schedules.json");
+  const teams = await db.select().from(teamsTable);
+
+  const userTeam = getTeamByUser(teams, interaction.user.id);
+  if (!userTeam) return interaction.reply("❌ No team");
+
+  const season = Object.values(schedules.reg)[0] as any;
+
+  for (const week of Object.values(season)) {
+    for (const g of Object.values(week as any)) {
+      if (g.status === 3) continue;
+
+      if (g.homeTeamId === userTeam.id || g.awayTeamId === userTeam.id) {
+        const oppId =
+          g.homeTeamId === userTeam.id
+            ? g.awayTeamId
+            : g.homeTeamId;
+
+        const opp = teams.find((t) => t.id === oppId);
+
+        return interaction.reply({
+          content: `**Next Opponent:** ${opp?.name}`,
+          ephemeral: true,
+        });
+      }
+    }
+  }
+}
+
+// ==========================
+// BOT INIT
+// ==========================
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+});
+
+client.once("ready", () => {
+  console.log(`✅ Logged in`);
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "update") {
+    await handleUpdate(interaction);
+  }
+
+  if (interaction.commandName === "seasonschedule") {
+    await handleSeasonSchedule(interaction);
+  }
+
+  if (interaction.commandName === "nextopp") {
+    await handleNextOpp(interaction);
+  }
+});
+
+// ==========================
+// COMMAND REGISTRATION
+// ==========================
+const rest = new REST({ version: "10" }).setToken(process.env.TOKEN!);
+
+(async () => {
+  await rest.put(
+    Routes.applicationCommands(process.env.CLIENT_ID!),
+    {
+      body: [
+        {
+          name: "update",
+          description: "Upload franchise ZIP",
+          options: [{ name: "file", type: 11, required: true }],
+        },
+        {
+          name: "seasonschedule",
+          description: "View your full season schedule",
+        },
+        {
+          name: "nextopp",
+          description: "View your next opponent",
+        },
+      ],
+    }
+  );
+})();
+
+client.login(process.env.TOKEN!);
