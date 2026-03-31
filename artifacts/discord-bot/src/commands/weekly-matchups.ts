@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { franchiseScheduleTable, usersTable, seasonsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 
-const COMPLETED_STATUS = 2;
+const MIN_COMPLETED_STATUS = 2; // Madden: 1=upcoming, 2=CPU-completed, 3=H2H-completed
 
 export const data = new SlashCommandBuilder()
   .setName("weeklymatchups")
@@ -77,7 +77,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const awayMention = mention(g.awayTeamName);
     const homeMention = mention(g.homeTeamName);
 
-    if (g.status === COMPLETED_STATUS && g.homeScore != null && g.awayScore != null) {
+    if (g.status >= MIN_COMPLETED_STATUS && g.homeScore != null && g.awayScore != null) {
       const hs = g.homeScore;
       const as_ = g.awayScore;
       const tied     = hs === as_;
@@ -98,7 +98,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   }
 
-  const played   = games.filter(g => g.status === COMPLETED_STATUS).length;
+  const played   = games.filter(g => g.status >= MIN_COMPLETED_STATUS).length;
   const upcoming = games.length - played;
   const footerParts: string[] = [];
   if (played > 0)   footerParts.push(`${played} game${played > 1 ? "s" : ""} played`);

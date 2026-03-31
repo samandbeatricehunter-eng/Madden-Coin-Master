@@ -6,7 +6,7 @@ import { franchiseScheduleTable, usersTable } from "@workspace/db";
 import { eq, and, or, asc, sql } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
-const COMPLETED_STATUS = 2;
+const MIN_COMPLETED_STATUS = 2; // Madden: 1=upcoming, 2=CPU-completed, 3=H2H-completed
 
 export const data = new SlashCommandBuilder()
   .setName("seasonschedule")
@@ -44,7 +44,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const played = allGames.filter(g => g.status === COMPLETED_STATUS).length;
+  const played = allGames.filter(g => g.status >= MIN_COMPLETED_STATUS).length;
 
   const lines = allGames.map(g => {
     const isHome     = g.homeTeamName.toLowerCase().trim() === teamLower;
@@ -54,7 +54,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const oppScore   = isHome ? g.awayScore : g.homeScore;
 
     const weekNum = g.weekIndex + 1;
-    if (g.status === COMPLETED_STATUS && myScore !== null && oppScore !== null) {
+    if (g.status >= MIN_COMPLETED_STATUS && myScore !== null && oppScore !== null) {
       const tied  = myScore === oppScore;
       const won   = myScore > oppScore;
       const label = tied ? "T" : (won ? "W" : "L");

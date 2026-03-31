@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable, franchiseRostersTable } from "@workspace/db";
-import { eq, sql, and, max, inArray } from "drizzle-orm";
+import { eq, sql, and, max, inArray, gte } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
 import * as fs from "fs";
@@ -23,10 +23,13 @@ const H2H_WIN_PAYOUT  = 50;
 const H2H_LOSS_PAYOUT = 20;
 const CPU_WIN_PAYOUT  = 20;
 
-// ── Madden completed-game status code ────────────────────────────────────────
-// Most Madden 24/25 franchise exports use status 2 for final games.
-// Change to 3 if your export marks completed games as status 3.
-const COMPLETED_STATUS = 2;
+// ── Madden completed-game status codes ───────────────────────────────────────
+// Madden 24/25 exports use TWO completed-status codes:
+//   1 = upcoming / not yet played
+//   2 = completed (CPU-simmed game)
+//   3 = completed (human-played game)
+// Any game with status >= 2 is treated as completed.
+const MIN_COMPLETED_STATUS = 2;
 
 // weekIndex mapping: Madden uses 0-based weekIndex (weekIndex 0 = Week 1).
 // The admin sets season.currentWeek as a 1-based string ("1", "2", ... "18").
@@ -215,7 +218,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     for (const game of iterateGames(regSeason)) {
       if (!game || typeof game !== "object") continue;
       if (game.homeTeamId == null || game.awayTeamId == null) continue;
-      if (Number(game.status) !== COMPLETED_STATUS) continue;
+      if (Number(game.status) < MIN_COMPLETED_STATUS) continue;
       if (_debugGameCount < 5) {
         console.log(`[franchiseupdate] Game sample #${_debugGameCount}: weekIndex=${game.weekIndex} status=${game.status} h=${game.homeTeamId} a=${game.awayTeamId} score=${game.homeScore}-${game.awayScore}`);
         _debugGameCount++;
@@ -422,9 +425,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const schedKey = `${weekIdx}-${hId}-${aId}`;
       const existing = schedMap.get(schedKey);
 
-      // Keep this entry if: (a) not seen yet, or (b) this version is completed
-      // and the existing one isn't — prevents status=0 "Upcoming" beating status=2 "Played"
-      if (!existing || (gameStatus === COMPLETED_STATUS && existing.status !== COMPLETED_STATUS)) {
+      // Keep this entry if: (a) not seen yet, or (b) this version is completed (status>=2)
+      // and the existing one isn't — prevents status=1 "Upcoming" beating status=2/3 "Played"
+      if (!existing || (gameStatus >= MIN_COMPLETED_STATUS && existing.status < MIN_COMPLETED_STATUS)) {
         schedMap.set(schedKey, { hId, aId, weekIdx, hTeamName, aTeamName, hScore, aScore, status: gameStatus });
       }
     }
@@ -623,7 +626,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .from(franchiseScheduleTable)
         .where(and(
           eq(franchiseScheduleTable.seasonId, season.id),
-          eq(franchiseScheduleTable.status,   COMPLETED_STATUS),
+          gte(franchiseScheduleTable.status,  MIN_COMPLETED_STATUS),
         ));
       const currentCompletedWeek = maxWeekRow?.maxWeek ?? null;
 
@@ -635,7 +638,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .where(and(
             eq(franchiseScheduleTable.seasonId,  season.id),
             eq(franchiseScheduleTable.weekIndex, currentCompletedWeek),
-            eq(franchiseScheduleTable.status,    COMPLETED_STATUS),
+            gte(franchiseScheduleTable.status,   MIN_COMPLETED_STATUS),
           ));
 
         const h2hGames = weekGames.filter(g =>

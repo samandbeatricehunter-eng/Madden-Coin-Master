@@ -6,7 +6,7 @@ import { franchiseScheduleTable } from "@workspace/db";
 import { eq, and, or, asc, lt, sql } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
-const COMPLETED_STATUS = 2;
+// Madden: 1=upcoming, 2=CPU-completed, 3=H2H-completed — upcoming games have status < 2
 
 export const data = new SlashCommandBuilder()
   .setName("nextopp")
@@ -34,7 +34,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         sql`lower(${franchiseScheduleTable.homeTeamName}) = ${teamLower}`,
         sql`lower(${franchiseScheduleTable.awayTeamName}) = ${teamLower}`,
       ),
-      lt(franchiseScheduleTable.status, COMPLETED_STATUS),
+      lt(franchiseScheduleTable.status, 2), // status < 2 means upcoming (status=1)
     ))
     .orderBy(asc(franchiseScheduleTable.weekIndex))
     .limit(1);
