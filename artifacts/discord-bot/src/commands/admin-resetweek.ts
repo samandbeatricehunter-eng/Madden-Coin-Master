@@ -2,14 +2,14 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { payoutRequestsTable, interviewRequestsTable } from "@workspace/db";
-import { eq, and, inArray } from "drizzle-orm";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { franchiseGameParticipantsTable, interviewRequestsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
+import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { WEEK_SEQUENCE, weekLabel } from "./advanceweek.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-resetweek")
-  .setDescription("Admin: clear all score reports and interviews for a specific week so members can resubmit")
+  .setDescription("Admin: clear franchise game records and interviews for a specific week so members can re-qualify")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addStringOption(opt =>
     opt.setName("week")
@@ -43,36 +43,37 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const confirm = interaction.options.getBoolean("confirm", true);
   const label   = weekLabel(week);
 
+  const season = await getOrCreateActiveSeason();
+
   // ── Fetch what exists for this week ─────────────────────────────────────────
-  const payouts = await db.select({
-    id:     payoutRequestsTable.id,
-    status: payoutRequestsTable.status,
-    gameType: payoutRequestsTable.gameType,
-    requesterTeam: payoutRequestsTable.requesterTeam,
-    opponentTeam: payoutRequestsTable.opponentTeam,
+  const participants = await db.select({
+    id:        franchiseGameParticipantsTable.id,
+    discordId: franchiseGameParticipantsTable.discordId,
+    gameType:  franchiseGameParticipantsTable.gameType,
   })
-    .from(payoutRequestsTable)
-    .where(eq(payoutRequestsTable.week, week));
+    .from(franchiseGameParticipantsTable)
+    .where(and(
+      eq(franchiseGameParticipantsTable.week, week),
+      eq(franchiseGameParticipantsTable.seasonId, season.id),
+    ));
 
   const interviews = await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
     .from(interviewRequestsTable)
     .where(eq(interviewRequestsTable.week, week));
 
-  const pending  = payouts.filter(p => p.status === "pending");
-  const approved = payouts.filter(p => p.status === "approved");
-  const denied   = payouts.filter(p => p.status === "denied");
-
   // ── Preview mode (confirm not set) ──────────────────────────────────────────
   if (!confirm) {
+    const h2hCount = participants.filter(p => p.gameType === "h2h").length;
+    const cpuCount = participants.filter(p => p.gameType === "cpu").length;
+
     const lines = [
       `**Week:** ${label}`,
-      `**Score reports found:** ${payouts.length} total`,
-      `  • Pending: ${pending.length}`,
-      `  • Approved: ${approved.length}${approved.length > 0 ? " ⚠️ (coins already paid — will be deleted but coins are NOT reversed)" : ""}`,
-      `  • Denied: ${denied.length}`,
+      `**Franchise game records:** ${participants.length} total`,
+      `  • H2H participants: ${h2hCount}`,
+      `  • CPU participants: ${cpuCount}`,
       `**Interview requests:** ${interviews.length}`,
       ``,
-      `Run this command again with \`confirm: True\` to delete all records for **${label}** and allow members to resubmit.`,
+      `Run this command again with \`confirm: True\` to delete all records for **${label}** and allow members to re-qualify.`,
     ];
 
     return interaction.editReply({
@@ -87,9 +88,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Nothing to delete ───────────────────────────────────────────────────────
-  if (payouts.length === 0 && interviews.length === 0) {
+  if (participants.length === 0 && interviews.length === 0) {
     return interaction.editReply({
-      content: `ℹ️ No score reports or interviews found for **${label}**. Nothing to reset.`,
+      content: `ℹ️ No franchise game records or interviews found for **${label}**. Nothing to reset.`,
     });
   }
 
@@ -98,35 +99,29 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ? await db.delete(interviewRequestsTable).where(eq(interviewRequestsTable.week, week)).returning({ id: interviewRequestsTable.id })
     : [];
 
-  // ── Delete all payout requests for this week ────────────────────────────────
-  const deletedPayouts = payouts.length > 0
-    ? await db.delete(payoutRequestsTable).where(eq(payoutRequestsTable.week, week)).returning({ id: payoutRequestsTable.id })
+  // ── Delete franchise game participant records for this week ─────────────────
+  const deletedParticipants = participants.length > 0
+    ? await db.delete(franchiseGameParticipantsTable)
+        .where(and(
+          eq(franchiseGameParticipantsTable.week, week),
+          eq(franchiseGameParticipantsTable.seasonId, season.id),
+        ))
+        .returning({ id: franchiseGameParticipantsTable.id })
     : [];
 
   // ── Summary ─────────────────────────────────────────────────────────────────
-  const warningLines: string[] = [];
-  if (approved.length > 0) {
-    warningLines.push(
-      `⚠️ **${approved.length} approved game(s) were deleted.** Coins already paid for those games are NOT reversed — members keep their earnings.`,
-    );
-  }
-
   const lines = [
     `**Week reset:** ${label}`,
-    `**Score reports deleted:** ${deletedPayouts.length} (${pending.length} pending, ${approved.length} approved, ${denied.length} denied)`,
+    `**Franchise game records deleted:** ${deletedParticipants.length}`,
     `**Interviews deleted:** ${deletedInterviews.length}`,
     ``,
-    `All members can now resubmit their scores for **${label}**.`,
+    `All members can now re-qualify for interviews after the next franchise update for **${label}**.`,
   ];
-
-  if (warningLines.length > 0) {
-    lines.push("", ...warningLines);
-  }
 
   return interaction.editReply({
     embeds: [
       new EmbedBuilder()
-        .setColor(approved.length > 0 ? Colors.Orange : Colors.Green)
+        .setColor(Colors.Green)
         .setTitle(`✅ ${label} Reset Complete`)
         .setDescription(lines.join("\n"))
         .setFooter({ text: `Reset by ${interaction.user.username}` })

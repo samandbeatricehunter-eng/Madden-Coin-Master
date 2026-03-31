@@ -3,8 +3,8 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { payoutRequestsTable, interviewRequestsTable } from "@workspace/db";
-import { eq, and, or, inArray, desc } from "drizzle-orm";
+import { franchiseGameParticipantsTable, interviewRequestsTable } from "@workspace/db";
+import { eq, and, inArray } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
 
@@ -69,7 +69,7 @@ export const INTERVIEW_QUESTIONS: string[] = [
   "If today's result gets talked about a year from now, what do you want people to remember about it?",
 ];
 
-// Loss-specific questions — only shown when the user's most recent game report was an H2H loss.
+// Loss-specific questions — shown when the user had an H2H game this week.
 export const LOSS_INTERVIEW_QUESTIONS: string[] = [
   "Be honest—did you win this game, or did your opponent lose it for you?",
   "At what point did you realize things were slipping, and why couldn't you stop it?",
@@ -104,9 +104,9 @@ export const LOSS_INTERVIEW_QUESTIONS: string[] = [
 ];
 
 /**
- * Returns the full question pool based on whether this is a loss interview.
- * "l" (loss) = regular + loss questions combined.
- * "r" (regular) = regular questions only.
+ * Returns the full question pool based on whether this is an H2H game.
+ * "l" (h2h) = regular + loss questions combined.
+ * "r" (regular) = regular questions only (CPU game or unknown).
  */
 export function getQuestionPool(poolType: "r" | "l"): string[] {
   return poolType === "l"
@@ -125,7 +125,7 @@ export function pickThreeIndices(poolSize: number): [number, number, number] {
 
 export const data = new SlashCommandBuilder()
   .setName("interviewrequest")
-  .setDescription(`Submit a post-game interview to earn ${INTERVIEW_PAYOUT} coins — one per week, after reporting a game`);
+  .setDescription(`Submit a post-game interview to earn ${INTERVIEW_PAYOUT} coins — one per week, after your game is processed`);
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
@@ -137,32 +137,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
 
-  // ── Rule 1: Must have a game score this week (either as reporter or opponent) ─
+  // ── Rule 1: Must have a game processed by /franchiseupdate this week ─────────
   const gameThisWeek = await db
     .select({
-      id:             payoutRequestsTable.id,
-      gameType:       payoutRequestsTable.gameType,
-      requesterId:    payoutRequestsTable.requesterId,
-      opponentId:     payoutRequestsTable.opponentId,
-      requesterScore: payoutRequestsTable.requesterScore,
-      opponentScore:  payoutRequestsTable.opponentScore,
+      id:       franchiseGameParticipantsTable.id,
+      gameType: franchiseGameParticipantsTable.gameType,
     })
-    .from(payoutRequestsTable)
+    .from(franchiseGameParticipantsTable)
     .where(and(
-      or(
-        eq(payoutRequestsTable.requesterId, interaction.user.id),
-        eq(payoutRequestsTable.opponentId,  interaction.user.id),
-      ),
-      eq(payoutRequestsTable.week, currentWeek),
+      eq(franchiseGameParticipantsTable.discordId, interaction.user.id),
+      eq(franchiseGameParticipantsTable.week,       currentWeek),
+      eq(franchiseGameParticipantsTable.seasonId,   season.id),
     ))
-    .orderBy(desc(payoutRequestsTable.createdAt))
     .limit(1);
 
   if (gameThisWeek.length === 0) {
     await interaction.editReply({
       content: [
         `❌ **No game on record for ${weekDisplay} yet.**`,
-        `A game score involving you must be submitted with \`/reportscore\` before you can request an interview this week.`,
+        `A game must be processed via the franchise update before you can submit an interview this week.`,
       ].join("\n"),
     });
     return;
@@ -193,15 +186,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Determine if most recent game was an H2H loss (from this user's POV) ──
-  const recentGame   = gameThisWeek[0]!;
-  const isRequester  = recentGame.requesterId === interaction.user.id;
-  const myScore      = isRequester ? (recentGame.requesterScore ?? 0) : (recentGame.opponentScore ?? 0);
-  const theirScore   = isRequester ? (recentGame.opponentScore ?? 0) : (recentGame.requesterScore ?? 0);
-  const isH2HLoss    = recentGame.gameType === "h2h" && myScore < theirScore;
-
-  // "l" = combined pool (regular + loss questions), "r" = regular pool only
-  const poolType: "r" | "l" = isH2HLoss ? "l" : "r";
+  // ── Use expanded pool for H2H games (includes loss/adversity questions) ────
+  const participantRow = gameThisWeek[0]!;
+  const poolType: "r" | "l" = participantRow.gameType === "h2h" ? "l" : "r";
   const pool = getQuestionPool(poolType);
 
   // ── Pick 3 unique questions from the appropriate pool ─────────────────────
@@ -211,25 +198,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const q3 = pool[i3]!;
   const indicesStr = `${i1},${i2},${i3}`;
 
-  const lossNote = isH2HLoss
-    ? `\n\n*After an H2H loss, questions may be drawn from the post-loss pool (${pool.length} total questions available).*`
+  const poolNote = poolType === "l"
+    ? `\n\n*H2H game detected — questions may be drawn from the expanded pool (${pool.length} total questions).*`
     : `\n\n*Questions are selected randomly from a pool of ${pool.length}.*`;
 
-  // ── Show questions + Submit button (DB record created on modal submit) ────
+  // ── Show questions + Submit button ────────────────────────────────────────
   const embed = new EmbedBuilder()
-    .setColor(isH2HLoss ? Colors.Red : Colors.Blurple)
+    .setColor(Colors.Blurple)
     .setTitle("🎙️ Post-Game Interview")
     .setDescription(
       `Here are your **3 interview questions** for **${weekDisplay}**.\n` +
       `Click **Submit Your Answers** to fill them in — you'll have time to type each one.` +
-      lossNote,
+      poolNote,
     )
     .addFields(
       { name: "Q1", value: q1 },
       { name: "Q2", value: q2 },
       { name: "Q3", value: q3 },
     )
-    .setFooter({ text: `${requesterTeam} • ${weekDisplay}${isH2HLoss ? " • Post-Loss Interview" : ""}` })
+    .setFooter({ text: `${requesterTeam} • ${weekDisplay}` })
     .setTimestamp();
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(

@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable } from "@workspace/db";
+import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable } from "@workspace/db";
 import { eq, sql, and, max } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
@@ -18,7 +18,7 @@ import {
 // ── Channel IDs ───────────────────────────────────────────────────────────────
 const GENERAL_CHANNEL_ID = process.env["DISCORD_GENERAL_CHANNEL_ID"] ?? "1476321282868908052";
 
-// ── Coin payouts (mirrors reportscore.ts) ────────────────────────────────────
+// ── Coin payouts ─────────────────────────────────────────────────────────────
 const H2H_WIN_PAYOUT  = 50;
 const H2H_LOSS_PAYOUT = 20;
 const CPU_WIN_PAYOUT  = 20;
@@ -299,6 +299,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await db.insert(franchiseProcessedGamesTable)
         .values({ gameId })
         .onConflictDoNothing();
+
+      // ── Record participation (used for interview eligibility) ──────────────
+      const currentWeek: string = (season as any).currentWeek ?? "1";
+      if (homeUser && awayUser) {
+        // H2H — both players participated
+        for (const uid of [homeUser.discordId, awayUser.discordId]) {
+          await db.insert(franchiseGameParticipantsTable)
+            .values({ seasonId: season.id, week: currentWeek, discordId: uid, gameType: "h2h" })
+            .onConflictDoNothing();
+        }
+      } else {
+        // CPU — only the human player
+        const humanUser2 = homeUser ?? awayUser!;
+        await db.insert(franchiseGameParticipantsTable)
+          .values({ seasonId: season.id, week: currentWeek, discordId: humanUser2.discordId, gameType: "cpu" })
+          .onConflictDoNothing();
+      }
 
       gamesProcessed++;
     }

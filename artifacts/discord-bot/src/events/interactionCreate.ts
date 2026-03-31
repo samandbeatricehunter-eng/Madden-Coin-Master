@@ -7,46 +7,19 @@ import {
 import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
-  payoutRequestsTable, interviewRequestsTable, userRecordsTable, wagersTable,
+  franchiseGameParticipantsTable, interviewRequestsTable, wagersTable,
 } from "@workspace/db";
-import { eq, and, or, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
-  upsertH2HRecord, appendGameLog, getOrCreateActiveSeason, getOrCreateUser,
+  getOrCreateActiveSeason, getOrCreateUser,
 } from "../lib/db-helpers.js";
-import { H2H_WIN_PAYOUT, H2H_LOSS_PAYOUT, CPU_WIN_PAYOUT } from "../commands/reportscore.js";
 import { INTERVIEW_PAYOUT, getQuestionPool } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
 const GENERAL_CHANNEL_ID       = "1476321282868908052";
-
-// ── Playoff + milestone constants ─────────────────────────────────────────────
-const PLAYOFF_WEEKS        = new Set(["wildcard", "divisional", "conference", "superbowl"]);
-const PLAYOFF_WIN_TOP4     = 75;   // Seeds 1-4 in their conference
-const PLAYOFF_WIN_WILDCARD = 100;  // Seeds 5-7 (wildcard entrants)
-const PLAYOFF_LOSS_BONUS   = 50;   // All playoff losers
-
-const SB_BONUSES: Record<number, number> = { 1: 250, 2: 500 };
-const SB_BONUS_3PLUS = 1000;
-
-const H2H_MILESTONES = [
-  { tier: 4, wins: 50, bonus: 1000 },
-  { tier: 3, wins: 25, bonus: 500  },
-  { tier: 2, wins: 12, bonus: 250  },
-  { tier: 1, wins: 5,  bonus: 100  },
-] as const;
-
-function checkMilestone(
-  totalWins: number,
-  currentTier: number,
-): { tier: number; wins: number; bonus: number } | null {
-  for (const m of H2H_MILESTONES) {
-    if (totalWins >= m.wins && currentTier < m.tier) return m;
-  }
-  return null;
-}
 
 export const name = "interactionCreate";
 
@@ -280,259 +253,6 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Score report: approve ────────────────────────────────────────────────────
-  if (action === "payout_approve") {
-    const payoutId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    const rows = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, payoutId)).limit(1);
-    const request = rows[0];
-    if (!request) { await interaction.followUp({ content: "❌ Request not found.", ephemeral: true }); return; }
-    if (request.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ This request has already been **${request.status}**.`, ephemeral: true });
-      return;
-    }
-
-    const season      = await getOrCreateActiveSeason();
-    const resultLines: string[] = [];
-    const myScore  = request.requesterScore ?? 0;
-    const oppScore = request.opponentScore  ?? 0;
-    const spread   = myScore - oppScore;
-    const requesterWon = myScore > oppScore;
-    const isTie    = myScore === oppScore;
-
-    // ── H2H ──────────────────────────────────────────────────────────────────
-    if (request.gameType === "h2h" || request.gameType === "pvp") {
-      if (isTie) {
-        await db.update(payoutRequestsTable)
-          .set({ status: "tied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-          .where(eq(payoutRequestsTable.id, payoutId));
-
-        await appendGameLog(request.requesterId, season.id, "loss", 0, `[TIE] ${request.opponentTeam ?? "Unknown"}`);
-        if (request.opponentId) await appendGameLog(request.opponentId, season.id, "loss", 0, `[TIE] ${request.requesterTeam ?? "Unknown"}`);
-
-        resultLines.push("🤝 **Tie game** — no payout awarded to either player.");
-        for (const uid of [request.requesterId, request.opponentId].filter(Boolean) as string[]) {
-          try {
-            const u = await interaction.client.users.fetch(uid);
-            await u.send(`🤝 Your game vs **${uid === request.requesterId ? request.opponentTeam : request.requesterTeam}** was confirmed as a **tie** (${myScore}–${oppScore}). No payout for ties.`).catch(() => {});
-          } catch (_) {}
-        }
-      } else {
-        const winnerId   = requesterWon ? request.requesterId : (request.opponentId ?? null);
-        const loserId    = requesterWon ? (request.opponentId ?? null) : request.requesterId;
-        const winnerTeam = requesterWon ? request.requesterTeam : request.opponentTeam;
-        const loserTeam  = requesterWon ? request.opponentTeam  : request.requesterTeam;
-
-        const isPlayoffGame   = PLAYOFF_WEEKS.has(request.week ?? "");
-        const isSuperBowlGame = request.week === "superbowl";
-        const gameLogType: "regular_season" | "playoff" | "superbowl" =
-          isSuperBowlGame ? "superbowl" : isPlayoffGame ? "playoff" : "regular_season";
-
-        // ── Ensure both players exist in usersTable (opponent may never have used the bot) ──
-        for (const uid of [winnerId, loserId].filter(Boolean) as string[]) {
-          const existing = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.discordId, uid)).limit(1);
-          if (existing.length === 0) {
-            const discordUser = await interaction.client.users.fetch(uid).catch(() => null);
-            await db.insert(usersTable).values({ discordId: uid, discordUsername: discordUser?.username ?? "Unknown" });
-          }
-        }
-
-        // Fetch winner's full data (seed, milestones, SB wins) in one read
-        const winnerUserRows = winnerId
-          ? await db.select({
-              allTimeH2HWins:       usersTable.allTimeH2HWins,
-              allTimeSuperbowlWins: usersTable.allTimeSuperbowlWins,
-              milestoneTierAwarded: usersTable.milestoneTierAwarded,
-              playoffSeed:          usersTable.playoffSeed,
-            }).from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1)
-          : [];
-        const winnerData = winnerUserRows[0] ?? null;
-
-        // ── Determine payouts ──────────────────────────────────────────────
-        let winnerPayout: number;
-        let loserPayout: number;
-        if (isPlayoffGame) {
-          const seed   = winnerData?.playoffSeed ?? null;
-          const isTop4 = seed !== null && seed <= 4;
-          winnerPayout = isTop4 ? PLAYOFF_WIN_TOP4 : PLAYOFF_WIN_WILDCARD;
-          loserPayout  = PLAYOFF_LOSS_BONUS;
-        } else {
-          winnerPayout = H2H_WIN_PAYOUT;
-          loserPayout  = H2H_LOSS_PAYOUT;
-        }
-
-        // ── Award base payouts ─────────────────────────────────────────────
-        const gameDesc = isPlayoffGame ? "Playoff" : "H2H";
-        if (winnerId) {
-          await addBalance(winnerId, winnerPayout);
-          await logTransaction(winnerId, winnerPayout, "addcoins",
-            `${gameDesc} win vs ${loserTeam} (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)})`, interaction.user.id);
-          resultLines.push(`🏆 **${winnerTeam}** (winner) → +**${winnerPayout} coins**`);
-        }
-        if (loserId) {
-          await addBalance(loserId, loserPayout);
-          await logTransaction(loserId, loserPayout, "addcoins",
-            `${gameDesc} loss vs ${winnerTeam} (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)})`, interaction.user.id);
-          resultLines.push(`🎮 **${loserTeam}** (loser) → +**${loserPayout} coins**`);
-        }
-
-        // ── Win/loss record totals ─────────────────────────────────────────
-        await upsertH2HRecord(request.requesterId, season.id, requesterWon,  spread);
-        if (request.opponentId) await upsertH2HRecord(request.opponentId, season.id, !requesterWon, -spread);
-
-        // ── Playoff-specific record counters ──────────────────────────────
-        if (isPlayoffGame && winnerId && loserId) {
-          const winnerSeasonRows = await db.select({ id: userRecordsTable.id })
-            .from(userRecordsTable)
-            .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)))
-            .limit(1);
-          const loserSeasonRows = await db.select({ id: userRecordsTable.id })
-            .from(userRecordsTable)
-            .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)))
-            .limit(1);
-
-          if (winnerSeasonRows.length > 0) {
-            if (isSuperBowlGame) {
-              await db.update(userRecordsTable)
-                .set({ superbowlWins: sql`${userRecordsTable.superbowlWins} + 1`, updatedAt: new Date() })
-                .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
-            } else {
-              await db.update(userRecordsTable)
-                .set({ playoffWins: sql`${userRecordsTable.playoffWins} + 1`, updatedAt: new Date() })
-                .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
-            }
-          }
-          if (loserSeasonRows.length > 0) {
-            if (isSuperBowlGame) {
-              await db.update(userRecordsTable)
-                .set({ superbowlLosses: sql`${userRecordsTable.superbowlLosses} + 1`, updatedAt: new Date() })
-                .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
-            } else {
-              await db.update(userRecordsTable)
-                .set({ playoffLosses: sql`${userRecordsTable.playoffLosses} + 1`, updatedAt: new Date() })
-                .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
-            }
-          }
-        }
-
-        // ── Super Bowl champion bonus ──────────────────────────────────────
-        if (isSuperBowlGame && winnerId && winnerData) {
-          const newSBWins = (winnerData.allTimeSuperbowlWins ?? 0) + 1;
-          await db.update(usersTable)
-            .set({ allTimeSuperbowlWins: sql`${usersTable.allTimeSuperbowlWins} + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, winnerId));
-          const sbBonus = SB_BONUSES[newSBWins] ?? SB_BONUS_3PLUS;
-          await addBalance(winnerId, sbBonus);
-          await logTransaction(winnerId, sbBonus, "addcoins",
-            `Super Bowl champion bonus (career SB #${newSBWins})`, interaction.user.id);
-          resultLines.push(`🏆 **${winnerTeam}** Super Bowl champion bonus (career #${newSBWins}) → +**${sbBonus} coins**`);
-          try {
-            const u = await interaction.client.users.fetch(winnerId);
-            await u.send(
-              `🏆 **Super Bowl Champion!** Career SB win #${newSBWins} earns you **+${sbBonus} coins**! Legendary! 🎉`
-            ).catch(() => {});
-          } catch (_) {}
-        }
-
-        // ── Career H2H loss tracker ────────────────────────────────────────
-        if (loserId) {
-          await db.update(usersTable)
-            .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, loserId));
-        }
-
-        // ── Career H2H win milestone check ─────────────────────────────────
-        if (winnerId && winnerData) {
-          const prevWins    = winnerData.allTimeH2HWins ?? 0;
-          const newWins     = prevWins + 1;
-          const currentTier = winnerData.milestoneTierAwarded ?? 0;
-          await db.update(usersTable)
-            .set({ allTimeH2HWins: sql`${usersTable.allTimeH2HWins} + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, winnerId));
-          const milestone = checkMilestone(newWins, currentTier);
-          if (milestone) {
-            await addBalance(winnerId, milestone.bonus);
-            await logTransaction(winnerId, milestone.bonus, "addcoins",
-              `Career H2H win milestone: ${milestone.wins} wins`, interaction.user.id);
-            await db.update(usersTable)
-              .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
-              .where(eq(usersTable.discordId, winnerId));
-            resultLines.push(`🎯 **${winnerTeam}** hit the **${milestone.wins}-win career milestone** → +**${milestone.bonus} bonus coins**!`);
-            try {
-              const u = await interaction.client.users.fetch(winnerId);
-              await u.send(
-                `🎯 **Win Milestone Reached!** You've hit **${milestone.wins} career H2H wins** — **+${milestone.bonus} bonus coins**! Keep it up! 🔥`
-              ).catch(() => {});
-            } catch (_) {}
-          }
-        }
-
-        // ── Game log ──────────────────────────────────────────────────────
-        await appendGameLog(request.requesterId, season.id, requesterWon ? "win" : "loss", spread, request.opponentTeam ?? "Unknown", gameLogType);
-        if (request.opponentId) await appendGameLog(request.opponentId, season.id, requesterWon ? "loss" : "win", -spread, request.requesterTeam ?? "Unknown", gameLogType);
-
-        await db.update(payoutRequestsTable)
-          .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-          .where(eq(payoutRequestsTable.id, payoutId));
-
-        if (winnerId) try {
-          const u = await interaction.client.users.fetch(winnerId);
-          await u.send(`🏆 ${gameDesc} win payout approved! **+${winnerPayout} coins** added. (${Math.max(myScore,oppScore)}–${Math.min(myScore,oppScore)} vs ${loserTeam})`).catch(() => {});
-        } catch (_) {}
-        if (loserId) try {
-          const u = await interaction.client.users.fetch(loserId);
-          await u.send(`🎮 ${gameDesc} loss payout approved! **+${loserPayout} coins** added. (${Math.min(myScore,oppScore)}–${Math.max(myScore,oppScore)} vs ${winnerTeam})`).catch(() => {});
-        } catch (_) {}
-      }
-
-    // ── CPU ────────────────────────────────────────────────────────────────────
-    } else if (request.gameType === "cpu") {
-      if (requesterWon && !isTie) {
-        await addBalance(request.requesterId, CPU_WIN_PAYOUT);
-        await logTransaction(request.requesterId, CPU_WIN_PAYOUT, "addcoins",
-          `CPU win payout vs ${request.opponentTeam ?? "CPU"}`, interaction.user.id);
-        resultLines.push(`🤖 **${request.requesterTeam}** → +**${CPU_WIN_PAYOUT} coins** (CPU win)`);
-        try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`🤖 CPU win payout approved! **+${CPU_WIN_PAYOUT} coins** added. (${myScore}–${oppScore} vs ${request.opponentTeam})`).catch(() => {}); } catch (_) {}
-      } else if (isTie) {
-        resultLines.push("🤝 **Tie vs CPU** — no payout.");
-        try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`🤝 CPU game vs **${request.opponentTeam}** confirmed as a tie (${myScore}–${oppScore}). No payout for ties.`).catch(() => {}); } catch (_) {}
-      } else {
-        resultLines.push("❌ **Loss vs CPU** — no payout.");
-        try { const u = await interaction.client.users.fetch(request.requesterId); await u.send(`CPU game vs **${request.opponentTeam}** confirmed (${myScore}–${oppScore}). No payout for CPU losses.`).catch(() => {}); } catch (_) {}
-      }
-
-      await appendGameLog(request.requesterId, season.id, requesterWon ? "win" : "loss", spread, `[CPU] ${request.opponentTeam ?? "CPU"}`);
-      await db.update(payoutRequestsTable)
-        .set({ status: isTie ? "tied" : "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-        .where(eq(payoutRequestsTable.id, payoutId));
-    }
-
-    const resolvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green).setTitle("✅ Score Report Processed")
-      .setDescription(resultLines.join("\n") + `\n\nProcessed by: ${interaction.user.toString()}`)
-      .setTimestamp();
-    await interaction.editReply({
-      embeds: [resolvedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("payout_done").setLabel("✅ Processed").setStyle(ButtonStyle.Success).setDisabled(true),
-      )],
-    });
-    return;
-  }
-
-  // ── Score report: deny ───────────────────────────────────────────────────────
-  if (action === "payout_deny") {
-    const payoutId = secondPart!;
-    const modal = new ModalBuilder().setCustomId(`payout_modal:${payoutId}`).setTitle("Deny Score Report");
-    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder().setCustomId("reason").setLabel("Reason for denial")
-        .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500)
-        .setPlaceholder("Explain why this score report is being denied..."),
-    ));
-    await interaction.showModal(modal);
-    return;
-  }
 
   // ── Interview: approve ───────────────────────────────────────────────────────
   if (action === "interview_approve") {
@@ -929,52 +649,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const action = parts[0]!;
   const idStr  = parts[1];
 
-  // ── Score report denial ──────────────────────────────────────────────────────
-  if (action === "payout_modal") {
-    const payoutId = parseInt(idStr!, 10);
-    const reason   = interaction.fields.getTextInputValue("reason");
-
-    const rows = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, payoutId)).limit(1);
-    const request = rows[0];
-    if (!request) { await interaction.reply({ content: "❌ Request not found.", ephemeral: true }); return; }
-    if (request.status !== "pending") {
-      await interaction.reply({ content: `⚠️ This request has already been **${request.status}**.`, ephemeral: true });
-      return;
-    }
-
-    await db.update(payoutRequestsTable)
-      .set({ status: "denied", denialReason: reason, resolvedAt: new Date(), resolvedBy: interaction.user.id, interviewClaimed: false })
-      .where(eq(payoutRequestsTable.id, payoutId));
-
-    try {
-      const requester = await interaction.client.users.fetch(request.requesterId);
-      const gameDesc  = request.gameType === "cpu"
-        ? `CPU game vs ${request.opponentTeam ?? "CPU"} (${request.requesterScore}–${request.opponentScore})`
-        : `H2H game vs ${request.opponentTeam ?? "Unknown"} (${request.requesterScore}–${request.opponentScore})`;
-      await requester.send(`❌ **Your score report for your ${gameDesc} was denied.**\n**Reason:** ${reason}\n\nYour interview eligibility has been reset — you may interview after your next verified game.`).catch(() => {});
-    } catch (_) {}
-
-    try {
-      const commChannel = await interaction.client.channels.fetch(process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!);
-      if (commChannel?.isTextBased() && request.discordMessageId) {
-        const msg = await (commChannel as any).messages.fetch(request.discordMessageId);
-        const deniedEmbed = new EmbedBuilder()
-          .setColor(Colors.Red).setTitle("❌ Score Report Denied")
-          .setDescription(`**Denied by:** ${interaction.user.toString()}\n**Reason:** ${reason}`)
-          .setTimestamp();
-        await msg.edit({
-          embeds: [deniedEmbed],
-          components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId("payout_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
-          )],
-        });
-      }
-    } catch (err) { console.error("Failed to edit commissioner message after score denial:", err); }
-
-    await interaction.reply({ content: `✅ Score report **#${payoutId}** denied. The requester has been notified.`, ephemeral: true });
-    return;
-  }
-
   // ── Interview denial ─────────────────────────────────────────────────────────
   if (action === "interview_modal") {
     const interviewId = parseInt(idStr!, 10);
@@ -991,10 +665,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     await db.update(interviewRequestsTable)
       .set({ status: "denied", denialReason: reason, resolvedAt: new Date(), resolvedBy: interaction.user.id })
       .where(eq(interviewRequestsTable.id, interviewId));
-
-    await db.update(payoutRequestsTable)
-      .set({ interviewClaimed: false })
-      .where(eq(payoutRequestsTable.id, interview.payoutRequestId));
 
     try {
       const u = await interaction.client.users.fetch(interview.discordId);
@@ -1047,20 +717,23 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const weekDisplay   = weekLabel(currentWeek);
     const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
 
-    // Re-check: must have a game this week (as requester OR opponent)
-    const gameThisWeek = await db.select({ id: payoutRequestsTable.id })
-      .from(payoutRequestsTable)
+    // Re-check: must have a game processed by /franchiseupdate this week
+    const gameThisWeek = await db.select({
+      id:       franchiseGameParticipantsTable.id,
+      gameType: franchiseGameParticipantsTable.gameType,
+    })
+      .from(franchiseGameParticipantsTable)
       .where(and(
-        or(
-          eq(payoutRequestsTable.requesterId, interaction.user.id),
-          eq(payoutRequestsTable.opponentId,  interaction.user.id),
-        ),
-        eq(payoutRequestsTable.week, currentWeek),
+        eq(franchiseGameParticipantsTable.discordId, interaction.user.id),
+        eq(franchiseGameParticipantsTable.week,      currentWeek),
+        eq(franchiseGameParticipantsTable.seasonId,  season.id),
       ))
       .limit(1);
 
     if (gameThisWeek.length === 0) {
-      await interaction.editReply({ content: `❌ No game on record for ${weekDisplay} yet. Report a game with \`/reportscore\` first.` });
+      await interaction.editReply({
+        content: `❌ No game on record for ${weekDisplay} yet. A game must be processed via the franchise update before you can submit an interview.`,
+      });
       return;
     }
 
@@ -1082,36 +755,21 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       return;
     }
 
-    // Get the linked score report
-    const linkedReport = gameThisWeek[0]!;
-    const fullReports  = await db.select().from(payoutRequestsTable).where(eq(payoutRequestsTable.id, linkedReport.id)).limit(1);
-    const report       = fullReports[0];
-
-    // Mark score report as interview claimed
-    await db.update(payoutRequestsTable)
-      .set({ interviewClaimed: true })
-      .where(eq(payoutRequestsTable.id, linkedReport.id));
-
     // Create the interview record with questions + answers
     const [interview] = await db.insert(interviewRequestsTable).values({
-      discordId:       interaction.user.id,
-      payoutRequestId: linkedReport.id,
-      week:            currentWeek,
-      status:          "pending",
-      question1:       q1,
-      question2:       q2,
-      question3:       q3,
-      answer1:         a1,
-      answer2:         a2,
-      answer3:         a3,
+      discordId: interaction.user.id,
+      week:      currentWeek,
+      status:    "pending",
+      question1: q1,
+      question2: q2,
+      question3: q3,
+      answer1:   a1,
+      answer2:   a2,
+      answer3:   a3,
     }).returning();
 
     const interviewId   = interview!.id;
-    const gameTypeLabel = (report?.gameType ?? "cpu") === "cpu" ? "CPU Game" : "H2H Game";
-    const myTeam        = report?.requesterTeam ?? requesterTeam;
-    const oppTeam       = report?.opponentTeam  ?? "Unknown";
-    const myScore       = report?.requesterScore ?? "?";
-    const oppScore      = report?.opponentScore  ?? "?";
+    const gameTypeLabel = (gameThisWeek[0]?.gameType ?? "cpu") === "h2h" ? "H2H Game" : "CPU Game";
 
     // ── Commissioner embed with all 3 Q&A pairs ──────────────────────────────
     const embed = new EmbedBuilder()
@@ -1121,13 +779,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
         { name: "Player",    value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
         { name: "Week",      value: weekDisplay,   inline: true },
         { name: "Game Type", value: gameTypeLabel, inline: true },
-        { name: "Game",      value: `**${myTeam}** ${myScore} – ${oppScore} **${oppTeam}**` },
         { name: `Q1: ${q1.slice(0, 200)}`, value: a1.slice(0, 1000) },
         { name: `Q2: ${q2.slice(0, 200)}`, value: a2.slice(0, 1000) },
         { name: `Q3: ${q3.slice(0, 200)}`, value: a3.slice(0, 1000) },
         { name: "Payout if Approved", value: `+**${INTERVIEW_PAYOUT} coins**` },
       )
-      .setFooter({ text: `Interview #${interviewId} • Score Report #${linkedReport.id}` })
+      .setFooter({ text: `Interview #${interviewId}` })
       .setTimestamp();
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(

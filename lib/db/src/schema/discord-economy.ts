@@ -194,7 +194,7 @@ export const payoutRequestsTable = pgTable("payout_requests", {
 export const interviewRequestsTable = pgTable("interview_requests", {
   id: serial("id").primaryKey(),
   discordId: text("discord_id").notNull(),
-  payoutRequestId: integer("payout_request_id").notNull(),
+  payoutRequestId: integer("payout_request_id"),
   week: text("week"), // mirrors the linked payout request's week
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied"
   question1: text("question_1"),
@@ -256,6 +256,19 @@ export const franchiseProcessedGamesTable = pgTable("franchise_processed_games",
   gameId:      text("game_id").primaryKey(),
   processedAt: timestamp("processed_at").notNull().defaultNow(),
 });
+
+// Tracks which players have had a game processed via /franchiseupdate this week (interview eligibility)
+export const franchiseGameParticipantsTable = pgTable("franchise_game_participants", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  week:      text("week").notNull(),
+  discordId: text("discord_id").notNull(),
+  gameType:  text("game_type").notNull(), // "h2h" | "cpu"
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueParticipant: uniqueIndex("franchise_game_participants_unique_idx")
+    .on(t.seasonId, t.week, t.discordId),
+}));
 
 // Stores the full regular-season schedule from each franchise ZIP import
 export const franchiseScheduleTable = pgTable("franchise_schedule", {

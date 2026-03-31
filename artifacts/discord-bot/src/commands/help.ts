@@ -67,16 +67,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ].join("\n"),
       },
       {
-        name: "🏆 Game Reporting & Interviews",
+        name: "🏆 Game Payouts & Interviews",
         value: [
-          "`/reportscore h2h [opp_team] [your_score] [their_score]` — Report an H2H game",
-          "  → Winner **+50 coins**, loser **+20 coins**. Ties pay nothing. Counts toward rankings.",
-          "`/reportscore cpu [cpu_team] [your_score] [cpu_score]` — Report a CPU game",
-          "  → Win pays **+20 coins**, loss/tie pays nothing. Does not count toward rankings.",
+          "**Game payouts are handled automatically** when the commissioner runs `/franchiseupdate` each week.",
+          "  → H2H Win **+50 coins** | H2H Loss **+20 coins** | CPU Win **+20 coins**",
+          "",
           "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
-          "  → One per game. Must report a new game before submitting another.",
-          "  → Loss interviews draw from an expanded loss-specific question pool.",
-          "  → All payouts require commissioner approval.",
+          "  → One per week. Your game must be processed via the franchise update first.",
+          "  → H2H game players get access to an expanded question pool.",
+          "  → All interview payouts require commissioner approval.",
+        ].join("\n"),
+      },
+      {
+        name: "📅 Schedule & Matchups",
+        value: [
+          "`/seasonschedule` — View the full current-season schedule (all weeks)",
+          "`/nextopp [@user]` — View your next opponent (or another member's next opponent)",
         ].join("\n"),
       },
       {
@@ -119,7 +125,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "💰 Coins",
         value: [
-          "`/addcoins @user [amount]` — Add coins to a user's balance",
+          "`/addcoins [users] [amount]` — Add coins to up to 32 users at once (accepts @mentions or bare IDs)",
           "`/removecoins @user [amount]` — Remove coins from a user's balance",
         ].join("\n"),
       },
@@ -176,7 +182,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: "📊 Records & Rankings",
         value: [
-          "`/updaterecord [win/loss] [spread] [team/@user]` — Manually log a game result",
           "`/seasonpr` — Post the current season power rankings",
           "`/alltimepr` — Post all-time power rankings",
           "`/recenth2h @user` — View a user's recent game results",
@@ -190,15 +195,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name: "🔄 Resets",
         value: [
           "`/resetupgrades @user [type]` — Reset a user's attribute/devup/agereset counts for the current season",
+          "`/admin-resetweek [week]` — Clear franchise game records and interviews for a week so members can re-qualify",
         ].join("\n"),
       },
       {
         name: "🎮 Game & Week Management",
         value: [
+          "`/franchiseupdate` — Import the franchise ZIP to process game results and award payouts",
           "`/advanceweek [week]` — Advance the league to the specified week",
           "`/admin-gotw [winner] [opponent] [bonus]` — Award Game of the Week bonus coins",
           "`/admin-potw [player] [bonus]` — Award Player of the Week bonus coins",
-          "`/admin-playoffs [on/off]` — Toggle playoff mode (affects payout logic for score reporting)",
+          "`/admin-playoffs [on/off]` — Toggle playoff mode",
+          "`/seasonschedule` — View the full season schedule",
+          "`/nextopp [@user]` — View next opponent for yourself or any member",
         ].join("\n"),
       },
       {

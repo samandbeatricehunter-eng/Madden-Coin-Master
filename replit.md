@@ -56,8 +56,9 @@ artifacts-monorepo/
 | `/availableupgrades` | See how many upgrades you've used this season |
 | `/teamlist` | Show all league members and their NFL team assignments |
 | `/openteams` | Show which NFL teams are not yet claimed |
-| `/reportscore` | Report a game score |
-| `/interviewrequest` | Submit a post-game interview for coin reward |
+| `/interviewrequest` | Submit a post-game interview for coin reward (after game is processed via franchise update) |
+| `/seasonschedule` | View the full current-season schedule |
+| `/nextopp` | View your next opponent |
 | `/wager` | Challenge another user to a coin wager |
 | `/userstats` | See your season and all-time stats |
 | `/rules` | View league rules |
@@ -69,12 +70,12 @@ All admin-facing commands now have Discord-level permission restrictions — the
 
 | Command | Description |
 |---|---|
-| `/addcoins` | Add coins to a user |
+| `/addcoins` | Add coins to up to 32 users at once |
 | `/removecoins` | Remove coins from a user |
 | `/resetupgrades` | Reset a user's upgrade counts for the season |
 | `/legend add/list/edit/remove` | Manage the legend store |
 | `/season new/status/addcoins/setbalance/override/core-attrs` | Season management incl. per-season override of all costs, caps, and core attribute list |
-| `/updaterecord` | Record a win or loss with point spread |
+| `/franchiseupdate` | Import the franchise ZIP to process results and award payouts |
 | `/seasonpr` | Show current season power rankings |
 | `/alltimepr` | Show all-time power rankings |
 | `/setuser` | Link a Discord user to an NFL team |
@@ -114,6 +115,9 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 - `coin_transactions` — Full transaction history
 - `game_log` — Individual match log (score, winner, loser, etc.)
 - `wagers` — Active and resolved coin wagers between users
+- `franchise_processed_games` — Dedup table for franchise ZIP imports (prevents double-processing)
+- `franchise_schedule` — Full regular-season schedule persisted from each franchise ZIP import
+- `franchise_game_participants` — Players who had a game processed this week (interview eligibility)
 
 ## Environment Variables Required
 

@@ -14,13 +14,12 @@ import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
 import * as adminSetUser from "./commands/admin-setuser.js";
 import * as adminTransactions from "./commands/admin-transactions.js";
 import { addNewUserData, deleteMemberData } from "./commands/admin-team.js";
-import { updateRecordData, seasonPRData, allTimePRData } from "./commands/records.js";
+import { seasonPRData, allTimePRData } from "./commands/records.js";
 import * as recentH2H from "./commands/recentH2H.js";
 import * as rules from "./commands/rules.js";
 import * as adminRules from "./commands/admin-rules.js";
 import * as adminSetAdmin from "./commands/admin-setadmin.js";
 import * as adminInventory from "./commands/admin-inventory.js";
-import * as reportscore from "./commands/reportscore.js";
 import * as interviewrequest from "./commands/interviewrequest.js";
 import * as advanceweek from "./commands/advanceweek.js";
 import * as adminPlayoffs from "./commands/admin-playoffs.js";
@@ -51,7 +50,7 @@ const commands = [
   help, balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
   adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
   adminSetUser, adminTransactions, recentH2H, rules,
-  adminRules, adminSetAdmin, adminInventory, reportscore, interviewrequest, advanceweek,
+  adminRules, adminSetAdmin, adminInventory, interviewrequest, advanceweek,
   adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, adminLegendVault, userStats, wager,
   teamlist, openteams, adminClearteam, adminResetWeek, franchiseUpdate,
   seasonschedule, nextopp,
@@ -60,7 +59,6 @@ const commands = [
 commands.push(
   addNewUserData.toJSON(),
   deleteMemberData.toJSON(),
-  updateRecordData.toJSON(),
   seasonPRData.toJSON(),
   allTimePRData.toJSON(),
 );

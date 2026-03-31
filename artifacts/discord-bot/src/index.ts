@@ -26,7 +26,6 @@ import {
 
 // Records / rankings
 import {
-  updateRecordData, executeUpdateRecord, autocompleteUpdateRecord,
   seasonPRData, executeSeasonPR,
   allTimePRData, executeAllTimePR,
 } from "./commands/records.js";
@@ -35,7 +34,6 @@ import * as rules from "./commands/rules.js";
 import * as adminRules from "./commands/admin-rules.js";
 import * as adminSetAdmin from "./commands/admin-setadmin.js";
 import * as adminInventory from "./commands/admin-inventory.js";
-import * as reportscore from "./commands/reportscore.js";
 import * as interviewrequest from "./commands/interviewrequest.js";
 import * as advanceweek from "./commands/advanceweek.js";
 import * as adminPlayoffs from "./commands/admin-playoffs.js";
@@ -111,7 +109,6 @@ if (!isProduction && !devBotEnabled) {
     adminRules,
     adminSetAdmin,
     adminInventory,
-    reportscore,
     interviewrequest,
     advanceweek,
     adminPlayoffs,
@@ -131,7 +128,6 @@ if (!isProduction && !devBotEnabled) {
     nextopp,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
-    { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },
     { data: seasonPRData, execute: executeSeasonPR },
     { data: allTimePRData, execute: executeAllTimePR },
   ];
