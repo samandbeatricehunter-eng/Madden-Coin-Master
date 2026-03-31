@@ -3,7 +3,7 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { franchiseGameParticipantsTable, interviewRequestsTable } from "@workspace/db";
+import { interviewRequestsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
@@ -11,108 +11,57 @@ import { weekLabel } from "./advanceweek.js";
 export const INTERVIEW_PAYOUT = 10;
 
 export const INTERVIEW_QUESTIONS: string[] = [
-  // Game recap
-  "Walk us through the turning point of that game — when did you feel the momentum shift?",
-  "What was the one play you knew was going to define how this game ended?",
-  "You had full control of the clock late. How did you manage the situation mentally?",
-  "Take us inside the locker room. What was the message at halftime?",
-  "How did you adjust your game plan after the first few drives?",
-  "There were moments that looked like the game could slip away. What kept you composed?",
-  "What did your defense show today that you haven't seen from them all season?",
-  "Talk about your offensive line tonight — how much does their performance set the tone?",
-  "You found some big plays in the passing game. What coverages were you attacking and why?",
-  "The run game was working early. Was that by design or did you audible into it based on what you saw?",
-
-  // Opponent / competition
-  "Your opponent has had a strong year. What specifically did you prepare for coming into today?",
-  "Is there a player on that roster who gave you problems you didn't fully expect?",
-  "After today's result, where do you think they rank in the league right now?",
-  "What's the one thing you saw on their side of the ball that genuinely impressed you?",
-  "How do you think this opponent stacks up against the other teams you've faced this season?",
-
-  // Team / culture
-  "You've been preaching consistency all season. Does today's win feel like proof of concept?",
-  "Talk about your team's identity — what makes this squad different from what you've put together before?",
-  "Is there a player on your roster who doesn't get enough credit for what they bring every week?",
-  "How has your depth been tested this season, and what have you learned from those moments?",
-  "You've dealt with some adversity this year. How has this group responded compared to past seasons?",
-
-  // Strategy / coaching
-  "You went for it on fourth down twice today. Walk us through those decisions.",
-  "Your two-minute offense has been elite. Is that something you drill specifically or does it come naturally?",
-  "Was there a coverage or scheme you wish you had attacked differently in this game?",
-  "Talk about your red zone offense — what's the philosophy when you get inside the twenty?",
-  "You made a personnel decision late in the game that raised some eyebrows. Explain your thinking.",
-
-  // Personal / mental game
-  "How do you stay focused when the game starts getting physical and personal fouls start stacking up?",
-  "What's your pre-game routine like, and has it changed since the start of the season?",
-  "Be honest — what part of your game are you still working to get right?",
-  "Does winning ever feel routine at this point, or does each one still hit the same?",
-  "What's the biggest lesson you've learned as a coach or competitor this season?",
-  "At what point in the game did you let yourself believe you were going to win?",
-  "How do you handle the pressure of high-expectation weeks when everyone expects you to dominate?",
-  "What drives you to keep improving when you're already performing at a high level?",
-  "How do you separate a tough loss from your preparation for the following week?",
-  "When you look back at the beginning of this season, would you have believed you'd be where you are now?",
-
-  // Season / big picture
-  "Where do you see this team's ceiling, realistically, before the season is over?",
-  "If you could fix one thing about how your season has gone so far, what would it be?",
-  "How are you managing your roster's stamina and mental health this deep into the season?",
-  "Do you study power rankings or do you block that noise out entirely?",
-  "What does a championship look like for this team — is it even on your radar or are you week-to-week?",
-  "Who in the league do you respect the most, and why?",
-  "If you played yourself at your best from a few seasons ago, who wins?",
-  "Give us a bold prediction for how the rest of the season plays out — yours or the league's.",
-  "What's one thing the league hasn't seen from you yet that you're saving for when it matters most?",
-  "If today's result gets talked about a year from now, what do you want people to remember about it?",
+  "What do you think was the biggest factor in today's result?",
+  "How would you assess your team's overall performance?",
+  "What adjustments did you make during the game?",
+  "What stood out to you the most about your opponent?",
+  "Where do you feel your team improved compared to last game?",
+  "What areas still need the most work moving forward?",
+  "How did your game plan evolve as the game progressed?",
+  "What was the turning point in this matchup?",
+  "How did you handle adversity during the game?",
+  "What does this result say about your team right now?",
+  "How do you keep your team focused week to week?",
+  "What message did you give your team before kickoff?",
+  "What message did you give your team after the game?",
+  "How important was execution in today's outcome?",
+  "What role did momentum play in this game?",
+  "How do you evaluate your performance as a coach/player today?",
+  "What's something fans might not see that impacted this game?",
+  "How did preparation show up on the field today?",
+  "What did you learn about your team from this game?",
+  "How do you build consistency going forward?",
+  "What's your mindset heading into the next matchup?",
+  "How do you respond to a game like this?",
+  "What challenges did your opponent present?",
+  "How did your team respond to those challenges?",
+  "What part of your game plan worked best?",
+  "What part didn't go as expected?",
+  "How do you balance aggression and discipline in games like this?",
+  "What does this game reveal about your team's identity?",
+  "How do you keep improving as the season progresses?",
+  "What kind of standard are you holding your team to?",
+  "How do you stay composed in high-pressure moments?",
+  "What was your focus coming into this game?",
+  "How do you evaluate success beyond just the scoreboard?",
+  "What does your team need to clean up immediately?",
+  "How do you prepare for different styles of opponents?",
+  "What impact did execution have on key moments?",
+  "How do you keep your team motivated throughout the season?",
+  "What's your biggest takeaway from this performance?",
+  "How do you build on this result moving forward?",
+  "What does this game mean for your team's trajectory?",
+  "How do you approach adjustments between games?",
+  "What challenges do you anticipate next week?",
+  "How do you keep your team locked in during tough stretches?",
+  "What role does leadership play in games like this?",
+  "How do you handle expectations from week to week?",
+  "What are you emphasizing in practice after this game?",
+  "How do you measure progress throughout the season?",
+  "What does a complete performance look like for your team?",
+  "How do you plan to carry momentum forward (or bounce back)?",
+  "What should people expect from your team going forward?",
 ];
-
-// Loss-specific questions — shown when the user had an H2H game this week.
-export const LOSS_INTERVIEW_QUESTIONS: string[] = [
-  "Be honest—did you win this game, or did your opponent lose it for you?",
-  "At what point did you realize things were slipping, and why couldn't you stop it?",
-  "There were some questionable decisions out there—do you put that on coaching or execution?",
-  "Is this a one-off performance, or is this starting to become a pattern for your team?",
-  "You've talked a lot about accountability—who needs to look in the mirror most after this one?",
-  "Did you feel outcoached tonight?",
-  "From the outside, it looked like a lack of discipline—would you agree with that assessment?",
-  "How frustrating is it knowing you had chances to take control and didn't capitalize?",
-  "Do you think your opponent exposed something that other teams are going to start targeting?",
-  "There were moments where the energy looked flat—what was going on with the team mentally?",
-  "Is this team as good as you thought it was coming into the game?",
-  "You've got big expectations this season—did this performance fall short of that standard?",
-  "Were you surprised by anything your opponent did, or were you just not prepared?",
-  "How much pressure is starting to build on this team after a performance like this?",
-  "If you had to send a message to the league after tonight, what would it be—because this didn't look like a statement game.",
-  "Do you feel like this result says more about your team—or your opponent?",
-  "Was this a case of being outplayed, or just outworked?",
-  "How much of this falls on leadership in the locker room?",
-  "Did you underestimate your opponent coming into this game?",
-  "There were some costly mistakes—are those correctable, or are they deeper issues?",
-  "At what point does this become a concern instead of just a bad game?",
-  "Do you think your game plan actually gave you a chance to win tonight?",
-  "How do you respond to critics who say this team can't handle pressure moments?",
-  "Was there a turning point where you felt momentum completely shift?",
-  "Do you feel like the team stayed composed, or did emotions get the best of you?",
-  "Is this loss going to linger, or can this group realistically turn the page quickly?",
-  "You've emphasized execution all season—why didn't it show up when it mattered most?",
-  "Did anything you saw tonight shake your confidence in this team?",
-  "Are you still confident this team can compete with the top teams in the league?",
-  "If you faced this same opponent again tomorrow, what would you do differently?",
-];
-
-/**
- * Returns the full question pool based on whether this is an H2H game.
- * "l" (h2h) = regular + loss questions combined.
- * "r" (regular) = regular questions only (CPU game or unknown).
- */
-export function getQuestionPool(poolType: "r" | "l"): string[] {
-  return poolType === "l"
-    ? [...INTERVIEW_QUESTIONS, ...LOSS_INTERVIEW_QUESTIONS]
-    : INTERVIEW_QUESTIONS;
-}
 
 export function pickThreeIndices(poolSize: number): [number, number, number] {
   const indices = new Set<number>();
@@ -125,7 +74,7 @@ export function pickThreeIndices(poolSize: number): [number, number, number] {
 
 export const data = new SlashCommandBuilder()
   .setName("interviewrequest")
-  .setDescription(`Submit a post-game interview to earn ${INTERVIEW_PAYOUT} coins — one per week, after your game is processed`);
+  .setDescription(`Submit a weekly interview for ${INTERVIEW_PAYOUT} coins — one per in-game week`);
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
@@ -137,32 +86,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
 
-  // ── Rule 1: Must have a game processed by /franchiseupdate this week ─────────
-  const gameThisWeek = await db
-    .select({
-      id:       franchiseGameParticipantsTable.id,
-      gameType: franchiseGameParticipantsTable.gameType,
-    })
-    .from(franchiseGameParticipantsTable)
-    .where(and(
-      eq(franchiseGameParticipantsTable.discordId, interaction.user.id),
-      eq(franchiseGameParticipantsTable.week,       currentWeek),
-      eq(franchiseGameParticipantsTable.seasonId,   season.id),
-    ))
-    .limit(1);
-
-  if (gameThisWeek.length === 0) {
-    await interaction.editReply({
-      content: [
-        `❌ **No game on record for ${weekDisplay} yet.**`,
-        `A game must be processed via the franchise update before you can submit an interview this week.`,
-      ].join("\n"),
-    });
-    return;
-  }
-
-  // ── Rule 2: Only one interview per week ───────────────────────────────────
-  const interviewThisWeek = await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
+  // ── One interview per in-game week ────────────────────────────────────────
+  const interviewThisWeek = await db
+    .select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
     .from(interviewRequestsTable)
     .where(and(
       eq(interviewRequestsTable.discordId, interaction.user.id),
@@ -186,21 +112,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Use expanded pool for H2H games (includes loss/adversity questions) ────
-  const participantRow = gameThisWeek[0]!;
-  const poolType: "r" | "l" = participantRow.gameType === "h2h" ? "l" : "r";
-  const pool = getQuestionPool(poolType);
-
-  // ── Pick 3 unique questions from the appropriate pool ─────────────────────
-  const [i1, i2, i3] = pickThreeIndices(pool.length);
-  const q1 = pool[i1]!;
-  const q2 = pool[i2]!;
-  const q3 = pool[i3]!;
+  // ── Pick 3 unique questions from the pool ─────────────────────────────────
+  const [i1, i2, i3] = pickThreeIndices(INTERVIEW_QUESTIONS.length);
+  const q1 = INTERVIEW_QUESTIONS[i1]!;
+  const q2 = INTERVIEW_QUESTIONS[i2]!;
+  const q3 = INTERVIEW_QUESTIONS[i3]!;
   const indicesStr = `${i1},${i2},${i3}`;
-
-  const poolNote = poolType === "l"
-    ? `\n\n*H2H game detected — questions may be drawn from the expanded pool (${pool.length} total questions).*`
-    : `\n\n*Questions are selected randomly from a pool of ${pool.length}.*`;
 
   // ── Show questions + Submit button ────────────────────────────────────────
   const embed = new EmbedBuilder()
@@ -208,8 +125,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setTitle("🎙️ Post-Game Interview")
     .setDescription(
       `Here are your **3 interview questions** for **${weekDisplay}**.\n` +
-      `Click **Submit Your Answers** to fill them in — you'll have time to type each one.` +
-      poolNote,
+      `Click **Submit Your Answers** to fill them in — you'll have time to type each one.\n\n` +
+      `*Questions are selected randomly from a pool of ${INTERVIEW_QUESTIONS.length}.*`,
     )
     .addFields(
       { name: "Q1", value: q1 },
@@ -221,7 +138,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`interview_answer:${interaction.user.id}:${poolType}:${indicesStr}`)
+      .setCustomId(`interview_answer:${interaction.user.id}:${indicesStr}`)
       .setLabel("📝 Submit Your Answers")
       .setStyle(ButtonStyle.Primary),
   );

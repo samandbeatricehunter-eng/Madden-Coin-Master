@@ -7,14 +7,14 @@ import {
 import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
-  franchiseGameParticipantsTable, interviewRequestsTable, wagersTable,
+  interviewRequestsTable, wagersTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
   getOrCreateActiveSeason, getOrCreateUser,
 } from "../lib/db-helpers.js";
-import { INTERVIEW_PAYOUT, getQuestionPool } from "../commands/interviewrequest.js";
+import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
@@ -580,11 +580,7 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Interview: open answer modal (player-facing) ──────────────────────────
   if (action === "interview_answer") {
     const targetUserId = secondPart!;    // the user who ran /interviewrequest
-    // New format: interview_answer:userId:poolType:i1,i2,i3
-    // Old format: interview_answer:userId:i1,i2,i3  (backwards compat)
-    const isNewFormat  = userId === "r" || userId === "l";
-    const poolType     = isNewFormat ? (userId as "r" | "l") : "r";
-    const indicesStr   = isNewFormat ? purchaseType! : userId!;
+    const indicesStr   = userId!;        // format: interview_answer:targetUserId:i1,i2,i3
 
     if (interaction.user.id !== targetUserId) {
       await interaction.reply({ content: "❌ This interview form isn't yours to fill out.", ephemeral: true });
@@ -592,15 +588,14 @@ async function handleButton(interaction: ButtonInteraction) {
     }
 
     const indices = indicesStr.split(",").map(Number);
-    const pool = getQuestionPool(poolType);
-    const q1 = pool[indices[0]!]!;
-    const q2 = pool[indices[1]!]!;
-    const q3 = pool[indices[2]!]!;
+    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
+    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
+    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
 
     const truncLabel = (q: string) => q.length <= 45 ? q : q.slice(0, 42) + "...";
 
     const modal = new ModalBuilder()
-      .setCustomId(`interview_answer_modal:${poolType}:${indicesStr}`)
+      .setCustomId(`interview_answer_modal:${indicesStr}`)
       .setTitle("🎙️ Post-Game Interview");
 
     modal.addComponents(
@@ -694,16 +689,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
   // ── Interview: submit answers (player-facing modal) ───────────────────────
   if (action === "interview_answer_modal") {
-    // New format: interview_answer_modal:poolType:i1,i2,i3
-    // Old format: interview_answer_modal:i1,i2,i3  (backwards compat)
-    const isNewFormat = idStr === "r" || idStr === "l";
-    const poolType    = isNewFormat ? (idStr as "r" | "l") : "r";
-    const indicesStr  = isNewFormat ? parts[2]! : idStr!;
+    // Format: interview_answer_modal:i1,i2,i3
+    const indicesStr = idStr!;
     const indices    = indicesStr.split(",").map(Number);
-    const pool = getQuestionPool(poolType);
-    const q1 = pool[indices[0]!]!;
-    const q2 = pool[indices[1]!]!;
-    const q3 = pool[indices[2]!]!;
+    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
+    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
+    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
     const a1 = interaction.fields.getTextInputValue("a1");
     const a2 = interaction.fields.getTextInputValue("a2");
     const a3 = interaction.fields.getTextInputValue("a3");
@@ -716,26 +707,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const currentWeek   = (season as any).currentWeek ?? "1";
     const weekDisplay   = weekLabel(currentWeek);
     const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
-
-    // Re-check: must have a game processed by /franchiseupdate this week
-    const gameThisWeek = await db.select({
-      id:       franchiseGameParticipantsTable.id,
-      gameType: franchiseGameParticipantsTable.gameType,
-    })
-      .from(franchiseGameParticipantsTable)
-      .where(and(
-        eq(franchiseGameParticipantsTable.discordId, interaction.user.id),
-        eq(franchiseGameParticipantsTable.week,      currentWeek),
-        eq(franchiseGameParticipantsTable.seasonId,  season.id),
-      ))
-      .limit(1);
-
-    if (gameThisWeek.length === 0) {
-      await interaction.editReply({
-        content: `❌ No game on record for ${weekDisplay} yet. A game must be processed via the franchise update before you can submit an interview.`,
-      });
-      return;
-    }
 
     // Re-check: only one interview per week
     const existingInterview = await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
@@ -768,17 +739,15 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       answer3:   a3,
     }).returning();
 
-    const interviewId   = interview!.id;
-    const gameTypeLabel = (gameThisWeek[0]?.gameType ?? "cpu") === "h2h" ? "H2H Game" : "CPU Game";
+    const interviewId = interview!.id;
 
     // ── Commissioner embed with all 3 Q&A pairs ──────────────────────────────
     const embed = new EmbedBuilder()
       .setColor(Colors.Blurple)
       .setTitle("🎙️ Post-Game Interview")
       .addFields(
-        { name: "Player",    value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
-        { name: "Week",      value: weekDisplay,   inline: true },
-        { name: "Game Type", value: gameTypeLabel, inline: true },
+        { name: "Player", value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
+        { name: "Week",   value: weekDisplay, inline: true },
         { name: `Q1: ${q1.slice(0, 200)}`, value: a1.slice(0, 1000) },
         { name: `Q2: ${q2.slice(0, 200)}`, value: a2.slice(0, 1000) },
         { name: `Q3: ${q3.slice(0, 200)}`, value: a3.slice(0, 1000) },
