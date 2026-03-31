@@ -53,14 +53,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const myScore    = isHome ? g.homeScore : g.awayScore;
     const oppScore   = isHome ? g.awayScore : g.homeScore;
 
+    const weekNum = g.weekIndex + 1;
     if (g.status === COMPLETED_STATUS && myScore !== null && oppScore !== null) {
       const tied  = myScore === oppScore;
       const won   = myScore > oppScore;
       const label = tied ? "T" : (won ? "W" : "L");
       const emoji = tied ? "🤝" : (won ? "✅" : "❌");
-      return `**Wk ${g.weekIndex}** ${location} ${opponent} — ${emoji} **${label}** (${myScore}–${oppScore})`;
+      return `**Wk ${weekNum}** ${location} ${opponent} — ${emoji} **${label}** (${myScore}–${oppScore})`;
     }
-    return `**Wk ${g.weekIndex}** ${location} ${opponent} — ⏳ Upcoming`;
+    return `**Wk ${weekNum}** ${location} ${opponent} — ⏳ Upcoming`;
   });
 
   const description = lines.join("\n");

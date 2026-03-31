@@ -364,6 +364,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // ── Persist full schedule (all games, not just completed) ─────────────────
+    let scheduleRowsSaved = 0;
     const scheduleUpserts: Promise<any>[] = [];
     for (const game of iterateGames(regSeason)) {
       if (!game || typeof game !== "object") continue;
@@ -375,11 +376,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const aData = teamMap.get(aId);
       if (!hData || !aData) continue;
 
+      // Store the registered team nickname for human teams so queries by user.team work.
+      // Fall back to Madden's nickname (no city prefix) for CPU teams.
+      const hUser = findUser(hData.name, hData.nickname);
+      const aUser = findUser(aData.name, aData.nickname);
+      const hTeamName = hUser?.team ?? hData.nickname;
+      const aTeamName = aUser?.team ?? aData.nickname;
+
       const weekIdx    = Number(game.weekIndex);
       const hScore     = game.homeScore != null ? Number(game.homeScore) : null;
       const aScore     = game.awayScore != null ? Number(game.awayScore) : null;
       const gameStatus = game.status   != null ? Number(game.status)    : 0;
 
+      scheduleRowsSaved++;
       scheduleUpserts.push(
         db.insert(franchiseScheduleTable)
           .values({
@@ -387,8 +396,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             weekIndex:    weekIdx,
             homeTeamId:   hId,
             awayTeamId:   aId,
-            homeTeamName: hData.name,
-            awayTeamName: aData.name,
+            homeTeamName: hTeamName,
+            awayTeamName: aTeamName,
             homeScore:    hScore,
             awayScore:    aScore,
             status:       gameStatus,
@@ -402,8 +411,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               franchiseScheduleTable.awayTeamId,
             ],
             set: {
-              homeTeamName: hData.name,
-              awayTeamName: aData.name,
+              homeTeamName: hTeamName,
+              awayTeamName: aTeamName,
               homeScore:    hScore,
               awayScore:    aScore,
               status:       gameStatus,
@@ -581,6 +590,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Other weeks (skipped):** ${gamesWrongWeek}`,
       `**CPU vs CPU (skipped):** ${gamesCpuVsCpu}`,
       `**Unregistered team (skipped):** ${gamesUnregistered}`,
+      `**Schedule rows saved:** ${scheduleRowsSaved}`,
       `**Roster players synced:** ${rostersSynced > 0 ? rostersSynced : "none (rosters.json not found in ZIP)"}`,
       `**ZIP files matched:** teams=\`${teamsResult?.matchedFile ?? "N/A"}\` schedules=\`${schedulesResult?.matchedFile ?? "N/A"}\` rosters=\`${rostersResult?.matchedFile ?? "not found"}\``,
     ];
@@ -706,25 +716,40 @@ function listJsonFilenames(dir: string): string {
 }
 
 // ── Utility: iterate games from a Madden schedule structure ──────────────────
-// Handles 2-level ({ weekKey: { gameKey: game } }) and
-//         3-level ({ yearKey: { weekKey: { gameKey: game } } }) nesting.
+// Madden exports nest games like: { weekKey: { gameKey: { ...game } } }
+// OR three levels:               { yearKey: { weekKey: { gameKey: { ...game } } } }
+// weekKey is "0"–"17" for regular season.
+// The game object itself may OR MAY NOT include a weekIndex field — we inject
+// it from the parent key so downstream code can rely on game.weekIndex reliably.
 function* iterateGames(schedule: any): Generator<any> {
   if (!schedule || typeof schedule !== "object") return;
-  for (const level1 of Object.values(schedule)) {
+
+  for (const [key1, level1] of Object.entries(schedule)) {
     if (!level1 || typeof level1 !== "object") continue;
-    // If this looks like a game object, yield it directly
+
+    // Level1 looks like a game object → flat array, yield it using its own weekIndex
     if ((level1 as any).homeTeamId != null) {
       yield level1;
-    } else {
-      for (const level2 of Object.values(level1 as any)) {
-        if (!level2 || typeof level2 !== "object") continue;
-        if ((level2 as any).homeTeamId != null) {
-          yield level2;
-        } else {
-          for (const level3 of Object.values(level2 as any)) {
-            if (!level3 || typeof level3 !== "object") continue;
-            if ((level3 as any).homeTeamId != null) yield level3;
-          }
+      continue;
+    }
+
+    // Otherwise dig one level deeper
+    for (const [key2, level2] of Object.entries(level1 as any)) {
+      if (!level2 || typeof level2 !== "object") continue;
+
+      // Level2 is a game — key1 is the week key
+      if ((level2 as any).homeTeamId != null) {
+        const weekIdx = parseInt(key1, 10);
+        yield { ...(level2 as any), weekIndex: isNaN(weekIdx) ? (level2 as any).weekIndex : weekIdx };
+        continue;
+      }
+
+      // Level2 is another nesting layer — key2 is the week key, level3 is the game
+      for (const [, level3] of Object.entries(level2 as any)) {
+        if (!level3 || typeof level3 !== "object") continue;
+        if ((level3 as any).homeTeamId != null) {
+          const weekIdx = parseInt(key2, 10);
+          yield { ...(level3 as any), weekIndex: isNaN(weekIdx) ? (level3 as any).weekIndex : weekIdx };
         }
       }
     }

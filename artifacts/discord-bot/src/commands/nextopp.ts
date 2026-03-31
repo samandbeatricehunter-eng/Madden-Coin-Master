@@ -51,17 +51,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const opponent = isHome ? g.awayTeamName : g.homeTeamName;
   const location = isHome ? "🏠 Home" : "✈️ Away";
 
+  const weekNum = g.weekIndex + 1;
   await interaction.editReply({
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Green)
-        .setTitle(`🏈 Next Opponent — Week ${g.weekIndex}`)
+        .setTitle(`🏈 Next Opponent — Week ${weekNum}`)
         .addFields(
           { name: "Your Team", value: user.team,  inline: true },
           { name: "Opponent",  value: opponent,   inline: true },
           { name: "Location",  value: location,   inline: true },
         )
-        .setFooter({ text: `Season ${season.seasonNumber} · Week ${g.weekIndex}` })
+        .setFooter({ text: `Season ${season.seasonNumber} · Week ${weekNum}` })
         .setTimestamp(),
     ],
   });
