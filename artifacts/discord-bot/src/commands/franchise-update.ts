@@ -450,7 +450,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .onConflictDoNothing()
       );
     }
-    console.log(`[franchiseupdate] Schedule: ${scheduleRowsSaved} unique games from ${schedMap.size} deduplicated entries`);
+    // Log status code breakdown — reveals if Madden uses codes other than 2 for completed games
+    const statusCounts = new Map<number, number>();
+    for (const entry of schedMap.values()) {
+      statusCounts.set(entry.status, (statusCounts.get(entry.status) ?? 0) + 1);
+    }
+    console.log(`[franchiseupdate] Schedule: ${scheduleRowsSaved} unique games. Status breakdown:`, JSON.stringify(Object.fromEntries([...statusCounts.entries()].sort())));
+    // Log first 15 games sorted by week so we can verify week/status/score data
+    const sampleGames = [...schedMap.values()]
+      .sort((a, b) => a.weekIdx - b.weekIdx)
+      .slice(0, 15)
+      .map(e => `wk${e.weekIdx} ${e.hTeamName}vs${e.aTeamName} st=${e.status} sc=${e.hScore ?? "?"}-${e.aScore ?? "?"}`);
+    console.log("[franchiseupdate] First 15 schedule entries:", sampleGames.join(" | "));
     await Promise.all(scheduleInserts);
 
     // ── Sync rosters from rosters.json ────────────────────────────────────────
