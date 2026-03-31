@@ -51,6 +51,8 @@ import * as openteams from "./commands/openteams.js";
 import * as adminClearteam from "./commands/admin-clearteam.js";
 import * as adminResetWeek from "./commands/admin-resetweek.js";
 import * as franchiseUpdate from "./commands/franchise-update.js";
+import * as seasonschedule from "./commands/seasonschedule.js";
+import * as nextopp from "./commands/nextopp.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -125,6 +127,8 @@ if (!isProduction && !devBotEnabled) {
     adminClearteam,
     adminResetWeek,
     franchiseUpdate,
+    seasonschedule,
+    nextopp,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: updateRecordData, execute: executeUpdateRecord, autocomplete: autocompleteUpdateRecord },

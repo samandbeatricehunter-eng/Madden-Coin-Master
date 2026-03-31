@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -256,6 +256,24 @@ export const franchiseProcessedGamesTable = pgTable("franchise_processed_games",
   gameId:      text("game_id").primaryKey(),
   processedAt: timestamp("processed_at").notNull().defaultNow(),
 });
+
+// Stores the full regular-season schedule from each franchise ZIP import
+export const franchiseScheduleTable = pgTable("franchise_schedule", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  weekIndex:    integer("week_index").notNull(),
+  homeTeamId:   integer("home_team_id").notNull(),
+  awayTeamId:   integer("away_team_id").notNull(),
+  homeTeamName: text("home_team_name").notNull(),
+  awayTeamName: text("away_team_name").notNull(),
+  homeScore:    integer("home_score"),
+  awayScore:    integer("away_score"),
+  status:       integer("status").notNull().default(0),
+  importedAt:   timestamp("imported_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueGame: uniqueIndex("franchise_schedule_unique_game_idx")
+    .on(t.seasonId, t.weekIndex, t.homeTeamId, t.awayTeamId),
+}));
 
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
