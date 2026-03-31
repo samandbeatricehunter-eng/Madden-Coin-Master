@@ -10,10 +10,13 @@
   },
   "dependencies": {
     "@workspace/db": "workspace:*",
+    "adm-zip": "^0.5.16",
+    "axios": "^1.14.0",
     "discord.js": "^14.21.0",
     "drizzle-orm": "catalog:"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "catalog:",
     "tsx": "catalog:"
   }

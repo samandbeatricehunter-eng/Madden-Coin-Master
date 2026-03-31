@@ -251,6 +251,12 @@ export const wagersTable = pgTable("wagers", {
   resolvedBy: text("resolved_by"),
 });
 
+// Tracks Madden franchise game IDs that have already been processed (dedup)
+export const franchiseProcessedGamesTable = pgTable("franchise_processed_games", {
+  gameId:      text("game_id").primaryKey(),
+  processedAt: timestamp("processed_at").notNull().defaultNow(),
+});
+
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
 export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;
