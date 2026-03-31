@@ -4,7 +4,7 @@ import {
 import { db } from "@workspace/db";
 import { seasonStatTierConfigsTable, seasonsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { STAT_CATEGORIES, STAT_CATEGORY_CHOICES } from "../lib/stat-categories.js";
 
 export const data = new SlashCommandBuilder()
@@ -38,11 +38,6 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
-
-  if (!isAdminUser(interaction)) {
-    await interaction.editReply({ content: "❌ Admins only." });
-    return;
-  }
 
   const categoryKey = interaction.options.getString("category", true);
   const tier        = interaction.options.getInteger("tier", true);

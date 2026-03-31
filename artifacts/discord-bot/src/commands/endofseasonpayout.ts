@@ -11,7 +11,6 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { addBalance, logTransaction, getOrCreateActiveSeason } from "../lib/db-helpers.js";
-import { isAdminUser } from "../lib/db-helpers.js";
 import {
   STAT_CATEGORIES, STAT_CATEGORY_MAP, evaluateTier, extractStat,
 } from "../lib/stat-categories.js";
@@ -56,11 +55,6 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
-
-  if (!isAdminUser(interaction)) {
-    await interaction.editReply({ content: "❌ Admins only." });
-    return;
-  }
 
   const attachment = interaction.options.getAttachment("file", true);
   const dryRun     = interaction.options.getBoolean("dry_run") ?? false;

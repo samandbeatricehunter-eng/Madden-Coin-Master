@@ -26,7 +26,6 @@ import {
   franchiseProcessedGamesTable, franchiseGameParticipantsTable,
 } from "@workspace/db";
 import { eq, and, gte, sql, inArray } from "drizzle-orm";
-import { isAdminUser } from "../lib/db-helpers.js";
 import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
 
 // Local table definitions for tables not re-exported by the db barrel
@@ -65,11 +64,6 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
-
-  if (!isAdminUser(interaction)) {
-    await interaction.editReply({ content: "❌ Admins only." });
-    return;
-  }
 
   const sinceStr = interaction.options.getString("since", true);
   const dryRun   = interaction.options.getBoolean("dry_run") ?? true;
