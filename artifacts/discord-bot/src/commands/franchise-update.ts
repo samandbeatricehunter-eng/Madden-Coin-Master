@@ -140,12 +140,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // ── Get active season ──────────────────────────────────────────────────────
     const season = await getOrCreateActiveSeason();
 
-    // ── Process schedule ───────────────────────────────────────────────────────
-    const regSeason = schedulesJson?.reg ?? schedulesJson?.schedules?.reg ?? schedulesJson;
+    // ── Process schedule (regular season only) ────────────────────────────────
+    const regSeason = schedulesJson?.reg ?? schedulesJson?.schedules?.reg;
+    if (!regSeason) {
+      return interaction.editReply({ content: "❌ No regular-season schedule (`schedules.reg`) found in `schedules.json`. Make sure you're uploading a valid Madden franchise export." });
+    }
 
-    let gamesProcessed = 0;
-    let gamesDuplicate = 0;
-    let gamesSkipped   = 0;
+    let gamesProcessed   = 0;
+    let gamesDuplicate   = 0;
+    let gamesCpuVsCpu    = 0;
+    let gamesUnregistered = 0;
     const skippedHumanTeams = new Set<string>();
     const payoutLines: string[] = [];
     const milestoneLines: string[] = [];
@@ -181,7 +185,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const awayIsHuman = awayTeamData.userName !== "CPU";
 
       // CPU vs CPU — skip
-      if (!homeIsHuman && !awayIsHuman) { gamesSkipped++; continue; }
+      if (!homeIsHuman && !awayIsHuman) { gamesCpuVsCpu++; continue; }
 
       const homeUser = homeIsHuman ? findUser(homeTeamData.name) : null;
       const awayUser = awayIsHuman ? findUser(awayTeamData.name) : null;
@@ -193,7 +197,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Skip game entirely if any human side has no registered Discord user
       // (avoids null dereference and keeps the summary honest)
       if ((homeIsHuman && !homeUser) || (awayIsHuman && !awayUser)) {
-        gamesSkipped++;
+        gamesUnregistered++;
         continue;
       }
 
@@ -299,11 +303,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // ── Build confirmation embed ───────────────────────────────────────────────
     const summaryParts: string[] = [
       `**Games processed:** ${gamesProcessed}`,
-      `**Already processed (skipped):** ${gamesDuplicate}`,
-      `**CPU vs CPU (skipped):** ${gamesSkipped}`,
+      `**Already processed (duplicate):** ${gamesDuplicate}`,
+      `**CPU vs CPU (skipped):** ${gamesCpuVsCpu}`,
+      `**Unregistered team (skipped):** ${gamesUnregistered}`,
     ];
     if (skippedHumanTeams.size > 0) {
-      summaryParts.push(`**Unregistered human teams:** ${[...skippedHumanTeams].join(", ")}`);
+      summaryParts.push(`**Unregistered teams:** ${[...skippedHumanTeams].join(", ")}`);
     }
     if (milestoneLines.length > 0) {
       summaryParts.push("", "**🎯 Milestones hit:**", ...milestoneLines);
