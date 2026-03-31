@@ -55,6 +55,7 @@ import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js"
 import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
 import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 import * as myRoster from "./commands/my-roster.js";
+import * as weeklyMatchups from "./commands/weekly-matchups.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -134,6 +135,7 @@ if (!isProduction && !devBotEnabled) {
     adminSetStatTier,
     endofseasonpayout,
     myRoster,
+    weeklyMatchups,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },
