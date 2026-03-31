@@ -37,6 +37,7 @@ import * as adminResetWeek from "./commands/admin-resetweek.js";
 import * as franchiseUpdate from "./commands/franchise-update.js";
 import * as seasonschedule from "./commands/seasonschedule.js";
 import * as nextopp from "./commands/nextopp.js";
+import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js";
 import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
 import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 
@@ -56,7 +57,7 @@ const commands = [
   adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, adminLegendVault, userStats, wager,
   teamlist, openteams, adminClearteam, adminResetWeek, franchiseUpdate,
   seasonschedule, nextopp,
-  adminSetStatTier, endofseasonpayout,
+  adminRollbackFranchise, adminSetStatTier, endofseasonpayout,
 ].map(c => c.data.toJSON());
 
 commands.push(

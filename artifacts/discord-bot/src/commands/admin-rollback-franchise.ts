@@ -1,135 +1,255 @@
+/**
+ * /admin-rollback-franchise
+ *
+ * Reverses ALL data written by a /franchiseupdate import that ran after a
+ * given timestamp.  Safe to run any time a bad import is discovered.
+ *
+ * What it undoes:
+ *  • coin_transactions describing "Franchise import" or "Career win milestone (franchise"
+ *  • Corresponding balance changes on economy_users
+ *  • game_log entries recorded after the cutoff
+ *  • user_records (wins/losses/point_differential) deduced from those game_log rows
+ *  • allTimeH2HWins / allTimeH2HLosses on economy_users (same deduction)
+ *  • franchise_processed_games entries (processed_at after cutoff)
+ *  • franchise_game_participants entries (created_at after cutoff)
+ *
+ * Default dry_run = true — always preview before committing.
+ */
+
 import {
-  ChatInputCommandInteraction,
-  SlashCommandBuilder,
+  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import {
+  usersTable, userRecordsTable,
+  franchiseProcessedGamesTable, franchiseGameParticipantsTable,
+} from "@workspace/db";
+import { eq, and, gte, sql, inArray } from "drizzle-orm";
+import { isAdminUser } from "../lib/db-helpers.js";
+import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
 
+// Local table definitions for tables not re-exported by the db barrel
+const coinTransactionsTable = pgTable("coin_transactions", {
+  id:          serial("id").primaryKey(),
+  discordId:   text("discord_id").notNull(),
+  amount:      integer("amount").notNull(),
+  type:        text("type").notNull(),
+  description: text("description").notNull(),
+  createdAt:   timestamp("created_at").notNull().defaultNow(),
+});
+
+const gameLogTable = pgTable("game_log", {
+  id:            serial("id").primaryKey(),
+  discordId:     text("discord_id").notNull(),
+  seasonId:      integer("season_id").notNull(),
+  result:        text("result").notNull(),
+  pointSpread:   integer("point_spread").notNull().default(0),
+  opponentLabel: text("opponent_label").notNull().default(""),
+  recordedAt:    timestamp("recorded_at").notNull().defaultNow(),
+});
+
+// ── Command ──────────────────────────────────────────────────────────────────
 export const data = new SlashCommandBuilder()
   .setName("admin-rollback-franchise")
-  .setDescription(
-    "[TEMP] Rollback the bad franchise import (transactions 408-490). ONE-TIME USE."
-  )
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+  .setDescription("Reverse all data written by a franchise import after a given timestamp")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addStringOption(o => o
+    .setName("since")
+    .setDescription("ISO timestamp of when the bad import started (e.g. 2026-03-31T19:00:00)")
+    .setRequired(true))
+  .addBooleanOption(o => o
+    .setName("dry_run")
+    .setDescription("Preview without making changes — default: TRUE. Set false to actually apply.")
+    .setRequired(false));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const lines: string[] = [];
-  const log = (msg: string) => {
-    console.log(msg);
-    lines.push(msg);
-  };
-
-  try {
-    log("=== FRANCHISE IMPORT ROLLBACK ===");
-
-    // Verify there's something to roll back
-    const checkResult = await db.execute(sql`
-      SELECT COUNT(*) as cnt FROM coin_transactions WHERE id BETWEEN 408 AND 490
-    `);
-    const count = Number((checkResult.rows[0] as any).cnt);
-
-    if (count === 0) {
-      await interaction.editReply(
-        "❌ Nothing to roll back — transactions 408-490 do not exist (already rolled back?)."
-      );
-      return;
-    }
-
-    log(`Found ${count} transactions to roll back.`);
-
-    // STEP 1: Revert coin balances
-    const balanceResult = await db.execute(sql`
-      UPDATE economy_users u
-      SET balance = u.balance - totals.total_to_subtract,
-          updated_at = NOW()
-      FROM (
-        SELECT discord_id, SUM(amount) as total_to_subtract
-        FROM coin_transactions
-        WHERE id BETWEEN 408 AND 490
-        GROUP BY discord_id
-      ) AS totals
-      WHERE u.discord_id = totals.discord_id
-      RETURNING u.discord_username, u.balance
-    `);
-    log(`✅ Step 1: Reverted balances for ${balanceResult.rows.length} users.`);
-
-    // STEP 2: Delete transactions
-    await db.execute(sql`
-      DELETE FROM coin_transactions WHERE id BETWEEN 408 AND 490
-    `);
-    log("✅ Step 2: Deleted transactions 408-490.");
-
-    // STEP 3: Revert H2H records in user_records Season 2
-    const recordsResult = await db.execute(sql`
-      UPDATE user_records ur
-      SET wins               = GREATEST(0, ur.wins   - deltas.h2h_wins),
-          losses             = GREATEST(0, ur.losses - deltas.h2h_losses),
-          point_differential = ur.point_differential - deltas.pd_delta,
-          updated_at         = NOW()
-      FROM (
-        SELECT
-          discord_id,
-          COUNT(*) FILTER (WHERE result = 'win')  AS h2h_wins,
-          COUNT(*) FILTER (WHERE result = 'loss') AS h2h_losses,
-          SUM(point_spread)                        AS pd_delta
-        FROM game_log
-        WHERE id BETWEEN 95 AND 178
-          AND opponent_label NOT LIKE '[CPU]%'
-        GROUP BY discord_id
-      ) AS deltas,
-      seasons s
-      WHERE ur.discord_id = deltas.discord_id
-        AND ur.season_id  = s.id
-        AND s.season_number = 2
-      RETURNING ur.discord_id
-    `);
-    log(`✅ Step 3: Reverted Season 2 H2H records for ${recordsResult.rows.length} users.`);
-
-    // STEP 4: Delete game_log entries 95-178
-    await db.execute(sql`
-      DELETE FROM game_log WHERE id BETWEEN 95 AND 178
-    `);
-    log("✅ Step 4: Deleted game_log entries 95-178.");
-
-    // STEP 5: Delete franchise_processed_games from bad import
-    const fpgResult = await db.execute(sql`
-      DELETE FROM franchise_processed_games
-      WHERE processed_at >= '2026-03-31 18:44:00'
-      RETURNING game_id
-    `);
-    log(`✅ Step 5: Deleted ${fpgResult.rows.length} processed game entries.`);
-
-    // STEP 6: Delete franchise_game_participants from bad import
-    const fgpResult = await db.execute(sql`
-      DELETE FROM franchise_game_participants
-      WHERE created_at >= '2026-03-31 18:44:00'
-      RETURNING id
-    `);
-    log(`✅ Step 6: Deleted ${fgpResult.rows.length} participant entries.`);
-
-    log("=== ROLLBACK COMPLETE ===");
-
-    const summary = [
-      "✅ **Franchise Import Rollback Complete**",
-      "",
-      `• Coin balances reverted for ${balanceResult.rows.length} users`,
-      "• Transactions 408-490 deleted",
-      `• Season 2 H2H records reverted for ${recordsResult.rows.length} users`,
-      "• Game log entries 95-178 deleted",
-      `• ${fpgResult.rows.length} processed game entries cleared`,
-      `• ${fgpResult.rows.length} participant entries cleared`,
-      "",
-      "The `/franchiseupdate` command can now be re-run cleanly.",
-    ].join("\n");
-
-    await interaction.editReply(summary);
-  } catch (err: any) {
-    console.error("Rollback failed:", err);
-    await interaction.editReply(
-      `❌ Rollback failed at step: ${lines.at(-1) ?? "unknown"}\n\`\`\`${err.message}\`\`\``
-    );
+  if (!isAdminUser(interaction)) {
+    await interaction.editReply({ content: "❌ Admins only." });
+    return;
   }
+
+  const sinceStr = interaction.options.getString("since", true);
+  const dryRun   = interaction.options.getBoolean("dry_run") ?? true;
+
+  const since = new Date(sinceStr);
+  if (isNaN(since.getTime())) {
+    await interaction.editReply({
+      content: `❌ Invalid timestamp: \`${sinceStr}\`\nUse ISO format, e.g. \`2026-03-31T19:00:00\``,
+    });
+    return;
+  }
+
+  await interaction.editReply({ content: `🔍 Scanning for franchise data after ${since.toISOString()}...` });
+
+  // ── Step 1: Franchise coin transactions ────────────────────────────────────
+  const franchiseTxns = await db.select()
+    .from(coinTransactionsTable)
+    .where(
+      and(
+        gte(coinTransactionsTable.createdAt, since),
+        sql`(lower(${coinTransactionsTable.description}) LIKE '%franchise import%'
+          OR lower(${coinTransactionsTable.description}) LIKE '%career win milestone%(franchise%'
+          OR lower(${coinTransactionsTable.description}) LIKE '%career win milestone%franchise%')`,
+      )
+    );
+
+  // Net coin amount per user to reverse
+  const balanceDelta = new Map<string, number>();
+  for (const tx of franchiseTxns) {
+    balanceDelta.set(tx.discordId, (balanceDelta.get(tx.discordId) ?? 0) + tx.amount);
+  }
+
+  // ── Step 2: game_log entries after cutoff ─────────────────────────────────
+  const gameLogs = await db.select()
+    .from(gameLogTable)
+    .where(gte(gameLogTable.recordedAt, since));
+
+  // Determine record corrections per (discordId, seasonId)
+  type RecordKey = string; // `${discordId}:${seasonId}`
+  const recordDeltas  = new Map<RecordKey, { wins: number; losses: number; pd: number }>();
+  const allTimeDeltas = new Map<string, { wins: number; losses: number }>();
+
+  for (const log of gameLogs) {
+    const key    = `${log.discordId}:${log.seasonId}`;
+    const isH2H  = !log.opponentLabel.startsWith("[CPU]");
+
+    if (!recordDeltas.has(key))       recordDeltas.set(key, { wins: 0, losses: 0, pd: 0 });
+    if (!allTimeDeltas.has(log.discordId)) allTimeDeltas.set(log.discordId, { wins: 0, losses: 0 });
+
+    if (isH2H) {
+      const rd = recordDeltas.get(key)!;
+      const at = allTimeDeltas.get(log.discordId)!;
+      if (log.result === "win")  { rd.wins++;   rd.pd += log.pointSpread; at.wins++; }
+      if (log.result === "loss") { rd.losses++; rd.pd += log.pointSpread; at.losses++; }
+    }
+  }
+
+  // ── Step 3: franchise_processed_games ─────────────────────────────────────
+  const processedToDelete = await db.select({ gameId: franchiseProcessedGamesTable.gameId })
+    .from(franchiseProcessedGamesTable)
+    .where(gte(franchiseProcessedGamesTable.processedAt, since));
+
+  // ── Step 4: franchise_game_participants ────────────────────────────────────
+  const participantCount = (await db.select({ count: sql<number>`count(*)` })
+    .from(franchiseGameParticipantsTable)
+    .where(gte(franchiseGameParticipantsTable.createdAt, since)))[0]?.count ?? 0;
+
+  // ── Build summary ─────────────────────────────────────────────────────────
+  const lines: string[] = [
+    `**Cutoff:** ${since.toISOString()}`,
+    `**Mode:** ${dryRun ? "🔍 DRY RUN (nothing changed)" : "⚠️ LIVE — changes applied"}`,
+    "",
+    `Coin transactions to reverse: **${franchiseTxns.length}**`,
+    `Game log entries to delete: **${gameLogs.length}**`,
+    `Processed game IDs to clear: **${processedToDelete.length}**`,
+    `Game participant records to clear: **${participantCount}**`,
+    `Users affected: **${balanceDelta.size}**`,
+  ];
+
+  if (balanceDelta.size > 0) {
+    lines.push("\n**Balance reversals:**");
+    for (const [did, amt] of balanceDelta) {
+      lines.push(`• <@${did}>  −${amt} coins`);
+    }
+  }
+
+  if (recordDeltas.size > 0) {
+    lines.push("\n**Record corrections (H2H only):**");
+    for (const [key, delta] of recordDeltas) {
+      const [did] = key.split(":");
+      if (delta.wins || delta.losses || delta.pd) {
+        lines.push(`• <@${did}>  W−${delta.wins}  L−${delta.losses}  PD${delta.pd >= 0 ? "−" : "+"}${Math.abs(delta.pd)}`);
+      }
+    }
+  }
+
+  if (dryRun) {
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🔍 Franchise Rollback — DRY RUN")
+          .setColor(Colors.Yellow)
+          .setDescription(lines.join("\n").slice(0, 3900))
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  // ── Apply rollback ─────────────────────────────────────────────────────────
+
+  // 5a. Reverse balances
+  for (const [discordId, delta] of balanceDelta) {
+    if (delta === 0) continue;
+    await db.update(usersTable)
+      .set({ balance: sql`${usersTable.balance} - ${delta}`, updatedAt: new Date() })
+      .where(eq(usersTable.discordId, discordId));
+  }
+
+  // 5b. Delete franchise coin transactions
+  if (franchiseTxns.length > 0) {
+    await db.delete(coinTransactionsTable)
+      .where(inArray(coinTransactionsTable.id, franchiseTxns.map(t => t.id)));
+  }
+
+  // 5c. Correct user_records (subtract wins/losses/PD)
+  for (const [key, delta] of recordDeltas) {
+    const [discordId, seasonIdStr] = key.split(":");
+    const seasonId = parseInt(seasonIdStr!, 10);
+    if (!discordId || isNaN(seasonId)) continue;
+    if (!delta.wins && !delta.losses && !delta.pd) continue;
+
+    await db.update(userRecordsTable)
+      .set({
+        wins:              sql`GREATEST(0, ${userRecordsTable.wins}              - ${delta.wins})`,
+        losses:            sql`GREATEST(0, ${userRecordsTable.losses}            - ${delta.losses})`,
+        pointDifferential: sql`${userRecordsTable.pointDifferential}             - ${delta.pd}`,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(userRecordsTable.discordId, discordId),
+        eq(userRecordsTable.seasonId,  seasonId),
+      ));
+  }
+
+  // 5d. Correct all-time H2H counters
+  for (const [discordId, delta] of allTimeDeltas) {
+    if (!delta.wins && !delta.losses) continue;
+    await db.update(usersTable)
+      .set({
+        allTimeH2HWins:   sql`GREATEST(0, ${usersTable.allTimeH2HWins}   - ${delta.wins})`,
+        allTimeH2HLosses: sql`GREATEST(0, ${usersTable.allTimeH2HLosses} - ${delta.losses})`,
+        updatedAt: new Date(),
+      })
+      .where(eq(usersTable.discordId, discordId));
+  }
+
+  // 5e. Delete game_log entries
+  if (gameLogs.length > 0) {
+    await db.delete(gameLogTable)
+      .where(inArray(gameLogTable.id, gameLogs.map(g => g.id)));
+  }
+
+  // 5f. Clear franchise_processed_games
+  if (processedToDelete.length > 0) {
+    await db.delete(franchiseProcessedGamesTable)
+      .where(inArray(franchiseProcessedGamesTable.gameId, processedToDelete.map(g => g.gameId)));
+  }
+
+  // 5g. Clear franchise_game_participants
+  await db.delete(franchiseGameParticipantsTable)
+    .where(gte(franchiseGameParticipantsTable.createdAt, since));
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("✅ Franchise Import Rolled Back")
+        .setColor(Colors.Red)
+        .setDescription(lines.join("\n").slice(0, 3900))
+        .setTimestamp(),
+    ],
+  });
 }
