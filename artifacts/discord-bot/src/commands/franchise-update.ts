@@ -387,15 +387,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await db.delete(franchiseScheduleTable)
       .where(eq(franchiseScheduleTable.seasonId, season.id));
 
-    let scheduleRowsSaved = 0;
-    const scheduleInserts: Promise<any>[] = [];
-    const seenScheduleKeys = new Set<string>(); // dedup: same game from multiple paths
+    // ── Collect all schedule entries into a Map, preferring completed status ──────
+    // The same game often appears in BOTH a flat scheduleInfoList section AND a
+    // week-keyed section. One copy may have status=0 (scheduled) and the other
+    // status=2 (completed). We must keep the completed version — "first seen wins"
+    // would silently drop results and show played games as Upcoming.
+    type SchedEntry = {
+      hId: number; aId: number; weekIdx: number;
+      hTeamName: string; aTeamName: string;
+      hScore: number | null; aScore: number | null; status: number;
+    };
+    const schedMap = new Map<string, SchedEntry>();
+
     for (const game of iterateGames(regSeason)) {
       if (!game || typeof game !== "object") continue;
       if (game.homeTeamId == null || game.awayTeamId == null || game.weekIndex == null) continue;
-      const schedKey = `${game.weekIndex}-${game.homeTeamId}-${game.awayTeamId}`;
-      if (seenScheduleKeys.has(schedKey)) continue;
-      seenScheduleKeys.add(schedKey);
 
       const hId  = Number(game.homeTeamId);
       const aId  = Number(game.awayTeamId);
@@ -403,8 +409,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const aData = teamMap.get(aId);
       if (!hData || !aData) continue;
 
-      // Store the registered team nickname for human teams so queries by user.team work.
-      // Fall back to Madden's nickname (no city prefix) for CPU teams.
       const hUser = findUser(hData.name, hData.nickname);
       const aUser = findUser(aData.name, aData.nickname);
       const hTeamName = hUser?.team ?? hData.nickname;
@@ -415,24 +419,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const aScore     = game.awayScore != null ? Number(game.awayScore) : null;
       const gameStatus = game.status   != null ? Number(game.status)    : 0;
 
+      const schedKey = `${weekIdx}-${hId}-${aId}`;
+      const existing = schedMap.get(schedKey);
+
+      // Keep this entry if: (a) not seen yet, or (b) this version is completed
+      // and the existing one isn't — prevents status=0 "Upcoming" beating status=2 "Played"
+      if (!existing || (gameStatus === COMPLETED_STATUS && existing.status !== COMPLETED_STATUS)) {
+        schedMap.set(schedKey, { hId, aId, weekIdx, hTeamName, aTeamName, hScore, aScore, status: gameStatus });
+      }
+    }
+
+    let scheduleRowsSaved = 0;
+    const scheduleInserts: Promise<any>[] = [];
+    for (const entry of schedMap.values()) {
       scheduleRowsSaved++;
       scheduleInserts.push(
         db.insert(franchiseScheduleTable)
           .values({
             seasonId:     season.id,
-            weekIndex:    weekIdx,
-            homeTeamId:   hId,
-            awayTeamId:   aId,
-            homeTeamName: hTeamName,
-            awayTeamName: aTeamName,
-            homeScore:    hScore,
-            awayScore:    aScore,
-            status:       gameStatus,
+            weekIndex:    entry.weekIdx,
+            homeTeamId:   entry.hId,
+            awayTeamId:   entry.aId,
+            homeTeamName: entry.hTeamName,
+            awayTeamName: entry.aTeamName,
+            homeScore:    entry.hScore,
+            awayScore:    entry.aScore,
+            status:       entry.status,
             importedAt:   new Date(),
           })
-          .onConflictDoNothing()  // safety net only — table was just cleared
+          .onConflictDoNothing()
       );
     }
+    console.log(`[franchiseupdate] Schedule: ${scheduleRowsSaved} unique games from ${schedMap.size} deduplicated entries`);
     await Promise.all(scheduleInserts);
 
     // ── Sync rosters from rosters.json ────────────────────────────────────────
@@ -499,7 +517,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       for (const p of rawPlayers) {
         if (!p || typeof p !== "object") continue;
 
-        // ── Filter: active 53-man roster only (skip practice squad / IR / etc.) ──
+        // ── Filter: active 53-man roster only ────────────────────────────────────
+        // Madden CFM exports use boolean flags, not a rosType integer.
+        // isOnPracticeSquad / isOnIR are confirmed present in this export.
+        // Also fall back to the legacy rosType integer for other export formats.
+        if (p.isOnPracticeSquad === true || p.isOnIR === true) continue;
+        if (p.isFreeAgent === true) continue;
         const rosType = p.rosType ?? p.rosterType ?? p.rostStatus ?? p.rosStatus ?? null;
         if (rosType != null && Number(rosType) !== ACTIVE_ROS_TYPE) continue;
 
@@ -515,13 +538,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
         const user = findUser(teamData.name, teamData.nickname);
 
-        // ── Resolve overall rating — try every known field name ──────────────
+        // ── Resolve overall rating — confirmed field for this export is playerBestOvr ──
         const ovrRaw =
-          p.overallRating   ??  // standard Madden export
+          p.playerBestOvr   ??  // confirmed Madden CFM export field (72, 85, etc.)
+          p.overallRating   ??  // alternate CFM format
           p.overallRatings  ??  // alternate spelling
           p.overall         ??  // short form
           p.ovr             ??  // acronym
-          p.playerBestOvr   ??  // Madden 22 CFM export
           p.bestOverall     ??  // another variant
           p.playerSkillRating ?? null;
         const overall = ovrRaw != null ? Math.max(0, Math.min(99, Number(ovrRaw))) : 0;
@@ -578,6 +601,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         rostersSynced++;
       }
       await Promise.all(rosterUpserts);
+      console.log(`[franchiseupdate] Roster import: ${rostersSynced} active players saved (${rawPlayers.length} total in export, filtered by isOnPracticeSquad/isOnIR)`);
     }
 
     // ── Auto-post weekly results to general channel ────────────────────────────

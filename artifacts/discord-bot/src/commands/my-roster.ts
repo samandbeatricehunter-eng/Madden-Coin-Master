@@ -29,13 +29,13 @@ const DEFENSE_POSITIONS_SET = new Set(
   DEFENSE_GROUPS.flatMap(g => g.positions),
 );
 
+// Madden CFM devTrait values: 0=Normal 1=Star 2=Superstar 3=X-Factor
 function devBadge(trait: number): string {
   switch (trait) {
-    case 4: return " ⚡";
-    case 3: return " ★★★";
-    case 2: return " ★★";
-    case 1: return " ★";
-    default: return "";
+    case 3: return " ⚡";   // X-Factor
+    case 2: return " ★★★";  // Superstar
+    case 1: return " ★★";   // Star
+    default: return "";      // Normal (0) or unknown
   }
 }
 
@@ -188,7 +188,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setTitle(`📋 ${user.team} Roster`)
         .setDescription(
           `**Season ${season.seasonNumber}** • ${players.length} players • Avg OVR: **${avgOvr}**\n` +
-          `⚡ = X-Factor  ★★★ = Superstar  ★★ = Star  ★ = Impact`,
+          `⚡ = X-Factor  ★★★ = Superstar  ★★ = Star`,
         );
     } else {
       embed.setTitle(`📋 ${user.team} Roster (cont.)`);
