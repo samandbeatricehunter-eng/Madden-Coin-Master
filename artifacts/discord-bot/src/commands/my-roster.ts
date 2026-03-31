@@ -15,9 +15,12 @@ const OFFENSE_GROUPS: { label: string; positions: string[] }[] = [
 ];
 
 const DEFENSE_GROUPS: { label: string; positions: string[] }[] = [
-  { label: "Defensive Line",    positions: ["LE", "RE", "DT", "DE"] },
-  { label: "Linebacker",        positions: ["LOLB", "MLB", "ROLB", "OLB", "ILB"] },
-  { label: "Defensive Back",    positions: ["CB", "FS", "SS", "S"] },
+  { label: "Defensive Line", positions: ["LE", "RE", "DT", "DE", "LEDGE", "REDGE"] },
+  { label: "MIKE Linebacker", positions: ["MLB", "MIKE"] },
+  { label: "SAM Linebacker",  positions: ["LOLB", "SAM"] },
+  { label: "WILL Linebacker", positions: ["ROLB", "WILL"] },
+  { label: "Cornerback",      positions: ["CB"] },
+  { label: "Safety",          positions: ["FS", "SS", "S"] },
 ];
 
 const SPECIAL_TEAMS_POSITIONS = ["K", "P", "KR", "PR", "LS"];
