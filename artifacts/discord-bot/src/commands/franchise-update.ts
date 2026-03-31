@@ -424,22 +424,65 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await Promise.all(scheduleUpserts);
 
     // ── Sync rosters from rosters.json ────────────────────────────────────────
+    // ── Position number → string map (Madden 24/25 roster export format) ──────
+    const POS_NUM: Record<number, string> = {
+      0: "QB",  1: "HB",  2: "FB",  3: "WR",  4: "TE",
+      5: "LT",  6: "LG",  7: "C",   8: "RG",  9: "RT",
+      10: "LE", 11: "RE", 12: "DT", 13: "LOLB", 14: "MLB", 15: "ROLB",
+      16: "CB", 17: "FS", 18: "SS", 19: "K",  20: "P",
+      21: "KR", 22: "PR", 23: "LS",
+    };
+
+    // rosType (roster type) values — only rosType 0 = 53-man active roster.
+    // rosType 1 = practice squad, 2 = IR, 3 = NFI/DNR, etc.
+    // If the field is missing we assume active roster.
+    const ACTIVE_ROS_TYPE = 0;
+
     let rostersSynced = 0;
     if (rostersJson) {
-      // The export wraps players under a key; try a few common shapes
-      const rawPlayers: any[] =
-        Array.isArray(rostersJson) ? rostersJson :
-        Array.isArray(rostersJson.rosters) ? rostersJson.rosters :
-        Array.isArray(rostersJson.players) ? rostersJson.players :
-        Object.values(rostersJson).filter(v => v && typeof v === "object" && !Array.isArray(v) && (v as any).firstName != null);
+      // Normalise: flatten the JSON into an array of player objects
+      let rawPlayers: any[] = [];
+      if (Array.isArray(rostersJson)) {
+        rawPlayers = rostersJson;
+      } else if (Array.isArray(rostersJson.rosters)) {
+        rawPlayers = rostersJson.rosters;
+      } else if (Array.isArray(rostersJson.players)) {
+        rawPlayers = rostersJson.players;
+      } else {
+        // Dictionary of players (key → player object) — common in MaddenCFMFiddler exports
+        for (const v of Object.values(rostersJson)) {
+          if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+          // If the value itself is a dict of players, flatten one more level
+          const vObj = v as any;
+          if (vObj.firstName != null || vObj.lastName != null || vObj.position != null) {
+            rawPlayers.push(vObj);
+          } else {
+            for (const inner of Object.values(vObj)) {
+              if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+                rawPlayers.push(inner);
+              }
+            }
+          }
+        }
+      }
+
+      // Log first player for debugging
+      if (rawPlayers.length > 0) {
+        console.log("[franchiseupdate] Sample player fields:", JSON.stringify(rawPlayers[0]).slice(0, 400));
+      }
 
       const rosterUpserts: Promise<any>[] = [];
       for (const p of rawPlayers) {
         if (!p || typeof p !== "object") continue;
-        const teamId = Number(p.teamId ?? p.teamIndex ?? p.rosterId ?? -1);
+
+        // ── Filter: active 53-man roster only (skip practice squad / IR / etc.) ──
+        const rosType = p.rosType ?? p.rosterType ?? p.rostStatus ?? p.rosStatus ?? null;
+        if (rosType != null && Number(rosType) !== ACTIVE_ROS_TYPE) continue;
+
+        const teamId = Number(p.teamId ?? p.teamIndex ?? -1);
         if (teamId < 0) continue;
 
-        const rawId  = p.playerId ?? p.rosterId ?? p.id;
+        const rawId  = p.playerId ?? p.rosterId ?? p.playerIndex ?? p.id;
         const playerId = rawId != null ? Number(rawId) : null;
         if (playerId == null || isNaN(playerId)) continue;
 
@@ -448,14 +491,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
         const user = findUser(teamData.name, teamData.nickname);
 
-        // overall can be an integer or an object with per-type ratings
-        let overall = 0;
-        if (typeof p.overallRating === "number") overall = p.overallRating;
-        else if (typeof p.overallRatings === "number") overall = p.overallRatings;
-        else if (p.overallRating != null) overall = Number(p.overallRating);
-        else if (p.overall != null) overall = Number(p.overall);
+        // ── Resolve overall rating — try every known field name ──────────────
+        const ovrRaw =
+          p.overallRating   ??  // standard Madden export
+          p.overallRatings  ??  // alternate spelling
+          p.overall         ??  // short form
+          p.ovr             ??  // acronym
+          p.playerBestOvr   ??  // Madden 22 CFM export
+          p.bestOverall     ??  // another variant
+          p.playerSkillRating ?? null;
+        const overall = ovrRaw != null ? Math.max(0, Math.min(99, Number(ovrRaw))) : 0;
 
-        const devTrait = p.devTrait != null ? Number(p.devTrait) : 0;
+        const devTrait = p.devTrait ?? p.devTraitId ?? p.playerDevTrait ?? 0;
+
+        // ── Resolve position — may be a string ("QB") or a number (0 = QB) ──
+        const posRaw = p.position ?? p.pos ?? p.positionId ?? "";
+        const position = typeof posRaw === "number"
+          ? (POS_NUM[posRaw] ?? String(posRaw))
+          : String(posRaw).trim().toUpperCase();
 
         rosterUpserts.push(
           db.insert(franchiseRostersTable)
@@ -465,13 +518,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               teamName:  teamData.name,
               discordId: user?.discordId ?? null,
               playerId,
-              firstName: (p.firstName ?? "").trim(),
-              lastName:  (p.lastName  ?? "").trim(),
-              position:  (p.position  ?? p.pos ?? "").trim().toUpperCase(),
+              firstName: String(p.firstName ?? "").trim(),
+              lastName:  String(p.lastName  ?? "").trim(),
+              position,
               overall,
-              devTrait,
+              devTrait:  Number(devTrait),
               age:       p.age != null ? Number(p.age) : null,
-              jerseyNum: p.jerseyNum != null ? Number(p.jerseyNum) : null,
+              jerseyNum: (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
+                ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
+                : null,
               importedAt: new Date(),
             })
             .onConflictDoUpdate({
@@ -483,13 +538,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               set: {
                 teamName:  teamData.name,
                 discordId: user?.discordId ?? null,
-                firstName: (p.firstName ?? "").trim(),
-                lastName:  (p.lastName  ?? "").trim(),
-                position:  (p.position  ?? p.pos ?? "").trim().toUpperCase(),
+                firstName: String(p.firstName ?? "").trim(),
+                lastName:  String(p.lastName  ?? "").trim(),
+                position,
                 overall,
-                devTrait,
+                devTrait:  Number(devTrait),
                 age:       p.age != null ? Number(p.age) : null,
-                jerseyNum: p.jerseyNum != null ? Number(p.jerseyNum) : null,
+                jerseyNum: (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
+                  ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
+                  : null,
                 importedAt: new Date(),
               },
             })
