@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable, franchiseRostersTable } from "@workspace/db";
-import { eq, sql, and, max } from "drizzle-orm";
+import { eq, sql, and, max, inArray } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
 import * as fs from "fs";
@@ -205,11 +205,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const payoutLines: string[] = [];
     const milestoneLines: string[] = [];
 
+    // Log the first few completed game objects for weekIndex debugging
+    let _debugGameCount = 0;
     // Iterate games flexibly (handles 2-level or 3-level nesting)
     for (const game of iterateGames(regSeason)) {
       if (!game || typeof game !== "object") continue;
       if (game.homeTeamId == null || game.awayTeamId == null) continue;
       if (Number(game.status) !== COMPLETED_STATUS) continue;
+      if (_debugGameCount < 5) {
+        console.log(`[franchiseupdate] Game sample #${_debugGameCount}: weekIndex=${game.weekIndex} status=${game.status} h=${game.homeTeamId} a=${game.awayTeamId} score=${game.homeScore}-${game.awayScore}`);
+        _debugGameCount++;
+      }
 
       const homeId = Number(game.homeTeamId);
       const awayId = Number(game.awayTeamId);
@@ -220,9 +226,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const homeScore = Number(game.homeScore ?? 0);
       const awayScore = Number(game.awayScore ?? 0);
 
-      // Build a stable game ID
+      // Build a stable game ID — do NOT include weekIndex in the fallback because
+      // Madden can report a different weekIndex for the same game across imports.
+      // Using seasonId + both teamIds + final score gives a stable key.
       const rawId   = game.gameId != null ? String(game.gameId) : null;
-      const gameId  = rawId ?? `wk${game.weekIndex ?? "?"}-h${homeId}-a${awayId}-${homeScore}-${awayScore}`;
+      const gameId  = rawId ?? `s${season.id}-h${homeId}-a${awayId}-${homeScore}-${awayScore}`;
 
       // Week-exact filter: only process games from the admin-set current week
       const gameWeekIndex = Number(game.weekIndex ?? -99);
@@ -363,9 +371,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       gamesProcessed++;
     }
 
-    // ── Persist full schedule (all games, not just completed) ─────────────────
+    // ── Persist full schedule (wipe + re-insert each time) ────────────────────
+    // We delete all rows for this season and re-insert from the ZIP on every
+    // import. This prevents stale duplicate rows when Madden shifts a game's
+    // weekIndex between exports (which broke the unique-constraint upsert).
+    await db.delete(franchiseScheduleTable)
+      .where(eq(franchiseScheduleTable.seasonId, season.id));
+
     let scheduleRowsSaved = 0;
-    const scheduleUpserts: Promise<any>[] = [];
+    const scheduleInserts: Promise<any>[] = [];
     for (const game of iterateGames(regSeason)) {
       if (!game || typeof game !== "object") continue;
       if (game.homeTeamId == null || game.awayTeamId == null || game.weekIndex == null) continue;
@@ -389,7 +403,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const gameStatus = game.status   != null ? Number(game.status)    : 0;
 
       scheduleRowsSaved++;
-      scheduleUpserts.push(
+      scheduleInserts.push(
         db.insert(franchiseScheduleTable)
           .values({
             seasonId:     season.id,
@@ -403,25 +417,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             status:       gameStatus,
             importedAt:   new Date(),
           })
-          .onConflictDoUpdate({
-            target: [
-              franchiseScheduleTable.seasonId,
-              franchiseScheduleTable.weekIndex,
-              franchiseScheduleTable.homeTeamId,
-              franchiseScheduleTable.awayTeamId,
-            ],
-            set: {
-              homeTeamName: hTeamName,
-              awayTeamName: aTeamName,
-              homeScore:    hScore,
-              awayScore:    aScore,
-              status:       gameStatus,
-              importedAt:   new Date(),
-            },
-          })
+          .onConflictDoNothing()  // safety net only — table was just cleared
       );
     }
-    await Promise.all(scheduleUpserts);
+    await Promise.all(scheduleInserts);
 
     // ── Sync rosters from rosters.json ────────────────────────────────────────
     // ── Position number → string map (Madden 24/25 roster export format) ──────
