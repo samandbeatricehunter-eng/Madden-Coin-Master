@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable } from "@workspace/db";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql, and, max } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
 import * as fs from "fs";
@@ -153,7 +153,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let gamesDuplicate    = 0;
     let gamesCpuVsCpu     = 0;
     let gamesUnregistered = 0;
-    let maxCompletedWeek: number | null = null;
     const skippedHumanTeams = new Set<string>();
     const payoutLines: string[] = [];
     const milestoneLines: string[] = [];
@@ -302,12 +301,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .onConflictDoNothing();
 
       gamesProcessed++;
-
-      // Track the highest week index among newly processed completed games
-      if (game.weekIndex != null) {
-        const wk = Number(game.weekIndex);
-        if (maxCompletedWeek === null || wk > maxCompletedWeek) maxCompletedWeek = wk;
-      }
     }
 
     // ── Persist full schedule (all games, not just completed) ─────────────────
@@ -362,13 +355,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await Promise.all(scheduleUpserts);
 
     // ── Auto-post weekly results to general channel ────────────────────────────
+    // Always derive the current week from persisted DB data so re-imports work correctly.
     try {
-      if (maxCompletedWeek !== null) {
-        // Post results for the most recently completed week
+      const [maxWeekRow] = await db
+        .select({ maxWeek: max(franchiseScheduleTable.weekIndex) })
+        .from(franchiseScheduleTable)
+        .where(and(
+          eq(franchiseScheduleTable.seasonId, season.id),
+          eq(franchiseScheduleTable.status,   COMPLETED_STATUS),
+        ));
+      const currentCompletedWeek = maxWeekRow?.maxWeek ?? null;
+
+      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
+
+      if (currentCompletedWeek !== null) {
+        // Post results for the most recently completed week (from DB)
         const weekGames = await db.select().from(franchiseScheduleTable)
           .where(and(
             eq(franchiseScheduleTable.seasonId,  season.id),
-            eq(franchiseScheduleTable.weekIndex, maxCompletedWeek),
+            eq(franchiseScheduleTable.weekIndex, currentCompletedWeek),
             eq(franchiseScheduleTable.status,    COMPLETED_STATUS),
           ));
 
@@ -376,7 +381,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           findUser(g.homeTeamName) && findUser(g.awayTeamName),
         );
 
-        if (h2hGames.length > 0) {
+        if (h2hGames.length > 0 && generalChannel?.isTextBased()) {
           const lines = h2hGames.map(g => {
             const hs      = g.homeScore ?? 0;
             const as_     = g.awayScore ?? 0;
@@ -390,21 +395,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             return `🏆 **${winner}** ${ws} — ${ls} **${loser}**`;
           });
 
-          const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
-          if (generalChannel?.isTextBased()) {
-            await (generalChannel as TextChannel).send({
-              embeds: [
-                new EmbedBuilder()
-                  .setColor(Colors.Gold)
-                  .setTitle(`🏈 Week ${maxCompletedWeek} Results`)
-                  .setDescription(lines.join("\n"))
-                  .setTimestamp(),
-              ],
-            });
-          }
+          await (generalChannel as TextChannel).send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(Colors.Gold)
+                .setTitle(`🏈 Week ${currentCompletedWeek} Results`)
+                .setDescription(lines.join("\n"))
+                .setTimestamp(),
+            ],
+          });
         }
       } else if (scheduleUpserts.length > 0) {
-        // No completed games yet — post week 1 upcoming matchups as a preview
+        // No completed games in DB yet — post week 1 upcoming matchups as a preview
         const week1Games = await db.select().from(franchiseScheduleTable)
           .where(and(
             eq(franchiseScheduleTable.seasonId,  season.id),
@@ -415,23 +417,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           findUser(g.homeTeamName) && findUser(g.awayTeamName),
         );
 
-        if (h2hWeek1.length > 0) {
+        if (h2hWeek1.length > 0 && generalChannel?.isTextBased()) {
           const lines = h2hWeek1.map(g =>
             `⏳ **${g.homeTeamName}** vs **${g.awayTeamName}**`,
           );
-          const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
-          if (generalChannel?.isTextBased()) {
-            await (generalChannel as TextChannel).send({
-              embeds: [
-                new EmbedBuilder()
-                  .setColor(Colors.Blue)
-                  .setTitle("🏈 Week 1 Matchups")
-                  .setDescription(lines.join("\n"))
-                  .setFooter({ text: "Season schedule imported" })
-                  .setTimestamp(),
-              ],
-            });
-          }
+          await (generalChannel as TextChannel).send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(Colors.Blue)
+                .setTitle("🏈 Week 1 Matchups")
+                .setDescription(lines.join("\n"))
+                .setFooter({ text: "Season schedule imported" })
+                .setTimestamp(),
+            ],
+          });
         }
       }
     } catch (postErr) {
