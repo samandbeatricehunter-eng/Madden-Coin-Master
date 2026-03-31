@@ -205,6 +205,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const payoutLines: string[] = [];
     const milestoneLines: string[] = [];
 
+    // Per-run dedup — prevents double-payout if the same game is yielded
+    // more than once (e.g. game appears in both scheduleInfoList AND week-keyed sections).
+    const seenGameKeys = new Set<string>();
+
     // Log the first few completed game objects for weekIndex debugging
     let _debugGameCount = 0;
     // Iterate games flexibly (handles 2-level or 3-level nesting)
@@ -216,6 +220,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         console.log(`[franchiseupdate] Game sample #${_debugGameCount}: weekIndex=${game.weekIndex} status=${game.status} h=${game.homeTeamId} a=${game.awayTeamId} score=${game.homeScore}-${game.awayScore}`);
         _debugGameCount++;
       }
+
+      // Per-run dedup key: (weekIndex, homeTeamId, awayTeamId)
+      const runKey = `${game.weekIndex}-${game.homeTeamId}-${game.awayTeamId}`;
+      if (seenGameKeys.has(runKey)) { gamesDuplicate++; continue; }
+      seenGameKeys.add(runKey);
 
       const homeId = Number(game.homeTeamId);
       const awayId = Number(game.awayTeamId);
@@ -380,9 +389,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     let scheduleRowsSaved = 0;
     const scheduleInserts: Promise<any>[] = [];
+    const seenScheduleKeys = new Set<string>(); // dedup: same game from multiple paths
     for (const game of iterateGames(regSeason)) {
       if (!game || typeof game !== "object") continue;
       if (game.homeTeamId == null || game.awayTeamId == null || game.weekIndex == null) continue;
+      const schedKey = `${game.weekIndex}-${game.homeTeamId}-${game.awayTeamId}`;
+      if (seenScheduleKeys.has(schedKey)) continue;
+      seenScheduleKeys.add(schedKey);
 
       const hId  = Number(game.homeTeamId);
       const aId  = Number(game.awayTeamId);
@@ -465,9 +478,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       }
 
-      // Log first player for debugging
+      // Log key fields from the first player to diagnose OVR/devTrait/rosType field names
       if (rawPlayers.length > 0) {
-        console.log("[franchiseupdate] Sample player fields:", JSON.stringify(rawPlayers[0]).slice(0, 400));
+        const p0 = rawPlayers[0] as any;
+        const diagFields = {
+          rosType: p0.rosType, rosterType: p0.rosterType, rostStatus: p0.rostStatus, rosStatus: p0.rosStatus,
+          overallRating: p0.overallRating, overall: p0.overall, ovr: p0.ovr,
+          playerBestOvr: p0.playerBestOvr, bestOverall: p0.bestOverall, playerSkillRating: p0.playerSkillRating,
+          devTrait: p0.devTrait, devTraitId: p0.devTraitId, playerDevTrait: p0.playerDevTrait,
+          position: p0.position, pos: p0.pos, positionId: p0.positionId,
+          firstName: p0.firstName, lastName: p0.lastName, teamId: p0.teamId,
+        };
+        console.log("[franchiseupdate] Player key fields sample:", JSON.stringify(diagFields));
+        console.log("[franchiseupdate] Total raw players:", rawPlayers.length);
+        // Print all keys of the first player so we can find unknown field names
+        console.log("[franchiseupdate] All player keys:", Object.keys(p0).join(", "));
       }
 
       const rosterUpserts: Promise<any>[] = [];
@@ -772,40 +797,51 @@ function listJsonFilenames(dir: string): string {
 }
 
 // ── Utility: iterate games from a Madden schedule structure ──────────────────
-// Madden exports nest games like: { weekKey: { gameKey: { ...game } } }
-// OR three levels:               { yearKey: { weekKey: { gameKey: { ...game } } } }
-// weekKey is "0"–"17" for regular season.
-// The game object itself may OR MAY NOT include a weekIndex field — we inject
-// it from the parent key so downstream code can rely on game.weekIndex reliably.
+// Madden exports come in several shapes:
+//   Flat:    { scheduleInfoList: { "0": game, "1": game, ... } }   (games have own weekIndex)
+//   2-level: { "0": { "0": game, "1": game }, "1": { ... } }       (weekKey → games)
+//   3-level: { "0": { "0": { "0": game } } }                        (yearKey → weekKey → games)
+//
+// CRITICAL RULE: ALWAYS trust the game's own weekIndex field when present.
+// Only fall back to the parent key if the game has no weekIndex of its own.
+// Overriding the game's embedded weekIndex with a mismatched parent key is
+// what caused duplicate rows at wrong weeks (e.g. Jets game at both Wk 7 & Wk 8).
+function resolveWeekIndex(game: any, parentKeyStr: string): number {
+  const embedded = game.weekIndex;
+  if (embedded != null && !isNaN(Number(embedded))) return Number(embedded);
+  const fromKey = parseInt(parentKeyStr, 10);
+  return isNaN(fromKey) ? -1 : fromKey;
+}
+
 function* iterateGames(schedule: any): Generator<any> {
   if (!schedule || typeof schedule !== "object") return;
 
   for (const [key1, level1] of Object.entries(schedule)) {
     if (!level1 || typeof level1 !== "object") continue;
 
-    // Level1 looks like a game object → flat array, yield it using its own weekIndex
+    // Level1 is itself a game object
     if ((level1 as any).homeTeamId != null) {
-      yield level1;
+      const wk = resolveWeekIndex(level1 as any, key1);
+      yield { ...(level1 as any), weekIndex: wk };
       continue;
     }
 
-    // Otherwise dig one level deeper
     for (const [key2, level2] of Object.entries(level1 as any)) {
       if (!level2 || typeof level2 !== "object") continue;
 
-      // Level2 is a game — key1 is the week key
+      // Level2 is a game — parent key is key1
       if ((level2 as any).homeTeamId != null) {
-        const weekIdx = parseInt(key1, 10);
-        yield { ...(level2 as any), weekIndex: isNaN(weekIdx) ? (level2 as any).weekIndex : weekIdx };
+        const wk = resolveWeekIndex(level2 as any, key1);
+        yield { ...(level2 as any), weekIndex: wk };
         continue;
       }
 
-      // Level2 is another nesting layer — key2 is the week key, level3 is the game
-      for (const [, level3] of Object.entries(level2 as any)) {
+      // Level3 — parent key for week is key2
+      for (const [key3, level3] of Object.entries(level2 as any)) {
         if (!level3 || typeof level3 !== "object") continue;
         if ((level3 as any).homeTeamId != null) {
-          const weekIdx = parseInt(key2, 10);
-          yield { ...(level3 as any), weekIndex: isNaN(weekIdx) ? (level3 as any).weekIndex : weekIdx };
+          const wk = resolveWeekIndex(level3 as any, key2);
+          yield { ...(level3 as any), weekIndex: wk };
         }
       }
     }
