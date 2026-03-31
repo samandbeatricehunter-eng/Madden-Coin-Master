@@ -37,7 +37,8 @@ import * as adminResetWeek from "./commands/admin-resetweek.js";
 import * as franchiseUpdate from "./commands/franchise-update.js";
 import * as seasonschedule from "./commands/seasonschedule.js";
 import * as nextopp from "./commands/nextopp.js";
-import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js";
+import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
+import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -54,7 +55,8 @@ const commands = [
   adminRules, adminSetAdmin, adminInventory, interviewrequest, advanceweek,
   adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, adminLegendVault, userStats, wager,
   teamlist, openteams, adminClearteam, adminResetWeek, franchiseUpdate,
-  seasonschedule, nextopp, adminRollbackFranchise,
+  seasonschedule, nextopp,
+  adminSetStatTier, endofseasonpayout,
 ].map(c => c.data.toJSON());
 
 commands.push(

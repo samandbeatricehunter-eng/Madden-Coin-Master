@@ -288,6 +288,24 @@ export const franchiseScheduleTable = pgTable("franchise_schedule", {
     .on(t.seasonId, t.weekIndex, t.homeTeamId, t.awayTeamId),
 }));
 
+// ── End-of-season stat payout tier configuration ──────────────────────────────
+// Each row defines one tier (1-4) for one stat category in a season.
+// For "higher is better" stats (offense, def INTs): threshold = minimum value to qualify.
+// For "lower is better" stats (def yards/pts/redzone): threshold = maximum value to qualify.
+// Tier 4 always has the best payout; threshold ordering depends on direction.
+export const seasonStatTierConfigsTable = pgTable("season_stat_tier_configs", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  statCategory: text("stat_category").notNull(),
+  tier:         integer("tier").notNull(),          // 1 | 2 | 3 | 4
+  threshold:    integer("threshold").notNull(),
+  payout:       integer("payout").notNull(),         // coins
+  updatedAt:    timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueStatTier: uniqueIndex("season_stat_tier_unique_idx")
+    .on(t.seasonId, t.statCategory, t.tier),
+}));
+
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
 export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;

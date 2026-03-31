@@ -75,7 +75,9 @@ All admin-facing commands now have Discord-level permission restrictions — the
 | `/resetupgrades` | Reset a user's upgrade counts for the season |
 | `/legend add/list/edit/remove` | Manage the legend store |
 | `/season new/status/addcoins/setbalance/override/core-attrs` | Season management incl. per-season override of all costs, caps, and core attribute list |
-| `/franchiseupdate` | Import the franchise ZIP to process results and award payouts |
+| `/franchiseupdate` | Import the franchise ZIP to process results and award payouts (weeks 1-8 log-only, week 9+ live payouts) |
+| `/admin-set-stat-tier` | Set a single tier threshold+payout for an end-of-season stat bonus category (11 categories × 4 tiers) |
+| `/endofseasonpayout` | Distribute end-of-season stat bonuses from franchise ZIP (requires all 44 tier configs set first) |
 | `/seasonpr` | Show current season power rankings |
 | `/alltimepr` | Show all-time power rankings |
 | `/setuser` | Link a Discord user to an NFL team |
@@ -118,6 +120,14 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 - `franchise_processed_games` — Dedup table for franchise ZIP imports (prevents double-processing)
 - `franchise_schedule` — Full regular-season schedule persisted from each franchise ZIP import
 - `franchise_game_participants` — Players who had a game processed this week (interview eligibility)
+- `season_stat_tier_configs` — End-of-season stat bonus tier config (11 categories × 4 tiers × season); direction (higher/lower) is encoded in the stat category definition in code, not the DB
+
+## End-of-Season Stat Bonus System
+
+- **11 categories**: off_pass_yds, off_rush_yds, off_pass_tds, off_rush_tds, off_pts_scored, off_redzone_pct, def_rush_yds, def_pass_yds, def_ints, def_redzone_pct, def_pts_allowed
+- **4 tiers per category**: Tier 1 (weakest) through Tier 4 (best), no stacking — highest qualifying tier wins
+- **Direction**: "higher is better" for offense + def INTs (threshold = minimum to qualify); "lower is better" for def yards/pts/redzone (threshold = maximum to qualify)
+- **Workflow**: Run `/admin-set-stat-tier` for each of the 44 (11×4) slots, then run `/endofseasonpayout` with the season-end franchise ZIP
 
 ## Environment Variables Required
 

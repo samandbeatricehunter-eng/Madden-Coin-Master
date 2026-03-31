@@ -28,6 +28,14 @@ const CPU_WIN_PAYOUT  = 20;
 // Change to 3 if your export marks completed games as status 3.
 const COMPLETED_STATUS = 2;
 
+// ── Historical week cutoff ─────────────────────────────────────────────────────
+// weekIndex is 0-based in the Madden export (weekIndex 0 = Week 1).
+// Games with weekIndex <= this value are treated as historical:
+// they are logged and the schedule is updated, but NO coin payouts are issued
+// and NO records (wins/losses/PD) are changed.
+// weekIndex 7 = Week 8 (last historical week); weekIndex 8 = Week 9 (first live week).
+const HISTORICAL_WEEK_INDEX_CUTOFF = 7;
+
 // ── Win milestones (mirrors interactionCreate.ts) ─────────────────────────────
 const H2H_MILESTONES = [
   { tier: 4, wins: 50, bonus: 1000, label: "50 All-Time Wins" },
@@ -166,6 +174,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let gamesDuplicate    = 0;
     let gamesCpuVsCpu     = 0;
     let gamesUnregistered = 0;
+    let gamesHistorical   = 0;
     const skippedHumanTeams = new Set<string>();
     const payoutLines: string[] = [];
     const milestoneLines: string[] = [];
@@ -191,6 +200,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       // Dedup check — in-memory, no DB round-trip per game
       if (processedSet.has(gameId)) { gamesDuplicate++; continue; }
+
+      // Historical mode: weeks 1-8 (weekIndex 0-7) are already accounted for manually.
+      // Log the game and update the schedule, but skip coin payouts and record changes.
+      const gameWeekIndex = Number(game.weekIndex ?? 0);
+      const isHistorical  = gameWeekIndex <= HISTORICAL_WEEK_INDEX_CUTOFF;
 
       const homeIsHuman = homeTeamData.userName !== "CPU";
       const awayIsHuman = awayTeamData.userName !== "CPU";
@@ -226,57 +240,61 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           const loScore    = Math.min(homeScore, awayScore);
           const spread     = hiScore - loScore;
 
-          // Award coins
-          await addBalance(winnerId, H2H_WIN_PAYOUT);
-          await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
-            `Franchise import: H2H win vs ${loserTeam} (${hiScore}–${loScore})`);
-          await addBalance(loserId, H2H_LOSS_PAYOUT);
-          await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
-            `Franchise import: H2H loss vs ${winnerTeam} (${loScore}–${hiScore})`);
+          if (isHistorical) {
+            // Historical week (1-8): log for display only — no coins, no record changes
+            await appendGameLog(winnerId, season.id, "win",   spread,  loserTeam);
+            await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam);
+          } else {
+            // Live week (9+): full payouts and record updates
+            await addBalance(winnerId, H2H_WIN_PAYOUT);
+            await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
+              `Franchise import: H2H win vs ${loserTeam} (${hiScore}–${loScore})`);
+            await addBalance(loserId, H2H_LOSS_PAYOUT);
+            await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
+              `Franchise import: H2H loss vs ${winnerTeam} (${loScore}–${hiScore})`);
 
-          payoutLines.push(`🏆 **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
+            payoutLines.push(`🏆 **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
 
-          // Update records
-          await upsertH2HRecord(winnerId, season.id, true,    spread);
-          await upsertH2HRecord(loserId,  season.id, false,  -spread);
+            await upsertH2HRecord(winnerId, season.id, true,    spread);
+            await upsertH2HRecord(loserId,  season.id, false,  -spread);
 
-          // Game log
-          await appendGameLog(winnerId, season.id, "win",   spread,  loserTeam);
-          await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam);
+            await appendGameLog(winnerId, season.id, "win",   spread,  loserTeam);
+            await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam);
 
-          // Increment all-time H2H wins on winner; all-time H2H losses on loser
-          await db.update(usersTable)
-            .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, winnerId));
-          await db.update(usersTable)
-            .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, loserId));
-
-          // Milestone check for winner
-          const winnerRow = await db.select({
-            allTimeH2HWins:      usersTable.allTimeH2HWins,
-            milestoneTierAwarded: usersTable.milestoneTierAwarded,
-          }).from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1);
-
-          const newWins     = (winnerRow[0]?.allTimeH2HWins ?? 0);
-          const currentTier = winnerRow[0]?.milestoneTierAwarded ?? 0;
-          const milestone   = checkMilestone(newWins, currentTier);
-
-          if (milestone) {
-            await addBalance(winnerId, milestone.bonus);
-            await logTransaction(winnerId, milestone.bonus, "addcoins",
-              `Career win milestone: ${milestone.label} (franchise import)`);
             await db.update(usersTable)
-              .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
+              .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() })
               .where(eq(usersTable.discordId, winnerId));
-            milestoneLines.push(`🎯 **${winnerTeam}** hit **${milestone.label}** → +${milestone.bonus} coins`);
+            await db.update(usersTable)
+              .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
+              .where(eq(usersTable.discordId, loserId));
+
+            const winnerRow = await db.select({
+              allTimeH2HWins:       usersTable.allTimeH2HWins,
+              milestoneTierAwarded: usersTable.milestoneTierAwarded,
+            }).from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1);
+
+            const newWins     = (winnerRow[0]?.allTimeH2HWins ?? 0);
+            const currentTier = winnerRow[0]?.milestoneTierAwarded ?? 0;
+            const milestone   = checkMilestone(newWins, currentTier);
+
+            if (milestone) {
+              await addBalance(winnerId, milestone.bonus);
+              await logTransaction(winnerId, milestone.bonus, "addcoins",
+                `Career win milestone: ${milestone.label} (franchise import)`);
+              await db.update(usersTable)
+                .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
+                .where(eq(usersTable.discordId, winnerId));
+              milestoneLines.push(`🎯 **${winnerTeam}** hit **${milestone.label}** → +${milestone.bonus} coins`);
+            }
           }
 
         } else {
-          // Tie — log but no coins
+          // Tie — log but no coins (even for live weeks)
           await appendGameLog(homeUser.discordId, season.id, "loss", 0, awayTeamData.name);
           await appendGameLog(awayUser.discordId, season.id, "loss", 0, homeTeamData.name);
-          payoutLines.push(`🤝 **${homeTeamData.name}** vs **${awayTeamData.name}** — Tie *(no payout)*`);
+          if (!isHistorical) {
+            payoutLines.push(`🤝 **${homeTeamData.name}** vs **${awayTeamData.name}** — Tie *(no payout)*`);
+          }
         }
 
       // ── CPU game: one human, one CPU ──────────────────────────────────────────
@@ -290,7 +308,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const humanWon    = humanScore > cpuScore && !isTie;
         const spread      = humanScore - cpuScore;
 
-        if (humanWon) {
+        if (!isHistorical && humanWon) {
           await addBalance(humanUser.discordId, CPU_WIN_PAYOUT);
           await logTransaction(humanUser.discordId, CPU_WIN_PAYOUT, "addcoins",
             `Franchise import: CPU win vs ${cpuTeam} (${humanScore}–${cpuScore})`);
@@ -325,7 +343,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .onConflictDoNothing();
       }
 
-      gamesProcessed++;
+      if (isHistorical) gamesHistorical++;
+      else gamesProcessed++;
     }
 
     // ── Persist full schedule (all games, not just completed) ─────────────────
@@ -464,7 +483,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     // ── Build confirmation embed ───────────────────────────────────────────────
     const summaryParts: string[] = [
-      `**Games processed:** ${gamesProcessed}`,
+      `**Games processed (live):** ${gamesProcessed}`,
+      `**Games logged (historical wk 1-8, no payout):** ${gamesHistorical}`,
       `**Already processed (duplicate):** ${gamesDuplicate}`,
       `**CPU vs CPU (skipped):** ${gamesCpuVsCpu}`,
       `**Unregistered team (skipped):** ${gamesUnregistered}`,
