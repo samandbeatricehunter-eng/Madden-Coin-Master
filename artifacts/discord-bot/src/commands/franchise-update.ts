@@ -190,6 +190,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (homeIsHuman && !homeUser) skippedHumanTeams.add(homeTeamData.name);
       if (awayIsHuman && !awayUser) skippedHumanTeams.add(awayTeamData.name);
 
+      // Skip game entirely if any human side has no registered Discord user
+      // (avoids null dereference and keeps the summary honest)
+      if ((homeIsHuman && !homeUser) || (awayIsHuman && !awayUser)) {
+        gamesSkipped++;
+        continue;
+      }
+
       const isTie   = homeScore === awayScore;
       const homeWon = homeScore > awayScore;
 
@@ -274,6 +281,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             `Franchise import: CPU win vs ${cpuTeam} (${humanScore}–${cpuScore})`);
           payoutLines.push(`🤖 **${humanTeam}** +${CPU_WIN_PAYOUT} coins *(CPU win vs ${cpuTeam} ${humanScore}–${cpuScore})*`);
         }
+
+        // Update season record (wins/losses/PD) for CPU games
+        await upsertH2HRecord(humanUser.discordId, season.id, humanWon && !isTie, spread);
 
         await appendGameLog(humanUser.discordId, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuTeam}`);
       }
