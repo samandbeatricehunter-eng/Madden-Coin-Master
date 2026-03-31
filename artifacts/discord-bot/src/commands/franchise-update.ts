@@ -115,13 +115,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return interaction.editReply({ content: "❌ `schedules.json` not found in the ZIP. Make sure you're uploading a valid Madden franchise export." });
     }
 
-    // ── Build teamId → { name, userName } map ─────────────────────────────────
-    const teamMap = new Map<number, { name: string; userName: string }>();
+    // ── Build teamId → { name, nickname, userName } map ──────────────────────
+    // name     = full "cityName teamName" (e.g. "Las Vegas Raiders")
+    // nickname = just teamName field     (e.g. "Raiders")
+    // The DB stores only the nickname (from NFL_TEAMS), so we need both for matching.
+    const teamMap = new Map<number, { name: string; nickname: string; userName: string }>();
     for (const t of Object.values(teamsJson) as any[]) {
       const id = t?.teamId ?? t?.teamIndex;
       if (id == null) continue;
-      const name = [t.cityName, t.teamName].filter(Boolean).join(" ").trim();
-      teamMap.set(Number(id), { name, userName: t.userName || "CPU" });
+      const nickname = (t.teamName ?? "").trim();
+      const name     = [t.cityName, nickname].filter(Boolean).join(" ").trim();
+      teamMap.set(Number(id), { name, nickname, userName: t.userName || "CPU" });
     }
 
     // ── Build team name (lowercase) → discord user lookup ─────────────────────
@@ -136,8 +140,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (u.team) teamToUser.set(u.team.toLowerCase().trim(), { discordId: u.discordId, discordUsername: u.discordUsername, team: u.team });
     }
 
-    function findUser(maddenTeamName: string) {
-      return teamToUser.get(maddenTeamName.toLowerCase().trim()) ?? null;
+    // Try full name first ("las vegas raiders"), fall back to nickname ("raiders")
+    function findUser(maddenFullName: string, maddenNickname: string) {
+      return teamToUser.get(maddenFullName.toLowerCase().trim())
+          ?? teamToUser.get(maddenNickname.toLowerCase().trim())
+          ?? null;
     }
 
     // ── Get active season ──────────────────────────────────────────────────────
@@ -190,8 +197,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // CPU vs CPU — skip
       if (!homeIsHuman && !awayIsHuman) { gamesCpuVsCpu++; continue; }
 
-      const homeUser = homeIsHuman ? findUser(homeTeamData.name) : null;
-      const awayUser = awayIsHuman ? findUser(awayTeamData.name) : null;
+      const homeUser = homeIsHuman ? findUser(homeTeamData.name, homeTeamData.nickname) : null;
+      const awayUser = awayIsHuman ? findUser(awayTeamData.name, awayTeamData.nickname) : null;
 
       // Track human teams that have no registered Discord user
       if (homeIsHuman && !homeUser) skippedHumanTeams.add(homeTeamData.name);
