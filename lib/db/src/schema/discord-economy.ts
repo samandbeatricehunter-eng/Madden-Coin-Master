@@ -340,6 +340,67 @@ export const seasonStatTierConfigsTable = pgTable("season_stat_tier_configs", {
     .on(t.seasonId, t.statCategory, t.tier),
 }));
 
+// ── Team season stats (offense/defense yards — upserted each franchise ZIP import) ──
+export const teamSeasonStatsTable = pgTable("team_season_stats", {
+  id:         serial("id").primaryKey(),
+  seasonId:   integer("season_id").notNull(),
+  teamId:     integer("team_id").notNull(),
+  discordId:  text("discord_id"),           // null if CPU team
+  teamName:   text("team_name").notNull().default(""),
+  offYds:     integer("off_yds").notNull().default(0),
+  offTDs:     integer("off_tds").notNull().default(0),
+  defPassYds: integer("def_pass_yds").notNull().default(0),
+  defRushYds: integer("def_rush_yds").notNull().default(0),
+  defTDs:     integer("def_tds").notNull().default(0),   // points/TDs allowed
+  wins:       integer("wins").notNull().default(0),
+  losses:     integer("losses").notNull().default(0),
+  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueTeam: uniqueIndex("team_season_stats_unique_idx").on(t.seasonId, t.teamId),
+}));
+
+// ── Player season stats (all stat categories — upserted each franchise ZIP import) ──
+export const playerSeasonStatsTable = pgTable("player_season_stats", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  playerId:     integer("player_id").notNull(),
+  teamId:       integer("team_id").notNull().default(-1),
+  teamName:     text("team_name").notNull().default(""),
+  discordId:    text("discord_id"),   // team owner's discord ID
+  firstName:    text("first_name").notNull().default(""),
+  lastName:     text("last_name").notNull().default(""),
+  position:     text("position").notNull().default(""),
+  passYds:      integer("pass_yds").notNull().default(0),
+  passTDs:      integer("pass_tds").notNull().default(0),
+  rushYds:      integer("rush_yds").notNull().default(0),
+  rushTDs:      integer("rush_tds").notNull().default(0),
+  recYds:       integer("rec_yds").notNull().default(0),
+  recTDs:       integer("rec_tds").notNull().default(0),
+  sacks:        integer("sacks").notNull().default(0),
+  defInts:      integer("def_ints").notNull().default(0),
+  totalTackles: integer("total_tackles").notNull().default(0),
+  tackleSolo:   integer("tackle_solo").notNull().default(0),
+  tackleAssist: integer("tackle_assist").notNull().default(0),
+  updatedAt:    timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniquePlayer: uniqueIndex("player_season_stats_unique_idx").on(t.seasonId, t.playerId),
+}));
+
+// ── GOTW recommendation history (4-week cooldown tracking) ────────────────────
+export const gotwHistoryTable = pgTable("gotw_history", {
+  id:          serial("id").primaryKey(),
+  seasonId:    integer("season_id").notNull(),
+  weekIndex:   integer("week_index").notNull(),   // 0-based (week 1 = index 0)
+  discordId1:  text("discord_id_1").notNull(),
+  discordId2:  text("discord_id_2").notNull(),
+  teamName1:   text("team_name_1").notNull(),
+  teamName2:   text("team_name_2").notNull(),
+  combinedScore: integer("combined_score").notNull().default(0), // stored as floor(score)
+  createdAt:   timestamp("created_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex),
+}));
+
 // ── Trade Block: user-posted trade offers ──────────────────────────────────────
 export const tradeBlockListingsTable = pgTable("trade_block_listings", {
   id:        serial("id").primaryKey(),

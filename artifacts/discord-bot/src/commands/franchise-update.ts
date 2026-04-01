@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable, franchiseRostersTable } from "@workspace/db";
+import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable, franchiseRostersTable, teamSeasonStatsTable, playerSeasonStatsTable } from "@workspace/db";
 import { eq, sql, and, max, inArray, gte } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
@@ -770,6 +770,185 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       console.error("Failed to post weekly matchups to general channel:", postErr);
     }
 
+    // ── Upsert team season stats (offYds / defYds) ────────────────────────────
+    // Try teamseasonstat.json first (MaddenCFMFiddler separate file), then fall
+    // back to teams.json which sometimes carries cumulative stat fields too.
+    let teamStatsUpserted = 0;
+    try {
+      const rawTeamStatResult =
+        readJsonFile(extractDir, "teamseasonstat") ??
+        readJsonFile(extractDir, "teamstats")      ??
+        teamsResult;
+
+      if (rawTeamStatResult?.data) {
+        const rawArr: any[] = Array.isArray(rawTeamStatResult.data)
+          ? rawTeamStatResult.data
+          : Object.values(rawTeamStatResult.data).filter(v => v && typeof v === "object");
+
+        const getN = (obj: any, ...keys: string[]): number => {
+          for (const k of keys) {
+            const v = obj?.[k];
+            if (v != null && !isNaN(Number(v))) return Number(v);
+          }
+          return 0;
+        };
+        const getOffYds = (t: any): number => {
+          const pass = getN(t, "offPassYds","offensivePassYards","passYds","passingYards");
+          const rush = getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards");
+          if (pass + rush > 0) return pass + rush;
+          return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
+        };
+        const getOffTDs = (t: any): number =>
+          getN(t, "offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offPassTDs","passTDs");
+        const getDefPassYds = (t: any): number =>
+          getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
+        const getDefRushYds = (t: any): number =>
+          getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
+        const getDefTDs = (t: any): number =>
+          getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts","defTDs","totalTDsAllowed");
+        const getDefTotalYds = (t: any): number => {
+          const sum = getDefPassYds(t) + getDefRushYds(t);
+          if (sum > 0) return sum;
+          return getN(t, "defTotalYds","totalDefYards","defYards","totalDefensiveYards");
+        };
+
+        const upserts: Promise<any>[] = [];
+        for (const t of rawArr) {
+          const rawTeamId = t?.teamId ?? t?.teamIndex;
+          if (rawTeamId == null) continue;
+          const teamId = Number(rawTeamId);
+          if (isNaN(teamId)) continue;
+
+          const teamData = teamMap.get(teamId);
+          if (!teamData) continue;
+
+          const offYds     = getOffYds(t);
+          const offTDs     = getOffTDs(t);
+          const defPassYds = getDefPassYds(t);
+          const defRushYds = getDefRushYds(t);
+          const defYds     = getDefTotalYds(t);
+          const defTDs     = getDefTDs(t);
+          const teamWins   = getN(t, "wins","totalWins","seasonWins");
+          const teamLosses = getN(t, "losses","totalLosses","seasonLosses");
+
+          const user = findUser(teamData.name, teamData.nickname);
+          const discordId = user?.discordId ?? null;
+
+          const vals = {
+            seasonId: season.id, teamId, discordId,
+            teamName: teamData.name,
+            offYds, offTDs, defPassYds, defRushYds, defTDs,
+            wins: teamWins, losses: teamLosses,
+            updatedAt: new Date(),
+          };
+          upserts.push(
+            db.insert(teamSeasonStatsTable)
+              .values(vals as any)
+              .onConflictDoUpdate({
+                target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId],
+                set:    vals as any,
+              }),
+          );
+          teamStatsUpserted++;
+        }
+        await Promise.all(upserts);
+        console.log(`[franchiseupdate] Team season stats upserted: ${teamStatsUpserted} teams from ${rawTeamStatResult.matchedFile}`);
+      }
+    } catch (tsErr) {
+      console.error("[franchiseupdate] Team season stats upsert failed (non-fatal):", tsErr);
+    }
+
+    // ── Upsert player season stats (passYds, rushYds, recYds, etc.) ───────────
+    let playerStatsUpserted = 0;
+    try {
+      const rawPlayerStatResult =
+        readJsonFile(extractDir, "playerseasonstat") ??
+        readJsonFile(extractDir, "playerstats");
+
+      if (rawPlayerStatResult?.data) {
+        const flatten = (obj: any): any[] => {
+          if (!obj) return [];
+          if (Array.isArray(obj)) return obj.filter(x => x && typeof x === "object");
+          if (typeof obj === "object") {
+            const wrapper = Object.keys(obj).find(k => Array.isArray(obj[k]) && obj[k].length > 0);
+            if (wrapper) return obj[wrapper].filter((x: any) => x && typeof x === "object");
+            return Object.values(obj).filter(x => x && typeof x === "object") as any[];
+          }
+          return [];
+        };
+
+        const getN2 = (obj: any, ...keys: string[]): number => {
+          for (const k of keys) {
+            const v = obj?.[k];
+            if (v != null && !isNaN(Number(v))) return Number(v);
+          }
+          return 0;
+        };
+
+        const rawPlayers = flatten(rawPlayerStatResult.data);
+        const batchSize = 200;
+        let batchUpserts: Promise<any>[] = [];
+
+        for (const p of rawPlayers) {
+          const rawPlayerId = p?.playerId ?? p?.rosterId ?? p?.playerIndex;
+          if (rawPlayerId == null) continue;
+          const playerId = Number(rawPlayerId);
+          if (isNaN(playerId) || playerId < 0) continue;
+
+          const rawTeamId = p?.teamId ?? p?.teamIndex;
+          const teamId = rawTeamId != null ? Number(rawTeamId) : -1;
+          const teamData = !isNaN(teamId) ? teamMap.get(teamId) : null;
+          const user = teamData ? findUser(teamData.name, teamData.nickname) : null;
+
+          const totalTackles = getN2(p, "totalTackles","tackles","tackleTotal");
+          const tackleSolo   = getN2(p, "tackleSolo","soloTackles","tackleSoloTotal");
+          const tackleAssist = getN2(p, "tackleAssist","assistTackles","tackleAssistTotal");
+
+          const vals2 = {
+            seasonId:     season.id,
+            playerId,
+            teamId:       isNaN(teamId) ? -1 : teamId,
+            teamName:     teamData?.name ?? (p?.teamName ?? ""),
+            discordId:    user?.discordId ?? null,
+            firstName:    String(p?.firstName ?? p?.first_name ?? "").trim(),
+            lastName:     String(p?.lastName  ?? p?.last_name  ?? "").trim(),
+            position:     String(p?.position  ?? p?.pos        ?? "").trim(),
+            passYds:      getN2(p, "passYds","passYards","passingYards","passYardsTotal","passingYardsTotal"),
+            passTDs:      getN2(p, "passTDs","passingTDs","passTouchdowns","passAttemptsTDs"),
+            rushYds:      getN2(p, "rushYds","rushYards","rushingYards","rushYardsTotal","rushingYardsTotal"),
+            rushTDs:      getN2(p, "rushTDs","rushingTDs","rushTouchdowns"),
+            recYds:       getN2(p, "recYds","recYards","receivingYards","catchYds","receivingYardsTotal"),
+            recTDs:       getN2(p, "recTDs","receivingTDs","recTouchdowns","catchTDs"),
+            sacks:        getN2(p, "sacks","defSacks","totalSacks"),
+            defInts:      getN2(p, "defInts","defensiveInterceptions","interceptions","intTotal","defTotalInts"),
+            totalTackles: totalTackles || (tackleSolo + tackleAssist),
+            tackleSolo,
+            tackleAssist,
+            updatedAt:    new Date(),
+          };
+
+          batchUpserts.push(
+            db.insert(playerSeasonStatsTable)
+              .values(vals2 as any)
+              .onConflictDoUpdate({
+                target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
+                set:    vals2 as any,
+              }),
+          );
+          playerStatsUpserted++;
+
+          if (batchUpserts.length >= batchSize) {
+            await Promise.all(batchUpserts);
+            batchUpserts = [];
+          }
+        }
+        if (batchUpserts.length > 0) await Promise.all(batchUpserts);
+        console.log(`[franchiseupdate] Player season stats upserted: ${playerStatsUpserted} players from ${rawPlayerStatResult.matchedFile}`);
+      }
+    } catch (psErr) {
+      console.error("[franchiseupdate] Player season stats upsert failed (non-fatal):", psErr);
+    }
+
     // ── Build confirmation embed ───────────────────────────────────────────────
     const summaryParts: string[] = [
       `**Current week:** Week ${currentWeekStr} (weekIndex ${targetWeekIndex})`,
@@ -780,6 +959,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Unregistered team (skipped):** ${gamesUnregistered}`,
       `**Schedule rows saved:** ${scheduleRowsSaved}`,
       `**Roster players synced:** ${rostersSynced > 0 ? rostersSynced : "none (rosters.json not found in ZIP)"}`,
+      `**Team season stats upserted:** ${teamStatsUpserted > 0 ? `${teamStatsUpserted} teams` : "none (no teamseasonstat file found)"}`,
+      `**Player season stats upserted:** ${playerStatsUpserted > 0 ? `${playerStatsUpserted} players` : "none (no playerseasonstat file found)"}`,
       `**ZIP files matched:** teams=\`${teamsResult?.matchedFile ?? "N/A"}\` schedules=\`${schedulesResult?.matchedFile ?? "N/A"}\` rosters=\`${rostersResult?.matchedFile ?? "not found"}\``,
     ];
     if (skippedHumanTeams.size > 0) {
