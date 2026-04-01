@@ -340,29 +340,47 @@ export async function processPlayerWeekStats(
       const lastName  = String(p.lastName  ?? p.lastname  ?? "");
       const position  = String(p.position  ?? p.pos ?? "");
 
-      let statFields: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
+      // Extract this week's stat values
+      let weekVals: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
+      let accumSet: Record<string, any> = {};
+
       if (statType === "passing") {
-        statFields = {
-          passYds: getN(p, "passYds", "passingYards", "passyds"),
-          passTDs: getN(p, "passTDs", "passingTds",   "passtds"),
+        const passYds = getN(p, "passYds", "passingYards", "passyds");
+        const passTDs = getN(p, "passTDs", "passingTds",   "passtds");
+        weekVals  = { passYds, passTDs };
+        accumSet  = {
+          passYds: sql`${playerSeasonStatsTable.passYds} + ${passYds}`,
+          passTDs: sql`${playerSeasonStatsTable.passTDs} + ${passTDs}`,
         };
       } else if (statType === "rushing") {
-        statFields = {
-          rushYds: getN(p, "rushYds", "rushingYards", "rushyds"),
-          rushTDs: getN(p, "rushTDs", "rushingTds",   "rushtds"),
+        const rushYds = getN(p, "rushYds", "rushingYards", "rushyds");
+        const rushTDs = getN(p, "rushTDs", "rushingTds",   "rushtds");
+        weekVals  = { rushYds, rushTDs };
+        accumSet  = {
+          rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
+          rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
         };
       } else if (statType === "receiving") {
-        statFields = {
-          recYds: getN(p, "recYds", "receivingYards", "recyds"),
-          recTDs: getN(p, "recTDs", "receivingTds",   "rectds"),
+        const recYds = getN(p, "recYds", "receivingYards", "recyds");
+        const recTDs = getN(p, "recTDs", "receivingTds",   "rectds");
+        weekVals  = { recYds, recTDs };
+        accumSet  = {
+          recYds: sql`${playerSeasonStatsTable.recYds} + ${recYds}`,
+          recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
         };
       } else if (statType === "defense") {
-        statFields = {
-          sacks:        getN(p, "sacks",        "defSacks",    "sack"),
-          defInts:      getN(p, "defInts",      "interceptions","defints", "ints"),
-          totalTackles: getN(p, "totalTackles", "tackleTotal", "tackles"),
-          tackleSolo:   getN(p, "tackleSolo",   "tacklesoloprops", "soloTackles"),
-          tackleAssist: getN(p, "tackleAssist", "assistTackles"),
+        const sacks        = getN(p, "sacks",        "defSacks",         "sack");
+        const defInts      = getN(p, "defInts",      "interceptions",    "defints", "ints");
+        const totalTackles = getN(p, "totalTackles", "tackleTotal",      "tackles");
+        const tackleSolo   = getN(p, "tackleSolo",   "tacklesoloprops",  "soloTackles");
+        const tackleAssist = getN(p, "tackleAssist", "assistTackles");
+        weekVals  = { sacks, defInts, totalTackles, tackleSolo, tackleAssist };
+        accumSet  = {
+          sacks:        sql`${playerSeasonStatsTable.sacks}        + ${sacks}`,
+          defInts:      sql`${playerSeasonStatsTable.defInts}      + ${defInts}`,
+          totalTackles: sql`${playerSeasonStatsTable.totalTackles} + ${totalTackles}`,
+          tackleSolo:   sql`${playerSeasonStatsTable.tackleSolo}   + ${tackleSolo}`,
+          tackleAssist: sql`${playerSeasonStatsTable.tackleAssist} + ${tackleAssist}`,
         };
       }
 
@@ -377,18 +395,20 @@ export async function processPlayerWeekStats(
             firstName,
             lastName,
             position,
-            ...statFields,
+            ...weekVals,
           })
           .onConflictDoUpdate({
             target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
             set: {
+              // Identity fields always overwrite (player may change teams)
               teamId,
               teamName,
               discordId,
               firstName,
               lastName,
               position,
-              ...statFields,
+              // Stat fields accumulate week-over-week
+              ...accumSet,
               updatedAt: new Date(),
             },
           })
