@@ -160,10 +160,25 @@ export async function processLeagueTeams(body: unknown): Promise<ProcessResult> 
       if (u.team) teamToUser.set(u.team.toLowerCase().trim(), u.discordId);
     }
 
+    // Madden Companion App uses non-standard nicknames for some teams.
+    // Map each MCA nickname to the common names users register under.
+    const MCA_NICK_ALIASES: Record<string, string[]> = {
+      "niners": ["49ers", "san francisco 49ers"],
+    };
+
     function findDiscordId(fullName: string, nick: string): string | null {
-      return teamToUser.get(fullName.toLowerCase().trim())
-        ?? teamToUser.get(nick.toLowerCase().trim())
-        ?? null;
+      const fn = fullName.toLowerCase().trim();
+      const nk = nick.toLowerCase().trim();
+
+      const direct = teamToUser.get(fn) ?? teamToUser.get(nk);
+      if (direct) return direct;
+
+      for (const alias of MCA_NICK_ALIASES[nk] ?? []) {
+        const via = teamToUser.get(alias.toLowerCase().trim());
+        if (via) return via;
+      }
+
+      return null;
     }
 
     let upserted = 0;
