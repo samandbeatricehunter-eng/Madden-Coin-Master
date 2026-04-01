@@ -781,9 +781,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         teamsResult;
 
       if (rawTeamStatResult?.data) {
-        const rawArr: any[] = Array.isArray(rawTeamStatResult.data)
-          ? rawTeamStatResult.data
-          : Object.values(rawTeamStatResult.data).filter(v => v && typeof v === "object");
+        // Robust flatten: handles arrays, numeric-keyed hashes, and one level of wrapper
+        const flattenStats = (obj: any): any[] => {
+          if (!obj) return [];
+          if (Array.isArray(obj)) return obj.filter(x => x && typeof x === "object");
+          if (typeof obj !== "object") return [];
+          const keys = Object.keys(obj);
+          // Numeric-keyed object {"0":{...},"1":{...}} → treat as indexed collection
+          if (keys.length > 0 && keys.every(k => /^\d+$/.test(k)))
+            return Object.values(obj).filter(v => v && typeof v === "object") as any[];
+          // Array-valued wrapper key
+          const arrayKey = keys.find(k => Array.isArray(obj[k]) && (obj[k] as any[]).length > 0);
+          if (arrayKey) return (obj[arrayKey] as any[]).filter(x => x && typeof x === "object");
+          // Single named wrapper (e.g. "teamSeasonStat") → unwrap one level and recurse
+          for (const v of Object.values(obj).filter(v => v && typeof v === "object") as any[]) {
+            const inner = flattenStats(v);
+            if (inner.length > 0) return inner;
+          }
+          return [];
+        };
+
+        const rawArr: any[] = flattenStats(rawTeamStatResult.data);
+        if (rawArr.length > 0) {
+          const tSample = rawArr[0];
+          console.log(`[franchiseupdate] teamseasonstat file: ${rawTeamStatResult.matchedFile}`);
+          console.log(`[franchiseupdate] Team stat record keys (first): ${Object.keys(tSample).join(", ")}`);
+          console.log(`[franchiseupdate] Team sample values: ${JSON.stringify(tSample).slice(0, 400)}`);
+        }
 
         const getN = (obj: any, ...keys: string[]): number => {
           for (const k of keys) {
@@ -805,7 +829,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const getDefRushYds = (t: any): number =>
           getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
         const getDefTDs = (t: any): number =>
-          getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts","defTDs","totalTDsAllowed");
+          // "defTDs" in Madden = TDs scored BY the defense (pick-6s etc.) — not TDs allowed
+          // Use ptsAllowed / totalTDsAllowed fields only
+          getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts","totalTDsAllowed","ptsScoredAllowed");
         const getDefTotalYds = (t: any): number => {
           const sum = getDefPassYds(t) + getDefRushYds(t);
           if (sum > 0) return sum;
@@ -866,13 +892,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         readJsonFile(extractDir, "playerstats");
 
       if (rawPlayerStatResult?.data) {
+        // Robust flatten — same logic as team stats above
         const flatten = (obj: any): any[] => {
           if (!obj) return [];
           if (Array.isArray(obj)) return obj.filter(x => x && typeof x === "object");
-          if (typeof obj === "object") {
-            const wrapper = Object.keys(obj).find(k => Array.isArray(obj[k]) && obj[k].length > 0);
-            if (wrapper) return obj[wrapper].filter((x: any) => x && typeof x === "object");
-            return Object.values(obj).filter(x => x && typeof x === "object") as any[];
+          if (typeof obj !== "object") return [];
+          const keys = Object.keys(obj);
+          // Numeric-keyed hash {"0":{...},"1":{...}} → indexed collection
+          if (keys.length > 0 && keys.every(k => /^\d+$/.test(k)))
+            return Object.values(obj).filter(v => v && typeof v === "object") as any[];
+          // Array-valued wrapper key
+          const arrayKey = keys.find(k => Array.isArray(obj[k]) && (obj[k] as any[]).length > 0);
+          if (arrayKey) return (obj[arrayKey] as any[]).filter(x => x && typeof x === "object");
+          // Named wrapper (e.g. "playerSeasonStat") → unwrap one level and recurse
+          for (const v of Object.values(obj).filter(v => v && typeof v === "object") as any[]) {
+            const inner = flatten(v);
+            if (inner.length > 0) return inner;
           }
           return [];
         };
@@ -886,6 +921,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         };
 
         const rawPlayers = flatten(rawPlayerStatResult.data);
+        // Log first record's keys to help debug field name mismatches
+        if (rawPlayers.length > 0) {
+          const sample = rawPlayers[0];
+          console.log(`[franchiseupdate] playerseasonstat file: ${rawPlayerStatResult.matchedFile}`);
+          console.log(`[franchiseupdate] Player stat record keys (first): ${Object.keys(sample).join(", ")}`);
+          console.log(`[franchiseupdate] Player sample values: ${JSON.stringify(sample).slice(0, 400)}`);
+        } else {
+          console.log(`[franchiseupdate] playerseasonstat found (${rawPlayerStatResult.matchedFile}) but flatten() returned 0 records`);
+          console.log(`[franchiseupdate] Raw data type: ${typeof rawPlayerStatResult.data}, top-level keys: ${Object.keys(rawPlayerStatResult.data ?? {}).slice(0, 10).join(", ")}`);
+        }
+
         const batchSize = 200;
         let batchUpserts: Promise<any>[] = [];
 

@@ -152,21 +152,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
 
     const entries = eligible.map(t => ({
-      name:        t.teamName,
-      passAllowed: t.defPassYds,
-      rushAllowed: t.defRushYds,
-      tdsAllowed:  t.defTDs,
-      detail:      `${t.defPassYds.toLocaleString()} pass yds / ${t.defRushYds.toLocaleString()} rush yds / ${t.defTDs} TDs allowed`,
-      score:       0,
+      name:       t.teamName,
+      totalYds:   t.defPassYds + t.defRushYds,
+      tdsAllowed: t.defTDs,
+      detail:     `${(t.defPassYds + t.defRushYds).toLocaleString()} total yds allowed / ${t.defTDs} TDs allowed`,
+      score:      0,
     }));
 
-    const maxPass = Math.max(...entries.map(e => e.passAllowed), 1);
-    const maxRush = Math.max(...entries.map(e => e.rushAllowed), 1);
-    const maxTDs  = Math.max(...entries.map(e => e.tdsAllowed),  1);
+    const maxYds = Math.max(...entries.map(e => e.totalYds), 1);
+    const maxTDs = Math.max(...entries.map(e => e.tdsAllowed), 1);
     for (const e of entries) {
-      e.score = (e.passAllowed / maxPass) * 0.40
-              + (e.rushAllowed / maxRush) * 0.40
-              + (e.tdsAllowed  / maxTDs)  * 0.20;
+      e.score = (e.totalYds   / maxYds) * 0.80
+              + (e.tdsAllowed / maxTDs)  * 0.20;
     }
     entries.sort((a, b) => a.score - b.score); // ascending: fewer yards = lower score = better rank
     return entries.slice(0, topN).map((e, i) =>
