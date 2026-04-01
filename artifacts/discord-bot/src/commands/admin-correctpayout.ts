@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, franchiseScheduleTable, franchiseProcessedGamesTable, gameLogTable,
 } from "@workspace/db";
-import { eq, and, sql, desc, like } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason, addBalance, logTransaction, upsertH2HRecord, appendGameLog } from "../lib/db-helpers.js";
 
 const H2H_WIN_PAYOUT  = 50;
@@ -88,7 +88,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .where(sql`lower(${usersTable.team}) = ${awayLower}`).limit(1);
 
   // ── Locate the processed game record (multiple fallback strategies) ────────
-  let processedGame = null as Awaited<ReturnType<typeof db.select>> extends (infer R)[] ? R | null : null;
+  type ProcessedGameRow = typeof franchiseProcessedGamesTable.$inferSelect;
+  let processedGame: ProcessedGameRow | null = null;
 
   // Strategy 0: manual gameid override
   if (gameIdOverride) {
@@ -129,23 +130,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     processedGame = r ?? null;
   }
 
-  // Strategy 4: substring scan — find any processedGame whose gameId contains both team IDs
-  // (covers constructed format for records pre-dating the lookup columns)
-  if (!processedGame) {
-    const hId = String(schedGame.homeTeamId);
-    const aId = String(schedGame.awayTeamId);
-    const candidates = await db.select().from(franchiseProcessedGamesTable)
-      .where(and(
-        like(franchiseProcessedGamesTable.gameId, `%${hId}%`),
-        like(franchiseProcessedGamesTable.gameId, `%${aId}%`),
-      ))
-      .limit(20);
-    // Take the first candidate that contains both IDs in the right order
-    processedGame = candidates.find(c =>
-      c.gameId.includes(`h${hId}`) && c.gameId.includes(`a${aId}`),
-    ) ?? candidates[0] ?? null;
-  }
-
   if (!processedGame) {
     const hId = schedGame.homeTeamId;
     const aId = schedGame.awayTeamId;
@@ -161,21 +145,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Determine what was PREVIOUSLY paid ────────────────────────────────────
-  const pg = processedGame as any;
-  const oldType         = pg.payoutType ?? null;
-  const oldWinnerId     = pg.winnerDiscordId ?? null;
-  const oldLoserId      = pg.loserDiscordId  ?? null;
-  const oldWinnerCoins  = pg.winnerCoins ?? 0;
-  const oldLoserCoins   = pg.loserCoins  ?? 0;
-  const oldPointDiff    = pg.appliedPointDiff ?? 0;
+  const oldType         = processedGame.payoutType    ?? null;
+  const oldWinnerId     = processedGame.winnerDiscordId ?? null;
+  const oldLoserId      = processedGame.loserDiscordId  ?? null;
+  const oldWinnerCoins  = processedGame.winnerCoins    ?? 0;
+  const oldLoserCoins   = processedGame.loserCoins     ?? 0;
+  const oldPointDiff    = processedGame.appliedPointDiff ?? 0;
 
   // If no metadata (legacy record), infer from schedule and registration
-  let inferredType        = oldType as string | null;
-  let inferredWinnerId    = oldWinnerId as string | null;
-  let inferredLoserId     = oldLoserId  as string | null;
-  let inferredWinnerCoins = oldWinnerCoins as number;
-  let inferredLoserCoins  = oldLoserCoins  as number;
-  let inferredPointDiff   = oldPointDiff   as number;
+  let inferredType:        string | null = oldType;
+  let inferredWinnerId:    string | null = oldWinnerId;
+  let inferredLoserId:     string | null = oldLoserId;
+  let inferredWinnerCoins: number        = oldWinnerCoins;
+  let inferredLoserCoins:  number        = oldLoserCoins;
+  let inferredPointDiff:   number        = oldPointDiff;
 
   const schedHomeScore = schedGame.homeScore ?? 0;
   const schedAwayScore = schedGame.awayScore ?? 0;
@@ -409,7 +392,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Update the processed game record with new metadata ────────────────────
-  const gameIdToUpdate = (processedGame as any).gameId as string;
+  const gameIdToUpdate = processedGame.gameId;
   await db.update(franchiseProcessedGamesTable)
     .set({
       payoutType:       newPayoutMeta.payoutType,

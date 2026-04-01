@@ -33,4 +33,3 @@ channel = "stable-25_05"
 
 [userenv.shared]
 DISCORD_GENERAL_CHANNEL_ID = "1476321282868908052"
-MADDEN_WEBHOOK_KEY = "recleague26"
