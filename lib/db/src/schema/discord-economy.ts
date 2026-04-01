@@ -253,8 +253,20 @@ export const wagersTable = pgTable("wagers", {
 
 // Tracks Madden franchise game IDs that have already been processed (dedup)
 export const franchiseProcessedGamesTable = pgTable("franchise_processed_games", {
-  gameId:      text("game_id").primaryKey(),
-  processedAt: timestamp("processed_at").notNull().defaultNow(),
+  gameId:           text("game_id").primaryKey(),
+  processedAt:      timestamp("processed_at").notNull().defaultNow(),
+  // Payout metadata — populated by franchise-update, used by admin-correctpayout for precise reversal
+  payoutType:       text("payout_type"),       // "h2h" | "cpu" | "none" | null (legacy rows)
+  winnerDiscordId:  text("winner_discord_id"), // discordId of user who received win payout
+  loserDiscordId:   text("loser_discord_id"),  // discordId of user who received loss payout (h2h only)
+  winnerCoins:      integer("winner_coins"),   // coins awarded to winner
+  loserCoins:       integer("loser_coins"),    // coins awarded to loser (0 for cpu)
+  appliedPointDiff: integer("applied_point_diff"), // point spread used for H2H record delta
+  // Lookup fields — allow admin-correctpayout to find this entry by season/week/teams
+  seasonIdRef:   integer("season_id_ref"),
+  weekIndexRef:  integer("week_index_ref"),
+  homeTeamRef:   text("home_team_ref"),
+  awayTeamRef:   text("away_team_ref"),
 });
 
 // Tracks which players have had a game processed via /franchiseupdate this week (interview eligibility)
