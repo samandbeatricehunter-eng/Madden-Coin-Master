@@ -388,6 +388,21 @@ export const playerSeasonStatsTable = pgTable("player_season_stats", {
   uniquePlayer: uniqueIndex("player_season_stats_unique_idx").on(t.seasonId, t.playerId),
 }));
 
+// ── Tracks which (season, weekType, weekNum, statType) combos have been processed ──
+// Prevents double-counting if MCA re-exports the same week's stats.
+export const playerStatWeekProcessedTable = pgTable("player_stat_week_processed", {
+  id:          serial("id").primaryKey(),
+  seasonId:    integer("season_id").notNull(),
+  weekType:    text("week_type").notNull(),   // "reg" | "post" | etc.
+  weekNum:     integer("week_num").notNull(),
+  statType:    text("stat_type").notNull(),   // "passing" | "rushing" | "receiving" | "defense"
+  recordCount: integer("record_count").notNull().default(0),
+  processedAt: timestamp("processed_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueWeek: uniqueIndex("player_stat_week_processed_unique_idx")
+    .on(t.seasonId, t.weekType, t.weekNum, t.statType),
+}));
+
 // ── GOTW recommendation history (4-week cooldown tracking) ────────────────────
 export const gotwHistoryTable = pgTable("gotw_history", {
   id:          serial("id").primaryKey(),

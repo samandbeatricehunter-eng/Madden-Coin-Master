@@ -11,6 +11,7 @@ import {
   franchiseMcaTeamsTable,
   teamSeasonStatsTable,
   playerSeasonStatsTable,
+  playerStatWeekProcessedTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 
@@ -311,6 +312,8 @@ const STAT_LIST_KEYS: Record<WeekStatType, string> = {
 export async function processPlayerWeekStats(
   body: unknown,
   statType: WeekStatType,
+  weekType: string,
+  weekNum: number,
 ): Promise<ProcessResult> {
   try {
     const season  = await getOrCreateActiveSeason();
@@ -319,6 +322,22 @@ export async function processPlayerWeekStats(
 
     if (!players.length) {
       return { ok: true, message: `No ${statType} records in payload` };
+    }
+
+    // ── Dedup check: skip if this week/stat combo has already been processed ──
+    const alreadyDone = await db.select({ id: playerStatWeekProcessedTable.id })
+      .from(playerStatWeekProcessedTable)
+      .where(and(
+        eq(playerStatWeekProcessedTable.seasonId, season.id),
+        eq(playerStatWeekProcessedTable.weekType,  weekType),
+        eq(playerStatWeekProcessedTable.weekNum,   weekNum),
+        eq(playerStatWeekProcessedTable.statType,  statType),
+      ))
+      .limit(1);
+
+    if (alreadyDone.length > 0) {
+      console.log(`[mca/week${weekNum}/${statType}] Already processed — skipping to prevent double-count`);
+      return { ok: true, message: `Week ${weekNum} ${statType} already recorded — skipped` };
     }
 
     const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
@@ -340,47 +359,32 @@ export async function processPlayerWeekStats(
       const lastName  = String(p.lastName  ?? p.lastname  ?? "");
       const position  = String(p.position  ?? p.pos ?? "");
 
-      // Extract this week's stat values
-      let weekVals: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
-      let accumSet: Record<string, any> = {};
+      // MCA sends cumulative season-to-date totals each export, so we replace
+      // (not add). The dedup check above ensures the same week isn't applied twice.
+      let statFields: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
 
       if (statType === "passing") {
-        const passYds = getN(p, "passYds", "passingYards", "passyds");
-        const passTDs = getN(p, "passTDs", "passingTds",   "passtds");
-        weekVals  = { passYds, passTDs };
-        accumSet  = {
-          passYds: sql`${playerSeasonStatsTable.passYds} + ${passYds}`,
-          passTDs: sql`${playerSeasonStatsTable.passTDs} + ${passTDs}`,
+        statFields = {
+          passYds: getN(p, "passYds", "passingYards", "passyds"),
+          passTDs: getN(p, "passTDs", "passingTds",   "passtds"),
         };
       } else if (statType === "rushing") {
-        const rushYds = getN(p, "rushYds", "rushingYards", "rushyds");
-        const rushTDs = getN(p, "rushTDs", "rushingTds",   "rushtds");
-        weekVals  = { rushYds, rushTDs };
-        accumSet  = {
-          rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
-          rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
+        statFields = {
+          rushYds: getN(p, "rushYds", "rushingYards", "rushyds"),
+          rushTDs: getN(p, "rushTDs", "rushingTds",   "rushtds"),
         };
       } else if (statType === "receiving") {
-        const recYds = getN(p, "recYds", "receivingYards", "recyds");
-        const recTDs = getN(p, "recTDs", "receivingTds",   "rectds");
-        weekVals  = { recYds, recTDs };
-        accumSet  = {
-          recYds: sql`${playerSeasonStatsTable.recYds} + ${recYds}`,
-          recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
+        statFields = {
+          recYds: getN(p, "recYds", "receivingYards", "recyds"),
+          recTDs: getN(p, "recTDs", "receivingTds",   "rectds"),
         };
       } else if (statType === "defense") {
-        const sacks        = getN(p, "sacks",        "defSacks",         "sack");
-        const defInts      = getN(p, "defInts",      "interceptions",    "defints", "ints");
-        const totalTackles = getN(p, "totalTackles", "tackleTotal",      "tackles");
-        const tackleSolo   = getN(p, "tackleSolo",   "tacklesoloprops",  "soloTackles");
-        const tackleAssist = getN(p, "tackleAssist", "assistTackles");
-        weekVals  = { sacks, defInts, totalTackles, tackleSolo, tackleAssist };
-        accumSet  = {
-          sacks:        sql`${playerSeasonStatsTable.sacks}        + ${sacks}`,
-          defInts:      sql`${playerSeasonStatsTable.defInts}      + ${defInts}`,
-          totalTackles: sql`${playerSeasonStatsTable.totalTackles} + ${totalTackles}`,
-          tackleSolo:   sql`${playerSeasonStatsTable.tackleSolo}   + ${tackleSolo}`,
-          tackleAssist: sql`${playerSeasonStatsTable.tackleAssist} + ${tackleAssist}`,
+        statFields = {
+          sacks:        getN(p, "sacks",        "defSacks",        "sack"),
+          defInts:      getN(p, "defInts",      "interceptions",   "defints", "ints"),
+          totalTackles: getN(p, "totalTackles", "tackleTotal",     "tackles"),
+          tackleSolo:   getN(p, "tackleSolo",   "tacklesoloprops", "soloTackles"),
+          tackleAssist: getN(p, "tackleAssist", "assistTackles"),
         };
       }
 
@@ -395,20 +399,18 @@ export async function processPlayerWeekStats(
             firstName,
             lastName,
             position,
-            ...weekVals,
+            ...statFields,
           })
           .onConflictDoUpdate({
             target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
             set: {
-              // Identity fields always overwrite (player may change teams)
               teamId,
               teamName,
               discordId,
               firstName,
               lastName,
               position,
-              // Stat fields accumulate week-over-week
-              ...accumSet,
+              ...statFields,
               updatedAt: new Date(),
             },
           })
@@ -417,8 +419,18 @@ export async function processPlayerWeekStats(
     }
 
     await Promise.all(ops);
-    console.log(`[mca/${statType}] Upserted ${upserted} player stat records for season ${season.id}`);
-    return { ok: true, message: `${statType}: upserted ${upserted} records`, details: { upserted } };
+
+    // ── Mark this week/stat combo as processed so re-exports are skipped ──────
+    await db.insert(playerStatWeekProcessedTable).values({
+      seasonId: season.id,
+      weekType,
+      weekNum,
+      statType,
+      recordCount: upserted,
+    });
+
+    console.log(`[mca/week${weekNum}/${statType}] Upserted ${upserted} player stat records, marked as processed`);
+    return { ok: true, message: `${statType} week ${weekNum}: upserted ${upserted} records`, details: { upserted } };
   } catch (err) {
     console.error(`[mca/${statType}] Error:`, err);
     return { ok: false, message: String(err) };

@@ -97,9 +97,10 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
     `/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/${statType}`,
     validateKey,
     async (req, res) => {
-      const weekNum = req.params["weekNum"] ?? "?";
+      const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+      const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
       res.status(200).json({ status: "received" });
-      const result = await processPlayerWeekStats(req.body, statType).catch(err => ({
+      const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum).catch(err => ({
         ok: false, message: String(err),
       }));
       if (result.ok) {
