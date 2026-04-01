@@ -141,25 +141,39 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
   if (COMMISSIONER_CHANNEL_ID) {
     const fields = [];
-    if (result.payoutLines.length > 0) {
-      fields.push({ name: "💰 Coin Payouts", value: result.payoutLines.slice(0, 10).join("\n") || "None", inline: false });
+
+    if (result.resultLines.length > 0) {
+      fields.push({
+        name: "🏈 Game Results",
+        value: result.resultLines.slice(0, 15).join("\n"),
+        inline: false,
+      });
     }
+
+    if (result.unregisteredLines.length > 0) {
+      fields.push({
+        name: "⚠️ Unregistered — no coins paid",
+        value: result.unregisteredLines.join("\n"),
+        inline: false,
+      });
+    }
+
     if (result.milestoneLines.length > 0) {
       fields.push({ name: "🎯 Milestones", value: result.milestoneLines.join("\n"), inline: false });
     }
-    fields.push({
-      name: "📊 Summary",
-      value: [
-        `✅ Games paid: **${result.gamesProcessed}**`,
-        result.gamesDuplicate   > 0 ? `⏭ Already processed: ${result.gamesDuplicate}` : null,
-        result.gamesCpuVsCpu    > 0 ? `🤖 CPU vs CPU skipped: ${result.gamesCpuVsCpu}` : null,
-        result.gamesUnregistered > 0 ? `⚠️ Unregistered players: ${result.gamesUnregistered}` : null,
-      ].filter(Boolean).join("\n") || "No games to process",
-      inline: false,
-    });
+
+    const summaryParts: string[] = [];
+    if (result.gamesProcessed > 0)    summaryParts.push(`✅ Paid out: **${result.gamesProcessed}** game(s)`);
+    if (result.gamesDuplicate > 0)    summaryParts.push(`⏭ Already processed: ${result.gamesDuplicate}`);
+    if (result.gamesCpuVsCpu > 0)     summaryParts.push(`🤖 CPU vs CPU skipped: ${result.gamesCpuVsCpu}`);
+    if (result.gamesUnregistered > 0) summaryParts.push(`⚠️ Unregistered (no payout): ${result.gamesUnregistered}`);
+    if (result.resultLines.length === 0 && result.gamesProcessed === 0) summaryParts.push("No completed games found in this week's data yet");
+
+    fields.push({ name: "📊 Summary", value: summaryParts.join("\n") || "Nothing to process", inline: false });
+
     await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-      title: `✅ Week ${weekNum} — MCA Import Complete`,
-      color: 0x57f287,
+      title: `✅ Week ${weekNum} — MCA Import`,
+      color: result.gamesProcessed > 0 ? 0x57f287 : 0x5865f2,
       fields,
       footer: { text: `Season ${result.seasonId} · Madden Companion App` },
     }).catch(() => {});
