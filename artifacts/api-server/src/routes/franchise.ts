@@ -75,7 +75,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validate
   console.log("[mca/freeagents/roster] Acknowledged (EA bug — payload skipped)");
 });
 
-// ── /week/:weekType/:weekNum/team — per-week team stats ───────────────────────
+// ── /week/:weekType/:weekNum/team — per-week team offense stats ───────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
@@ -83,6 +83,28 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team
   console.log(`[mca/week${weekNum}/team] Received team stats (weekType=${weekType}), processing...`);
   const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
   console.log(`[mca/week${weekNum}/team] Result:`, result.message);
+});
+
+// ── /week/:weekType/:weekNum/defense — per-week defensive stats (acknowledge) ─
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/defense", validateKey, (req, res) => {
+  const weekNum = req.params["weekNum"] ?? "?";
+  res.status(200).json({ status: "received" });
+  console.log(`[mca/week${weekNum}/defense] Acknowledged (no-op)`);
+});
+
+// ── /week/:weekType/:weekNum/passing — per-week passing stats (acknowledge) ───
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/passing", validateKey, (req, res) => {
+  res.status(200).json({ status: "received" });
+});
+
+// ── /week/:weekType/:weekNum/rushing — per-week rushing stats (acknowledge) ───
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/rushing", validateKey, (req, res) => {
+  res.status(200).json({ status: "received" });
+});
+
+// ── /week/:weekType/:weekNum/receiving — per-week receiving stats (acknowledge)
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/receiving", validateKey, (req, res) => {
+  res.status(200).json({ status: "received" });
 });
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
