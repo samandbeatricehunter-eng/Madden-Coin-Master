@@ -347,11 +347,13 @@ export const teamSeasonStatsTable = pgTable("team_season_stats", {
   teamId:     integer("team_id").notNull(),
   discordId:  text("discord_id"),           // null if CPU team
   teamName:   text("team_name").notNull().default(""),
-  offYds:     integer("off_yds").notNull().default(0),
-  offTDs:     integer("off_tds").notNull().default(0),
+  offYds:     integer("off_yds").notNull().default(0),      // total offensive yards (pass + rush)
+  offPassYds: integer("off_pass_yds").notNull().default(0), // offensive passing yards
+  offRushYds: integer("off_rush_yds").notNull().default(0), // offensive rushing yards
+  offTDs:     integer("off_tds").notNull().default(0),      // points scored (ptsFor fallback)
   defPassYds: integer("def_pass_yds").notNull().default(0),
   defRushYds: integer("def_rush_yds").notNull().default(0),
-  defTDs:     integer("def_tds").notNull().default(0),   // points/TDs allowed
+  defTDs:     integer("def_tds").notNull().default(0),      // points allowed (ptsAgainst fallback)
   wins:       integer("wins").notNull().default(0),
   losses:     integer("losses").notNull().default(0),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
@@ -454,6 +456,24 @@ export const tradeBlockISOTable = pgTable("trade_block_iso", {
   status:    text("status").notNull().default("active"), // "active" | "removed"
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ── MCA (Madden Companion App) team map ──────────────────────────────────────
+// Populated by the /leagueteams webhook; used by /week scorer and /schedules handler.
+// Gives us teamId → fullName, nickName, userName so we know who is human vs CPU
+// and which Discord user controls each team, without needing the ZIP file.
+export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  teamId:    integer("team_id").notNull(),
+  fullName:  text("full_name").notNull(),      // "Las Vegas Raiders"
+  nickName:  text("nick_name").notNull(),       // "Raiders"
+  userName:  text("user_name").notNull(),       // Madden in-game username or "CPU"
+  isHuman:   boolean("is_human").notNull().default(false),
+  discordId: text("discord_id"),               // null if CPU team or no match
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),
+}));
 
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;

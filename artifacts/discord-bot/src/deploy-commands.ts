@@ -46,6 +46,7 @@ import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as statLeaders from "./commands/statleaders.js";
 import * as tradeBlock from "./commands/tradeblock.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
+import * as webhookurl from "./commands/webhookurl.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -70,6 +71,7 @@ const commands = [
   statLeaders,
   tradeBlock,
   postFullSeasonSchedule,
+  webhookurl,
 ].map(c => c.data.toJSON());
 
 commands.push(

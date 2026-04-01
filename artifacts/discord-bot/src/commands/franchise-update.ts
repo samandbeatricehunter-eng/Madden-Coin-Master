@@ -816,9 +816,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           }
           return 0;
         };
+        const getOffPassYds = (t: any): number =>
+          getN(t, "offPassYds","offensivePassYards","passYds","passingYards","passingYardsTotal");
+        const getOffRushYds = (t: any): number =>
+          getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards","rushingYardsTotal");
         const getOffYds = (t: any): number => {
-          const pass = getN(t, "offPassYds","offensivePassYards","passYds","passingYards");
-          const rush = getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards");
+          const pass = getOffPassYds(t);
+          const rush = getOffRushYds(t);
           if (pass + rush > 0) return pass + rush;
           return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
         };
@@ -850,7 +854,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           const teamData = teamMap.get(teamId);
           if (!teamData) continue;
 
-          const offYds     = getOffYds(t);
+          const offPassYds = getOffPassYds(t);
+          const offRushYds = getOffRushYds(t);
+          const offYds     = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
           const offTDs     = getOffTDs(t);
           const defPassYds = getDefPassYds(t);
           const defRushYds = getDefRushYds(t);
@@ -865,7 +871,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           const vals = {
             seasonId: season.id, teamId, discordId,
             teamName: teamData.name,
-            offYds, offTDs, defPassYds, defRushYds, defTDs,
+            offYds, offPassYds, offRushYds, offTDs, defPassYds, defRushYds, defTDs,
             wins: teamWins, losses: teamLosses,
             updatedAt: new Date(),
           };

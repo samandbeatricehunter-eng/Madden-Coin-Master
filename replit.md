@@ -21,7 +21,11 @@ pnpm workspace monorepo using TypeScript. Hosts a Discord economy bot for a Madd
 ```text
 artifacts-monorepo/
 ├── artifacts/
-│   ├── api-server/         # Express API server (unused for bot but part of template)
+│   ├── api-server/         # Express API server — hosts MCA webhook receiver + healthz
+│   │   └── src/
+│   │       ├── routes/franchise.ts        # MCA webhook routes (/api/madden/:key/*)
+│   │       ├── lib/franchise-processor.ts # Shared game/roster/stats processing logic
+│   │       └── lib/discord-notify.ts      # Discord REST API notifier (no discord.js)
 │   ├── mockup-sandbox/     # UI prototyping sandbox
 │   └── discord-bot/        # Discord economy bot (main artifact)
 ├── lib/
@@ -94,6 +98,7 @@ All admin-facing commands now have Discord-level permission restrictions — the
 | `/advanceweek` | Set the current league week |
 | `/admin-gotw` / `/admin-potw` | Set GOTW/POTW bonuses |
 | `/admin-playoffs` | Manage playoff seeding |
+| `/webhookurl` | Show the Madden Companion App export URL (static HTTPS URL to enter in the app before each export) |
 
 ### Purchase Rules
 
@@ -127,6 +132,7 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 - `franchise_schedule` — Full regular-season schedule persisted from each franchise ZIP import
 - `franchise_game_participants` — Players who had a game processed this week (interview eligibility)
 - `season_stat_tier_configs` — End-of-season stat bonus tier config (11 categories × 4 tiers × season); direction (higher/lower) is encoded in the stat category definition in code, not the DB
+- `franchise_mca_teams` — Team map populated by the MCA `/leagueteams` webhook; gives teamId → fullName, nickName, userName, isHuman, discordId per season; queried by the scores processor
 
 ## End-of-Season Stat Bonus System
 

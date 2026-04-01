@@ -136,6 +136,11 @@ export async function getOrCreateUser(discordId: string, discordUsername: string
   return user!;
 }
 
+export async function getUserByDiscordId(discordId: string): Promise<User | null> {
+  const rows = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+  return rows[0] ?? null;
+}
+
 export async function getActiveSeason(): Promise<Season | null> {
   const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
   return seasons[0] ?? null;
