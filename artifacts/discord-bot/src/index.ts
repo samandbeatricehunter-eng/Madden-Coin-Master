@@ -62,6 +62,7 @@ import * as tradeBlock from "./commands/tradeblock.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
 import * as webhookurl from "./commands/webhookurl.js";
 import * as adminCatchup from "./commands/admin-catchup.js";
+import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -148,6 +149,7 @@ if (!isProduction && !devBotEnabled) {
     postFullSeasonSchedule,
     webhookurl,
     adminCatchup,
+    adminFixPlayerNames,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },

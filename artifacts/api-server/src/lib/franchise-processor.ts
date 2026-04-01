@@ -9,6 +9,7 @@ import {
   franchiseProcessedGamesTable,
   franchiseGameParticipantsTable,
   franchiseMcaTeamsTable,
+  franchiseRostersTable,
   teamSeasonStatsTable,
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
@@ -461,9 +462,21 @@ export async function processPlayerWeekStats(
       return { ok: true, message: `Week ${weekNum} ${statType} already recorded — skipped` };
     }
 
-    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
-      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
-    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+    const [mcaTeams, rosterRows] = await Promise.all([
+      db.select().from(franchiseMcaTeamsTable)
+        .where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
+      db.select({
+        playerId:  franchiseRostersTable.playerId,
+        firstName: franchiseRostersTable.firstName,
+        lastName:  franchiseRostersTable.lastName,
+        position:  franchiseRostersTable.position,
+      }).from(franchiseRostersTable)
+        .where(eq(franchiseRostersTable.seasonId, season.id)),
+    ]);
+
+    const teamMap   = new Map(mcaTeams.map(t => [t.teamId, t]));
+    // Roster map: playerId → name/position (MCA stats don't include names, only roster IDs)
+    const rosterMap = new Map(rosterRows.map(r => [r.playerId, r]));
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -484,9 +497,17 @@ export async function processPlayerWeekStats(
       const mcaTeam   = teamMap.get(teamId);
       const teamName  = mcaTeam?.fullName ?? String(p.teamName ?? p.teamname ?? "");
       const discordId = mcaTeam?.discordId ?? null;
-      const firstName = String(p.firstName ?? p.firstname ?? p.first_name ?? p.playerFirstName ?? "");
-      const lastName  = String(p.lastName  ?? p.lastname  ?? p.last_name  ?? p.playerLastName  ?? "");
-      const position  = String(p.position  ?? p.pos       ?? p.playerPosition ?? "");
+
+      // MCA stat payloads typically only include the rosterId, not the player's name.
+      // Cross-reference with the franchise roster table (populated by /franchiseupdate)
+      // and fall back to any name fields the MCA payload might happen to include.
+      const rosterEntry = rosterMap.get(playerId);
+      const firstName = rosterEntry?.firstName
+        || String(p.firstName ?? p.firstname ?? p.first_name ?? p.playerFirstName ?? "");
+      const lastName  = rosterEntry?.lastName
+        || String(p.lastName  ?? p.lastname  ?? p.last_name  ?? p.playerLastName  ?? "");
+      const position  = rosterEntry?.position
+        || String(p.position  ?? p.pos       ?? p.playerPosition ?? "");
 
       // MCA sends per-week stats (not cumulative season totals), so we ACCUMULATE
       // each week's export on top of the existing season total.
@@ -544,8 +565,12 @@ export async function processPlayerWeekStats(
           .onConflictDoUpdate({
             target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
             set: {
-              // Identity fields always overwrite (player may switch teams mid-season)
-              teamId, teamName, discordId, firstName, lastName, position,
+              // Team fields always update (player may switch teams mid-season)
+              teamId, teamName, discordId,
+              // Only overwrite name/position if we actually have a value — never blank out a good name
+              ...(firstName ? { firstName } : {}),
+              ...(lastName  ? { lastName  } : {}),
+              ...(position  ? { position  } : {}),
               // Stat fields accumulate week over week
               ...accumSet,
               updatedAt: new Date(),
