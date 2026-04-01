@@ -125,7 +125,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
     resultLines: [] as string[], unregisteredLines: [] as string[],
-    weekNum, seasonId: 0,
+    weekNum, seasonId: 0, catchupMode: false,
   }));
   console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
 
@@ -142,6 +142,20 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   }
 
   if (COMMISSIONER_CHANNEL_ID) {
+    // ── Catchup mode: send a minimal commissioner-only confirmation, no payouts ──
+    if (result.catchupMode) {
+      const gameLines = result.resultLines.length > 0
+        ? result.resultLines.slice(0, 15).join("\n")
+        : "No completed games found";
+      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+        title: `📋 Week ${weekNum} — MCA Import (Catchup Mode)`,
+        description: `Scores logged — no payouts issued\n\n${gameLines}`,
+        color: 0x5865f2,
+        footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
+      }).catch(() => {});
+      return;
+    }
+
     const fields = [];
 
     if (result.resultLines.length > 0) {
@@ -181,7 +195,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     }).catch(() => {});
   }
 
-  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0) {
+  // Only post results to the general channel in normal (non-catchup) mode
+  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0 && !result.catchupMode) {
     const lines = result.payoutLines
       .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
       .map(l => {
@@ -223,7 +238,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
     resultLines: [] as string[], unregisteredLines: [] as string[],
-    weekNum, seasonId: 0,
+    weekNum, seasonId: 0, catchupMode: false,
   }));
 
   if (!result.ok) {
@@ -239,6 +254,19 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
   }
 
   if (COMMISSIONER_CHANNEL_ID) {
+    if (result.catchupMode) {
+      const gameLines = result.resultLines.length > 0
+        ? result.resultLines.slice(0, 15).join("\n")
+        : "No completed games found";
+      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+        title: `📋 Week ${weekNum} — MCA Import (Catchup Mode)`,
+        description: `Scores logged — no payouts issued\n\n${gameLines}`,
+        color: 0x5865f2,
+        footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
+      }).catch(() => {});
+      return;
+    }
+
     const fields = [];
 
     if (result.payoutLines.length > 0) {
@@ -276,7 +304,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     }).catch(() => {});
   }
 
-  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0) {
+  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0 && !result.catchupMode) {
     const lines = result.payoutLines
       .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
       .map(l => {

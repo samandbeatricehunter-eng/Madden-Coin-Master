@@ -467,8 +467,16 @@ export async function processPlayerWeekStats(
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
+    let loggedSample = false;
 
     for (const p of players) {
+      // ── Debug: log first player's raw keys so we can verify MCA field names ──
+      if (!loggedSample) {
+        console.log(`[mca/week${weekNum}/${statType}] Sample player keys:`, Object.keys(p as object).join(", "));
+        console.log(`[mca/week${weekNum}/${statType}] Sample player data:`, JSON.stringify(p).slice(0, 300));
+        loggedSample = true;
+      }
+
       const playerId = getN(p, "rosterId", "playerId", "rosterid", "playerid");
       if (!playerId) continue;
 
@@ -480,32 +488,49 @@ export async function processPlayerWeekStats(
       const lastName  = String(p.lastName  ?? p.lastname  ?? p.last_name  ?? p.playerLastName  ?? "");
       const position  = String(p.position  ?? p.pos       ?? p.playerPosition ?? "");
 
-      // MCA sends cumulative season-to-date totals each export, so we replace
-      // (not add). The dedup check above ensures the same week isn't applied twice.
-      let statFields: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
+      // MCA sends per-week stats (not cumulative season totals), so we ACCUMULATE
+      // each week's export on top of the existing season total.
+      // The dedup check above ensures the same week is never double-counted.
+      let insertFields: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
+      let accumSet:     Record<string, any> = {};
 
       if (statType === "passing") {
-        statFields = {
-          passYds: getN(p, "passYds", "passingYards", "passyds"),
-          passTDs: getN(p, "passTDs", "passingTds",   "passtds"),
+        const passYds = getN(p, "passYds", "passingYards", "passyds");
+        const passTDs = getN(p, "passTDs", "passingTds",   "passtds");
+        insertFields = { passYds, passTDs };
+        accumSet     = {
+          passYds: sql`${playerSeasonStatsTable.passYds} + ${passYds}`,
+          passTDs: sql`${playerSeasonStatsTable.passTDs} + ${passTDs}`,
         };
       } else if (statType === "rushing") {
-        statFields = {
-          rushYds: getN(p, "rushYds", "rushingYards", "rushyds"),
-          rushTDs: getN(p, "rushTDs", "rushingTds",   "rushtds"),
+        const rushYds = getN(p, "rushYds", "rushingYards", "rushyds");
+        const rushTDs = getN(p, "rushTDs", "rushingTds",   "rushtds");
+        insertFields = { rushYds, rushTDs };
+        accumSet     = {
+          rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
+          rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
         };
       } else if (statType === "receiving") {
-        statFields = {
-          recYds: getN(p, "recYds", "receivingYards", "recyds"),
-          recTDs: getN(p, "recTDs", "receivingTds",   "rectds"),
+        const recYds = getN(p, "recYds", "receivingYards", "recyds");
+        const recTDs = getN(p, "recTDs", "receivingTds",   "rectds");
+        insertFields = { recYds, recTDs };
+        accumSet     = {
+          recYds: sql`${playerSeasonStatsTable.recYds} + ${recYds}`,
+          recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
         };
       } else if (statType === "defense") {
-        statFields = {
-          sacks:        getN(p, "sacks",        "defSacks",        "sack"),
-          defInts:      getN(p, "defInts",      "interceptions",   "defints", "ints"),
-          totalTackles: getN(p, "totalTackles", "tackleTotal",     "tackles"),
-          tackleSolo:   getN(p, "tackleSolo",   "tacklesoloprops", "soloTackles"),
-          tackleAssist: getN(p, "tackleAssist", "assistTackles"),
+        const sacks        = getN(p, "sacks",        "defSacks",        "sack");
+        const defInts      = getN(p, "defInts",      "interceptions",   "defints", "ints");
+        const totalTackles = getN(p, "totalTackles", "tackleTotal",     "tackles");
+        const tackleSolo   = getN(p, "tackleSolo",   "tacklesoloprops", "soloTackles");
+        const tackleAssist = getN(p, "tackleAssist", "assistTackles");
+        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist };
+        accumSet     = {
+          sacks:        sql`${playerSeasonStatsTable.sacks}        + ${sacks}`,
+          defInts:      sql`${playerSeasonStatsTable.defInts}      + ${defInts}`,
+          totalTackles: sql`${playerSeasonStatsTable.totalTackles} + ${totalTackles}`,
+          tackleSolo:   sql`${playerSeasonStatsTable.tackleSolo}   + ${tackleSolo}`,
+          tackleAssist: sql`${playerSeasonStatsTable.tackleAssist} + ${tackleAssist}`,
         };
       }
 
@@ -513,25 +538,16 @@ export async function processPlayerWeekStats(
         db.insert(playerSeasonStatsTable)
           .values({
             seasonId: season.id,
-            playerId,
-            teamId,
-            teamName,
-            discordId,
-            firstName,
-            lastName,
-            position,
-            ...statFields,
+            playerId, teamId, teamName, discordId, firstName, lastName, position,
+            ...insertFields,
           })
           .onConflictDoUpdate({
             target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
             set: {
-              teamId,
-              teamName,
-              discordId,
-              firstName,
-              lastName,
-              position,
-              ...statFields,
+              // Identity fields always overwrite (player may switch teams mid-season)
+              teamId, teamName, discordId, firstName, lastName, position,
+              // Stat fields accumulate week over week
+              ...accumSet,
               updatedAt: new Date(),
             },
           })
@@ -651,6 +667,7 @@ export interface WeekScoresResult {
   unregisteredLines: string[];  // human teams with no Discord link
   weekNum: number;
   seasonId: number;
+  catchupMode: boolean;         // true when catchup mode is active (no payouts/notifications)
 }
 
 export async function processWeekScores(
@@ -661,7 +678,7 @@ export async function processWeekScores(
     ok: false, message: "", gamesProcessed: 0, gamesDuplicate: 0,
     gamesCpuVsCpu: 0, gamesUnregistered: 0, payoutLines: [], milestoneLines: [],
     resultLines: [], unregisteredLines: [],
-    weekNum, seasonId: 0,
+    weekNum, seasonId: 0, catchupMode: false,
   };
 
   try {
@@ -742,6 +759,29 @@ export async function processWeekScores(
       const bothReg = homeIsHuman && awayIsHuman;
       const isTrueH2H   = bothReg && status === 3;
       const isForcedCPU = bothReg && status === 2;
+
+      // ── Catchup mode: log result + mark processed, skip all payouts/coins ──
+      if (season.catchupMode) {
+        const hiScore    = Math.max(homeScore, awayScore);
+        const loScore    = Math.min(homeScore, awayScore);
+        const winnerName = homeWon ? hData.fullName : aData.fullName;
+        const loserName  = homeWon ? aData.fullName : hData.fullName;
+        resultLines.push(isTie
+          ? `🤝 **${hData.fullName}** ${homeScore} — ${awayScore} **${aData.fullName}** *(tie)*`
+          : `📋 **${winnerName}** ${hiScore} — ${loScore} **${loserName}**`
+        );
+        await db.insert(franchiseProcessedGamesTable)
+          .values({
+            gameId, payoutType: "catchup",
+            seasonIdRef: season.id, weekIndexRef: weekIndexTarget,
+            homeTeamRef: hData.fullName.toLowerCase(),
+            awayTeamRef: aData.fullName.toLowerCase(),
+          })
+          .onConflictDoNothing();
+        processedSet.add(gameId);
+        gamesProcessed++;
+        continue;
+      }
 
       // Payout metadata — populated in each branch, saved to DB for admin-correctpayout reversals
       let payoutMeta: {
@@ -903,10 +943,10 @@ export async function processWeekScores(
     console.log(`[mca/week${weekNum}/schedules] Processed: ${gamesProcessed} games, ${gamesDuplicate} dupes, ${gamesCpuVsCpu} cpu-vs-cpu, ${gamesUnregistered} unregistered`);
     return {
       ok: true,
-      message: `Week ${weekNum}: ${gamesProcessed} game(s) processed`,
+      message: `Week ${weekNum}: ${gamesProcessed} game(s) processed${season.catchupMode ? " [CATCHUP MODE — no payouts]" : ""}`,
       gamesProcessed, gamesDuplicate, gamesCpuVsCpu, gamesUnregistered,
       payoutLines, milestoneLines, resultLines, unregisteredLines,
-      weekNum, seasonId: season.id,
+      weekNum, seasonId: season.id, catchupMode: season.catchupMode,
     };
   } catch (err) {
     console.error(`[mca/week${weekNum}/scores] Error:`, err);

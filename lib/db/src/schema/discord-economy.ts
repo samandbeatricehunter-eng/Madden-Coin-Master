@@ -66,6 +66,8 @@ export const seasonsTable = pgTable("seasons", {
   currentWeek: text("current_week").notNull().default("1"),
   // JSON array of attribute names that count as "core" this season — null = use default from constants
   coreAttributesOverride: text("core_attributes_override"),
+  // When true: MCA exports accumulate stats only — no payouts, no Discord notifications
+  catchupMode: boolean("catchup_mode").notNull().default(false),
 });
 
 export const legendsTable = pgTable("legends", {
