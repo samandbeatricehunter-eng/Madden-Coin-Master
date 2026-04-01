@@ -5,9 +5,9 @@ import {
 import { db } from "@workspace/db";
 import {
   playerSeasonStatsTable, teamSeasonStatsTable,
-  franchiseScheduleTable, userRecordsTable, usersTable,
+  franchiseScheduleTable, franchiseMcaTeamsTable, userRecordsTable, usersTable,
 } from "@workspace/db";
-import { eq, gte, and } from "drizzle-orm";
+import { eq, gte, and, aliasedTable } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
 // ── Player stat category definitions ─────────────────────────────────────────
@@ -94,17 +94,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season   = await getOrCreateActiveSeason();
 
   // ── Load data ───────────────────────────────────────────────────────────────
+  // Alias the MCA teams table so we can join it twice (home + away)
+  const homeMca = aliasedTable(franchiseMcaTeamsTable, "home_mca");
+  const awayMca = aliasedTable(franchiseMcaTeamsTable, "away_mca");
+
   const [players, teamStats, completedGames, allRecords, allUsers] = await Promise.all([
     db.select().from(playerSeasonStatsTable)
       .where(eq(playerSeasonStatsTable.seasonId, season.id)),
     db.select().from(teamSeasonStatsTable)
       .where(eq(teamSeasonStatsTable.seasonId, season.id)),
+    // Join with franchise_mca_teams to resolve short schedule names ("Giants")
+    // to the canonical MCA full names ("New York G-Men") used in team_season_stats.
     db.select({
-      homeTeamName: franchiseScheduleTable.homeTeamName,
-      awayTeamName: franchiseScheduleTable.awayTeamName,
+      homeTeamName: homeMca.fullName,
+      awayTeamName: awayMca.fullName,
       homeScore:    franchiseScheduleTable.homeScore,
       awayScore:    franchiseScheduleTable.awayScore,
     }).from(franchiseScheduleTable)
+      .innerJoin(homeMca, and(
+        eq(homeMca.teamId,   franchiseScheduleTable.homeTeamId),
+        eq(homeMca.seasonId, franchiseScheduleTable.seasonId),
+      ))
+      .innerJoin(awayMca, and(
+        eq(awayMca.teamId,   franchiseScheduleTable.awayTeamId),
+        eq(awayMca.seasonId, franchiseScheduleTable.seasonId),
+      ))
       .where(and(
         eq(franchiseScheduleTable.seasonId, season.id),
         gte(franchiseScheduleTable.status, 2), // completed games only
