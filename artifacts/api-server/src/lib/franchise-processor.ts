@@ -311,15 +311,13 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
     };
     const getOffTDs = (t: any): number =>
-      getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs",
-           "ptsFor","ptsScored","pointsFor","totalPoints");
+      getN(t, "ptsFor","ptsScored","pointsFor","pointsScored","totalPoints");
     const getDefPassYds = (t: any): number =>
       getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
     const getDefRushYds = (t: any): number =>
       getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
     const getDefTDs = (t: any): number =>
-      getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts",
-           "ptsAgainst","pointsAgainst","defPts");
+      getN(t, "ptsAgainst","pointsAgainst","defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defPts");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -414,15 +412,13 @@ export async function processTeamWeekStats(
       return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
     };
     const getOffTDs = (t: any): number =>
-      getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs",
-           "ptsFor","ptsScored","pointsFor","totalPoints");
+      getN(t, "ptsFor","ptsScored","pointsFor","pointsScored","totalPoints");
     const getDefPassYds = (t: any): number =>
       getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
     const getDefRushYds = (t: any): number =>
       getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
     const getDefTDs = (t: any): number =>
-      getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts",
-           "ptsAgainst","pointsAgainst","defPts");
+      getN(t, "ptsAgainst","pointsAgainst","defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defPts");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;

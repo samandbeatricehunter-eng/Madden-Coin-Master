@@ -891,17 +891,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
         };
         const getOffTDs = (t: any): number =>
-          // Prefer dedicated TD fields; fall back to ptsFor (points scored) if no TD field exists
-          getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs","offPassTDs","passTDs",
-               "ptsFor","ptsScored","pointsFor","totalPoints","pointsScored");
+          getN(t, "ptsFor","ptsScored","pointsFor","pointsScored","totalPoints");
         const getDefPassYds = (t: any): number =>
           getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
         const getDefRushYds = (t: any): number =>
           getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
         const getDefTDs = (t: any): number =>
-          // Prefer dedicated "pts allowed" fields; fall back to ptsAgainst if nothing else exists
-          getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts","totalTDsAllowed","ptsScoredAllowed",
-               "ptsAgainst","pointsAgainst","defPts");
+          getN(t, "ptsAgainst","pointsAgainst","defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defPts");
         const getDefTotalYds = (t: any): number => {
           const sum = getDefPassYds(t) + getDefRushYds(t);
           if (sum > 0) return sum;
