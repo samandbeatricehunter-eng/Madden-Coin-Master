@@ -54,10 +54,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply("❌ When type is **h2h**, both `winner` and `pointdiff` are required.");
     return;
   }
-  if (newType === "cpu" && !winner) {
-    await interaction.editReply("❌ When type is **cpu**, `winner` is required so we know who gets the coins.");
-    return;
-  }
+  // CPU: winner is optional — if omitted the schedule scores will be used to infer the winner
 
   const season    = await getOrCreateActiveSeason();
   const weekIndex = week - 1;
@@ -258,16 +255,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     newLoserUser      = lu;
     newWinnerTeamName = wu.team ?? winner;
     newLoserTeamName  = lu.team ?? "Unknown";
-  } else if (newType === "cpu" && winner) {
-    const winnerLower = winner.toLowerCase();
+  } else if (newType === "cpu") {
+    // Resolve winner: use explicit `winner` arg, else infer from schedule scores
+    const resolvedWinner = winner ?? (
+      (schedGame.homeScore ?? 0) >= (schedGame.awayScore ?? 0) ? homeTeam : awayTeam
+    );
+    const winnerLower = resolvedWinner.toLowerCase();
     const [wu] = await db.select().from(usersTable)
       .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
     if (!wu) {
-      await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
+      await interaction.editReply(`❌ Could not find a registered user for winner team **${resolvedWinner}** (inferred from schedule). Pass \`winner\` explicitly if scores are wrong.`);
       return;
     }
     newWinnerUser    = wu;
-    newWinIsHome     = winner.toLowerCase() === homeLower;
+    newWinIsHome     = winnerLower === homeLower;
     newLoserTeamName = newWinIsHome ? awayTeam : homeTeam;
   }
 
@@ -395,16 +396,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
       applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins → **${newWinnerTeamName}** | +${H2H_LOSS_PAYOUT} coins → **${newLoserTeamName}**`);
 
-      await tx.update(userRecordsTable).set({
-        wins: sql`${userRecordsTable.wins} + 1`,
-        pointDifferential: sql`${userRecordsTable.pointDifferential} + ${pointDiff}`,
-        updatedAt: new Date(),
-      }).where(and(eq(userRecordsTable.discordId, newWinnerUser.discordId), eq(userRecordsTable.seasonId, season.id)));
-      await tx.update(userRecordsTable).set({
-        losses: sql`${userRecordsTable.losses} + 1`,
-        pointDifferential: sql`${userRecordsTable.pointDifferential} - ${pointDiff}`,
-        updatedAt: new Date(),
-      }).where(and(eq(userRecordsTable.discordId, newLoserUser.discordId), eq(userRecordsTable.seasonId, season.id)));
+      // Upsert records — handles case where row doesn't exist yet (early-season / legacy correction)
+      await tx.insert(userRecordsTable).values({
+        discordId: newWinnerUser.discordId, discordUsername: newWinnerUser.discordUsername,
+        team: newWinnerUser.team ?? null, seasonId: season.id,
+        wins: 1, losses: 0, pointDifferential: pointDiff,
+      }).onConflictDoUpdate({
+        target: [userRecordsTable.discordId, userRecordsTable.seasonId],
+        set: {
+          wins: sql`${userRecordsTable.wins} + 1`,
+          pointDifferential: sql`${userRecordsTable.pointDifferential} + ${pointDiff}`,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.insert(userRecordsTable).values({
+        discordId: newLoserUser.discordId, discordUsername: newLoserUser.discordUsername,
+        team: newLoserUser.team ?? null, seasonId: season.id,
+        wins: 0, losses: 1, pointDifferential: -pointDiff,
+      }).onConflictDoUpdate({
+        target: [userRecordsTable.discordId, userRecordsTable.seasonId],
+        set: {
+          losses: sql`${userRecordsTable.losses} + 1`,
+          pointDifferential: sql`${userRecordsTable.pointDifferential} - ${pointDiff}`,
+          updatedAt: new Date(),
+        },
+      });
       applyLines.push(`✅ Records: **${newWinnerTeamName}** +1W, **${newLoserTeamName}** +1L`);
 
       await tx.insert(gameLogTable).values({
