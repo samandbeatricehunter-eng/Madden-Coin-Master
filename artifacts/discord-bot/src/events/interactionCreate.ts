@@ -25,6 +25,26 @@ const GENERAL_CHANNEL_ID       = "1476321282868908052";
 export const name = "interactionCreate";
 
 export async function execute(interaction: Interaction) {
+  // ── Role guard ─────────────────────────────────────────────────────────────
+  // All interactions from guild members must have at least one assigned role
+  // beyond @everyone (which every user has by default).
+  if (interaction.inGuild() && interaction.member) {
+    const roles = (interaction.member as any).roles;
+    // GuildMemberRoleManager exposes .cache (Collection); raw API payloads give a string[]
+    const roleCount: number = roles?.cache?.size ?? (Array.isArray(roles) ? roles.length : 0);
+    if (roleCount <= 1) {
+      if (interaction.isAutocomplete()) {
+        await interaction.respond([]).catch(() => {});
+      } else if (interaction.isRepliable()) {
+        await interaction.reply({
+          content: "❌ You must have a role assigned in this server to use the bot.",
+          ephemeral: true,
+        }).catch(() => {});
+      }
+      return;
+    }
+  }
+
   if (interaction.isAutocomplete()) {
     const client = interaction.client as any;
     const command = client.commands?.get(interaction.commandName);
