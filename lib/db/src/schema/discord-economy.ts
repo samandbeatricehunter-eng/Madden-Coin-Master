@@ -401,6 +401,17 @@ export const gotwHistoryTable = pgTable("gotw_history", {
   uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex),
 }));
 
+// ── Game matchup channels (created per week by /advanceweek, deleted on next advance) ──
+export const gameChannelsTable = pgTable("game_channels", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  weekIndex:    integer("week_index").notNull(),
+  channelId:    text("channel_id").notNull(),
+  awayTeamName: text("away_team_name").notNull().default(""),
+  homeTeamName: text("home_team_name").notNull().default(""),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
 // ── Trade Block: user-posted trade offers ──────────────────────────────────────
 export const tradeBlockListingsTable = pgTable("trade_block_listings", {
   id:        serial("id").primaryKey(),
