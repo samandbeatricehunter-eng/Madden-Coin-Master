@@ -4,6 +4,7 @@ import {
   processTeamStats,
   processSchedules,
   processWeekScores,
+  processPlayerWeekStats,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed } from "../lib/discord-notify.js";
 
@@ -90,27 +91,25 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team
   console.log(`[mca/week${weekNum}/team] Result:`, result.message);
 });
 
-// ── /week/:weekType/:weekNum/defense — per-week defensive stats (acknowledge) ─
-router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/defense", validateKey, (req, res) => {
-  const weekNum = req.params["weekNum"] ?? "?";
-  res.status(200).json({ status: "received" });
-  console.log(`[mca/week${weekNum}/defense] Acknowledged (no-op)`);
-});
-
-// ── /week/:weekType/:weekNum/passing — per-week passing stats (acknowledge) ───
-router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/passing", validateKey, (req, res) => {
-  res.status(200).json({ status: "received" });
-});
-
-// ── /week/:weekType/:weekNum/rushing — per-week rushing stats (acknowledge) ───
-router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/rushing", validateKey, (req, res) => {
-  res.status(200).json({ status: "received" });
-});
-
-// ── /week/:weekType/:weekNum/receiving — per-week receiving stats (acknowledge)
-router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/receiving", validateKey, (req, res) => {
-  res.status(200).json({ status: "received" });
-});
+// ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → player stat upserts ──
+for (const statType of ["passing", "rushing", "receiving", "defense"] as const) {
+  router.post(
+    `/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/${statType}`,
+    validateKey,
+    async (req, res) => {
+      const weekNum = req.params["weekNum"] ?? "?";
+      res.status(200).json({ status: "received" });
+      const result = await processPlayerWeekStats(req.body, statType).catch(err => ({
+        ok: false, message: String(err),
+      }));
+      if (result.ok) {
+        console.log(`[mca/week${weekNum}/${statType}] ${result.message}`);
+      } else {
+        console.error(`[mca/week${weekNum}/${statType}] Error: ${result.message}`);
+      }
+    },
+  );
+}
 
 // ── /week/:weekType/:weekNum/schedules — per-week game results → payouts ──────
 // The MCA sends scores here (NOT /scores). This is the primary payout trigger.

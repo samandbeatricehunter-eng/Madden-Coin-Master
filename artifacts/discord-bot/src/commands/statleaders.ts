@@ -4,15 +4,36 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  teamSeasonStatsTable,
+  playerSeasonStatsTable, teamSeasonStatsTable,
   userRecordsTable, usersTable,
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
+// ── Player stat category definitions ─────────────────────────────────────────
+interface PlayerStatCat {
+  key:   string;
+  label: string;
+  unit:  string;
+  emoji: string;
+  field: (p: typeof playerSeasonStatsTable.$inferSelect) => number;
+}
+
+const PLAYER_STAT_CATS: PlayerStatCat[] = [
+  { key: "passing_yards",   label: "Passing Yards",           unit: "yds",     emoji: "🎯", field: p => p.passYds      },
+  { key: "passing_tds",     label: "Passing TDs",             unit: "TDs",     emoji: "🏆", field: p => p.passTDs      },
+  { key: "rushing_yards",   label: "Rushing Yards",           unit: "yds",     emoji: "💨", field: p => p.rushYds      },
+  { key: "rushing_tds",     label: "Rushing TDs",             unit: "TDs",     emoji: "🏆", field: p => p.rushTDs      },
+  { key: "receiving_yards", label: "Receiving Yards",         unit: "yds",     emoji: "🙌", field: p => p.recYds       },
+  { key: "receiving_tds",   label: "Receiving TDs",           unit: "TDs",     emoji: "🏆", field: p => p.recTDs       },
+  { key: "def_sacks",       label: "Defensive Sacks",         unit: "sacks",   emoji: "💥", field: p => p.sacks        },
+  { key: "def_ints",        label: "Defensive INTs",          unit: "INTs",    emoji: "🫳", field: p => p.defInts      },
+  { key: "def_tackles",     label: "Defensive Total Tackles", unit: "tackles", emoji: "🦺",
+    field: p => p.totalTackles > 0 ? p.totalTackles : p.tackleSolo + p.tackleAssist },
+];
+
 // ── Team stat category definitions ────────────────────────────────────────────
 type Direction = "higher" | "lower";
-
 interface TeamStatCat {
   key:       string;
   label:     string;
@@ -23,54 +44,38 @@ interface TeamStatCat {
 }
 
 const TEAM_STAT_CATS: TeamStatCat[] = [
-  {
-    key: "off_yds",      label: "Total Offensive Yards",           unit: "yds", direction: "higher", emoji: "🏈",
-    field: t => t.offYds,
-  },
-  {
-    key: "pass_yds",     label: "Passing Yards",                   unit: "yds", direction: "higher", emoji: "🎯",
-    field: t => t.offPassYds,
-  },
-  {
-    key: "rush_yds",     label: "Rushing Yards",                   unit: "yds", direction: "higher", emoji: "💨",
-    field: t => t.offRushYds,
-  },
-  {
-    key: "def_yds",      label: "Def. Total Yards Allowed",        unit: "yds", direction: "lower",  emoji: "🛡️",
-    field: t => t.defPassYds + t.defRushYds,
-  },
-  {
-    key: "def_pass_yds", label: "Def. Passing Yards Allowed",      unit: "yds", direction: "lower",  emoji: "✋",
-    field: t => t.defPassYds,
-  },
-  {
-    key: "def_rush_yds", label: "Def. Rushing Yards Allowed",      unit: "yds", direction: "lower",  emoji: "🧱",
-    field: t => t.defRushYds,
-  },
-  {
-    key: "point_diff",   label: "Point Differential",              unit: "pts", direction: "higher", emoji: "📈",
-    field: t => t.offTDs - t.defTDs,
-  },
+  { key: "off_yds",      label: "Total Offensive Yards",      unit: "yds", direction: "higher", emoji: "🏈", field: t => t.offYds              },
+  { key: "pass_yds",     label: "Passing Yards (Team)",       unit: "yds", direction: "higher", emoji: "🎯", field: t => t.offPassYds           },
+  { key: "rush_yds",     label: "Rushing Yards (Team)",       unit: "yds", direction: "higher", emoji: "💨", field: t => t.offRushYds           },
+  { key: "def_yds",      label: "Def. Total Yards Allowed",   unit: "yds", direction: "lower",  emoji: "🛡️", field: t => t.defPassYds + t.defRushYds },
+  { key: "def_pass_yds", label: "Def. Passing Yards Allowed", unit: "yds", direction: "lower",  emoji: "✋", field: t => t.defPassYds           },
+  { key: "def_rush_yds", label: "Def. Rushing Yards Allowed", unit: "yds", direction: "lower",  emoji: "🧱", field: t => t.defRushYds           },
+  { key: "point_diff",   label: "Point Differential",         unit: "pts", direction: "higher", emoji: "📈", field: t => t.offTDs - t.defTDs    },
 ];
 
 // ── Slash command ─────────────────────────────────────────────────────────────
 export const data = new SlashCommandBuilder()
   .setName("statleaders")
-  .setDescription("Display season team stat leaders from the last franchise update")
+  .setDescription("Display season stat leaders from the last MCA export")
   .addStringOption(o =>
     o.setName("category")
       .setDescription("Which stat category to display")
       .setRequired(true)
       .addChoices(
-        { name: "All Categories (top 3 each)",          value: "all"          },
-        { name: "Teams to Watch",                        value: "teams"        },
-        { name: "🏈 Total Offensive Yards",              value: "off_yds"      },
-        { name: "🎯 Passing Yards",                      value: "pass_yds"     },
-        { name: "💨 Rushing Yards",                      value: "rush_yds"     },
-        { name: "🛡️ Def. Total Yards Allowed",           value: "def_yds"      },
-        { name: "✋ Def. Passing Yards Allowed",          value: "def_pass_yds" },
-        { name: "🧱 Def. Rushing Yards Allowed",         value: "def_rush_yds" },
-        { name: "📈 Point Differential",                 value: "point_diff"   },
+        { name: "All Categories (top 3 each)",           value: "all"              },
+        { name: "Teams to Watch",                         value: "teams"            },
+        { name: "🎯 Passing Yards",                       value: "passing_yards"    },
+        { name: "🏆 Passing TDs",                         value: "passing_tds"      },
+        { name: "💨 Rushing Yards",                       value: "rushing_yards"    },
+        { name: "🏆 Rushing TDs",                         value: "rushing_tds"      },
+        { name: "🙌 Receiving Yards",                     value: "receiving_yards"  },
+        { name: "🏆 Receiving TDs",                       value: "receiving_tds"    },
+        { name: "💥 Defensive Sacks",                     value: "def_sacks"        },
+        { name: "🫳 Defensive INTs",                      value: "def_ints"         },
+        { name: "🦺 Defensive Total Tackles",             value: "def_tackles"      },
+        { name: "🏈 Total Offensive Yards (Team)",        value: "off_yds"          },
+        { name: "🛡️ Def. Total Yards Allowed (Team)",     value: "def_yds"          },
+        { name: "📈 Point Differential (Team)",           value: "point_diff"       },
       ))
   .addBooleanOption(o => o
     .setName("public")
@@ -89,7 +94,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season   = await getOrCreateActiveSeason();
 
   // ── Load data ───────────────────────────────────────────────────────────────
-  const [teamStats, allRecords, allUsers] = await Promise.all([
+  const [players, teamStats, allRecords, allUsers] = await Promise.all([
+    db.select().from(playerSeasonStatsTable)
+      .where(eq(playerSeasonStatsTable.seasonId, season.id)),
     db.select().from(teamSeasonStatsTable)
       .where(eq(teamSeasonStatsTable.seasonId, season.id)),
     db.select().from(userRecordsTable)
@@ -97,48 +104,60 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable),
   ]);
 
-  if (teamStats.length === 0) {
+  if (players.length === 0 && teamStats.length === 0) {
     await interaction.editReply({
-      content: "📭 No stat data found for this season. Run `/franchiseupdate` first.",
+      content: "📭 No stat data found for this season. Run a weekly MCA export first.",
     });
     return;
   }
 
   // ── Lookup maps ─────────────────────────────────────────────────────────────
-  const teamNameToUser = new Map<string, string>(); // teamName (lc) → discordId
+  const teamNameToUser = new Map<string, string>();
   for (const u of allUsers) {
     if (u.team) teamNameToUser.set(u.team.toLowerCase().trim(), u.discordId);
   }
   const discordIdToRecord = new Map(allRecords.map(r => [r.discordId, r]));
 
-  // Only user-controlled teams for "Teams to Watch" formula sections
   const userTeamStats = teamStats.filter(t =>
     t.discordId != null || teamNameToUser.has(t.teamName?.toLowerCase().trim() ?? "")
   );
 
-  // ── Helper: build top-N team leaders for one stat category ─────────────────
+  // ── Helper: build top-N player leaders ──────────────────────────────────────
+  function buildPlayerLeaders(cat: PlayerStatCat, topN: number): string {
+    const entries = players
+      .map(p => ({ p, val: cat.field(p) }))
+      .filter(x => x.val > 0)
+      .sort((a, b) => b.val - a.val)
+      .slice(0, topN);
+
+    if (!entries.length) return "*No player data yet — export weekly stats via the Madden Companion App*";
+    return entries.map(({ p, val }, i) => {
+      const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Unknown";
+      return `**#${i + 1}** ${name} (${p.teamName || "?"}) — ${val.toLocaleString()} ${cat.unit}`;
+    }).join("\n");
+  }
+
+  // ── Helper: build top-N team leaders ────────────────────────────────────────
   function buildTeamLeaders(cat: TeamStatCat, topN: number): string {
     const entries = teamStats
       .filter(t => t.teamName)
       .map(t => ({ t, val: cat.field(t) }))
       .filter(x => cat.direction === "lower" ? x.val > 0 : x.val !== 0);
 
-    if (!entries.length) return "*No data — run `/franchiseupdate` first*";
+    if (!entries.length) return "*No team data yet — run `/franchiseupdate` first*";
 
-    // Higher = best first; Lower = worst (most yards allowed) last = best first = ascending
     entries.sort((a, b) => cat.direction === "higher" ? b.val - a.val : a.val - b.val);
 
     return entries.slice(0, topN).map(({ t, val }, i) => {
       const sign  = cat.key === "point_diff" && val > 0 ? "+" : "";
-      const value = `${sign}${val.toLocaleString()} ${cat.unit}`;
-      return `**#${i + 1}** ${t.teamName} — ${value}`;
+      return `**#${i + 1}** ${t.teamName} — ${sign}${val.toLocaleString()} ${cat.unit}`;
     }).join("\n");
   }
 
-  // ── Helper: Lethal Offense — top total yards + pts (user teams only) ─────
+  // ── Helper: Lethal Offense ───────────────────────────────────────────────────
   function buildLethalOffense(topN: number): string {
     const eligible = userTeamStats.filter(t => t.teamName && (t.offYds > 0 || t.offTDs > 0));
-    if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
+    if (!eligible.length) return "*No team stat data found*";
 
     const entries = eligible.map(t => ({
       name: t.teamName, offYds: t.offYds, offTDs: t.offTDs, score: 0,
@@ -155,12 +174,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ).join("\n");
   }
 
-  // ── Helper: Stiff Defense — fewest yards/pts allowed (user teams only) ─────
+  // ── Helper: Stiff Defense ────────────────────────────────────────────────────
   function buildStiffDefense(topN: number): string {
     const eligible = userTeamStats.filter(t =>
       t.teamName && (t.defPassYds > 0 || t.defRushYds > 0 || t.defTDs > 0)
     );
-    if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
+    if (!eligible.length) return "*No team stat data found*";
 
     const entries = eligible.map(t => ({
       name: t.teamName,
@@ -175,17 +194,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     for (const e of entries) {
       e.score = (e.totalYds / maxYds) * 0.80 + (e.tdsAllowed / maxTDs) * 0.20;
     }
-    entries.sort((a, b) => a.score - b.score); // ascending: fewer yards = better
+    entries.sort((a, b) => a.score - b.score);
 
     return entries.slice(0, topN).map((e, i) =>
       `**#${i + 1}** ${e.name} — ${e.detail}`,
     ).join("\n");
   }
 
-  // ── Helper: Sleepers — losing/even record teams w/ explosive output ─────────
+  // ── Helper: Sleepers ─────────────────────────────────────────────────────────
   function buildSleepers(topN: number): string {
     const eligible = userTeamStats.filter(t => t.teamName);
-    if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
+    if (!eligible.length) return "*No team stat data found*";
 
     const entries: {
       name: string; wins: number; losses: number;
@@ -239,78 +258,87 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ).join("\n");
   }
 
-  // ── Build embeds ────────────────────────────────────────────────────────────
-  const footerText = `Season ${season.seasonNumber ?? season.id} • Last updated via /franchiseupdate`;
+  // ── Build embeds ─────────────────────────────────────────────────────────────
+  const footerText = `Season ${season.seasonNumber ?? season.id} • Data via MCA weekly export`;
   const embeds: EmbedBuilder[] = [];
 
   if (category === "all") {
-    // Two embeds: 4 categories + 3 categories, then Teams to Watch
-    const embed1 = new EmbedBuilder()
-      .setTitle("📊 Season Team Stat Leaders — All Categories (Top 3)")
-      .setColor(Colors.Blurple);
+    // Player stats split across two embeds (5 + 4)
+    const cat1 = PLAYER_STAT_CATS.slice(0, 5);
+    const cat2 = PLAYER_STAT_CATS.slice(5);
 
-    for (const cat of TEAM_STAT_CATS.slice(0, 4)) {
-      embed1.addFields({
-        name:  `${cat.emoji} ${cat.label}`,
-        value: buildTeamLeaders(cat, 3),
-      });
+    const embed1 = new EmbedBuilder()
+      .setTitle("📊 Season Stat Leaders — Players (Top 3 each)")
+      .setColor(Colors.Blurple);
+    for (const cat of cat1) {
+      embed1.addFields({ name: `${cat.emoji} ${cat.label}`, value: buildPlayerLeaders(cat, 3) });
     }
 
     const embed2 = new EmbedBuilder()
       .setColor(Colors.Blurple);
-
-    for (const cat of TEAM_STAT_CATS.slice(4)) {
-      embed2.addFields({
-        name:  `${cat.emoji} ${cat.label}`,
-        value: buildTeamLeaders(cat, 3),
-      });
+    for (const cat of cat2) {
+      embed2.addFields({ name: `${cat.emoji} ${cat.label}`, value: buildPlayerLeaders(cat, 3) });
     }
 
-    const teamsEmbed = new EmbedBuilder()
-      .setTitle("🏟️ Teams to Watch")
-      .setColor(Colors.DarkGold)
-      .addFields(
-        { name: "⚡ Most Lethal Offenses (Top 5)",                                    value: buildLethalOffense(5) },
-        { name: "🛡️ Most Stiff Defenses (Top 5) — fewest yards allowed",              value: buildStiffDefense(5)  },
-        { name: "💤 Most Explosive Sleepers (Top 5) — losing/even-record teams only",  value: buildSleepers(5)      },
-      )
-      .setFooter({ text: footerText })
-      .setTimestamp();
+    embeds.push(embed1, embed2);
 
-    embeds.push(embed1, embed2, teamsEmbed);
+    // Teams to Watch
+    embeds.push(
+      new EmbedBuilder()
+        .setTitle("🏟️ Teams to Watch")
+        .setColor(Colors.DarkGold)
+        .addFields(
+          { name: "⚡ Most Lethal Offenses (Top 5)",                                    value: buildLethalOffense(5) },
+          { name: "🛡️ Most Stiff Defenses (Top 5) — fewest yards allowed",              value: buildStiffDefense(5)  },
+          { name: "💤 Most Explosive Sleepers (Top 5) — losing/even-record teams only",  value: buildSleepers(5)      },
+        )
+        .setFooter({ text: footerText })
+        .setTimestamp()
+    );
 
   } else if (category === "teams") {
-    const embed = new EmbedBuilder()
-      .setTitle("🏟️ Teams to Watch")
-      .setColor(Colors.DarkGold)
-      .addFields(
-        { name: "⚡ Most Lethal Offenses (Top 5)",                                    value: buildLethalOffense(5) },
-        { name: "🛡️ Most Stiff Defenses (Top 5) — fewest yards allowed",              value: buildStiffDefense(5)  },
-        { name: "💤 Most Explosive Sleepers (Top 5) — losing/even-record teams only",  value: buildSleepers(5)      },
-      )
-      .setFooter({ text: footerText })
-      .setTimestamp();
-
-    embeds.push(embed);
+    embeds.push(
+      new EmbedBuilder()
+        .setTitle("🏟️ Teams to Watch")
+        .setColor(Colors.DarkGold)
+        .addFields(
+          { name: "⚡ Most Lethal Offenses (Top 5)",                                    value: buildLethalOffense(5) },
+          { name: "🛡️ Most Stiff Defenses (Top 5) — fewest yards allowed",              value: buildStiffDefense(5)  },
+          { name: "💤 Most Explosive Sleepers (Top 5) — losing/even-record teams only",  value: buildSleepers(5)      },
+        )
+        .setFooter({ text: footerText })
+        .setTimestamp()
+    );
 
   } else {
-    // Single team stat category — top 10
-    const cat = TEAM_STAT_CATS.find(c => c.key === category);
-    if (!cat) {
-      await interaction.editReply({ content: "❌ Unknown category selected." });
-      return;
+    // Single player stat category
+    const playerCat = PLAYER_STAT_CATS.find(c => c.key === category);
+    if (playerCat) {
+      embeds.push(
+        new EmbedBuilder()
+          .setTitle(`${playerCat.emoji} ${playerCat.label} Leaders — Top 10`)
+          .setColor(Colors.Blurple)
+          .setDescription(buildPlayerLeaders(playerCat, 10))
+          .setFooter({ text: footerText })
+          .setTimestamp()
+      );
+    } else {
+      // Team stat category
+      const teamCat = TEAM_STAT_CATS.find(c => c.key === category);
+      if (!teamCat) {
+        await interaction.editReply({ content: "❌ Unknown category selected." });
+        return;
+      }
+      const dirNote = teamCat.direction === "lower" ? " (fewest is best)" : "";
+      embeds.push(
+        new EmbedBuilder()
+          .setTitle(`${teamCat.emoji} ${teamCat.label} Leaders — Top 10${dirNote}`)
+          .setColor(Colors.Blurple)
+          .setDescription(buildTeamLeaders(teamCat, 10))
+          .setFooter({ text: footerText })
+          .setTimestamp()
+      );
     }
-
-    const dirNote = cat.direction === "lower" ? " (fewest is best)" : "";
-
-    const embed = new EmbedBuilder()
-      .setTitle(`${cat.emoji} ${cat.label} Leaders — Top 10${dirNote}`)
-      .setColor(Colors.Blurple)
-      .setDescription(buildTeamLeaders(cat, 10))
-      .setFooter({ text: footerText })
-      .setTimestamp();
-
-    embeds.push(embed);
   }
 
   await interaction.editReply({ embeds });

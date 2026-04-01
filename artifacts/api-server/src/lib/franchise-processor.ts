@@ -10,6 +10,7 @@ import {
   franchiseGameParticipantsTable,
   franchiseMcaTeamsTable,
   teamSeasonStatsTable,
+  playerSeasonStatsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 
@@ -278,6 +279,113 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
     return { ok: true, message: `${upserted} team stats updated`, details: { seasonId: season.id } };
   } catch (err) {
     console.error("[mca/teamstats] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → playerSeasonStatsTable ──
+export type WeekStatType = "passing" | "rushing" | "receiving" | "defense";
+
+const STAT_LIST_KEYS: Record<WeekStatType, string> = {
+  passing:   "playerPassingStatInfoList",
+  rushing:   "playerRushingStatInfoList",
+  receiving: "playerReceivingStatInfoList",
+  defense:   "playerDefenseStatInfoList",
+};
+
+export async function processPlayerWeekStats(
+  body: unknown,
+  statType: WeekStatType,
+): Promise<ProcessResult> {
+  try {
+    const season  = await getOrCreateActiveSeason();
+    const listKey = STAT_LIST_KEYS[statType];
+    const players = extractList(body, listKey);
+
+    if (!players.length) {
+      return { ok: true, message: `No ${statType} records in payload` };
+    }
+
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+
+    const ops: Promise<any>[] = [];
+    let upserted = 0;
+
+    for (const p of players) {
+      const playerId = getN(p, "rosterId", "playerId", "rosterid", "playerid");
+      if (!playerId) continue;
+
+      const teamId    = getN(p, "teamId", "teamid");
+      const mcaTeam   = teamMap.get(teamId);
+      const teamName  = mcaTeam?.fullName ?? String(p.teamName ?? p.teamname ?? "");
+      const discordId = mcaTeam?.discordId ?? null;
+      const firstName = String(p.firstName ?? p.firstname ?? "");
+      const lastName  = String(p.lastName  ?? p.lastname  ?? "");
+      const position  = String(p.position  ?? p.pos ?? "");
+
+      let statFields: Partial<typeof playerSeasonStatsTable.$inferInsert> = {};
+      if (statType === "passing") {
+        statFields = {
+          passYds: getN(p, "passYds", "passingYards", "passyds"),
+          passTDs: getN(p, "passTDs", "passingTds",   "passtds"),
+        };
+      } else if (statType === "rushing") {
+        statFields = {
+          rushYds: getN(p, "rushYds", "rushingYards", "rushyds"),
+          rushTDs: getN(p, "rushTDs", "rushingTds",   "rushtds"),
+        };
+      } else if (statType === "receiving") {
+        statFields = {
+          recYds: getN(p, "recYds", "receivingYards", "recyds"),
+          recTDs: getN(p, "recTDs", "receivingTds",   "rectds"),
+        };
+      } else if (statType === "defense") {
+        statFields = {
+          sacks:        getN(p, "sacks",        "defSacks",    "sack"),
+          defInts:      getN(p, "defInts",      "interceptions","defints", "ints"),
+          totalTackles: getN(p, "totalTackles", "tackleTotal", "tackles"),
+          tackleSolo:   getN(p, "tackleSolo",   "tacklesoloprops", "soloTackles"),
+          tackleAssist: getN(p, "tackleAssist", "assistTackles"),
+        };
+      }
+
+      ops.push(
+        db.insert(playerSeasonStatsTable)
+          .values({
+            seasonId: season.id,
+            playerId,
+            teamId,
+            teamName,
+            discordId,
+            firstName,
+            lastName,
+            position,
+            ...statFields,
+          })
+          .onConflictDoUpdate({
+            target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
+            set: {
+              teamId,
+              teamName,
+              discordId,
+              firstName,
+              lastName,
+              position,
+              ...statFields,
+              updatedAt: new Date(),
+            },
+          })
+      );
+      upserted++;
+    }
+
+    await Promise.all(ops);
+    console.log(`[mca/${statType}] Upserted ${upserted} player stat records for season ${season.id}`);
+    return { ok: true, message: `${statType}: upserted ${upserted} records`, details: { upserted } };
+  } catch (err) {
+    console.error(`[mca/${statType}] Error:`, err);
     return { ok: false, message: String(err) };
   }
 }
