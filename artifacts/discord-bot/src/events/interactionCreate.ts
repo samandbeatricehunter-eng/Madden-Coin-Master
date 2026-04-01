@@ -1,6 +1,8 @@
 import {
-  Interaction, ButtonInteraction, EmbedBuilder, Colors,
+  Interaction, ButtonInteraction, StringSelectMenuInteraction,
+  EmbedBuilder, Colors,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction,
   TextChannel,
 } from "discord.js";
@@ -9,6 +11,7 @@ import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   interviewRequestsTable, wagersTable,
   tradeBlockListingsTable, tradeBlockISOTable,
+  franchiseScheduleTable, seasonsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
@@ -17,6 +20,9 @@ import {
 } from "../lib/db-helpers.js";
 import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
+import {
+  scoreH2HMatchups, postGotwToChannel, GOTW_CHANNEL_ID,
+} from "../lib/gotw-helpers.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
@@ -68,8 +74,9 @@ export async function execute(interaction: Interaction) {
     return;
   }
 
-  if (interaction.isButton())      { await handleButton(interaction); return; }
-  if (interaction.isModalSubmit()) { await handleModal(interaction); }
+  if (interaction.isButton())           { await handleButton(interaction);    return; }
+  if (interaction.isStringSelectMenu()) { await handleSelectMenu(interaction); return; }
+  if (interaction.isModalSubmit())      { await handleModal(interaction); }
 }
 
 // ── Button handler ─────────────────────────────────────────────────────────────
@@ -818,6 +825,154 @@ async function handleButton(interaction: ButtonInteraction) {
     } catch (_) {}
 
     await interaction.editReply({ content: `✅ ISO #${isoId} has been closed and removed from the trade block.` });
+    return;
+  }
+
+  // ── GOTW: admin confirms recommended game ─────────────────────────────────────
+  if (action === "gotw_confirm") {
+    // customId: gotw_confirm:{seasonId}:{weekIndex}:{awayDiscordId}:{homeDiscordId}
+    const [, rawSeasonId, rawWeekIndex, awayDiscordId, homeDiscordId] = interaction.customId.split(":");
+    const seasonId  = parseInt(rawSeasonId  ?? "0", 10);
+    const weekIndex = parseInt(rawWeekIndex ?? "0", 10);
+    const weekNum   = weekIndex + 1;
+
+    await interaction.deferUpdate();
+
+    // Look up team names for both Discord IDs
+    const [awayUser] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, awayDiscordId!)).limit(1);
+    const [homeUser] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, homeDiscordId!)).limit(1);
+
+    const awayTeam = awayUser?.team ?? awayDiscordId ?? "Away Team";
+    const homeTeam = homeUser?.team ?? homeDiscordId ?? "Home Team";
+
+    const result = await postGotwToChannel(
+      interaction.client, seasonId, weekIndex, weekNum,
+      awayTeam, homeTeam, awayDiscordId!, homeDiscordId!, 0,
+    );
+
+    if (result) {
+      await interaction.editReply({
+        content: `✅ GOTW posted to <#${GOTW_CHANNEL_ID}>!\n**${awayTeam} vs ${homeTeam}**`,
+        components: [],
+      });
+    } else {
+      await interaction.editReply({
+        content: `❌ Failed to post GOTW. Check that the bot has access to <#${GOTW_CHANNEL_ID}>.`,
+        components: [],
+      });
+    }
+    return;
+  }
+
+  // ── GOTW: admin wants to pick a different game ────────────────────────────────
+  if (action === "gotw_decline") {
+    // customId: gotw_decline:{seasonId}:{weekIndex}
+    const [, rawSeasonId, rawWeekIndex] = interaction.customId.split(":");
+    const seasonId  = parseInt(rawSeasonId  ?? "0", 10);
+    const weekIndex = parseInt(rawWeekIndex ?? "0", 10);
+
+    await interaction.deferUpdate();
+
+    // Re-fetch the season and games
+    const [season] = await db.select()
+      .from(seasonsTable)
+      .where(eq(seasonsTable.id, seasonId))
+      .limit(1);
+
+    const games = season
+      ? await db.select()
+          .from(franchiseScheduleTable)
+          .where(and(
+            eq(franchiseScheduleTable.seasonId,  seasonId),
+            eq(franchiseScheduleTable.weekIndex, weekIndex),
+          ))
+      : [];
+
+    // Build team → Discord ID map
+    const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
+      .from(usersTable);
+    const teamToDiscord = new Map<string, string>();
+    for (const u of allUsers) {
+      if (u.team) teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
+    }
+
+    const scored = await scoreH2HMatchups(seasonId, weekIndex, games, teamToDiscord);
+
+    if (scored.length === 0) {
+      await interaction.editReply({
+        content: "❌ No H2H matchups available to select from.",
+        components: [],
+      });
+      return;
+    }
+
+    // Build select menu — one option per H2H game
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`gotw_select:${seasonId}:${weekIndex}`)
+      .setPlaceholder("Select the Game of the Week…")
+      .addOptions(
+        scored.map(g => {
+          const cooldownTag = g.eligible ? "" : " ⚠️ (cooldown)";
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(`${g.awayTeamName} vs ${g.homeTeamName}${cooldownTag}`.slice(0, 100))
+            .setValue(`${g.awayDiscordId}:${g.homeDiscordId}`)
+            .setDescription(`${g.awayTeamName} vs ${g.homeTeamName}`.slice(0, 100));
+        })
+      );
+
+    const menuRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+
+    await interaction.editReply({
+      content: "Select the game you'd like to name as GOTW:",
+      components: [menuRow],
+    });
+    return;
+  }
+}
+
+// ── String select menu handler ─────────────────────────────────────────────────
+async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
+  const parts     = interaction.customId.split(":");
+  const action    = parts[0]!;
+
+  // ── GOTW: admin selected a specific game ─────────────────────────────────────
+  if (action === "gotw_select") {
+    const seasonId  = parseInt(parts[1] ?? "0", 10);
+    const weekIndex = parseInt(parts[2] ?? "0", 10);
+    const weekNum   = weekIndex + 1;
+
+    // Value format: {awayDiscordId}:{homeDiscordId}
+    const selectedValue  = interaction.values[0] ?? "";
+    const [awayDiscordId, homeDiscordId] = selectedValue.split(":");
+
+    await interaction.deferUpdate();
+
+    const [awayUser] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, awayDiscordId!)).limit(1);
+    const [homeUser] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, homeDiscordId!)).limit(1);
+
+    const awayTeam = awayUser?.team ?? "Away Team";
+    const homeTeam = homeUser?.team ?? "Home Team";
+
+    const result = await postGotwToChannel(
+      interaction.client, seasonId, weekIndex, weekNum,
+      awayTeam, homeTeam, awayDiscordId!, homeDiscordId!, 0,
+    );
+
+    if (result) {
+      await interaction.editReply({
+        content: `✅ GOTW posted to <#${GOTW_CHANNEL_ID}>!\n**${awayTeam} vs ${homeTeam}**`,
+        components: [],
+      });
+    } else {
+      await interaction.editReply({
+        content: `❌ Failed to post GOTW. Check that the bot has access to <#${GOTW_CHANNEL_ID}>.`,
+        components: [],
+      });
+    }
     return;
   }
 }

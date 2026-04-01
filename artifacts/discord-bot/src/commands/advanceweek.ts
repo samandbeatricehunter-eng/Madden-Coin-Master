@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { deleteGotwMessages } from "../lib/gotw-helpers.js";
 
 const MATCHUP_CATEGORY_ID = "1478427821666861272";
 
@@ -94,6 +95,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await db.update(seasonsTable)
     .set({ currentWeek: newWeek })
     .where(eq(seasonsTable.id, season.id));
+
+  // Delete GOTW announcement + poll for the week we're leaving
+  const oldWeekNum = parseInt(season.currentWeek ?? "1", 10);
+  if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18) {
+    await deleteGotwMessages(interaction.client, season.id, oldWeekNum - 1);
+  }
 
   const oldLabel = weekLabel(season.currentWeek ?? "1");
   const newLabel = weekLabel(newWeek);
