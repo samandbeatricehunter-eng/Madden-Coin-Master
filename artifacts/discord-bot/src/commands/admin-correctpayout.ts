@@ -81,6 +81,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // ── Validate winner belongs to this game ─────────────────────────────────
+  if (winner) {
+    const winnerLower = winner.toLowerCase();
+    if (winnerLower !== homeLower && winnerLower !== awayLower) {
+      await interaction.editReply(
+        `❌ \`winner\` must be one of the two teams in this game:\n` +
+        `• **${schedGame.homeTeamName}** (home)\n` +
+        `• **${schedGame.awayTeamName}** (away)\n\n` +
+        `You entered: \`${winner}\``,
+      );
+      return;
+    }
+  }
+
   // ── Find registered users for both teams ──────────────────────────────────
   const [homeUser] = await db.select().from(usersTable)
     .where(sql`lower(${usersTable.team}) = ${homeLower}`).limit(1);

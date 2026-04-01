@@ -67,8 +67,8 @@ router.post("/madden/:leagueKey/schedules", validateKey, async (req, res) => {
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
 router.post("/madden/:leagueKey/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
-  const weekNum  = parseInt(req.params["weekNum"]  ?? "0", 10);
-  const weekType = (req.params["weekType"] ?? "reg").toLowerCase();
+  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
 
   res.status(200).json({ status: "received" });
 
