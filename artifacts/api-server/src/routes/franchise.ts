@@ -122,6 +122,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
+    resultLines: [] as string[], unregisteredLines: [] as string[],
     weekNum, seasonId: 0,
   }));
   console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
@@ -219,6 +220,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
+    resultLines: [] as string[], unregisteredLines: [] as string[],
     weekNum, seasonId: 0,
   }));
 
