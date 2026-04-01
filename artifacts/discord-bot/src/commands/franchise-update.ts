@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, franchiseProcessedGamesTable, franchiseScheduleTable, franchiseGameParticipantsTable, franchiseRostersTable, teamSeasonStatsTable, playerSeasonStatsTable } from "@workspace/db";
-import { eq, sql, and, max, inArray, gte } from "drizzle-orm";
+import { eq, sql, and, max, inArray, gte, isNotNull, isNull } from "drizzle-orm";
 import axios from "axios";
 import AdmZip from "adm-zip";
 import * as fs from "fs";
@@ -291,7 +291,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       } = {
         payoutType: "none",
         seasonIdRef: season.id, weekIndexRef: gameWeekIndex,
-        homeTeamRef: homeTeamData.name.toLowerCase(), awayTeamRef: awayTeamData.name.toLowerCase(),
+        // Use schedule-compatible name (user's registered team or Madden nickname) so that
+        // admin-correctpayout Strategy 1 lookup matches what the admin sees in /weeklymatchups
+        homeTeamRef: (homeUser?.team ?? homeTeamData.nickname).toLowerCase(),
+        awayTeamRef: (awayUser?.team ?? awayTeamData.nickname).toLowerCase(),
       };
 
       // ── True H2H: both registered, user-played (status=3) ────────────────────
@@ -456,6 +459,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // We delete all rows for this season and re-insert from the ZIP on every
     // import. This prevents stale duplicate rows when Madden shifts a game's
     // weekIndex between exports (which broke the unique-constraint upsert).
+    //
+    // IMPORTANT: snapshot processedGameId links before wiping so we can restore
+    // them on the newly-inserted rows — admin-correctpayout depends on this field
+    // to locate processed game records without requiring the gameid option.
+    const existingLinks = await db.select({
+      weekIndex:       franchiseScheduleTable.weekIndex,
+      homeTeamId:      franchiseScheduleTable.homeTeamId,
+      awayTeamId:      franchiseScheduleTable.awayTeamId,
+      processedGameId: franchiseScheduleTable.processedGameId,
+    }).from(franchiseScheduleTable).where(and(
+      eq(franchiseScheduleTable.seasonId, season.id),
+      isNotNull(franchiseScheduleTable.processedGameId),
+    ));
+    const processedGameIdByKey = new Map(
+      existingLinks.map(l => [`${l.weekIndex}-${l.homeTeamId}-${l.awayTeamId}`, l.processedGameId!]),
+    );
+
     await db.delete(franchiseScheduleTable)
       .where(eq(franchiseScheduleTable.seasonId, season.id));
 
@@ -503,21 +523,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     let scheduleRowsSaved = 0;
     const scheduleInserts: Promise<any>[] = [];
-    for (const entry of schedMap.values()) {
+    for (const [schedKey, entry] of schedMap.entries()) {
       scheduleRowsSaved++;
+      // Restore the processedGameId link from the snapshot so admin-correctpayout
+      // can always locate processed game records via Strategy 2 after re-imports
+      const restoredProcessedGameId = processedGameIdByKey.get(schedKey) ?? null;
       scheduleInserts.push(
         db.insert(franchiseScheduleTable)
           .values({
-            seasonId:     season.id,
-            weekIndex:    entry.weekIdx,
-            homeTeamId:   entry.hId,
-            awayTeamId:   entry.aId,
-            homeTeamName: entry.hTeamName,
-            awayTeamName: entry.aTeamName,
-            homeScore:    entry.hScore,
-            awayScore:    entry.aScore,
-            status:       entry.status,
-            importedAt:   new Date(),
+            seasonId:        season.id,
+            weekIndex:       entry.weekIdx,
+            homeTeamId:      entry.hId,
+            awayTeamId:      entry.aId,
+            homeTeamName:    entry.hTeamName,
+            awayTeamName:    entry.aTeamName,
+            homeScore:       entry.hScore,
+            awayScore:       entry.aScore,
+            status:          entry.status,
+            processedGameId: restoredProcessedGameId,
+            importedAt:      new Date(),
           })
           .onConflictDoNothing()
       );
@@ -535,6 +559,46 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .map(e => `wk${e.weekIdx} ${e.hTeamName}vs${e.aTeamName} st=${e.status} sc=${e.hScore ?? "?"}-${e.aScore ?? "?"}`);
     console.log("[franchiseupdate] First 15 schedule entries:", sampleGames.join(" | "));
     await Promise.all(scheduleInserts);
+
+    // ── Backfill processedGameId links for legacy schedule rows ──────────────
+    // Old processed game rows inserted before the wipe-fix may lack a schedule
+    // link. Re-connect them by reconstructing the synthetic gameId and updating
+    // both the schedule row's processedGameId and the processed game's team refs
+    // so admin-correctpayout Strategy 1+2 are reliable for historical records.
+    const unlinkedRows = await db.select({
+      id:           franchiseScheduleTable.id,
+      weekIndex:    franchiseScheduleTable.weekIndex,
+      homeTeamId:   franchiseScheduleTable.homeTeamId,
+      awayTeamId:   franchiseScheduleTable.awayTeamId,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      homeScore:    franchiseScheduleTable.homeScore,
+      awayScore:    franchiseScheduleTable.awayScore,
+    }).from(franchiseScheduleTable).where(and(
+      eq(franchiseScheduleTable.seasonId, season.id),
+      isNull(franchiseScheduleTable.processedGameId),
+      isNotNull(franchiseScheduleTable.homeScore),
+    ));
+    let backfilled = 0;
+    for (const row of unlinkedRows) {
+      const candidateId = `s${season.id}-h${row.homeTeamId}-a${row.awayTeamId}-${row.homeScore ?? 0}-${row.awayScore ?? 0}`;
+      const [pg] = await db.select().from(franchiseProcessedGamesTable)
+        .where(eq(franchiseProcessedGamesTable.gameId, candidateId)).limit(1);
+      if (!pg) continue;
+      // Restore schedule link
+      await db.update(franchiseScheduleTable)
+        .set({ processedGameId: pg.gameId })
+        .where(eq(franchiseScheduleTable.id, row.id));
+      // Fix team refs to use schedule-compatible names (matching admin command input)
+      await db.update(franchiseProcessedGamesTable)
+        .set({
+          homeTeamRef: row.homeTeamName.toLowerCase(),
+          awayTeamRef: row.awayTeamName.toLowerCase(),
+        })
+        .where(eq(franchiseProcessedGamesTable.gameId, pg.gameId));
+      backfilled++;
+    }
+    if (backfilled > 0) console.log(`[franchiseupdate] Backfilled ${backfilled} legacy schedule→processedGame links`);
 
     // ── Sync rosters from rosters.json ────────────────────────────────────────
     // ── Position number → string map (Madden 24/25 roster export format) ──────
