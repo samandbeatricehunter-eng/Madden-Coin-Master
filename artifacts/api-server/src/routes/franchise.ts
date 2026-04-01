@@ -291,19 +291,6 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
   }
 });
 
-// ── /schedules — full season schedule (may include completed game scores) ─────
-router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, async (req, res) => {
-  res.status(200).json({ status: "received" });
-  const body = req.body as Record<string, unknown>;
-  const keys = Object.keys(body ?? {});
-  const firstKey = keys[0];
-  const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
-  console.log("[mca/schedules] Top-level keys:", keys);
-  console.log("[mca/schedules] First item sample:", JSON.stringify(sample)?.slice(0, 500));
-  const result = await processSchedules(req.body).catch(err => ({ ok: false, message: String(err) }));
-  console.log("[mca/schedules] Result:", result.message);
-});
-
 // ── Catch-all: log any MCA endpoint we haven't explicitly handled ─────────────
 // Uses router.use() to avoid path-to-regexp wildcard restrictions.
 // validateKey not supported here; check key manually.
