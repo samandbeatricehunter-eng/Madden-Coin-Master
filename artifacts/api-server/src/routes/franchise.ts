@@ -28,22 +28,26 @@ function validateKey(req: Request, res: Response, next: () => void) {
   next();
 }
 
-// ── /leagueteams — team info + roster ─────────────────────────────────────────
-router.post("/madden/:leagueKey/leagueteams", validateKey, async (req, res) => {
-  res.status(200).json({ status: "received" }); // respond immediately so MCA doesn't retry
+// The MCA appends /platform/leagueId/ between the base URL and endpoint slug.
+// e.g. base = /api/madden/:leagueKey  →  actual call = /api/madden/:leagueKey/pc/21960156/leagueteams
+// We use /:platform/:leagueId/ to absorb those segments and keep the key check simple.
+
+// ── /leagueteams — team info ───────────────────────────────────────────────────
+router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, async (req, res) => {
+  res.status(200).json({ status: "received" });
   console.log("[mca/leagueteams] Received payload, processing async...");
   const result = await processLeagueTeams(req.body).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leagueteams] Result:", result.message);
 });
 
-// ── /standings — optional, just acknowledge ────────────────────────────────────
-router.post("/madden/:leagueKey/standings", validateKey, (req, res) => {
+// ── /standings — league standings (acknowledge only, data not used) ────────────
+router.post("/madden/:leagueKey/:platform/:leagueId/standings", validateKey, (req, res) => {
   res.status(200).json({ status: "received" });
   console.log("[mca/standings] Received standings payload (no-op)");
 });
 
-// ── /teamstats — team season stats ────────────────────────────────────────────
-router.post("/madden/:leagueKey/teamstats", validateKey, async (req, res) => {
+// ── /teamstats — season-level team stats (some MCA versions send this) ────────
+router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, async (req, res) => {
   res.status(200).json({ status: "received" });
   console.log("[mca/teamstats] Received payload, processing async...");
   const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
@@ -51,7 +55,7 @@ router.post("/madden/:leagueKey/teamstats", validateKey, async (req, res) => {
 });
 
 // ── /schedules — full season schedule ─────────────────────────────────────────
-router.post("/madden/:leagueKey/schedules", validateKey, async (req, res) => {
+router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, async (req, res) => {
   res.status(200).json({ status: "received" });
   console.log("[mca/schedules] Received payload, processing async...");
   const result = await processSchedules(req.body).catch(err => ({ ok: false, message: String(err) }));
@@ -65,8 +69,24 @@ router.post("/madden/:leagueKey/schedules", validateKey, async (req, res) => {
   }
 });
 
+// ── /freeagents/roster — known EA bug (always empty); just acknowledge ─────────
+router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validateKey, (req, res) => {
+  res.status(200).json({ status: "received" });
+  console.log("[mca/freeagents/roster] Acknowledged (EA bug — payload skipped)");
+});
+
+// ── /week/:weekType/:weekNum/team — per-week team stats ───────────────────────
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team", validateKey, async (req, res) => {
+  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  res.status(200).json({ status: "received" });
+  console.log(`[mca/week${weekNum}/team] Received team stats (weekType=${weekType}), processing...`);
+  const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
+  console.log(`[mca/week${weekNum}/team] Result:`, result.message);
+});
+
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
-router.post("/madden/:leagueKey/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
 
@@ -97,7 +117,6 @@ router.post("/madden/:leagueKey/week/:weekType/:weekNum/scores", validateKey, as
     return;
   }
 
-  // Post summary to commissioner channel
   if (COMMISSIONER_CHANNEL_ID) {
     const fields = [];
 
@@ -136,7 +155,6 @@ router.post("/madden/:leagueKey/week/:weekType/:weekNum/scores", validateKey, as
     }).catch(() => {});
   }
 
-  // Post game results to general channel
   if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0) {
     const lines = result.payoutLines
       .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
