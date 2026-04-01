@@ -493,11 +493,11 @@ export async function processTeamWeekStats(
 // ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → playerSeasonStatsTable ──
 export type WeekStatType = "passing" | "rushing" | "receiving" | "defense";
 
-const STAT_LIST_KEYS: Record<WeekStatType, string> = {
-  passing:   "playerPassingStatInfoList",
-  rushing:   "playerRushingStatInfoList",
-  receiving: "playerReceivingStatInfoList",
-  defense:   "playerDefenseStatInfoList",
+const STAT_LIST_KEYS: Record<WeekStatType, string[]> = {
+  passing:   ["playerPassingStatInfoList",   "playerPassStatInfoList"],
+  rushing:   ["playerRushingStatInfoList",   "playerRushStatInfoList"],
+  receiving: ["playerReceivingStatInfoList", "playerRecStatInfoList"],
+  defense:   ["playerDefensiveStatInfoList", "playerDefenseStatInfoList", "playerDefStatInfoList"],
 };
 
 export async function processPlayerWeekStats(
@@ -508,8 +508,8 @@ export async function processPlayerWeekStats(
 ): Promise<ProcessResult> {
   try {
     const season  = await getOrCreateActiveSeason();
-    const listKey = STAT_LIST_KEYS[statType];
-    const players = extractList(body, listKey);
+    const listKeys = STAT_LIST_KEYS[statType];
+    const players = extractList(body, ...listKeys);
 
     if (!players.length) {
       return { ok: true, message: `No ${statType} records in payload` };
@@ -555,7 +555,16 @@ export async function processPlayerWeekStats(
       // ── Debug: log first player's raw keys so we can verify MCA field names ──
       if (!loggedSample) {
         console.log(`[mca/week${weekNum}/${statType}] Sample player keys:`, Object.keys(p as object).join(", "));
-        console.log(`[mca/week${weekNum}/${statType}] Sample player data:`, JSON.stringify(p).slice(0, 300));
+        console.log(`[mca/week${weekNum}/${statType}] Sample player data:`, JSON.stringify(p).slice(0, 500));
+        if (statType === "defense") {
+          // Extra detail for defense so we can pin down the exact field names
+          const defFields = ["sacks","defSacks","sack","defInts","interceptions","defInterceptions","ints",
+            "totalTackles","defTotalTackles","tackleTotal","tackles",
+            "tackleSolo","defTackleSolo","soloTackles","tackleAssist","defTackleAssist","assistTackles"];
+          const found: Record<string,any> = {};
+          for (const f of defFields) if ((p as any)[f] != null) found[f] = (p as any)[f];
+          console.log(`[mca/week${weekNum}/defense] Defensive field values found:`, JSON.stringify(found));
+        }
         loggedSample = true;
       }
 
@@ -609,11 +618,11 @@ export async function processPlayerWeekStats(
           recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
         };
       } else if (statType === "defense") {
-        const sacks        = getN(p, "sacks",        "defSacks",        "sack");
-        const defInts      = getN(p, "defInts",      "interceptions",   "defints", "ints");
-        const totalTackles = getN(p, "totalTackles", "tackleTotal",     "tackles");
-        const tackleSolo   = getN(p, "tackleSolo",   "tacklesoloprops", "soloTackles");
-        const tackleAssist = getN(p, "tackleAssist", "assistTackles");
+        const sacks        = getN(p, "defSacks",        "sacks",         "sack");
+        const defInts      = getN(p, "defInts",         "defInterceptions", "interceptions", "ints");
+        const totalTackles = getN(p, "defTotalTackles", "totalTackles",  "tackleTotal", "tackles");
+        const tackleSolo   = getN(p, "defTackleSolo",   "tackleSolo",    "soloTackles");
+        const tackleAssist = getN(p, "defTackleAssist", "tackleAssist",  "assistTackles");
         insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist };
         accumSet     = {
           sacks:        sql`${playerSeasonStatsTable.sacks}        + ${sacks}`,
