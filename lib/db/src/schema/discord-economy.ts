@@ -396,6 +396,8 @@ export const gotwHistoryTable = pgTable("gotw_history", {
   teamName1:   text("team_name_1").notNull(),
   teamName2:   text("team_name_2").notNull(),
   combinedScore: integer("combined_score").notNull().default(0), // stored as floor(score)
+  announcementMessageId: text("announcement_message_id"),        // Discord message ID of @everyone post
+  pollMessageId:         text("poll_message_id"),                // Discord message ID of the poll
   createdAt:   timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex),
