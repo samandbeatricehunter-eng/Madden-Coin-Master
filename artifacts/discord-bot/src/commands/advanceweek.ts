@@ -7,6 +7,9 @@ import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, go
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { deleteGotwMessages } from "../lib/gotw-helpers.js";
+import { generateFranchiseArticle } from "../lib/franchise-article.js";
+
+const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
 const MATCHUP_CATEGORY_ID = "1478427821666861272";
 
@@ -308,4 +311,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.editReply({ embeds: [embed] });
+
+  // ── Franchise article — post to headlines channel when leaving a regular-season week ──
+  if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && guild) {
+    const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
+      ?? await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+
+    if (headlinesChannel && headlinesChannel.isTextBased()) {
+      // Fire article generation async — don't block the interaction reply
+      (async () => {
+        try {
+          const completedWeekIndex = oldWeekNum - 1; // 0-based
+          const article = await generateFranchiseArticle(
+            season.id,
+            season.seasonNumber,
+            completedWeekIndex,
+            newLabel,
+          );
+
+          const tc = headlinesChannel as import("discord.js").TextChannel;
+          await tc.send({
+            content: `@everyone\n📰 **REC League — Week ${oldWeekNum} Recap**\n\n${article}`,
+          });
+        } catch (err) {
+          console.error("[advanceweek] Failed to generate franchise article:", err);
+        }
+      })();
+    }
+  }
 }
