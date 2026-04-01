@@ -799,7 +799,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
         };
         const getOffTDs = (t: any): number =>
-          getN(t, "offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offPassTDs","passTDs");
+          getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs","offPassTDs","passTDs");
         const getDefPassYds = (t: any): number =>
           getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
         const getDefRushYds = (t: any): number =>

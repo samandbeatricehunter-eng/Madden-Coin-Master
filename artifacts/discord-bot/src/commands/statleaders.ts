@@ -7,7 +7,7 @@ import {
   playerSeasonStatsTable, teamSeasonStatsTable,
   userRecordsTable, usersTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
 // ── Player stat category definitions ─────────────────────────────────────────
@@ -31,11 +31,7 @@ const PLAYER_STAT_CATS: PlayerStatCat[] = [
     field: p => p.totalTackles > 0 ? p.totalTackles : p.tackleSolo + p.tackleAssist },
 ];
 
-// ── Ordinal suffix ─────────────────────────────────────────────────────────────
-function ordinal(n: number): string {
-  const s = ["th","st","nd","rd"], v = n % 100;
-  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
-}
+const TEAM_STAT_CATEGORY = "teams";
 
 // ── Slash command ─────────────────────────────────────────────────────────────
 export const data = new SlashCommandBuilder()
@@ -48,6 +44,7 @@ export const data = new SlashCommandBuilder()
       .setRequired(true)
       .addChoices(
         { name: "All Categories (top 3 each)",           value: "all"              },
+        { name: "Teams to Watch",                         value: TEAM_STAT_CATEGORY },
         { name: "Passing Yards",                          value: "passing_yards"    },
         { name: "Passing TDs",                            value: "passing_tds"      },
         { name: "Rushing Yards",                          value: "rushing_yards"    },
@@ -100,6 +97,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
   const discordIdToRecord = new Map(allRecords.map(r => [r.discordId, r]));
 
+  // Only user-controlled teams (discordId known) for team stat sections
+  const userTeamStats = teamStats.filter(t =>
+    t.discordId != null || teamNameToUser.has(t.teamName?.toLowerCase().trim() ?? "")
+  );
+
   // ── Helper: build top-N player leaders for one category ───────────────────
   function buildPlayerLeaders(cat: PlayerStatCat, topN: number): string {
     const entries = players
@@ -116,21 +118,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }).join("\n");
   }
 
-  // ── Helper: build team formula leaders ────────────────────────────────────
-
-  // Lethal Offense: 45% total offense yards + 55% total offensive TDs (normalized)
+  // ── Helper: Lethal Offense — top total yards + TDs (user teams only) ────────
   function buildLethalOffense(topN: number): string {
-    if (!teamStats.length) return "*No team stat data found — run `/franchiseupdate` first*";
+    const eligible = userTeamStats.filter(t => t.teamName && (t.offYds > 0 || t.offTDs > 0));
+    if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
 
-    const entries = teamStats.map(t => ({
-      name:    t.teamName,
-      offYds:  t.offYds,
-      offTDs:  t.offTDs,
-      detail:  `${t.offYds.toLocaleString()} yds / ${t.offTDs} TDs`,
-      score:   0,
-    })).filter(e => e.name);
-
-    if (!entries.length) return "*No team stat data found*";
+    const entries = eligible.map(t => ({
+      name:   t.teamName,
+      offYds: t.offYds,
+      offTDs: t.offTDs,
+      detail: `${t.offYds.toLocaleString()} yds / ${t.offTDs} TDs`,
+      score:  0,
+    }));
 
     const maxYds = Math.max(...entries.map(e => e.offYds), 1);
     const maxTDs = Math.max(...entries.map(e => e.offTDs), 1);
@@ -139,24 +138,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
     entries.sort((a, b) => b.score - a.score);
     return entries.slice(0, topN).map((e, i) =>
-      `**#${i + 1}** ${e.name} — ${e.detail} *(score: ${(e.score * 100).toFixed(1)})*`,
+      `**#${i + 1}** ${e.name} — ${e.detail}`,
     ).join("\n");
   }
 
-  // Stiff Defense: 40% pass yds allowed + 40% rush yds allowed + 20% TDs allowed (lower = better)
+  // ── Helper: Stiff Defense — fewest yards/TDs allowed (user teams only) ──────
+  // Lower yards allowed = better defense. Ascending sort.
   function buildStiffDefense(topN: number): string {
-    if (!teamStats.length) return "*No team stat data found — run `/franchiseupdate` first*";
+    // Only include teams that have actual defensive data
+    const eligible = userTeamStats.filter(t =>
+      t.teamName && (t.defPassYds > 0 || t.defRushYds > 0 || t.defTDs > 0)
+    );
+    if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
 
-    const entries = teamStats.map(t => ({
-      name:       t.teamName,
+    const entries = eligible.map(t => ({
+      name:        t.teamName,
       passAllowed: t.defPassYds,
       rushAllowed: t.defRushYds,
       tdsAllowed:  t.defTDs,
-      detail:     `${t.defPassYds.toLocaleString()} pass yds / ${t.defRushYds.toLocaleString()} rush yds / ${t.defTDs} TDs allowed`,
-      score:      0,
-    })).filter(e => e.name);
-
-    if (!entries.length) return "*No team stat data found*";
+      detail:      `${t.defPassYds.toLocaleString()} pass yds / ${t.defRushYds.toLocaleString()} rush yds / ${t.defTDs} TDs allowed`,
+      score:       0,
+    }));
 
     const maxPass = Math.max(...entries.map(e => e.passAllowed), 1);
     const maxRush = Math.max(...entries.map(e => e.rushAllowed), 1);
@@ -166,15 +168,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               + (e.rushAllowed / maxRush) * 0.40
               + (e.tdsAllowed  / maxTDs)  * 0.20;
     }
-    entries.sort((a, b) => a.score - b.score); // ascending: best defense first
+    entries.sort((a, b) => a.score - b.score); // ascending: fewer yards = lower score = better rank
     return entries.slice(0, topN).map((e, i) =>
-      `**#${i + 1}** ${e.name} — ${e.detail} *(score: ${(e.score * 100).toFixed(1)})*`,
+      `**#${i + 1}** ${e.name} — ${e.detail}`,
     ).join("\n");
   }
 
-  // Sleepers: losing/even record teams ranked by explosive formula
+  // ── Helper: Sleepers — losing/even record teams w/ explosive output ──────────
   function buildSleepers(topN: number): string {
-    if (!teamStats.length) return "*No team stat data found — run `/franchiseupdate` first*";
+    const eligible = userTeamStats.filter(t => t.teamName);
+    if (!eligible.length) return "*No team stat data found — run `/franchiseupdate` first*";
 
     const entries: {
       name: string; wins: number; losses: number;
@@ -182,22 +185,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       wlDiff: number; score: number; detail: string;
     }[] = [];
 
-    for (const t of teamStats) {
-      if (!t.teamName) continue;
-
-      // Get W/L: prefer userRecordsTable for registered users, fall back to teamSeasonStats
+    for (const t of eligible) {
       let wins   = t.wins;
       let losses = t.losses;
-      const discordId = t.discordId
-        ?? teamNameToUser.get(t.teamName.toLowerCase().trim());
+      const discordId = t.discordId ?? teamNameToUser.get(t.teamName.toLowerCase().trim());
       if (discordId) {
         const rec = discordIdToRecord.get(discordId);
         if (rec) { wins = rec.wins; losses = rec.losses; }
       }
 
-      if (wins > losses) continue; // only losing/even teams
+      if (wins > losses) continue; // only losing/even-record teams
 
-      const defYds = (t.defPassYds + t.defRushYds) || t.offYds; // defYds = pass+rush allowed
       const defYdsTotal = t.defPassYds + t.defRushYds;
       const wlDiff = wins - losses;
 
@@ -206,7 +204,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         offYds: t.offYds, offTDs: t.offTDs,
         defYds: defYdsTotal, defTDs: t.defTDs,
         wlDiff, score: 0,
-        detail: `${wins}W–${losses}L | Off: ${t.offYds.toLocaleString()} yds/${t.offTDs} TDs | Def allowed: ${defYdsTotal.toLocaleString()} yds/${t.defTDs} pts`,
+        detail: `${wins}W–${losses}L | Off: ${t.offYds.toLocaleString()} yds / ${t.offTDs} TDs | Def allowed: ${defYdsTotal.toLocaleString()} yds`,
       });
     }
 
@@ -224,11 +222,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         + (e.offTDs / maxOffTDs) * 0.075
         - (e.defYds / maxDefYds) * 0.10
         - (e.defTDs / maxDefTDs) * 0.075
-        + (e.wlDiff / maxAbsWL)  * 0.25; // wlDiff ≤ 0 for losing/even
+        + (e.wlDiff / maxAbsWL)  * 0.25;
     }
     entries.sort((a, b) => b.score - a.score);
     return entries.slice(0, topN).map((e, i) =>
-      `**#${i + 1}** ${e.name} (${e.wins}–${e.losses}) — ${e.detail} *(score: ${(e.score * 100).toFixed(1)})*`,
+      `**#${i + 1}** ${e.name} (${e.wins}–${e.losses}) — ${e.detail}`,
     ).join("\n");
   }
 
@@ -236,16 +234,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const footerText = `Season ${season.seasonNumber ?? season.id} • Last updated via /franchiseupdate`;
   const embeds: EmbedBuilder[] = [];
 
-  const teamStatsEmbed = new EmbedBuilder()
-    .setTitle("🏟️ Team Performance Categories")
-    .setColor(Colors.DarkGold)
-    .addFields(
-      { name: "⚡ Most Lethal Offenses (Top 5)",                                   value: buildLethalOffense(5) || "*No data*" },
-      { name: "🛡️ Most Stiff Defenses (Top 5) — lowest score = best",             value: buildStiffDefense(5) || "*No data*"  },
-      { name: "💤 Most Explosive Sleepers (Top 5) — losing/even-record teams only", value: buildSleepers(5)     || "*No data*"  },
-    )
-    .setFooter({ text: footerText })
-    .setTimestamp();
+  const showTeams = category === "all" || category === TEAM_STAT_CATEGORY;
 
   if (category === "all") {
     const cat1 = PLAYER_STAT_CATS.slice(0, 5);
@@ -266,8 +255,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       embed2.addFields({ name: cat.label, value: buildPlayerLeaders(cat, 3) });
     }
 
-    embeds.push(embed1, embed2, teamStatsEmbed);
+    embeds.push(embed1, embed2);
+  } else if (category === TEAM_STAT_CATEGORY) {
+    // Teams to Watch only — no player embed needed
   } else {
+    // Single player category
     const cat = PLAYER_STAT_CATS.find(c => c.key === category);
     if (!cat) {
       await interaction.editReply("❌ Unknown category selected.");
@@ -281,7 +273,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setFooter({ text: footerText })
       .setTimestamp();
 
-    embeds.push(leadersEmbed, teamStatsEmbed);
+    embeds.push(leadersEmbed);
+  }
+
+  // Team stat embed — only for "all" and "teams" selections
+  if (showTeams) {
+    const teamStatsEmbed = new EmbedBuilder()
+      .setTitle("🏟️ Teams to Watch")
+      .setColor(Colors.DarkGold)
+      .addFields(
+        { name: "⚡ Most Lethal Offenses (Top 5)",                                   value: buildLethalOffense(5) },
+        { name: "🛡️ Most Stiff Defenses (Top 5) — fewest yards allowed",             value: buildStiffDefense(5)  },
+        { name: "💤 Most Explosive Sleepers (Top 5) — losing/even-record teams only", value: buildSleepers(5)      },
+      )
+      .setFooter({ text: footerText })
+      .setTimestamp();
+
+    embeds.push(teamStatsEmbed);
   }
 
   await interaction.editReply({ embeds });
