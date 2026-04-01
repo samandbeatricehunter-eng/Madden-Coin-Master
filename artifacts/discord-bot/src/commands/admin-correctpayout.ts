@@ -177,29 +177,61 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   let inferredLoserCoins  = oldLoserCoins  as number;
   let inferredPointDiff   = oldPointDiff   as number;
 
-  if (!inferredType) {
-    const homeScore = schedGame.homeScore ?? 0;
-    const awayScore = schedGame.awayScore ?? 0;
-    const homeWon   = homeScore > awayScore;
+  const schedHomeScore = schedGame.homeScore ?? 0;
+  const schedAwayScore = schedGame.awayScore ?? 0;
+  const schedHomeWon   = schedHomeScore > schedAwayScore;
+  const schedSpread    = Math.abs(schedHomeScore - schedAwayScore);
+  const schedStatus    = schedGame.status ?? 0; // 2=CPU-simmed, 3=user-played
 
+  if (!inferredType) {
+    // Legacy record — infer type from schedule status + registration
     if (homeUser && awayUser) {
-      inferredType        = "h2h";
-      inferredWinnerId    = homeWon ? homeUser.discordId : awayUser.discordId;
-      inferredLoserId     = homeWon ? awayUser.discordId : homeUser.discordId;
-      inferredWinnerCoins = H2H_WIN_PAYOUT;
-      inferredLoserCoins  = H2H_LOSS_PAYOUT;
-      inferredPointDiff   = Math.abs(homeScore - awayScore);
+      // Both registered: use schedule status to distinguish H2H from force win/autopilot
+      if (schedStatus === 3) {
+        inferredType        = "h2h";
+        inferredWinnerId    = schedHomeWon ? homeUser.discordId : awayUser.discordId;
+        inferredLoserId     = schedHomeWon ? awayUser.discordId : homeUser.discordId;
+        inferredWinnerCoins = H2H_WIN_PAYOUT;
+        inferredLoserCoins  = H2H_LOSS_PAYOUT;
+        inferredPointDiff   = schedSpread;
+      } else {
+        // status=2 or unknown — treat as CPU win (force/autopilot)
+        inferredType        = "cpu";
+        inferredWinnerId    = schedHomeWon ? homeUser.discordId : awayUser.discordId;
+        inferredWinnerCoins = CPU_WIN_PAYOUT;
+        inferredLoserCoins  = 0;
+        inferredPointDiff   = schedSpread;
+      }
     } else if (homeUser || awayUser) {
       const humanUser  = homeUser ?? awayUser!;
-      const humanScore = homeUser ? (schedGame.homeScore ?? 0) : (schedGame.awayScore ?? 0);
-      const cpuScore   = homeUser ? (schedGame.awayScore ?? 0) : (schedGame.homeScore ?? 0);
+      const humanScore = homeUser ? schedHomeScore : schedAwayScore;
+      const cpuScore   = homeUser ? schedAwayScore : schedHomeScore;
       inferredType        = humanScore > cpuScore ? "cpu" : "none";
       inferredWinnerId    = humanScore > cpuScore ? humanUser.discordId : null;
       inferredWinnerCoins = CPU_WIN_PAYOUT;
       inferredLoserCoins  = 0;
-      inferredPointDiff   = Math.abs(humanScore - cpuScore);
+      inferredPointDiff   = schedSpread;
     } else {
       inferredType = "none";
+    }
+  }
+
+  // If type is known but winner IDs are missing (older MCA-processed games lacked full metadata),
+  // recover them from the schedule scores and user registration.
+  if (inferredType && !inferredWinnerId && inferredType !== "none") {
+    if (inferredType === "h2h" && homeUser && awayUser) {
+      inferredWinnerId    = schedHomeWon ? homeUser.discordId : awayUser.discordId;
+      inferredLoserId     = schedHomeWon ? awayUser.discordId : homeUser.discordId;
+      if (!inferredWinnerCoins) inferredWinnerCoins = H2H_WIN_PAYOUT;
+      if (!inferredLoserCoins)  inferredLoserCoins  = H2H_LOSS_PAYOUT;
+      if (!inferredPointDiff)   inferredPointDiff   = schedSpread;
+    } else if (inferredType === "cpu") {
+      const winnerUser = schedHomeWon ? (homeUser ?? awayUser) : (awayUser ?? homeUser);
+      if (winnerUser) {
+        inferredWinnerId = winnerUser.discordId;
+        if (!inferredWinnerCoins) inferredWinnerCoins = CPU_WIN_PAYOUT;
+        if (!inferredPointDiff)   inferredPointDiff   = schedSpread;
+      }
     }
   }
 
@@ -279,6 +311,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await logTransaction(inferredWinnerId, -inferredWinnerCoins, "removecoins",
         `[Correction Wk${week}] Reversed incorrect CPU win payout`);
       reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from prior winner`);
+    }
+
+    // Remove the CPU game log entry (stored with "[CPU] teamName" label — search both formats)
+    const cpuLoserTeam   = inferredWinnerId === homeUser?.discordId ? awayTeam : homeTeam;
+    const cpuLabelExact  = `[cpu] ${cpuLoserTeam.toLowerCase()}`;
+    const cpuLabelPlain  = cpuLoserTeam.toLowerCase();
+    const [cpuWinnerLog] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
+      .where(and(
+        eq(gameLogTable.discordId, inferredWinnerId),
+        eq(gameLogTable.seasonId,  season.id),
+        sql`lower(${gameLogTable.opponentLabel}) IN (${cpuLabelExact}, ${cpuLabelPlain})`,
+      ))
+      .orderBy(desc(gameLogTable.id)).limit(1);
+    if (cpuWinnerLog) {
+      await db.delete(gameLogTable).where(eq(gameLogTable.id, cpuWinnerLog.id));
+      reversalLines.push(`❌ Removed CPU win game log entry`);
     }
   }
 

@@ -452,7 +452,15 @@ export async function processWeekScores(
       const isTrueH2H   = bothReg && status === 3;
       const isForcedCPU = bothReg && status === 2;
 
-      let payoutType = "none";
+      // Payout metadata — populated in each branch, saved to DB for admin-correctpayout reversals
+      let payoutMeta: {
+        payoutType: string;
+        winnerDiscordId?: string | null;
+        loserDiscordId?: string | null;
+        winnerCoins?: number | null;
+        loserCoins?: number | null;
+        appliedPointDiff?: number | null;
+      } = { payoutType: "none" };
 
       if (isTrueH2H) {
         if (!isTie) {
@@ -497,7 +505,12 @@ export async function processWeekScores(
             milestoneLines.push(`🎯 **${winnerTeam}** hit **${milestone.label}** → +${milestone.bonus} coins`);
           }
 
-          payoutType = "h2h";
+          payoutMeta = {
+            payoutType: "h2h",
+            winnerDiscordId: winnerId, loserDiscordId: loserId,
+            winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT,
+            appliedPointDiff: spread,
+          };
           await db.insert(franchiseGameParticipantsTable)
             .values([
               { seasonId: season.id, week: String(weekNum), discordId: winnerId, gameType: "h2h" },
@@ -516,15 +529,20 @@ export async function processWeekScores(
         const winnerId   = homeWon ? hData.discordId! : aData.discordId!;
         const winnerTeam = homeWon ? hData.fullName   : aData.fullName;
         const loserTeam  = homeWon ? aData.fullName   : hData.fullName;
-        const spread     = homeScore - awayScore;
+        const spread     = Math.abs(homeScore - awayScore);
 
         if (!isTie) {
           await addBalance(winnerId, CPU_WIN_PAYOUT);
           await logTransaction(winnerId, CPU_WIN_PAYOUT, "addcoins",
             `MCA webhook: CPU win vs ${loserTeam} (${hiScore}–${loScore})`);
           payoutLines.push(`🤖 **${winnerTeam}** +${CPU_WIN_PAYOUT} *(force/autopilot vs ${loserTeam} ${hiScore}–${loScore})*`);
-          await appendGameLog(winnerId, season.id, "win", Math.abs(spread), `[CPU] ${loserTeam}`);
-          payoutType = "cpu";
+          await appendGameLog(winnerId, season.id, "win", spread, `[CPU] ${loserTeam}`);
+          payoutMeta = {
+            payoutType: "cpu",
+            winnerDiscordId: winnerId, loserDiscordId: null,
+            winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0,
+            appliedPointDiff: spread,
+          };
           for (const uid of [hData.discordId!, aData.discordId!]) {
             await db.insert(franchiseGameParticipantsTable)
               .values({ seasonId: season.id, week: String(weekNum), discordId: uid, gameType: "cpu" })
@@ -547,18 +565,23 @@ export async function processWeekScores(
           await logTransaction(humanData.discordId!, CPU_WIN_PAYOUT, "addcoins",
             `MCA webhook: CPU win vs ${cpuData.fullName} (${humanScore}–${cpuScore})`);
           payoutLines.push(`🤖 **${humanData.fullName}** +${CPU_WIN_PAYOUT} *(CPU win vs ${cpuData.fullName} ${humanScore}–${cpuScore})*`);
+          payoutMeta = {
+            payoutType: "cpu",
+            winnerDiscordId: humanData.discordId!, loserDiscordId: null,
+            winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0,
+            appliedPointDiff: Math.abs(spread),
+          };
         }
         await appendGameLog(humanData.discordId!, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuData.fullName}`);
         await db.insert(franchiseGameParticipantsTable)
           .values({ seasonId: season.id, week: String(weekNum), discordId: humanData.discordId!, gameType: "cpu" })
           .onConflictDoNothing();
-        if (humanWon) payoutType = "cpu";
       }
 
       await db.insert(franchiseProcessedGamesTable)
         .values({
           gameId,
-          payoutType,
+          ...payoutMeta,
           seasonIdRef: season.id,
           weekIndexRef: weekIndexTarget,
           homeTeamRef: hData.fullName.toLowerCase(),
