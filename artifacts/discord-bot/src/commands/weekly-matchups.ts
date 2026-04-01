@@ -1,6 +1,6 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits,
+  PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -8,6 +8,8 @@ import {
   teamSeasonStatsTable, gotwHistoryTable, userRecordsTable,
 } from "@workspace/db";
 import { eq, and, asc, inArray, lt, gte } from "drizzle-orm";
+
+const MATCHUPS_CHANNEL_ID = "1478777175128932463";
 
 const MIN_COMPLETED_STATUS = 2; // Madden: 1=upcoming, 2=CPU-completed, 3=H2H-completed
 const GOTW_COOLDOWN_WEEKS = 4;  // users who were in GOTW within last 4 weeks are excluded
@@ -18,7 +20,7 @@ export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply({ ephemeral: true });
 
   // ── Get active season ──────────────────────────────────────────────────────
   const [season] = await db.select()
@@ -132,7 +134,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     embed.addFields(gotwField);
   }
 
-  await interaction.editReply({ embeds: [embed] });
+  // ── Post to dedicated matchups channel ─────────────────────────────────────
+  const targetChannel = interaction.client.channels.cache.get(MATCHUPS_CHANNEL_ID)
+    ?? await interaction.client.channels.fetch(MATCHUPS_CHANNEL_ID).catch(() => null);
+
+  if (!targetChannel || !targetChannel.isTextBased()) {
+    await interaction.editReply({
+      content: `❌ Could not find or access the matchups channel (\`${MATCHUPS_CHANNEL_ID}\`).`,
+    });
+    return;
+  }
+
+  await (targetChannel as TextChannel).send({ embeds: [embed] });
+  await interaction.editReply({ content: `✅ Week ${currentWeekNum} matchups posted to <#${MATCHUPS_CHANNEL_ID}>.` });
 }
 
 // ── GOTW recommendation helper ─────────────────────────────────────────────────
