@@ -47,6 +47,8 @@ import * as statLeaders from "./commands/statleaders.js";
 import * as tradeBlock from "./commands/tradeblock.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
 import * as webhookurl from "./commands/webhookurl.js";
+import * as adminCatchup from "./commands/admin-catchup.js";
+import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -72,6 +74,8 @@ const commands = [
   tradeBlock,
   postFullSeasonSchedule,
   webhookurl,
+  adminCatchup,
+  adminFixPlayerNames,
 ].map(c => c.data.toJSON());
 
 commands.push(
