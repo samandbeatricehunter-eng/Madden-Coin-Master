@@ -112,6 +112,83 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/rece
   res.status(200).json({ status: "received" });
 });
 
+// ── /week/:weekType/:weekNum/schedules — per-week game results → payouts ──────
+// The MCA sends scores here (NOT /scores). This is the primary payout trigger.
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/schedules", validateKey, async (req, res) => {
+  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  res.status(200).json({ status: "received" });
+  console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing payouts...`);
+  const result = await processWeekScores(req.body, weekNum).catch(err => ({
+    ok: false, message: String(err),
+    gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
+    payoutLines: [] as string[], milestoneLines: [] as string[],
+    weekNum, seasonId: 0,
+  }));
+  console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
+
+  if (!result.ok) {
+    console.error(`[mca/week${weekNum}/schedules] Processing failed:`, result.message);
+    if (COMMISSIONER_CHANNEL_ID) {
+      sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+        title: `❌ Week ${weekNum} Import Failed`,
+        description: result.message,
+        color: 0xed4245,
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  if (COMMISSIONER_CHANNEL_ID) {
+    const fields = [];
+    if (result.payoutLines.length > 0) {
+      fields.push({ name: "💰 Coin Payouts", value: result.payoutLines.slice(0, 10).join("\n") || "None", inline: false });
+    }
+    if (result.milestoneLines.length > 0) {
+      fields.push({ name: "🎯 Milestones", value: result.milestoneLines.join("\n"), inline: false });
+    }
+    fields.push({
+      name: "📊 Summary",
+      value: [
+        `✅ Games paid: **${result.gamesProcessed}**`,
+        result.gamesDuplicate   > 0 ? `⏭ Already processed: ${result.gamesDuplicate}` : null,
+        result.gamesCpuVsCpu    > 0 ? `🤖 CPU vs CPU skipped: ${result.gamesCpuVsCpu}` : null,
+        result.gamesUnregistered > 0 ? `⚠️ Unregistered players: ${result.gamesUnregistered}` : null,
+      ].filter(Boolean).join("\n") || "No games to process",
+      inline: false,
+    });
+    await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+      title: `✅ Week ${weekNum} — MCA Import Complete`,
+      color: 0x57f287,
+      fields,
+      footer: { text: `Season ${result.seasonId} · Madden Companion App` },
+    }).catch(() => {});
+  }
+
+  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0) {
+    const lines = result.payoutLines
+      .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
+      .map(l => {
+        const m = l.match(/\*\*(.+?)\*\* \+\d+ \| 🎮 \*\*(.+?)\*\* \+\d+ \*\((\d+)–(\d+)\)\*/);
+        if (m) return `🏆 **${m[1]}** ${m[3]} — ${m[4]} **${m[2]}**`;
+        return l;
+      });
+    if (lines.length > 0) {
+      await sendDiscordEmbed(GENERAL_CHANNEL_ID, {
+        title: `🏈 Week ${weekNum} Results`,
+        description: lines.join("\n"),
+        color: 0xf0b132,
+      }).catch(() => {});
+    }
+  }
+});
+
+// ── /team/:teamId/roster — per-team roster (no-op, we don't use this data) ───
+router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, (req, res) => {
+  res.status(200).json({ status: "received" });
+  console.log(`[mca/team/${req.params["teamId"]}/roster] Acknowledged (no-op)`);
+});
+
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
