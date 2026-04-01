@@ -110,7 +110,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .sort((a, b) => b.val - a.val)
       .slice(0, topN);
 
-    if (!entries.length) return "*No data found*";
+    if (!entries.length) return "*Player stats not in this franchise ZIP — your export only includes team-level data (yards, pts). Individual player stats are unavailable.*";
     return entries.map(({ p, val }, i) => {
       const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Unknown";
       const team = p.teamName || "?";
@@ -127,7 +127,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       name:   t.teamName,
       offYds: t.offYds,
       offTDs: t.offTDs,
-      detail: `${t.offYds.toLocaleString()} yds / ${t.offTDs} TDs`,
+      detail: `${t.offYds.toLocaleString()} yds / ${t.offTDs} pts`,
       score:  0,
     }));
 
@@ -155,7 +155,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       name:       t.teamName,
       totalYds:   t.defPassYds + t.defRushYds,
       tdsAllowed: t.defTDs,
-      detail:     `${(t.defPassYds + t.defRushYds).toLocaleString()} total yds allowed / ${t.defTDs} TDs allowed`,
+      detail:     `${(t.defPassYds + t.defRushYds).toLocaleString()} total yds allowed / ${t.defTDs} pts against`,
       score:      0,
     }));
 
@@ -201,7 +201,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         offYds: t.offYds, offTDs: t.offTDs,
         defYds: defYdsTotal, defTDs: t.defTDs,
         wlDiff, score: 0,
-        detail: `${wins}W–${losses}L | Off: ${t.offYds.toLocaleString()} yds / ${t.offTDs} TDs | Def allowed: ${defYdsTotal.toLocaleString()} yds`,
+        detail: `${wins}W–${losses}L | Off: ${t.offYds.toLocaleString()} yds / ${t.offTDs} pts | Def allowed: ${defYdsTotal.toLocaleString()} yds`,
       });
     }
 

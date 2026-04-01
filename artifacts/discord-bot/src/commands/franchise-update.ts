@@ -823,15 +823,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
         };
         const getOffTDs = (t: any): number =>
-          getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs","offPassTDs","passTDs");
+          // Prefer dedicated TD fields; fall back to ptsFor (points scored) if no TD field exists
+          getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs","offPassTDs","passTDs",
+               "ptsFor","ptsScored","pointsFor","totalPoints","pointsScored");
         const getDefPassYds = (t: any): number =>
           getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
         const getDefRushYds = (t: any): number =>
           getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
         const getDefTDs = (t: any): number =>
-          // "defTDs" in Madden = TDs scored BY the defense (pick-6s etc.) — not TDs allowed
-          // Use ptsAllowed / totalTDsAllowed fields only
-          getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts","totalTDsAllowed","ptsScoredAllowed");
+          // Prefer dedicated "pts allowed" fields; fall back to ptsAgainst if nothing else exists
+          getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts","totalTDsAllowed","ptsScoredAllowed",
+               "ptsAgainst","pointsAgainst","defPts");
         const getDefTotalYds = (t: any): number => {
           const sum = getDefPassYds(t) + getDefRushYds(t);
           if (sum > 0) return sum;
