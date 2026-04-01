@@ -932,19 +932,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           const user = findUser(teamData.name, teamData.nickname);
           const discordId = user?.discordId ?? null;
 
-          const vals = {
+          const updatedAt = new Date();
+          const teamInsert: typeof teamSeasonStatsTable.$inferInsert = {
             seasonId: season.id, teamId, discordId,
             teamName: teamData.name,
             offYds, offPassYds, offRushYds, offTDs, defPassYds, defRushYds, defTDs,
-            wins: teamWins, losses: teamLosses,
-            updatedAt: new Date(),
+            wins: teamWins, losses: teamLosses, updatedAt,
           };
           upserts.push(
             db.insert(teamSeasonStatsTable)
-              .values(vals as any)
+              .values(teamInsert)
               .onConflictDoUpdate({
                 target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId],
-                set:    vals as any,
+                set: {
+                  discordId, teamName: teamData.name,
+                  offYds, offPassYds, offRushYds, offTDs, defPassYds, defRushYds, defTDs,
+                  wins: teamWins, losses: teamLosses, updatedAt,
+                },
               }),
           );
           teamStatsUpserted++;
@@ -1022,7 +1026,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           const tackleSolo   = getN2(p, "tackleSolo","soloTackles","tackleSoloTotal");
           const tackleAssist = getN2(p, "tackleAssist","assistTackles","tackleAssistTotal");
 
-          const vals2 = {
+          const playerInsert: typeof playerSeasonStatsTable.$inferInsert = {
             seasonId:     season.id,
             playerId,
             teamId:       isNaN(teamId) ? -1 : teamId,
@@ -1044,13 +1048,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             tackleAssist,
             updatedAt:    new Date(),
           };
-
           batchUpserts.push(
             db.insert(playerSeasonStatsTable)
-              .values(vals2 as any)
+              .values(playerInsert)
               .onConflictDoUpdate({
                 target: [playerSeasonStatsTable.seasonId, playerSeasonStatsTable.playerId],
-                set:    vals2 as any,
+                set: {
+                  teamId: playerInsert.teamId!, teamName: playerInsert.teamName!,
+                  discordId: playerInsert.discordId ?? null,
+                  firstName: playerInsert.firstName!, lastName: playerInsert.lastName!,
+                  position: playerInsert.position!,
+                  passYds: playerInsert.passYds!, passTDs: playerInsert.passTDs!,
+                  rushYds: playerInsert.rushYds!, rushTDs: playerInsert.rushTDs!,
+                  recYds: playerInsert.recYds!, recTDs: playerInsert.recTDs!,
+                  sacks: playerInsert.sacks!, defInts: playerInsert.defInts!,
+                  totalTackles: playerInsert.totalTackles!, tackleSolo: playerInsert.tackleSolo!,
+                  tackleAssist: playerInsert.tackleAssist!, updatedAt: playerInsert.updatedAt!,
+                },
               }),
           );
           playerStatsUpserted++;

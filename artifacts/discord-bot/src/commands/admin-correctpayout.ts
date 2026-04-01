@@ -4,10 +4,11 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  usersTable, userRecordsTable, franchiseScheduleTable, franchiseProcessedGamesTable, gameLogTable,
+  usersTable, userRecordsTable, franchiseScheduleTable, franchiseProcessedGamesTable,
+  gameLogTable, coinTransactionsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc } from "drizzle-orm";
-import { getOrCreateActiveSeason, addBalance, logTransaction, upsertH2HRecord, appendGameLog } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
 const H2H_WIN_PAYOUT  = 50;
 const H2H_LOSS_PAYOUT = 20;
@@ -232,191 +233,235 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   }
 
-  // ── Reverse the prior payout ───────────────────────────────────────────────
-  const reversalLines: string[] = [];
+  // ── Pre-validate new winner/loser before any writes ──────────────────────
+  type UserRow = typeof usersTable.$inferSelect;
+  let newWinnerUser: UserRow | null = null;
+  let newLoserUser:  UserRow | null = null;
+  let newWinnerTeamName = "";
+  let newLoserTeamName  = "";
+  let newWinIsHome      = false;
+
+  if (newType === "h2h" && winner && pointDiff !== null) {
+    const winnerLower = winner.toLowerCase();
+    const [wu] = await db.select().from(usersTable)
+      .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
+    if (!wu) {
+      await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
+      return;
+    }
+    const lu = wu.discordId === homeUser?.discordId ? awayUser : homeUser;
+    if (!lu) {
+      await interaction.editReply(`❌ Could not find the loser user — both teams must be registered for an H2H correction.`);
+      return;
+    }
+    newWinnerUser     = wu;
+    newLoserUser      = lu;
+    newWinnerTeamName = wu.team ?? winner;
+    newLoserTeamName  = lu.team ?? "Unknown";
+  } else if (newType === "cpu" && winner) {
+    const winnerLower = winner.toLowerCase();
+    const [wu] = await db.select().from(usersTable)
+      .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
+    if (!wu) {
+      await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
+      return;
+    }
+    newWinnerUser    = wu;
+    newWinIsHome     = winner.toLowerCase() === homeLower;
+    newLoserTeamName = newWinIsHome ? awayTeam : homeTeam;
+  }
+
+  // ── Find game log entries to remove BEFORE the transaction (read-only) ───
+  let winnerLogId:    number | null = null;
+  let loserLogId:     number | null = null;
+  let cpuWinnerLogId: number | null = null;
 
   if (inferredType === "h2h" && inferredWinnerId && inferredLoserId) {
-    if (inferredWinnerCoins > 0) {
-      await db.update(usersTable)
-        .set({ balance: sql`${usersTable.balance} - ${inferredWinnerCoins}`, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, inferredWinnerId));
-      await logTransaction(inferredWinnerId, -inferredWinnerCoins, "removecoins",
-        `[Correction Wk${week}] Reversed incorrect H2H win payout`);
-      reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from winner`);
-    }
-    if (inferredLoserCoins > 0) {
-      await db.update(usersTable)
-        .set({ balance: sql`${usersTable.balance} - ${inferredLoserCoins}`, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, inferredLoserId));
-      await logTransaction(inferredLoserId, -inferredLoserCoins, "removecoins",
-        `[Correction Wk${week}] Reversed incorrect H2H loss payout`);
-      reversalLines.push(`❌ Removed ${inferredLoserCoins} coins from loser`);
-    }
-
-    // Undo H2H records
-    await db.update(userRecordsTable).set({
-      wins:              sql`${userRecordsTable.wins}   - 1`,
-      pointDifferential: sql`${userRecordsTable.pointDifferential} - ${inferredPointDiff}`,
-      updatedAt: new Date(),
-    }).where(and(eq(userRecordsTable.discordId, inferredWinnerId), eq(userRecordsTable.seasonId, season.id)));
-
-    await db.update(userRecordsTable).set({
-      losses:            sql`${userRecordsTable.losses} - 1`,
-      pointDifferential: sql`${userRecordsTable.pointDifferential} + ${inferredPointDiff}`,
-      updatedAt: new Date(),
-    }).where(and(eq(userRecordsTable.discordId, inferredLoserId), eq(userRecordsTable.seasonId, season.id)));
-
-    // Undo all-time counters
-    await db.update(usersTable)
-      .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   - 1`, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, inferredWinnerId));
-    await db.update(usersTable)
-      .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} - 1`, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, inferredLoserId));
-
-    reversalLines.push("❌ Reversed H2H win/loss records and all-time counters");
-
-    // Remove most recent game log entries for this game
     const loserTeamForWinner = inferredLoserId === homeUser?.discordId ? schedGame.homeTeamName : schedGame.awayTeamName;
     const winnerTeamForLoser = inferredWinnerId === homeUser?.discordId ? schedGame.homeTeamName : schedGame.awayTeamName;
-
-    const [winnerLog] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
+    const [wl] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
       .where(and(
         eq(gameLogTable.discordId, inferredWinnerId),
         eq(gameLogTable.seasonId,  season.id),
         sql`lower(${gameLogTable.opponentLabel}) = ${loserTeamForWinner.toLowerCase()}`,
-      ))
-      .orderBy(desc(gameLogTable.id)).limit(1);
-    if (winnerLog) await db.delete(gameLogTable).where(eq(gameLogTable.id, winnerLog.id));
-
-    const [loserLog] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
+      )).orderBy(desc(gameLogTable.id)).limit(1);
+    const [ll] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
       .where(and(
         eq(gameLogTable.discordId, inferredLoserId),
         eq(gameLogTable.seasonId,  season.id),
         sql`lower(${gameLogTable.opponentLabel}) = ${winnerTeamForLoser.toLowerCase()}`,
-      ))
-      .orderBy(desc(gameLogTable.id)).limit(1);
-    if (loserLog) await db.delete(gameLogTable).where(eq(gameLogTable.id, loserLog.id));
-
-    reversalLines.push("❌ Removed incorrect H2H game log entries");
-
+      )).orderBy(desc(gameLogTable.id)).limit(1);
+    winnerLogId = wl?.id ?? null;
+    loserLogId  = ll?.id ?? null;
   } else if (inferredType === "cpu" && inferredWinnerId) {
-    if (inferredWinnerCoins > 0) {
-      await db.update(usersTable)
-        .set({ balance: sql`${usersTable.balance} - ${inferredWinnerCoins}`, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, inferredWinnerId));
-      await logTransaction(inferredWinnerId, -inferredWinnerCoins, "removecoins",
-        `[Correction Wk${week}] Reversed incorrect CPU win payout`);
-      reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from prior winner`);
-    }
-
-    // Remove the CPU game log entry (stored with "[CPU] teamName" label — search both formats)
-    const cpuLoserTeam   = inferredWinnerId === homeUser?.discordId ? awayTeam : homeTeam;
-    const cpuLabelExact  = `[cpu] ${cpuLoserTeam.toLowerCase()}`;
-    const cpuLabelPlain  = cpuLoserTeam.toLowerCase();
-    const [cpuWinnerLog] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
+    const cpuLoserTeam  = inferredWinnerId === homeUser?.discordId ? awayTeam : homeTeam;
+    const cpuLabelExact = `[cpu] ${cpuLoserTeam.toLowerCase()}`;
+    const cpuLabelPlain = cpuLoserTeam.toLowerCase();
+    const [cwl] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
       .where(and(
         eq(gameLogTable.discordId, inferredWinnerId),
         eq(gameLogTable.seasonId,  season.id),
         sql`lower(${gameLogTable.opponentLabel}) IN (${cpuLabelExact}, ${cpuLabelPlain})`,
-      ))
-      .orderBy(desc(gameLogTable.id)).limit(1);
-    if (cpuWinnerLog) {
-      await db.delete(gameLogTable).where(eq(gameLogTable.id, cpuWinnerLog.id));
-      reversalLines.push(`❌ Removed CPU win game log entry`);
-    }
+      )).orderBy(desc(gameLogTable.id)).limit(1);
+    cpuWinnerLogId = cwl?.id ?? null;
   }
 
-  // ── Apply the correct payout ───────────────────────────────────────────────
-  const applyLines: string[] = [];
-  let newPayoutMeta: {
+  // ── Atomically reverse the prior payout and apply the correct one ────────
+  const reversalLines: string[] = [];
+  const applyLines:    string[] = [];
+  type PayoutMeta = {
     payoutType: string; winnerDiscordId?: string | null; loserDiscordId?: string | null;
     winnerCoins?: number | null; loserCoins?: number | null; appliedPointDiff?: number | null;
-  } = { payoutType: newType };
-
-  if (newType === "h2h" && winner && pointDiff !== null) {
-    const winnerLower = winner.toLowerCase();
-    const [winnerUser] = await db.select().from(usersTable)
-      .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
-    if (!winnerUser) {
-      await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
-      return;
-    }
-    const loserUser = winnerUser.discordId === homeUser?.discordId ? awayUser : homeUser;
-    if (!loserUser) {
-      await interaction.editReply(`❌ Could not find the loser user — both teams must be registered for an H2H correction.`);
-      return;
-    }
-    const winnerTeamName = winnerUser.team ?? winner;
-    const loserTeamName  = loserUser.team  ?? "Unknown";
-
-    await addBalance(winnerUser.discordId, H2H_WIN_PAYOUT);
-    await logTransaction(winnerUser.discordId, H2H_WIN_PAYOUT, "addcoins",
-      `[Correction Wk${week}] H2H win vs ${loserTeamName} (+${pointDiff})`);
-    await addBalance(loserUser.discordId, H2H_LOSS_PAYOUT);
-    await logTransaction(loserUser.discordId, H2H_LOSS_PAYOUT, "addcoins",
-      `[Correction Wk${week}] H2H loss vs ${winnerTeamName} (−${pointDiff})`);
-    applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins → **${winnerTeamName}** | +${H2H_LOSS_PAYOUT} coins → **${loserTeamName}**`);
-
-    await upsertH2HRecord(winnerUser.discordId, season.id, true,   pointDiff);
-    await upsertH2HRecord(loserUser.discordId,  season.id, false, -pointDiff);
-    applyLines.push(`✅ Records: **${winnerTeamName}** +1W, **${loserTeamName}** +1L`);
-
-    await appendGameLog(winnerUser.discordId, season.id, "win",   pointDiff,  loserTeamName);
-    await appendGameLog(loserUser.discordId,  season.id, "loss", -pointDiff, winnerTeamName);
-
-    await db.update(usersTable)
-      .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, winnerUser.discordId));
-    await db.update(usersTable)
-      .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, loserUser.discordId));
-
-    newPayoutMeta = {
-      payoutType: "h2h", winnerDiscordId: winnerUser.discordId, loserDiscordId: loserUser.discordId,
-      winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT, appliedPointDiff: pointDiff,
-    };
-
-  } else if (newType === "cpu" && winner) {
-    const winnerLower = winner.toLowerCase();
-    const [winnerUser] = await db.select().from(usersTable)
-      .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
-    if (!winnerUser) {
-      await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
-      return;
-    }
-    const loserTeamName = winnerLower === homeLower ? awayTeam : homeTeam;
-    await addBalance(winnerUser.discordId, CPU_WIN_PAYOUT);
-    await logTransaction(winnerUser.discordId, CPU_WIN_PAYOUT, "addcoins",
-      `[Correction Wk${week}] CPU win vs ${loserTeamName} (force/autopilot)`);
-    applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins → **${winnerUser.team ?? winner}** *(no record change)*`);
-
-    const winIsHome  = winnerLower === homeLower;
-    const wScore     = winIsHome ? (schedGame.homeScore ?? 0) : (schedGame.awayScore ?? 0);
-    const lScore     = winIsHome ? (schedGame.awayScore ?? 0) : (schedGame.homeScore ?? 0);
-    await appendGameLog(winnerUser.discordId, season.id, "win", wScore - lScore, `[CPU] ${loserTeamName}`);
-
-    newPayoutMeta = {
-      payoutType: "cpu", winnerDiscordId: winnerUser.discordId,
-      winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0, appliedPointDiff: Math.abs(wScore - lScore),
-    };
-
-  } else if (newType === "none") {
-    applyLines.push("✅ Game voided — no payouts applied");
-  }
-
-  // ── Update the processed game record with new metadata ────────────────────
+  };
+  let newPayoutMeta: PayoutMeta = { payoutType: newType };
   const gameIdToUpdate = processedGame.gameId;
-  await db.update(franchiseProcessedGamesTable)
-    .set({
-      payoutType:       newPayoutMeta.payoutType,
-      winnerDiscordId:  newPayoutMeta.winnerDiscordId ?? null,
-      loserDiscordId:   newPayoutMeta.loserDiscordId  ?? null,
-      winnerCoins:      newPayoutMeta.winnerCoins     ?? null,
-      loserCoins:       newPayoutMeta.loserCoins      ?? null,
-      appliedPointDiff: newPayoutMeta.appliedPointDiff ?? null,
-    })
-    .where(eq(franchiseProcessedGamesTable.gameId, gameIdToUpdate));
+
+  await db.transaction(async (tx) => {
+    // ── Reverse ────────────────────────────────────────────────────────────
+    if (inferredType === "h2h" && inferredWinnerId && inferredLoserId) {
+      if (inferredWinnerCoins > 0) {
+        await tx.update(usersTable)
+          .set({ balance: sql`${usersTable.balance} - ${inferredWinnerCoins}`, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, inferredWinnerId));
+        await tx.insert(coinTransactionsTable).values({
+          discordId: inferredWinnerId, amount: -inferredWinnerCoins, type: "removecoins",
+          description: `[Correction Wk${week}] Reversed incorrect H2H win payout`, relatedUserId: null,
+        });
+        reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from winner`);
+      }
+      if (inferredLoserCoins > 0) {
+        await tx.update(usersTable)
+          .set({ balance: sql`${usersTable.balance} - ${inferredLoserCoins}`, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, inferredLoserId));
+        await tx.insert(coinTransactionsTable).values({
+          discordId: inferredLoserId, amount: -inferredLoserCoins, type: "removecoins",
+          description: `[Correction Wk${week}] Reversed incorrect H2H loss payout`, relatedUserId: null,
+        });
+        reversalLines.push(`❌ Removed ${inferredLoserCoins} coins from loser`);
+      }
+      await tx.update(userRecordsTable).set({
+        wins:              sql`${userRecordsTable.wins}   - 1`,
+        pointDifferential: sql`${userRecordsTable.pointDifferential} - ${inferredPointDiff}`,
+        updatedAt: new Date(),
+      }).where(and(eq(userRecordsTable.discordId, inferredWinnerId), eq(userRecordsTable.seasonId, season.id)));
+      await tx.update(userRecordsTable).set({
+        losses:            sql`${userRecordsTable.losses} - 1`,
+        pointDifferential: sql`${userRecordsTable.pointDifferential} + ${inferredPointDiff}`,
+        updatedAt: new Date(),
+      }).where(and(eq(userRecordsTable.discordId, inferredLoserId), eq(userRecordsTable.seasonId, season.id)));
+      await tx.update(usersTable)
+        .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   - 1`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, inferredWinnerId));
+      await tx.update(usersTable)
+        .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} - 1`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, inferredLoserId));
+      reversalLines.push("❌ Reversed H2H win/loss records and all-time counters");
+      if (winnerLogId) await tx.delete(gameLogTable).where(eq(gameLogTable.id, winnerLogId));
+      if (loserLogId)  await tx.delete(gameLogTable).where(eq(gameLogTable.id, loserLogId));
+      reversalLines.push("❌ Removed incorrect H2H game log entries");
+
+    } else if (inferredType === "cpu" && inferredWinnerId) {
+      if (inferredWinnerCoins > 0) {
+        await tx.update(usersTable)
+          .set({ balance: sql`${usersTable.balance} - ${inferredWinnerCoins}`, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, inferredWinnerId));
+        await tx.insert(coinTransactionsTable).values({
+          discordId: inferredWinnerId, amount: -inferredWinnerCoins, type: "removecoins",
+          description: `[Correction Wk${week}] Reversed incorrect CPU win payout`, relatedUserId: null,
+        });
+        reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from prior winner`);
+      }
+      if (cpuWinnerLogId) {
+        await tx.delete(gameLogTable).where(eq(gameLogTable.id, cpuWinnerLogId));
+        reversalLines.push("❌ Removed CPU win game log entry");
+      }
+    }
+
+    // ── Apply ──────────────────────────────────────────────────────────────
+    if (newType === "h2h" && newWinnerUser && newLoserUser && pointDiff !== null) {
+      await tx.update(usersTable)
+        .set({ balance: sql`${usersTable.balance} + ${H2H_WIN_PAYOUT}`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, newWinnerUser.discordId));
+      await tx.insert(coinTransactionsTable).values({
+        discordId: newWinnerUser.discordId, amount: H2H_WIN_PAYOUT, type: "addcoins",
+        description: `[Correction Wk${week}] H2H win vs ${newLoserTeamName} (+${pointDiff})`, relatedUserId: null,
+      });
+      await tx.update(usersTable)
+        .set({ balance: sql`${usersTable.balance} + ${H2H_LOSS_PAYOUT}`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, newLoserUser.discordId));
+      await tx.insert(coinTransactionsTable).values({
+        discordId: newLoserUser.discordId, amount: H2H_LOSS_PAYOUT, type: "addcoins",
+        description: `[Correction Wk${week}] H2H loss vs ${newWinnerTeamName} (−${pointDiff})`, relatedUserId: null,
+      });
+      applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins → **${newWinnerTeamName}** | +${H2H_LOSS_PAYOUT} coins → **${newLoserTeamName}**`);
+
+      await tx.update(userRecordsTable).set({
+        wins: sql`${userRecordsTable.wins} + 1`,
+        pointDifferential: sql`${userRecordsTable.pointDifferential} + ${pointDiff}`,
+        updatedAt: new Date(),
+      }).where(and(eq(userRecordsTable.discordId, newWinnerUser.discordId), eq(userRecordsTable.seasonId, season.id)));
+      await tx.update(userRecordsTable).set({
+        losses: sql`${userRecordsTable.losses} + 1`,
+        pointDifferential: sql`${userRecordsTable.pointDifferential} - ${pointDiff}`,
+        updatedAt: new Date(),
+      }).where(and(eq(userRecordsTable.discordId, newLoserUser.discordId), eq(userRecordsTable.seasonId, season.id)));
+      applyLines.push(`✅ Records: **${newWinnerTeamName}** +1W, **${newLoserTeamName}** +1L`);
+
+      await tx.insert(gameLogTable).values({
+        discordId: newWinnerUser.discordId, seasonId: season.id, result: "win",
+        pointSpread: pointDiff, opponentLabel: newLoserTeamName, gameType: "regular_season",
+      });
+      await tx.insert(gameLogTable).values({
+        discordId: newLoserUser.discordId, seasonId: season.id, result: "loss",
+        pointSpread: -pointDiff, opponentLabel: newWinnerTeamName, gameType: "regular_season",
+      });
+      await tx.update(usersTable)
+        .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, newWinnerUser.discordId));
+      await tx.update(usersTable)
+        .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, newLoserUser.discordId));
+      newPayoutMeta = {
+        payoutType: "h2h", winnerDiscordId: newWinnerUser.discordId, loserDiscordId: newLoserUser.discordId,
+        winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT, appliedPointDiff: pointDiff,
+      };
+
+    } else if (newType === "cpu" && newWinnerUser) {
+      const wScore = newWinIsHome ? (schedGame.homeScore ?? 0) : (schedGame.awayScore ?? 0);
+      const lScore = newWinIsHome ? (schedGame.awayScore ?? 0) : (schedGame.homeScore ?? 0);
+      await tx.update(usersTable)
+        .set({ balance: sql`${usersTable.balance} + ${CPU_WIN_PAYOUT}`, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, newWinnerUser.discordId));
+      await tx.insert(coinTransactionsTable).values({
+        discordId: newWinnerUser.discordId, amount: CPU_WIN_PAYOUT, type: "addcoins",
+        description: `[Correction Wk${week}] CPU win vs ${newLoserTeamName} (force/autopilot)`, relatedUserId: null,
+      });
+      applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins → **${newWinnerUser.team ?? winner}** *(no record change)*`);
+      await tx.insert(gameLogTable).values({
+        discordId: newWinnerUser.discordId, seasonId: season.id, result: "win",
+        pointSpread: wScore - lScore, opponentLabel: `[CPU] ${newLoserTeamName}`, gameType: "regular_season",
+      });
+      newPayoutMeta = {
+        payoutType: "cpu", winnerDiscordId: newWinnerUser.discordId,
+        winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0, appliedPointDiff: Math.abs(wScore - lScore),
+      };
+
+    } else if (newType === "none") {
+      applyLines.push("✅ Game voided — no payouts applied");
+    }
+
+    // ── Update processed game metadata ─────────────────────────────────────
+    await tx.update(franchiseProcessedGamesTable)
+      .set({
+        payoutType:       newPayoutMeta.payoutType,
+        winnerDiscordId:  newPayoutMeta.winnerDiscordId  ?? null,
+        loserDiscordId:   newPayoutMeta.loserDiscordId   ?? null,
+        winnerCoins:      newPayoutMeta.winnerCoins      ?? null,
+        loserCoins:       newPayoutMeta.loserCoins       ?? null,
+        appliedPointDiff: newPayoutMeta.appliedPointDiff ?? null,
+      })
+      .where(eq(franchiseProcessedGamesTable.gameId, gameIdToUpdate));
+  });
 
   // ── Reply ─────────────────────────────────────────────────────────────────
   const wasLegacy = !oldType;

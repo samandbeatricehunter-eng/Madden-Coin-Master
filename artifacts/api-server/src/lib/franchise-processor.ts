@@ -50,7 +50,7 @@ async function logTransaction(
 ): Promise<void> {
   await db.insert(coinTransactionsTable).values({
     discordId, amount,
-    type: type as any,
+    type,
     description,
     relatedUserId: null,
   });
@@ -247,26 +247,29 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       const offRushYds = getOffRushYds(t);
       const offYds     = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
 
-      const vals = {
-        seasonId:   season.id,
-        teamId,
-        discordId:  teamEntry.discordId,
-        teamName:   teamEntry.fullName,
-        offYds,
-        offPassYds,
-        offRushYds,
-        offTDs:     getOffTDs(t),
-        defPassYds: getDefPassYds(t),
-        defRushYds: getDefRushYds(t),
-        defTDs:     getDefTDs(t),
-        wins:       getN(t, "wins","totalWins","seasonWins"),
-        losses:     getN(t, "losses","totalLosses","seasonLosses"),
-        updatedAt:  new Date(),
+      const offTDs     = getOffTDs(t);
+      const defPassYds = getDefPassYds(t);
+      const defRushYds = getDefRushYds(t);
+      const defTDs     = getDefTDs(t);
+      const wins       = getN(t, "wins","totalWins","seasonWins");
+      const losses     = getN(t, "losses","totalLosses","seasonLosses");
+      const updatedAt  = new Date();
+      const insertVals: typeof teamSeasonStatsTable.$inferInsert = {
+        seasonId: season.id, teamId, discordId: teamEntry.discordId ?? null,
+        teamName: teamEntry.fullName, offYds, offPassYds, offRushYds,
+        offTDs, defPassYds, defRushYds, defTDs, wins, losses, updatedAt,
       };
       ops.push(
         db.insert(teamSeasonStatsTable)
-          .values(vals as any)
-          .onConflictDoUpdate({ target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId], set: vals as any })
+          .values(insertVals)
+          .onConflictDoUpdate({
+            target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId],
+            set: {
+              discordId: teamEntry.discordId ?? null, teamName: teamEntry.fullName,
+              offYds, offPassYds, offRushYds, offTDs, defPassYds, defRushYds, defTDs,
+              wins, losses, updatedAt,
+            },
+          })
       );
       upserted++;
     }
