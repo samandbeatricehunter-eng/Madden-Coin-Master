@@ -257,8 +257,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     newLoserTeamName  = lu.team ?? "Unknown";
   } else if (newType === "cpu") {
     // Resolve winner: use explicit `winner` arg, else infer from schedule scores
+    if (!winner && (schedGame.homeScore ?? 0) === (schedGame.awayScore ?? 0)) {
+      await interaction.editReply("❌ Scores are tied — cannot infer CPU winner automatically. Pass `winner` explicitly.");
+      return;
+    }
     const resolvedWinner = winner ?? (
-      (schedGame.homeScore ?? 0) >= (schedGame.awayScore ?? 0) ? homeTeam : awayTeam
+      (schedGame.homeScore ?? 0) > (schedGame.awayScore ?? 0) ? homeTeam : awayTeam
     );
     const winnerLower = resolvedWinner.toLowerCase();
     const [wu] = await db.select().from(usersTable)
