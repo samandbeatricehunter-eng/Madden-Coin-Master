@@ -133,7 +133,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (!entries.length) return "*No player data yet — export weekly stats via the Madden Companion App*";
     return entries.map(({ p, val }, i) => {
       const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Unknown";
-      return `**#${i + 1}** ${name} (${p.teamName || "?"}) — ${val.toLocaleString()} ${cat.unit}`;
+      const pos  = p.position ? `, ${p.position}` : "";
+      return `**#${i + 1}** ${name}${pos} (${p.teamName || "?"}) — ${val.toLocaleString()} ${cat.unit}`;
     }).join("\n");
   }
 

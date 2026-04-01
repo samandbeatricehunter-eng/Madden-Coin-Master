@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import {
   processLeagueTeams,
   processTeamStats,
+  processTeamWeekStats,
   processSchedules,
   processWeekScores,
   processPlayerWeekStats,
@@ -87,7 +88,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/team] Received team stats (weekType=${weekType}), processing...`);
-  const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processTeamWeekStats(req.body, weekType, weekNum).catch(err => ({ ok: false, message: String(err) }));
   console.log(`[mca/week${weekNum}/team] Result:`, result.message);
 });
 

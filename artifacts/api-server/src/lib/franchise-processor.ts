@@ -299,6 +299,127 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
   }
 }
 
+// ── /week/:weekType/:weekNum/team → accumulate teamSeasonStatsTable week-over-week ──
+// MCA sends per-game stats (not cumulative) for only the teams that played that week.
+// We accumulate with dedup so re-exporting the same week doesn't double-count.
+export async function processTeamWeekStats(
+  body: unknown,
+  weekType: string,
+  weekNum: number,
+): Promise<ProcessResult> {
+  try {
+    const season = await getOrCreateActiveSeason();
+    const stats  = extractList(body, "teamStatInfoList", "teamStatsInfoList", "teamStats");
+    if (stats.length === 0) {
+      return { ok: true, message: "No team stats in payload" };
+    }
+
+    // ── Dedup: skip if this week's team stats already processed ───────────────
+    const alreadyDone = await db.select({ id: playerStatWeekProcessedTable.id })
+      .from(playerStatWeekProcessedTable)
+      .where(and(
+        eq(playerStatWeekProcessedTable.seasonId, season.id),
+        eq(playerStatWeekProcessedTable.weekType,  weekType),
+        eq(playerStatWeekProcessedTable.weekNum,   weekNum),
+        eq(playerStatWeekProcessedTable.statType,  "team"),
+      ))
+      .limit(1);
+
+    if (alreadyDone.length > 0) {
+      console.log(`[mca/week${weekNum}/team] Already processed — skipping`);
+      return { ok: true, message: `Week ${weekNum} team stats already recorded — skipped` };
+    }
+
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+
+    const getOffPassYds = (t: any): number =>
+      getN(t, "offPassYds","offensivePassYards","passYds","passingYards","passingYardsTotal");
+    const getOffRushYds = (t: any): number =>
+      getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards","rushingYardsTotal");
+    const getOffYds = (t: any): number => {
+      const pass = getOffPassYds(t); const rush = getOffRushYds(t);
+      if (pass + rush > 0) return pass + rush;
+      return getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
+    };
+    const getOffTDs = (t: any): number =>
+      getN(t, "offTDs","offTotalTDs","totalOffTDs","offTouchdowns","totalTouchdowns","offensiveTDs",
+           "ptsFor","ptsScored","pointsFor","totalPoints");
+    const getDefPassYds = (t: any): number =>
+      getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
+    const getDefRushYds = (t: any): number =>
+      getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
+    const getDefTDs = (t: any): number =>
+      getN(t, "defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defTotalPts",
+           "ptsAgainst","pointsAgainst","defPts");
+
+    const ops: Promise<any>[] = [];
+    let upserted = 0;
+
+    for (const t of stats) {
+      const teamId = Number(t?.teamId ?? t?.teamIndex ?? -1);
+      if (teamId < 0 || isNaN(teamId)) continue;
+      const teamEntry = teamMap.get(teamId);
+      if (!teamEntry) continue;
+
+      const offPassYds = getOffPassYds(t);
+      const offRushYds = getOffRushYds(t);
+      const offYds     = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
+      const offTDs     = getOffTDs(t);
+      const defPassYds = getDefPassYds(t);
+      const defRushYds = getDefRushYds(t);
+      const defTDs     = getDefTDs(t);
+      const wins       = getN(t, "wins","totalWins","seasonWins");
+      const losses     = getN(t, "losses","totalLosses","seasonLosses");
+
+      ops.push(
+        db.insert(teamSeasonStatsTable)
+          .values({
+            seasonId: season.id, teamId,
+            discordId: teamEntry.discordId ?? null,
+            teamName: teamEntry.fullName,
+            offYds, offPassYds, offRushYds, offTDs,
+            defPassYds, defRushYds, defTDs, wins, losses,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId],
+            set: {
+              discordId:  teamEntry.discordId ?? null,
+              teamName:   teamEntry.fullName,
+              // Accumulate stats week-over-week (MCA sends per-game totals)
+              offYds:     sql`${teamSeasonStatsTable.offYds}     + ${offYds}`,
+              offPassYds: sql`${teamSeasonStatsTable.offPassYds} + ${offPassYds}`,
+              offRushYds: sql`${teamSeasonStatsTable.offRushYds} + ${offRushYds}`,
+              offTDs:     sql`${teamSeasonStatsTable.offTDs}     + ${offTDs}`,
+              defPassYds: sql`${teamSeasonStatsTable.defPassYds} + ${defPassYds}`,
+              defRushYds: sql`${teamSeasonStatsTable.defRushYds} + ${defRushYds}`,
+              defTDs:     sql`${teamSeasonStatsTable.defTDs}     + ${defTDs}`,
+              wins:       sql`${teamSeasonStatsTable.wins}       + ${wins}`,
+              losses:     sql`${teamSeasonStatsTable.losses}     + ${losses}`,
+              updatedAt:  new Date(),
+            },
+          })
+      );
+      upserted++;
+    }
+
+    await Promise.all(ops);
+
+    await db.insert(playerStatWeekProcessedTable).values({
+      seasonId: season.id, weekType, weekNum,
+      statType: "team", recordCount: upserted,
+    });
+
+    console.log(`[mca/week${weekNum}/team] Accumulated ${upserted} team stat rows, marked processed`);
+    return { ok: true, message: `week ${weekNum} team stats: accumulated ${upserted} teams`, details: { upserted } };
+  } catch (err) {
+    console.error("[mca/week/team] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
 // ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → playerSeasonStatsTable ──
 export type WeekStatType = "passing" | "rushing" | "receiving" | "defense";
 
@@ -355,9 +476,9 @@ export async function processPlayerWeekStats(
       const mcaTeam   = teamMap.get(teamId);
       const teamName  = mcaTeam?.fullName ?? String(p.teamName ?? p.teamname ?? "");
       const discordId = mcaTeam?.discordId ?? null;
-      const firstName = String(p.firstName ?? p.firstname ?? "");
-      const lastName  = String(p.lastName  ?? p.lastname  ?? "");
-      const position  = String(p.position  ?? p.pos ?? "");
+      const firstName = String(p.firstName ?? p.firstname ?? p.first_name ?? p.playerFirstName ?? "");
+      const lastName  = String(p.lastName  ?? p.lastname  ?? p.last_name  ?? p.playerLastName  ?? "");
+      const position  = String(p.position  ?? p.pos       ?? p.playerPosition ?? "");
 
       // MCA sends cumulative season-to-date totals each export, so we replace
       // (not add). The dedup check above ensures the same week isn't applied twice.
