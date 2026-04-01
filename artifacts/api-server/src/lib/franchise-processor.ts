@@ -162,22 +162,91 @@ export async function processLeagueTeams(body: unknown): Promise<ProcessResult> 
       if (u.team) teamToUser.set(u.team.toLowerCase().trim(), u.discordId);
     }
 
-    // Madden Companion App uses non-standard nicknames for some teams.
-    // Map each MCA nickname to the common names users register under.
-    const MCA_NICK_ALIASES: Record<string, string[]> = {
-      "niners": ["49ers", "san francisco 49ers"],
+    // Madden CFM uses abbreviated / custom team names that differ from what
+    // users register with in Discord.  Both the full MCA name (city + nick)
+    // and the standalone nick are checked against this map.
+    // Add entries here whenever the league renames a team.
+    const MCA_ALIASES: Record<string, string[]> = {
+      // ── NFC West ──────────────────────────────────────────────────────────────
+      "niners":                   ["49ers", "san francisco 49ers"],
+      "san francisco niners":     ["san francisco 49ers", "49ers"],
+      "rams":                     ["rams", "los angeles rams"],
+      // ── NFC East ─────────────────────────────────────────────────────────────
+      "g-men":                    ["giants", "new york giants"],
+      "new york g-men":           ["new york giants", "giants"],
+      "big blue":                 ["giants", "new york giants"],
+      // ── NFC North ────────────────────────────────────────────────────────────
+      "pack":                     ["packers", "green bay packers"],
+      "green bay pack":           ["green bay packers", "packers"],
+      "vikes":                    ["vikings", "minnesota vikings"],
+      "minnesota vikes":          ["minnesota vikings", "vikings"],
+      // ── NFC South ────────────────────────────────────────────────────────────
+      "bucs":                     ["buccaneers", "tampa bay buccaneers"],
+      "tampa bay bucs":           ["tampa bay buccaneers", "buccaneers"],
+      "aints":                    ["saints", "new orleans saints"],
+      // ── AFC East ─────────────────────────────────────────────────────────────
+      "phins":                    ["dolphins", "miami dolphins"],
+      "miami phins":              ["miami dolphins", "dolphins"],
+      "fins":                     ["dolphins", "miami dolphins"],
+      "miami fins":               ["miami dolphins", "dolphins"],
+      "pats":                     ["patriots", "new england patriots"],
+      "new england pats":         ["new england patriots", "patriots"],
+      // ── AFC South ────────────────────────────────────────────────────────────
+      "jags":                     ["jaguars", "jacksonville jaguars"],
+      "jacksonville jags":        ["jacksonville jaguars", "jaguars"],
+      // ── AFC West ─────────────────────────────────────────────────────────────
+      "bolts":                    ["chargers", "los angeles chargers"],
+      "los angeles bolts":        ["los angeles chargers", "chargers"],
+      "la bolts":                 ["los angeles chargers", "chargers"],
+      "sd bolts":                 ["los angeles chargers", "chargers"],
+      "silver and black":         ["raiders", "las vegas raiders"],
+      // Additional short-form nicks users might register with
+      "chiefs":                   ["chiefs", "kansas city chiefs"],
+      "bears":                    ["bears", "chicago bears"],
+      "lions":                    ["lions", "detroit lions"],
+      "falcons":                  ["falcons", "atlanta falcons"],
+      "panthers":                 ["panthers", "carolina panthers"],
+      "saints":                   ["saints", "new orleans saints"],
+      "seahawks":                 ["seahawks", "seattle seahawks"],
+      "cardinals":                ["cardinals", "arizona cardinals"],
+      "cowboys":                  ["cowboys", "dallas cowboys"],
+      "eagles":                   ["eagles", "philadelphia eagles"],
+      "commanders":               ["commanders", "washington commanders"],
+      "redskins":                 ["commanders", "washington commanders"],
+      "bengals":                  ["bengals", "cincinnati bengals"],
+      "ravens":                   ["ravens", "baltimore ravens"],
+      "browns":                   ["browns", "cleveland browns"],
+      "steelers":                 ["steelers", "pittsburgh steelers"],
+      "texans":                   ["texans", "houston texans"],
+      "colts":                    ["colts", "indianapolis colts"],
+      "titans":                   ["titans", "tennessee titans"],
+      "broncos":                  ["broncos", "denver broncos"],
+      "bills":                    ["bills", "buffalo bills"],
+      "jets":                     ["jets", "new york jets"],
     };
 
     function findDiscordId(fullName: string, nick: string): string | null {
       const fn = fullName.toLowerCase().trim();
       const nk = nick.toLowerCase().trim();
 
+      // 1. Direct match on full name or nick
       const direct = teamToUser.get(fn) ?? teamToUser.get(nk);
       if (direct) return direct;
 
-      for (const alias of MCA_NICK_ALIASES[nk] ?? []) {
-        const via = teamToUser.get(alias.toLowerCase().trim());
-        if (via) return via;
+      // 2. Alias lookup — check both the combined full name and the standalone nick
+      for (const key of [fn, nk]) {
+        for (const alias of MCA_ALIASES[key] ?? []) {
+          const via = teamToUser.get(alias.toLowerCase().trim());
+          if (via) return via;
+        }
+      }
+
+      // 3. Fuzzy city fallback — if city matches exactly and we have only one
+      //    user with that city prefix, use them (handles "Kansas City Chiefs" → "Chiefs")
+      const city = fn.includes(" ") ? fn.split(" ").slice(0, -1).join(" ") : "";
+      if (city) {
+        const cityMatches = [...teamToUser.entries()].filter(([k]) => k.startsWith(city));
+        if (cityMatches.length === 1) return cityMatches[0]![1];
       }
 
       return null;

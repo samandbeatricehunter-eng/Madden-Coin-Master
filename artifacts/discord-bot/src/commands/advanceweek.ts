@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, ChannelType,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable } from "@workspace/db";
+import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { deleteGotwMessages } from "../lib/gotw-helpers.js";
@@ -208,15 +208,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           eq(franchiseScheduleTable.weekIndex, weekIndex),
         ));
 
-      // Build team name (lowercase) → discordId map
+      // Build team name (lowercase) → discordId map using the MCA teams table,
+      // which already has alias-resolved discordIds from the franchise import.
+      // This handles Madden CFM custom names like "G-Men", "Bolts", "Vikes", etc.
+      const mcaTeams = await db.select({
+        fullName: franchiseMcaTeamsTable.fullName,
+        discordId: franchiseMcaTeamsTable.discordId,
+      }).from(franchiseMcaTeamsTable)
+        .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+
+      const teamToDiscord = new Map<string, string>();
+      for (const t of mcaTeams) {
+        if (t.discordId) teamToDiscord.set(t.fullName.toLowerCase().trim(), t.discordId);
+      }
+
+      // Fallback: also include usersTable.team mappings for any teams not in
+      // the MCA teams table yet (e.g. before /franchiseupdate has been run).
       const allUsers = await db.select({
         discordId: usersTable.discordId,
         team:      usersTable.team,
       }).from(usersTable);
-
-      const teamToDiscord = new Map<string, string>();
       for (const u of allUsers) {
-        if (u.team) teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
+        if (u.team && !teamToDiscord.has(u.team.toLowerCase().trim())) {
+          teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
+        }
       }
 
       // Filter to H2H games only: both teams must have a registered user
