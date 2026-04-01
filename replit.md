@@ -79,6 +79,7 @@ All admin-facing commands now have Discord-level permission restrictions — the
 | `/admin-set-stat-tier` | Set a single tier threshold+payout for an end-of-season stat bonus category (11 categories × 4 tiers) |
 | `/endofseasonpayout` | Distribute end-of-season stat bonuses from franchise ZIP (requires all 44 tier configs set first) |
 | `/admin-correctpayout` | Retroactively fix a game's payout type (h2h/cpu/none) — reverses prior coins/records and applies correct ones |
+| `/statleaders` | Season stat leaders from a franchise ZIP (player top-10 per category or top-3 for all; + team formula categories). Admin can post publicly. |
 | `/seasonpr` | Show current season power rankings |
 | `/alltimepr` | Show all-time power rankings |
 | `/setuser` | Link a Discord user to an NFL team |

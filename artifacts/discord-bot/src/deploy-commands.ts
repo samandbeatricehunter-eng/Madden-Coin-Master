@@ -43,6 +43,7 @@ import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 import * as myRoster from "./commands/my-roster.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
+import * as statLeaders from "./commands/statleaders.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -64,6 +65,7 @@ const commands = [
   myRoster,
   weeklyMatchups,
   adminCorrectPayout,
+  statLeaders,
 ].map(c => c.data.toJSON());
 
 commands.push(
