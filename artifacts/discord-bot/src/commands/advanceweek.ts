@@ -3,9 +3,9 @@ import {
   PermissionFlagsBits, ChannelType,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable } from "@workspace/db";
+import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { deleteGotwMessages } from "../lib/gotw-helpers.js";
 
 const MATCHUP_CATEGORY_ID = "1478427821666861272";
@@ -96,17 +96,76 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .set({ currentWeek: newWeek })
     .where(eq(seasonsTable.id, season.id));
 
-  // Delete GOTW announcement + poll for the week we're leaving
+  // Declare channelLines early so both GOTW bonus and channel lifecycle can append to it
+  const channelLines: string[] = [];
+
+  // ── GOTW bonus + cleanup for the week we're leaving ──────────────────────
   const oldWeekNum = parseInt(season.currentWeek ?? "1", 10);
   if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18) {
-    await deleteGotwMessages(interaction.client, season.id, oldWeekNum - 1);
+    const oldWeekIndex = oldWeekNum - 1;
+
+    try {
+      // Look up confirmed GOTW for this week
+      const [gotwRow] = await db.select()
+        .from(gotwHistoryTable)
+        .where(and(
+          eq(gotwHistoryTable.seasonId,  season.id),
+          eq(gotwHistoryTable.weekIndex, oldWeekIndex),
+        ))
+        .limit(1);
+
+      if (gotwRow) {
+        // Find the actual game in the schedule — match by team names (case-insensitive)
+        const scheduleGames = await db.select()
+          .from(franchiseScheduleTable)
+          .where(and(
+            eq(franchiseScheduleTable.seasonId,  season.id),
+            eq(franchiseScheduleTable.weekIndex, oldWeekIndex),
+          ));
+
+        const gotwGame = scheduleGames.find(g =>
+          g.awayTeamName.toLowerCase().trim() === gotwRow.teamName1.toLowerCase().trim() &&
+          g.homeTeamName.toLowerCase().trim() === gotwRow.teamName2.toLowerCase().trim()
+        );
+
+        // Only award if status = 3 (H2H user-played — not CPU-simmed)
+        if (gotwGame && gotwGame.status === 3) {
+          const GOTW_BONUS = 10;
+          await addBalance(gotwRow.discordId1, GOTW_BONUS);
+          await logTransaction(gotwRow.discordId1, GOTW_BONUS, "addcoins",
+            `GOTW participant bonus — Week ${oldWeekNum}`, "system");
+
+          await addBalance(gotwRow.discordId2, GOTW_BONUS);
+          await logTransaction(gotwRow.discordId2, GOTW_BONUS, "addcoins",
+            `GOTW participant bonus — Week ${oldWeekNum}`, "system");
+
+          channelLines.push(
+            `🏆 GOTW bonus: **+${GOTW_BONUS} coins** awarded to <@${gotwRow.discordId1}> & <@${gotwRow.discordId2}>`,
+          );
+
+          // Notify both players via DM
+          for (const discordId of [gotwRow.discordId1, gotwRow.discordId2]) {
+            try {
+              const user = await interaction.client.users.fetch(discordId);
+              await user.send(
+                `🏆 **GOTW Bonus!** You participated in this week's Game of the Week and earned **+${GOTW_BONUS} coins**!`
+              ).catch(() => {});
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[advanceweek] GOTW bonus error:", err);
+    }
+
+    // Delete GOTW announcement + poll from Discord
+    await deleteGotwMessages(interaction.client, season.id, oldWeekIndex);
   }
 
   const oldLabel = weekLabel(season.currentWeek ?? "1");
   const newLabel = weekLabel(newWeek);
 
   // ── Channel lifecycle ──────────────────────────────────────────────────────
-  const channelLines: string[] = [];
   const guild = interaction.guild;
 
   if (guild) {
