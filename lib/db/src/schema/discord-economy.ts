@@ -340,6 +340,47 @@ export const seasonStatTierConfigsTable = pgTable("season_stat_tier_configs", {
     .on(t.seasonId, t.statCategory, t.tier),
 }));
 
+// ── Trade Block: user-posted trade offers ──────────────────────────────────────
+export const tradeBlockListingsTable = pgTable("trade_block_listings", {
+  id:        serial("id").primaryKey(),
+  discordId: text("discord_id").notNull(),
+  teamName:  text("team_name").notNull().default(""),
+  seasonId:  integer("season_id").notNull(),
+  items:     json("items").notNull().$type<Array<
+    | { type: "player"; firstName: string; lastName: string; position: string; overall: number; devTrait: number; playerId: number }
+    | { type: "pick";   description: string }
+    | { type: "coins";  amount: number }
+  >>(),
+  notes:     text("notes"),        // what they're looking for in return
+  messageId: text("message_id"),   // Discord message ID for deletion/editing
+  channelId: text("channel_id"),
+  status:    text("status").notNull().default("active"), // "active" | "removed"
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── Trade Block ISO: user is seeking a specific asset type ────────────────────
+export const tradeBlockISOTable = pgTable("trade_block_iso", {
+  id:             serial("id").primaryKey(),
+  discordId:      text("discord_id").notNull(),
+  teamName:       text("team_name").notNull().default(""),
+  seasonId:       integer("season_id").notNull(),
+  seekingType:    text("seeking_type").notNull(),    // "player_position" | "draft_pick" | "coins"
+  seekingDetails: json("seeking_details").notNull().$type<{
+    position?: string;   // for player_position
+    rounds?: string[];   // for draft_pick
+    amount?: number;     // for coins
+  }>(),
+  offering: json("offering").notNull().$type<{
+    players?: string;
+    picks?: string;
+    coins?: number;
+  }>(),
+  messageId: text("message_id"),
+  channelId: text("channel_id"),
+  status:    text("status").notNull().default("active"), // "active" | "removed"
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
 export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;

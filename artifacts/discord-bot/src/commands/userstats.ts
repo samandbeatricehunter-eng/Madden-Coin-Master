@@ -7,7 +7,7 @@ import {
   inventoryTable, purchasesTable, interviewRequestsTable, seasonStatsTable,
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
 
 const MILESTONE_LABELS: Record<number, string> = {
@@ -56,6 +56,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const allTimeH2HL     = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
   const allTimePlayoffW = parseInt(allTimeRows[0]?.totalPlayoffWins ?? "0", 10);
   const allTimePlayoffL = parseInt(allTimeRows[0]?.totalPlayoffLosses ?? "0", 10);
+
+  // ── Streaks ────────────────────────────────────────────────────────────────
+  const [overallStreak, h2hStreak] = await Promise.all([
+    computeStreak(interaction.user.id, false),
+    computeStreak(interaction.user.id, true),
+  ]);
 
   // ── Inventory (this season, non-legend items only) ───────────────────────
   const inventory = await db.select().from(inventoryTable)
@@ -122,12 +128,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ? `${conf} Seed #${playoffSeed} (${playoffSeed <= 4 ? "Top 4" : "Wildcard"})`
     : "*Not seeded*";
 
+  const fmtStreak = (s: { result: "win" | "loss" | null; count: number }) => {
+    if (!s.result) return "*No games yet*";
+    const icon = s.result === "win" ? "🔥" : "❄️";
+    return `${icon} **${s.count}-game ${s.result === "win" ? "WIN" : "LOSS"} streak**`;
+  };
+
   const statsEmbed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("🏈 Season Record & Milestones")
     .addFields(
       { name: "Season Record",            value: `**${wins}W – ${losses}L** (PD: ${pd > 0 ? "+" : ""}${pd})`, inline: true },
       { name: "This Season Playoffs",    value: `${pWins}W – ${pLosses}L`, inline: true },
+      { name: "\u200b",                  value: "\u200b", inline: true },
+      { name: "📈 Overall Streak",       value: fmtStreak(overallStreak), inline: true },
+      { name: "⚔️ H2H-Only Streak",     value: fmtStreak(h2hStreak), inline: true },
       { name: "\u200b",                  value: "\u200b", inline: true },
       { name: "All-Time H2H Wins",       value: `**${allTimeH2HW}**`, inline: true },
       { name: "All-Time H2H Losses",     value: `**${allTimeH2HL}**`, inline: true },

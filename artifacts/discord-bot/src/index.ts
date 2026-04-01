@@ -58,6 +58,7 @@ import * as myRoster from "./commands/my-roster.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as statLeaders from "./commands/statleaders.js";
+import * as tradeBlock from "./commands/tradeblock.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -140,6 +141,7 @@ if (!isProduction && !devBotEnabled) {
     weeklyMatchups,
     adminCorrectPayout,
     statLeaders,
+    tradeBlock,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },

@@ -8,6 +8,7 @@ import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   interviewRequestsTable, wagersTable,
+  tradeBlockListingsTable, tradeBlockISOTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
@@ -636,6 +637,169 @@ async function handleButton(interaction: ButtonInteraction) {
     });
     return;
   }
+
+  // ── Trade Block: Interested! ─────────────────────────────────────────────────
+  if (action === "tb_interested") {
+    const listingId       = secondPart!;
+    const posterDiscordId = userId!;
+
+    if (interaction.user.id === posterDiscordId) {
+      await interaction.reply({ content: "❌ You can't express interest in your own trade block listing.", ephemeral: true });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`tb_offer_modal:${listingId}:${posterDiscordId}`)
+      .setTitle("Make Your Offer");
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("offer_text")
+          .setLabel("What are you offering in return?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000)
+          .setPlaceholder("Describe your offer (players, picks, coins, etc.)"),
+      ),
+    );
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (tb_interested) error:", err);
+    });
+    return;
+  }
+
+  // ── Trade Block: Close Negotiations (regular listing) ─────────────────────────
+  if (action === "tb_close") {
+    const listingId       = parseInt(secondPart ?? "0", 10);
+    const posterDiscordId = userId!;
+
+    if (interaction.user.id !== posterDiscordId) {
+      await interaction.reply({ content: "❌ Only the person who posted this trade block listing can close it.", ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const [listing] = await db.select().from(tradeBlockListingsTable)
+      .where(and(eq(tradeBlockListingsTable.id, listingId), eq(tradeBlockListingsTable.status, "active")))
+      .limit(1);
+
+    if (!listing) {
+      await interaction.editReply({ content: "❌ This listing has already been closed." });
+      return;
+    }
+
+    await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
+
+    // Delete the Discord message
+    try { await interaction.message.delete(); } catch (_) {}
+
+    // Build summary for DM
+    type TItem =
+      | { type: "player"; firstName: string; lastName: string; position: string; overall: number; devTrait: number }
+      | { type: "pick"; description: string }
+      | { type: "coins"; amount: number };
+    const items = (listing.items as TItem[]);
+    const itemLines = items.map(item => {
+      if (item.type === "player") return `• ${item.firstName} ${item.lastName} (${item.position}) OVR ${item.overall}`;
+      if (item.type === "pick")   return `• 📋 ${item.description}`;
+      return `• 💰 ${item.amount.toLocaleString()} coins`;
+    }).join("\n");
+
+    try {
+      const poster = await interaction.client.users.fetch(posterDiscordId);
+      await poster.send(
+        `🔄 **You've closed negotiations on the following trade block deal:**\n\n` +
+        `**Listing #${listingId}**\n${itemLines}` +
+        (listing.notes ? `\n**Looking for:** ${listing.notes}` : "")
+      ).catch(() => {});
+    } catch (_) {}
+
+    await interaction.editReply({ content: `✅ Listing #${listingId} has been closed and removed from the trade block.` });
+    return;
+  }
+
+  // ── Trade Block ISO: Make An Offer ────────────────────────────────────────────
+  if (action === "tb_iso_offer") {
+    const isoId           = secondPart!;
+    const posterDiscordId = userId!;
+
+    if (interaction.user.id === posterDiscordId) {
+      await interaction.reply({ content: "❌ You can't make an offer on your own ISO post.", ephemeral: true });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`tb_iso_offer_modal:${isoId}:${posterDiscordId}`)
+      .setTitle("Make Your Offer");
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("offer_text")
+          .setLabel("What are you offering?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000)
+          .setPlaceholder("Describe what you're offering in response to their ISO"),
+      ),
+    );
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (tb_iso_offer) error:", err);
+    });
+    return;
+  }
+
+  // ── Trade Block ISO: Close Negotiations ──────────────────────────────────────
+  if (action === "tb_iso_close") {
+    const isoId           = parseInt(secondPart ?? "0", 10);
+    const posterDiscordId = userId!;
+
+    if (interaction.user.id !== posterDiscordId) {
+      await interaction.reply({ content: "❌ Only the person who posted this ISO can close it.", ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const [iso] = await db.select().from(tradeBlockISOTable)
+      .where(and(eq(tradeBlockISOTable.id, isoId), eq(tradeBlockISOTable.status, "active")))
+      .limit(1);
+
+    if (!iso) {
+      await interaction.editReply({ content: "❌ This ISO post has already been closed." });
+      return;
+    }
+
+    await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, isoId));
+
+    try { await interaction.message.delete(); } catch (_) {}
+
+    // Build summary for DM
+    const sd = iso.seekingDetails as any;
+    const of = iso.offering as any;
+    let seekingDesc = "";
+    if (iso.seekingType === "player_position") seekingDesc = `${sd.position ?? "?"} position player`;
+    else if (iso.seekingType === "draft_pick")  seekingDesc = `Draft picks (Rounds: ${(sd.rounds ?? []).join(", ")})`;
+    else                                         seekingDesc = `${(sd.amount ?? 0).toLocaleString()} coins`;
+
+    const offeringLines = [
+      of.players ? `• Players: ${of.players}` : null,
+      of.picks   ? `• Picks: ${of.picks}`     : null,
+      of.coins   ? `• 💰 ${of.coins.toLocaleString()} coins` : null,
+    ].filter(Boolean).join("\n");
+
+    try {
+      const poster = await interaction.client.users.fetch(posterDiscordId);
+      await poster.send(
+        `🔍 **You've closed negotiations on the following trade block deal:**\n\n` +
+        `**ISO #${isoId} — Seeking:** ${seekingDesc}\n` +
+        `**Offering:**\n${offeringLines || "*Nothing specified*"}`
+      ).catch(() => {});
+    } catch (_) {}
+
+    await interaction.editReply({ content: `✅ ISO #${isoId} has been closed and removed from the trade block.` });
+    return;
+  }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -786,6 +950,85 @@ async function handleModal(interaction: ModalSubmitInteraction) {
         `You'll get a DM once it's approved or denied.`,
       ].join("\n"),
     });
+    return;
+  }
+
+  // ── Trade Block: offer submitted (Interested! flow) ───────────────────────────
+  if (action === "tb_offer_modal") {
+    const listingId       = parseInt(idStr ?? "0", 10);
+    const posterDiscordId = parts[2]!;
+    const offerText       = interaction.fields.getTextInputValue("offer_text");
+
+    await interaction.deferReply({ ephemeral: true });
+
+    // Fetch listing so we can include details in the DM
+    const [listing] = await db.select().from(tradeBlockListingsTable)
+      .where(eq(tradeBlockListingsTable.id, listingId)).limit(1);
+
+    if (!listing || listing.status !== "active") {
+      await interaction.editReply({ content: "❌ This listing is no longer active." });
+      return;
+    }
+
+    type TItem =
+      | { type: "player"; firstName: string; lastName: string; position: string; overall: number }
+      | { type: "pick"; description: string }
+      | { type: "coins"; amount: number };
+    const itemLines = (listing.items as TItem[]).map(item => {
+      if (item.type === "player") return `• ${item.firstName} ${item.lastName} (${item.position}) OVR ${item.overall}`;
+      if (item.type === "pick")   return `• 📋 ${item.description}`;
+      return `• 💰 ${item.amount.toLocaleString()} coins`;
+    }).join("\n");
+
+    try {
+      const poster = await interaction.client.users.fetch(posterDiscordId);
+      await poster.send(
+        `🔄 **Trade Block Interest!** (Listing #${listingId})\n\n` +
+        `<@${interaction.user.id}> is interested in your trade block offer!\n\n` +
+        `**Your listing:**\n${itemLines}` +
+        (listing.notes ? `\n**Your ask:** ${listing.notes}` : "") +
+        `\n\n**Their offer:**\n${offerText}\n\n` +
+        `📬 Contact them to continue negotiations: <@${interaction.user.id}>`
+      ).catch(() => {});
+    } catch (_) {}
+
+    await interaction.editReply({ content: "✅ Your offer has been sent! The other manager will reach out if they're interested." });
+    return;
+  }
+
+  // ── Trade Block ISO: offer submitted (Make An Offer flow) ─────────────────────
+  if (action === "tb_iso_offer_modal") {
+    const isoId           = parseInt(idStr ?? "0", 10);
+    const posterDiscordId = parts[2]!;
+    const offerText       = interaction.fields.getTextInputValue("offer_text");
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const [iso] = await db.select().from(tradeBlockISOTable)
+      .where(eq(tradeBlockISOTable.id, isoId)).limit(1);
+
+    if (!iso || iso.status !== "active") {
+      await interaction.editReply({ content: "❌ This ISO post is no longer active." });
+      return;
+    }
+
+    const sd = iso.seekingDetails as any;
+    let seekingDesc = "";
+    if (iso.seekingType === "player_position") seekingDesc = `${sd.position ?? "?"} position player`;
+    else if (iso.seekingType === "draft_pick")  seekingDesc = `Draft picks (Rounds: ${(sd.rounds ?? []).join(", ")})`;
+    else                                         seekingDesc = `${(sd.amount ?? 0).toLocaleString()} coins`;
+
+    try {
+      const poster = await interaction.client.users.fetch(posterDiscordId);
+      await poster.send(
+        `🔍 **ISO Response!** (ISO #${isoId})\n\n` +
+        `<@${interaction.user.id}> is responding to your ISO for **${seekingDesc}**!\n\n` +
+        `**Their offer:**\n${offerText}\n\n` +
+        `📬 Contact them to continue negotiations: <@${interaction.user.id}>`
+      ).catch(() => {});
+    } catch (_) {}
+
+    await interaction.editReply({ content: "✅ Your offer has been sent! The other manager will reach out if they're interested." });
     return;
   }
 }

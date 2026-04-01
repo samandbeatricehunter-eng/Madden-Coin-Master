@@ -5,7 +5,7 @@ import {
   userRecordsTable, gameLogTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 
 // ── Default rules (seeds the DB if a section has never been set) ───────────────
 export const SECTION_META: Record<string, { title: string; color: number }> = {
@@ -308,4 +308,32 @@ export async function normalizeDefensivePositions(): Promise<void> {
   }
 
   console.log("✅ Positions normalized (OL / DL / LB / DB)");
+}
+
+// ── Streak computation ─────────────────────────────────────────────────────────
+// Returns the current consecutive W/L streak for a user.
+// h2hOnly=true skips any game where opponentLabel starts with "[CPU]".
+export async function computeStreak(
+  discordId: string,
+  h2hOnly: boolean,
+): Promise<{ result: "win" | "loss" | null; count: number }> {
+  const rows = await db
+    .select({ result: gameLogTable.result, opponentLabel: gameLogTable.opponentLabel })
+    .from(gameLogTable)
+    .where(eq(gameLogTable.discordId, discordId))
+    .orderBy(desc(gameLogTable.recordedAt));
+
+  const filtered = h2hOnly
+    ? rows.filter(r => !r.opponentLabel?.startsWith("[CPU]"))
+    : rows;
+
+  if (filtered.length === 0) return { result: null, count: 0 };
+
+  const firstResult = filtered[0]!.result as "win" | "loss";
+  let count = 0;
+  for (const row of filtered) {
+    if (row.result === firstResult) count++;
+    else break;
+  }
+  return { result: firstResult, count };
 }

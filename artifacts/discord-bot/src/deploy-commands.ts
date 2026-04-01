@@ -44,6 +44,7 @@ import * as myRoster from "./commands/my-roster.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as statLeaders from "./commands/statleaders.js";
+import * as tradeBlock from "./commands/tradeblock.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -66,6 +67,7 @@ const commands = [
   weeklyMatchups,
   adminCorrectPayout,
   statLeaders,
+  tradeBlock,
 ].map(c => c.data.toJSON());
 
 commands.push(
