@@ -291,10 +291,11 @@ export const franchiseScheduleTable = pgTable("franchise_schedule", {
   awayTeamId:   integer("away_team_id").notNull(),
   homeTeamName: text("home_team_name").notNull(),
   awayTeamName: text("away_team_name").notNull(),
-  homeScore:    integer("home_score"),
-  awayScore:    integer("away_score"),
-  status:       integer("status").notNull().default(0),
-  importedAt:   timestamp("imported_at").notNull().defaultNow(),
+  homeScore:       integer("home_score"),
+  awayScore:       integer("away_score"),
+  status:          integer("status").notNull().default(0),
+  processedGameId: text("processed_game_id"),  // gameId stored in franchise_processed_games for this game
+  importedAt:      timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueGame: uniqueIndex("franchise_schedule_unique_game_idx")
     .on(t.seasonId, t.weekIndex, t.homeTeamId, t.awayTeamId),

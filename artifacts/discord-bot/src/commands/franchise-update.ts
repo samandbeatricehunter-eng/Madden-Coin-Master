@@ -414,6 +414,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .onConflictDoNothing();
       processedSet.add(gameId);
 
+      // Also store the gameId on the schedule row so admin-correctpayout can always find it
+      await db.update(franchiseScheduleTable)
+        .set({ processedGameId: gameId })
+        .where(and(
+          eq(franchiseScheduleTable.seasonId,   season.id),
+          eq(franchiseScheduleTable.weekIndex,  gameWeekIndex),
+          eq(franchiseScheduleTable.homeTeamId, homeId),
+          eq(franchiseScheduleTable.awayTeamId, awayId),
+        ));
+
       // ── Record participation (used for interview eligibility) ──────────────
       // True H2H (status=3) → both users logged as "h2h"
       // Force win / autopilot (status=2, both registered) → both logged as "cpu"

@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, franchiseScheduleTable, franchiseProcessedGamesTable, gameLogTable,
 } from "@workspace/db";
-import { eq, and, or, sql, desc, asc } from "drizzle-orm";
+import { eq, and, sql, desc, like } from "drizzle-orm";
 import { getOrCreateActiveSeason, addBalance, logTransaction, upsertH2HRecord, appendGameLog } from "../lib/db-helpers.js";
 
 const H2H_WIN_PAYOUT  = 50;
@@ -33,17 +33,20 @@ export const data = new SlashCommandBuilder()
   .addStringOption(o => o
     .setName("winner").setDescription("Winning team name — required when type is h2h or cpu").setRequired(false))
   .addIntegerOption(o => o
-    .setName("pointdiff").setDescription("Point differential (winning score − losing score) — required when type is h2h").setRequired(false).setMinValue(1));
+    .setName("pointdiff").setDescription("Point differential (winning score − losing score) — required when type is h2h").setRequired(false).setMinValue(1))
+  .addStringOption(o => o
+    .setName("gameid").setDescription("Override: paste the exact game ID if auto-lookup fails (check bot logs or DB)").setRequired(false));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const week      = interaction.options.getInteger("week", true);
-  const homeTeam  = interaction.options.getString("hometeam", true).trim();
-  const awayTeam  = interaction.options.getString("awayteam", true).trim();
-  const newType   = interaction.options.getString("type", true) as "h2h" | "cpu" | "none";
-  const winner    = interaction.options.getString("winner")?.trim() ?? null;
-  const pointDiff = interaction.options.getInteger("pointdiff") ?? null;
+  const week        = interaction.options.getInteger("week", true);
+  const homeTeam    = interaction.options.getString("hometeam", true).trim();
+  const awayTeam    = interaction.options.getString("awayteam", true).trim();
+  const newType     = interaction.options.getString("type", true) as "h2h" | "cpu" | "none";
+  const winner      = interaction.options.getString("winner")?.trim() ?? null;
+  const pointDiff   = interaction.options.getInteger("pointdiff") ?? null;
+  const gameIdOverride = interaction.options.getString("gameid")?.trim() ?? null;
 
   // ── Validate inputs ────────────────────────────────────────────────────────
   if (newType === "h2h" && (!winner || pointDiff === null)) {
@@ -51,7 +54,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
   if (newType === "cpu" && !winner) {
-    await interaction.editReply("❌ When type is **cpu**, `winner` is required so we know who gets the 20 coins.");
+    await interaction.editReply("❌ When type is **cpu**, `winner` is required so we know who gets the coins.");
     return;
   }
 
@@ -73,7 +76,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (!schedGame) {
     await interaction.editReply(
       `❌ No schedule entry found for **${homeTeam} vs ${awayTeam}** in Week ${week}.\n` +
-      `Make sure the team names match exactly (try \`/seasonschedule\` or \`/weeklymatchups\` to see exact names).`,
+      `Make sure the team names match exactly (try \`/weeklymatchups\` to see exact names).`,
     );
     return;
   }
@@ -84,60 +87,97 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const [awayUser] = await db.select().from(usersTable)
     .where(sql`lower(${usersTable.team}) = ${awayLower}`).limit(1);
 
-  // ── Find the processed game record ────────────────────────────────────────
-  // Try by stored lookup fields first (new records), then fall back to weekIndex scan.
-  let processedGame = (await db.select().from(franchiseProcessedGamesTable)
-    .where(and(
-      eq(franchiseProcessedGamesTable.seasonIdRef,  season.id),
-      eq(franchiseProcessedGamesTable.weekIndexRef, weekIndex),
-      eq(franchiseProcessedGamesTable.homeTeamRef,  homeLower),
-      eq(franchiseProcessedGamesTable.awayTeamRef,  awayLower),
-    ))
-    .limit(1))[0] ?? null;
+  // ── Locate the processed game record (multiple fallback strategies) ────────
+  let processedGame = null as Awaited<ReturnType<typeof db.select>> extends (infer R)[] ? R | null : null;
 
-  // Legacy fallback: scan all processed games for this season and find by homeTeamId match
+  // Strategy 0: manual gameid override
+  if (gameIdOverride) {
+    const [r] = await db.select().from(franchiseProcessedGamesTable)
+      .where(eq(franchiseProcessedGamesTable.gameId, gameIdOverride)).limit(1);
+    processedGame = r ?? null;
+  }
+
+  // Strategy 1: new lookup columns (works for games processed after the schema update)
   if (!processedGame) {
+    const [r] = await db.select().from(franchiseProcessedGamesTable)
+      .where(and(
+        eq(franchiseProcessedGamesTable.seasonIdRef,  season.id),
+        eq(franchiseProcessedGamesTable.weekIndexRef, weekIndex),
+        eq(franchiseProcessedGamesTable.homeTeamRef,  homeLower),
+        eq(franchiseProcessedGamesTable.awayTeamRef,  awayLower),
+      ))
+      .limit(1);
+    processedGame = r ?? null;
+  }
+
+  // Strategy 2: use processedGameId stored on the schedule row (works after schedule column added)
+  if (!processedGame && schedGame.processedGameId) {
+    const [r] = await db.select().from(franchiseProcessedGamesTable)
+      .where(eq(franchiseProcessedGamesTable.gameId, schedGame.processedGameId)).limit(1);
+    processedGame = r ?? null;
+  }
+
+  // Strategy 3: reconstructed gameId format (works when Madden didn't provide its own gameId)
+  if (!processedGame) {
+    const hId     = schedGame.homeTeamId;
+    const aId     = schedGame.awayTeamId;
+    const hScore  = schedGame.homeScore ?? 0;
+    const aScore  = schedGame.awayScore ?? 0;
+    const constructedId = `s${season.id}-h${hId}-a${aId}-${hScore}-${aScore}`;
+    const [r] = await db.select().from(franchiseProcessedGamesTable)
+      .where(eq(franchiseProcessedGamesTable.gameId, constructedId)).limit(1);
+    processedGame = r ?? null;
+  }
+
+  // Strategy 4: substring scan — find any processedGame whose gameId contains both team IDs
+  // (covers constructed format for records pre-dating the lookup columns)
+  if (!processedGame) {
+    const hId = String(schedGame.homeTeamId);
+    const aId = String(schedGame.awayTeamId);
     const candidates = await db.select().from(franchiseProcessedGamesTable)
       .where(and(
-        eq(franchiseProcessedGamesTable.seasonIdRef, season.id),
-        eq(franchiseProcessedGamesTable.weekIndexRef, weekIndex),
+        like(franchiseProcessedGamesTable.gameId, `%${hId}%`),
+        like(franchiseProcessedGamesTable.gameId, `%${aId}%`),
       ))
-      .limit(100);
-    // For legacy records, try matching by gameId pattern using teamIds
-    const hId = schedGame.homeTeamId;
-    const aId = schedGame.awayTeamId;
-    const hScore = schedGame.homeScore ?? 0;
-    const aScore = schedGame.awayScore ?? 0;
-    const reconstructedId = `s${season.id}-h${hId}-a${aId}-${hScore}-${aScore}`;
-    processedGame = candidates.find(c => c.gameId === reconstructedId) ?? null;
+      .limit(20);
+    // Take the first candidate that contains both IDs in the right order
+    processedGame = candidates.find(c =>
+      c.gameId.includes(`h${hId}`) && c.gameId.includes(`a${aId}`),
+    ) ?? candidates[0] ?? null;
   }
 
   if (!processedGame) {
+    const hId = schedGame.homeTeamId;
+    const aId = schedGame.awayTeamId;
     await interaction.editReply(
-      `❌ No processed game record found for **${homeTeam} vs ${awayTeam}** in Week ${week}.\n` +
-      `This game may not have been imported yet, or was imported before the tracking system was set up.`,
+      `❌ Could not locate the processed game record for **${schedGame.homeTeamName} vs ${schedGame.awayTeamName}** in Week ${week}.\n\n` +
+      `**To fix this manually:**\n` +
+      `Run the command again and add the exact game ID using the \`gameid:\` parameter.\n\n` +
+      `The game ID is either a Madden-provided integer, or in the format:\n` +
+      `\`s${season.id}-h${hId}-a${aId}-${schedGame.homeScore ?? "?"}-${schedGame.awayScore ?? "?"}\`\n\n` +
+      `If you can't find it, run \`/franchiseupdate\` again — the next import will tag the schedule row correctly.`,
     );
     return;
   }
 
   // ── Determine what was PREVIOUSLY paid ────────────────────────────────────
-  const oldType         = processedGame.payoutType ?? null;
-  const oldWinnerId     = processedGame.winnerDiscordId ?? null;
-  const oldLoserId      = processedGame.loserDiscordId  ?? null;
-  const oldWinnerCoins  = processedGame.winnerCoins ?? 0;
-  const oldLoserCoins   = processedGame.loserCoins  ?? 0;
-  const oldPointDiff    = processedGame.appliedPointDiff ?? 0;
+  const pg = processedGame as any;
+  const oldType         = pg.payoutType ?? null;
+  const oldWinnerId     = pg.winnerDiscordId ?? null;
+  const oldLoserId      = pg.loserDiscordId  ?? null;
+  const oldWinnerCoins  = pg.winnerCoins ?? 0;
+  const oldLoserCoins   = pg.loserCoins  ?? 0;
+  const oldPointDiff    = pg.appliedPointDiff ?? 0;
 
   // If no metadata (legacy record), infer from schedule and registration
-  let inferredType: string | null = oldType;
-  let inferredWinnerId = oldWinnerId;
-  let inferredLoserId  = oldLoserId;
-  let inferredWinnerCoins = oldWinnerCoins;
-  let inferredLoserCoins  = oldLoserCoins;
-  let inferredPointDiff   = oldPointDiff;
+  let inferredType        = oldType as string | null;
+  let inferredWinnerId    = oldWinnerId as string | null;
+  let inferredLoserId     = oldLoserId  as string | null;
+  let inferredWinnerCoins = oldWinnerCoins as number;
+  let inferredLoserCoins  = oldLoserCoins  as number;
+  let inferredPointDiff   = oldPointDiff   as number;
 
   if (!inferredType) {
-    // Legacy inference — both registered means H2H was applied incorrectly
     const homeScore = schedGame.homeScore ?? 0;
     const awayScore = schedGame.awayScore ?? 0;
     const homeWon   = homeScore > awayScore;
@@ -167,7 +207,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const reversalLines: string[] = [];
 
   if (inferredType === "h2h" && inferredWinnerId && inferredLoserId) {
-    // Remove coins from both
     if (inferredWinnerCoins > 0) {
       await db.update(usersTable)
         .set({ balance: sql`${usersTable.balance} - ${inferredWinnerCoins}`, updatedAt: new Date() })
@@ -208,29 +247,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     reversalLines.push("❌ Reversed H2H win/loss records and all-time counters");
 
-    // Remove most recent game log entries for both users related to this game
-    const winnerLoserTeamName = inferredLoserId === homeUser?.discordId ? schedGame.homeTeamName : schedGame.awayTeamName;
-    const loserWinnerTeamName = inferredWinnerId === homeUser?.discordId ? schedGame.homeTeamName : schedGame.awayTeamName;
+    // Remove most recent game log entries for this game
+    const loserTeamForWinner = inferredLoserId === homeUser?.discordId ? schedGame.homeTeamName : schedGame.awayTeamName;
+    const winnerTeamForLoser = inferredWinnerId === homeUser?.discordId ? schedGame.homeTeamName : schedGame.awayTeamName;
 
-    const [winnerLogEntry] = await db.select({ id: gameLogTable.id })
-      .from(gameLogTable)
+    const [winnerLog] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
       .where(and(
         eq(gameLogTable.discordId, inferredWinnerId),
         eq(gameLogTable.seasonId,  season.id),
-        sql`lower(${gameLogTable.opponentLabel}) = ${winnerLoserTeamName.toLowerCase()}`,
+        sql`lower(${gameLogTable.opponentLabel}) = ${loserTeamForWinner.toLowerCase()}`,
       ))
       .orderBy(desc(gameLogTable.id)).limit(1);
-    if (winnerLogEntry) await db.delete(gameLogTable).where(eq(gameLogTable.id, winnerLogEntry.id));
+    if (winnerLog) await db.delete(gameLogTable).where(eq(gameLogTable.id, winnerLog.id));
 
-    const [loserLogEntry] = await db.select({ id: gameLogTable.id })
-      .from(gameLogTable)
+    const [loserLog] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
       .where(and(
         eq(gameLogTable.discordId, inferredLoserId),
         eq(gameLogTable.seasonId,  season.id),
-        sql`lower(${gameLogTable.opponentLabel}) = ${loserWinnerTeamName.toLowerCase()}`,
+        sql`lower(${gameLogTable.opponentLabel}) = ${winnerTeamForLoser.toLowerCase()}`,
       ))
       .orderBy(desc(gameLogTable.id)).limit(1);
-    if (loserLogEntry) await db.delete(gameLogTable).where(eq(gameLogTable.id, loserLogEntry.id));
+    if (loserLog) await db.delete(gameLogTable).where(eq(gameLogTable.id, loserLog.id));
 
     reversalLines.push("❌ Removed incorrect H2H game log entries");
 
@@ -241,48 +278,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .where(eq(usersTable.discordId, inferredWinnerId));
       await logTransaction(inferredWinnerId, -inferredWinnerCoins, "removecoins",
         `[Correction Wk${week}] Reversed incorrect CPU win payout`);
-      reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from winner`);
+      reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from prior winner`);
     }
   }
 
   // ── Apply the correct payout ───────────────────────────────────────────────
   const applyLines: string[] = [];
   let newPayoutMeta: {
-    payoutType: string; winnerDiscordId?: string; loserDiscordId?: string;
-    winnerCoins?: number; loserCoins?: number; appliedPointDiff?: number;
+    payoutType: string; winnerDiscordId?: string | null; loserDiscordId?: string | null;
+    winnerCoins?: number | null; loserCoins?: number | null; appliedPointDiff?: number | null;
   } = { payoutType: newType };
 
   if (newType === "h2h" && winner && pointDiff !== null) {
     const winnerLower = winner.toLowerCase();
     const [winnerUser] = await db.select().from(usersTable)
       .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
-
     if (!winnerUser) {
       await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
       return;
     }
-
-    // Identify loser user
     const loserUser = winnerUser.discordId === homeUser?.discordId ? awayUser : homeUser;
     if (!loserUser) {
       await interaction.editReply(`❌ Could not find the loser user — both teams must be registered for an H2H correction.`);
       return;
     }
-
     const winnerTeamName = winnerUser.team ?? winner;
-    const loserTeamName  = loserUser.team ?? "Unknown";
+    const loserTeamName  = loserUser.team  ?? "Unknown";
 
     await addBalance(winnerUser.discordId, H2H_WIN_PAYOUT);
     await logTransaction(winnerUser.discordId, H2H_WIN_PAYOUT, "addcoins",
-      `[Correction Wk${week}] H2H win vs ${loserTeamName} (+${pointDiff} spread)`);
+      `[Correction Wk${week}] H2H win vs ${loserTeamName} (+${pointDiff})`);
     await addBalance(loserUser.discordId, H2H_LOSS_PAYOUT);
     await logTransaction(loserUser.discordId, H2H_LOSS_PAYOUT, "addcoins",
-      `[Correction Wk${week}] H2H loss vs ${winnerTeamName} (−${pointDiff} spread)`);
-    applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins to **${winnerTeamName}**, +${H2H_LOSS_PAYOUT} coins to **${loserTeamName}**`);
+      `[Correction Wk${week}] H2H loss vs ${winnerTeamName} (−${pointDiff})`);
+    applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins → **${winnerTeamName}** | +${H2H_LOSS_PAYOUT} coins → **${loserTeamName}**`);
 
     await upsertH2HRecord(winnerUser.discordId, season.id, true,   pointDiff);
     await upsertH2HRecord(loserUser.discordId,  season.id, false, -pointDiff);
-    applyLines.push(`✅ H2H records updated (${winnerTeamName} +1W, ${loserTeamName} +1L)`);
+    applyLines.push(`✅ Records: **${winnerTeamName}** +1W, **${loserTeamName}** +1L`);
 
     await appendGameLog(winnerUser.discordId, season.id, "win",   pointDiff,  loserTeamName);
     await appendGameLog(loserUser.discordId,  season.id, "loss", -pointDiff, winnerTeamName);
@@ -303,23 +336,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const winnerLower = winner.toLowerCase();
     const [winnerUser] = await db.select().from(usersTable)
       .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
-
     if (!winnerUser) {
       await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
       return;
     }
-
     const loserTeamName = winnerLower === homeLower ? awayTeam : homeTeam;
-
     await addBalance(winnerUser.discordId, CPU_WIN_PAYOUT);
     await logTransaction(winnerUser.discordId, CPU_WIN_PAYOUT, "addcoins",
       `[Correction Wk${week}] CPU win vs ${loserTeamName} (force/autopilot)`);
-    applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins to **${winnerUser.team ?? winner}** *(CPU win, no record change)*`);
+    applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins → **${winnerUser.team ?? winner}** *(no record change)*`);
 
-    const sched = schedGame;
-    const winIsHome = winnerLower === homeLower;
-    const wScore = winIsHome ? (sched.homeScore ?? 0) : (sched.awayScore ?? 0);
-    const lScore = winIsHome ? (sched.awayScore ?? 0) : (sched.homeScore ?? 0);
+    const winIsHome  = winnerLower === homeLower;
+    const wScore     = winIsHome ? (schedGame.homeScore ?? 0) : (schedGame.awayScore ?? 0);
+    const lScore     = winIsHome ? (schedGame.awayScore ?? 0) : (schedGame.homeScore ?? 0);
     await appendGameLog(winnerUser.discordId, season.id, "win", wScore - lScore, `[CPU] ${loserTeamName}`);
 
     newPayoutMeta = {
@@ -331,7 +360,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     applyLines.push("✅ Game voided — no payouts applied");
   }
 
-  // ── Update the processed game record ──────────────────────────────────────
+  // ── Update the processed game record with new metadata ────────────────────
+  const gameIdToUpdate = (processedGame as any).gameId as string;
   await db.update(franchiseProcessedGamesTable)
     .set({
       payoutType:       newPayoutMeta.payoutType,
@@ -341,24 +371,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       loserCoins:       newPayoutMeta.loserCoins      ?? null,
       appliedPointDiff: newPayoutMeta.appliedPointDiff ?? null,
     })
-    .where(eq(franchiseProcessedGamesTable.gameId, processedGame.gameId));
+    .where(eq(franchiseProcessedGamesTable.gameId, gameIdToUpdate));
 
   // ── Reply ─────────────────────────────────────────────────────────────────
-  const wasLegacy = !processedGame.payoutType;
+  const wasLegacy = !oldType;
   const embed = new EmbedBuilder()
     .setTitle(`🔧 Payout Corrected — Week ${week}: ${schedGame.homeTeamName} vs ${schedGame.awayTeamName}`)
     .setColor(Colors.Orange)
     .addFields(
       {
-        name: `What was reversed (was: **${inferredType ?? "unknown"}**${wasLegacy ? " — inferred" : ""})`,
-        value: reversalLines.length ? reversalLines.join("\n") : "*Nothing was reversed (prior type was none)*",
+        name: `Reversed (was: **${inferredType ?? "unknown"}**${wasLegacy ? " — inferred from schedule" : ""})`,
+        value: reversalLines.length ? reversalLines.join("\n") : "*Nothing to reverse (prior type was none)*",
       },
       {
-        name: `What was applied (now: **${newType}**)`,
+        name: `Applied (now: **${newType}**)`,
         value: applyLines.length ? applyLines.join("\n") : "*No payouts applied*",
       },
     )
-    .setFooter({ text: `Game ID: ${processedGame.gameId}` })
+    .setFooter({ text: `Game ID: ${gameIdToUpdate}` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
