@@ -48,7 +48,7 @@ import * as teamlist from "./commands/teamlist.js";
 import * as openteams from "./commands/openteams.js";
 import * as adminClearteam from "./commands/admin-clearteam.js";
 import * as adminResetWeek from "./commands/admin-resetweek.js";
-import * as franchiseUpdate from "./commands/franchise-update.js";
+
 import * as seasonschedule from "./commands/seasonschedule.js";
 import * as nextopp from "./commands/nextopp.js";
 import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js";
@@ -146,7 +146,6 @@ if (!isProduction && !devBotEnabled) {
     openteams,
     adminClearteam,
     adminResetWeek,
-    franchiseUpdate,
     seasonschedule,
     nextopp,
     adminRollbackFranchise,
