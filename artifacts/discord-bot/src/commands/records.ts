@@ -2,10 +2,8 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction,
   EmbedBuilder, Colors, TextChannel,
 } from "discord.js";
-import { db } from "@workspace/db";
-import { userRecordsTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getSeasonRecords, getAllTimeRecords } from "../lib/gcs-fallback.js";
 
 // ─── Power Ranking Formula ────────────────────────────────────────────────────
 function calcPRScore(wins: number, losses: number, pointDiff: number): number {
@@ -48,11 +46,14 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
   await interaction.deferReply();
 
   const season = await getOrCreateActiveSeason();
-  const records = await db.select().from(userRecordsTable).where(eq(userRecordsTable.seasonId, season.id));
+  const { records, source } = await getSeasonRecords(season.id);
 
   if (records.length === 0) {
     return interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 Season ${season.seasonNumber} Power Rankings`).setDescription("No games have been recorded yet this season.")],
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle(`📊 Season ${season.seasonNumber} Power Rankings`)
+        .setDescription("No game records found yet this season.\n\nExport data from the Madden Companion App to populate this.")],
     });
   }
 
@@ -74,13 +75,16 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
     return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${formatDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.prScore.toFixed(1)}${postseason ? ` *(${postseason})*` : ""}`;
   });
 
+  const footerParts = ["PR Score = 60% × (W-L Diff) + 40% × (Point Diff)"];
+  if (source === "gcs") footerParts.push("⚡ Data pulled from latest MCA export");
+
   return interaction.editReply({
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Gold)
         .setTitle(`🏈 Season ${season.seasonNumber} Power Rankings`)
         .setDescription(rows.join("\n"))
-        .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff)" })
+        .setFooter({ text: footerParts.join(" • ") })
         .setTimestamp(),
     ],
   });
@@ -94,53 +98,22 @@ export const allTimePRData = new SlashCommandBuilder()
 export async function executeAllTimePR(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
-  const allRecords = await db.select().from(userRecordsTable);
+  const { records, source } = await getAllTimeRecords();
 
-  if (allRecords.length === 0) {
+  if (records.length === 0) {
     return interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("📊 All-Time Power Rankings").setDescription("No games have been recorded yet.")],
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("📊 All-Time Power Rankings")
+        .setDescription("No game records found yet.\n\nExport data from the Madden Companion App to populate this.")],
     });
   }
 
-  const aggregated = new Map<string, {
-    username: string; team: string | null;
-    wins: number; losses: number; pointDifferential: number;
-    playoffWins: number; playoffLosses: number;
-    superbowlWins: number; superbowlLosses: number;
-  }>();
-
-  for (const rec of allRecords) {
-    const ex = aggregated.get(rec.discordId);
-    if (ex) {
-      ex.wins               += rec.wins;
-      ex.losses             += rec.losses;
-      ex.pointDifferential  += rec.pointDifferential;
-      ex.playoffWins        += rec.playoffWins;
-      ex.playoffLosses      += rec.playoffLosses;
-      ex.superbowlWins      += rec.superbowlWins;
-      ex.superbowlLosses    += rec.superbowlLosses;
-      ex.username = rec.discordUsername;
-      if (rec.team) ex.team = rec.team;
-    } else {
-      aggregated.set(rec.discordId, {
-        username: rec.discordUsername,
-        team: rec.team ?? null,
-        wins: rec.wins,
-        losses: rec.losses,
-        pointDifferential: rec.pointDifferential,
-        playoffWins: rec.playoffWins,
-        playoffLosses: rec.playoffLosses,
-        superbowlWins: rec.superbowlWins,
-        superbowlLosses: rec.superbowlLosses,
-      });
-    }
-  }
-
-  const ranked = Array.from(aggregated.values()).map(r => ({
+  const ranked = records.map(r => ({
     ...r,
     gamesPlayed: r.wins + r.losses,
     prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
-    label: displayName(r.username, r.team),
+    label: displayName(r.discordUsername, r.team),
   })).sort((a, b) => b.prScore - a.prScore);
 
   const medals = ["🥇", "🥈", "🥉"];
@@ -154,13 +127,16 @@ export async function executeAllTimePR(interaction: ChatInputCommandInteraction)
     return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${formatDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.prScore.toFixed(1)}${postseason ? ` *(${postseason})*` : ""}`;
   });
 
+  const footerParts = ["PR Score = 60% × (W-L Diff) + 40% × (Point Diff)"];
+  if (source === "gcs") footerParts.push("⚡ Data pulled from latest MCA export");
+
   return interaction.editReply({
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Purple)
         .setTitle("🏆 All-Time Power Rankings")
         .setDescription(rows.join("\n"))
-        .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff)" })
+        .setFooter({ text: footerParts.join(" • ") })
         .setTimestamp(),
     ],
   });

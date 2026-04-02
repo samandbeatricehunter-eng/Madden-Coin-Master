@@ -44,6 +44,32 @@ export async function listMcaFilesSafe(prefix: string): Promise<{ files: string[
   }
 }
 
+export interface McaFileMeta {
+  name: string;
+  sizeBytes: number;
+  updatedAt: string | null;
+}
+
+/** List all GCS files under prefix with size + timestamp metadata. Never throws. */
+export async function listMcaFilesWithMeta(
+  prefix: string,
+): Promise<{ files: McaFileMeta[]; error?: string }> {
+  try {
+    const bucket = makeBucket();
+    if (!bucket) return { files: [], error: "DEFAULT_OBJECT_STORAGE_BUCKET_ID not configured" };
+    const [files] = await bucket.getFiles({ prefix });
+    const meta: McaFileMeta[] = files.map(f => ({
+      name:      f.name,
+      sizeBytes: Number(f.metadata?.size ?? 0),
+      updatedAt: (f.metadata?.updated as string | undefined) ?? null,
+    }));
+    meta.sort((a, b) => a.name.localeCompare(b.name));
+    return { files: meta };
+  } catch (err) {
+    return { files: [], error: String(err) };
+  }
+}
+
 /** Download and JSON-parse a GCS file. Throws on failure. */
 export async function readMcaJson(key: string): Promise<unknown> {
   const bucket = makeBucket();
