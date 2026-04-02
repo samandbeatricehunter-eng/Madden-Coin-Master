@@ -1145,7 +1145,19 @@ function normalizePlayers(body: unknown): any[] {
   if (Array.isArray(body)) return body;
   const b = body as Record<string, unknown>;
 
-  for (const key of ["playerArray", "rosters", "players", "rosterArray", "playerInfoList"]) {
+  // All known Madden CFM per-team roster + free-agent wrapper keys
+  for (const key of [
+    "rosterInfoList",        // Most common in Madden 24/25 CFM companion API
+    "playerArray",
+    "teamRosterInfoList",
+    "activeRosterInfoList",
+    "playerInfoList",
+    "rosters",
+    "players",
+    "rosterArray",
+    "teamPlayerInfoList",
+    "playerRosterInfoList",
+  ]) {
     if (Array.isArray(b[key])) return b[key] as any[];
   }
 
@@ -1232,7 +1244,12 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
       };
     }
 
+    // Always log body structure so we can debug key-name mismatches
+    const bodyKeys = body && typeof body === "object" ? Object.keys(body as Record<string, unknown>) : [];
+    console.log(`[roster/team/${mcaTeamId}] Body keys: [${bodyKeys.join(", ")}]`);
+
     const rawPlayers = normalizePlayers(body);
+    console.log(`[roster/team/${mcaTeamId}] normalizePlayers returned ${rawPlayers.length} entries`);
     if (rawPlayers.length > 0) {
       const p0 = rawPlayers[0] as Record<string, unknown>;
       console.log(`[roster/team/${mcaTeamId}] First player keys: ${Object.keys(p0).slice(0, 20).join(", ")}`);
