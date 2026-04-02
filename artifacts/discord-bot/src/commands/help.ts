@@ -103,10 +103,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
     }
 
-    // ── Admin embed ───────────────────────────────────────────────────────────
-    const adminEmbed = new EmbedBuilder()
+    // ── Admin embed 1: User/Coin/Inventory/Legends/Rules ─────────────────────
+    const adminEmbed1 = new EmbedBuilder()
       .setColor(Colors.Gold)
-      .setTitle("⚙️ REC League Econo-Bot — Admin Commands")
+      .setTitle("⚙️ Admin Commands (1/2)")
       .addFields(
         {
           name: "👤 User Management",
@@ -161,6 +161,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             "`/adminrules reset [section]` — Reset to defaults or clear a custom section",
           ].join("\n"),
         },
+      );
+
+    // ── Admin embed 2: Season/Records/MCA/Articles ────────────────────────────
+    const adminEmbed2 = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("⚙️ Admin Commands (2/2)")
+      .addFields(
         {
           name: "📅 Season — Commands",
           value: [
@@ -193,7 +200,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             "`/admin-listuserteams` — List all registered users and linked teams",
             "`/seasonpr` — Post current season power rankings",
             "`/alltimepr` — Post all-time power rankings",
-            "",
             "📋 **PR Formula:** 60% × (W−L) + 40% × Point Differential",
           ].join("\n"),
         },
@@ -206,7 +212,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             "`/admin-catchup status` — Check whether catchup mode is active",
             "`/admin-fullsync` — Full sync: auto-link teams, process stored game files, award missed milestones",
             "`/admin-syncmilestones` — Check and award any missed career milestone bonuses",
-            "`/admin-syncmilestones user:@X wins:N` — Manually set a user's all-time win count",
           ].join("\n"),
         },
         {
@@ -214,7 +219,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           value: [
             "`/advanceweek [week]` — Advance the league week and post the recap article",
             "`/admin-resendarticle week:N` — Regenerate and post the recap for any previous week",
-            "`/admin-fixplayernames` — Fix malformed player names imported from franchise ZIPs",
             "`/endofseasonpayout` — Run end-of-season playoff ranking bonuses",
             "`/admin-playoffs [on/off]` — Toggle playoff mode on/off",
           ].join("\n"),
@@ -223,10 +227,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setFooter({ text: "Admin commands are only visible to bot admins and server administrators." })
       .setTimestamp();
 
-    return await interaction.reply({
-      embeds: [memberEmbed, adminEmbed],
-      ephemeral: true,
-    });
+    // Send member embed first, then follow up with admin embeds separately
+    // (splitting avoids Discord's 6000-char combined embed limit)
+    await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
+    return await interaction.followUp({ embeds: [adminEmbed1, adminEmbed2], ephemeral: true });
   } catch (err) {
     console.error("[/help] Error:", err);
     const msg = err instanceof Error ? err.message : String(err);
