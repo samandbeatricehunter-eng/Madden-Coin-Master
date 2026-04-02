@@ -146,7 +146,9 @@ export const userRecordsTable = pgTable("user_records", {
   superbowlWins: integer("superbowl_wins").notNull().default(0),
   superbowlLosses: integer("superbowl_losses").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  uniqPlayerSeason: uniqueIndex("user_records_discord_season_idx").on(t.discordId, t.seasonId),
+}));
 
 // Individual game log for /recentH2H
 export const gameLogTable = pgTable("game_log", {
