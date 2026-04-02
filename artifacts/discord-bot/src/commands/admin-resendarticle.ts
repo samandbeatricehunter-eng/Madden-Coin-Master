@@ -4,6 +4,7 @@ import {
 } from "discord.js";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { generateFranchiseArticle } from "../lib/franchise-article.js";
+import { sendArticleChunked } from "../lib/send-article.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
@@ -90,9 +91,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const prefix = pingEveryone ? "@everyone\n" : "";
-  await (headlinesChannel as TextChannel).send({
-    content: `${prefix}📰 **REC League — Week ${week} Recap**\n\n${article}`,
-  });
+  const header = `${prefix}📰 **REC League — Week ${week} Recap**\n\n`;
+  try {
+    await sendArticleChunked(headlinesChannel as TextChannel, header, article);
+  } catch (sendErr) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("❌ Failed to Post Article")
+        .setDescription(
+          "The article was generated but could not be sent to the headlines channel.\n\n" +
+          `**Error:** \`${sendErr instanceof Error ? sendErr.message : String(sendErr)}\``
+        )],
+    });
+    return;
+  }
 
   // ── Confirm to admin ─────────────────────────────────────────────────────────
   await interaction.editReply({

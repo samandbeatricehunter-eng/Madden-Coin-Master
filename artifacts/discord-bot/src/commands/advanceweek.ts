@@ -9,6 +9,7 @@ import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from
 import { deleteGotwMessages } from "../lib/gotw-helpers.js";
 import { generateFranchiseArticle } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
+import { sendArticleChunked } from "../lib/send-article.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
@@ -346,9 +347,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           );
 
           const tc = headlinesChannel as import("discord.js").TextChannel;
-          await tc.send({
-            content: `@everyone\n📰 **REC League — Week ${oldWeekNum} Recap**\n\n${article}`,
-          });
+          await sendArticleChunked(
+            tc,
+            `@everyone\n📰 **REC League — Week ${oldWeekNum} Recap**\n\n`,
+            article,
+          );
         } catch (err) {
           console.error("[advanceweek] Failed to generate franchise article:", err);
           // Post a visible fallback so the channel isn't silently blank
