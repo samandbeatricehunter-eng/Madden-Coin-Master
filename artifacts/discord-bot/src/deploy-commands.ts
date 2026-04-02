@@ -49,6 +49,7 @@ import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule
 import * as webhookurl from "./commands/webhookurl.js";
 import * as adminCatchup from "./commands/admin-catchup.js";
 import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
+import * as setweek from "./commands/setweek.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -76,6 +77,7 @@ const commands = [
   webhookurl,
   adminCatchup,
   adminFixPlayerNames,
+  setweek,
 ].map(c => c.data.toJSON());
 
 commands.push(
