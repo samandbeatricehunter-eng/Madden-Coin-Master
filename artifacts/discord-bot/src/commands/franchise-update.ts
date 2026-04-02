@@ -735,10 +735,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           ? (POS_NUM[posRaw] ?? String(posRaw))
           : String(posRaw).trim().toUpperCase();
 
-        // ── Capture all *Rating attribute fields from the raw player object ──────
-        const attributes: Record<string, number> = {};
+        // ── Capture all *Rating attribute fields + key bio fields ────────────────
+        // Bio fields: height (inches), weight (lbs), handedness (0=right/1=left or string)
+        const BIO_FIELDS = new Set([
+          "height", "heightInches",
+          "weight",
+          "handedness", "throwingHand", "playerHandedness",
+        ]);
+        const attributes: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
-          if (typeof v === "number" && k.endsWith("Rating")) attributes[k] = v;
+          if (v == null) continue;
+          if (typeof v === "number" && k.endsWith("Rating")) { attributes[k] = v; continue; }
+          if (BIO_FIELDS.has(k)) { attributes[k] = v; }
         }
 
         const jerseyNum = (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
