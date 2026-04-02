@@ -351,6 +351,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           });
         } catch (err) {
           console.error("[advanceweek] Failed to generate franchise article:", err);
+          // Post a visible fallback so the channel isn't silently blank
+          try {
+            const tc = headlinesChannel as import("discord.js").TextChannel;
+            await tc.send({
+              content: `📰 **REC League — Week ${oldWeekNum} Recap**\n\n_The AI recap could not be generated for this week. Check back next advance._`,
+            });
+          } catch { /* if this also fails, nothing we can do */ }
         }
       })();
     }

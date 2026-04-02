@@ -196,10 +196,12 @@ LEAGUE DATA:
 ${context}`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: "gpt-4o-mini",
     max_completion_tokens: 1000,
     messages: [{ role: "user", content: prompt }],
   });
 
-  return response.choices[0]?.message?.content?.trim() ?? "The league article could not be generated at this time.";
+  const text = response.choices[0]?.message?.content?.trim();
+  if (!text) throw new Error("OpenAI returned an empty response");
+  return text;
 }
