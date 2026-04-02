@@ -7,7 +7,7 @@ import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, go
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { deleteGotwMessages } from "../lib/gotw-helpers.js";
-import { generateFranchiseArticle } from "../lib/franchise-article.js";
+import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 
@@ -329,38 +329,61 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply({ embeds: [embed] });
 
-  // ── Franchise article — post to headlines channel when leaving a regular-season week ──
+  // ── Franchise articles — recap of completed week + preview of new week ───────
   if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && guild) {
     const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
       ?? await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
 
     if (headlinesChannel && headlinesChannel.isTextBased()) {
-      // Fire article generation async — don't block the interaction reply
+      // Fire both articles async — recap first, then preview. Don't block the interaction reply.
       (async () => {
+        const tc = headlinesChannel as import("discord.js").TextChannel;
+        const completedWeekIndex = oldWeekNum - 1; // 0-based
+
+        // ── 1. Recap of the week that just completed ──────────────────────────
         try {
-          const completedWeekIndex = oldWeekNum - 1; // 0-based
-          const article = await generateFranchiseArticle(
+          const recapArticle = await generateFranchiseArticle(
             season.id,
             season.seasonNumber,
             completedWeekIndex,
             newLabel,
           );
-
-          const tc = headlinesChannel as import("discord.js").TextChannel;
           await sendArticleChunked(
             tc,
             `@everyone\n📰 **REC League — Week ${oldWeekNum} Recap**\n\n`,
-            article,
+            recapArticle,
           );
         } catch (err) {
-          console.error("[advanceweek] Failed to generate franchise article:", err);
-          // Post a visible fallback so the channel isn't silently blank
+          console.error("[advanceweek] Failed to generate recap article:", err);
           try {
-            const tc = headlinesChannel as import("discord.js").TextChannel;
             await tc.send({
               content: `📰 **REC League — Week ${oldWeekNum} Recap**\n\n_The AI recap could not be generated for this week. Check back next advance._`,
             });
-          } catch { /* if this also fails, nothing we can do */ }
+          } catch { /* nothing we can do */ }
+        }
+
+        // ── 2. Preview of the new week (only for regular-season weeks) ────────
+        const newWeekNum = parseInt(newWeek, 10);
+        if (!isNaN(newWeekNum) && newWeekNum >= 1 && newWeekNum <= 18) {
+          try {
+            const previewArticle = await generateWeekPreview(
+              season.id,
+              season.seasonNumber,
+              newWeekNum - 1, // 0-based
+            );
+            await sendArticleChunked(
+              tc,
+              `@everyone\n📋 **REC League — Week ${newWeekNum} Preview**\n\n`,
+              previewArticle,
+            );
+          } catch (err) {
+            console.error("[advanceweek] Failed to generate preview article:", err);
+            try {
+              await tc.send({
+                content: `📋 **REC League — Week ${newWeekNum} Preview**\n\n_The AI preview could not be generated for this week._`,
+              });
+            } catch { /* nothing we can do */ }
+          }
         }
       })();
     }
