@@ -45,10 +45,11 @@ function devBadge(trait: number): string {
 function formatPlayerLine(p: {
   firstName: string; lastName: string;
   position: string; overall: number; devTrait: number;
-  jerseyNum: number | null;
+  jerseyNum: number | null; age: number | null;
 }): string {
   const num = p.jerseyNum != null ? `#${p.jerseyNum} ` : "";
-  return `${num}**${p.firstName} ${p.lastName}** (${p.position}) — OVR ${p.overall}${devBadge(p.devTrait)}`;
+  const agePart = p.age != null ? ` | Age ${p.age}` : "";
+  return `${num}**${p.firstName} ${p.lastName}** (${p.position}) — OVR ${p.overall}${agePart}${devBadge(p.devTrait)}`;
 }
 
 function fieldChunks(label: string, lines: string[]): { name: string; value: string }[] {
