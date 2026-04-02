@@ -97,11 +97,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (report.filesFound.length === 0) {
-    gameEmbed.setDescription(
-      "No schedule files found in storage.\n" +
-      "Export game data from the Madden Companion App (MCA) to populate this."
-    );
+  // GCS diagnostics — show what IS in storage so admins know if it's empty or unreachable
+  if (report.gcsError) {
+    gameEmbed.setDescription(`⚠️ **Storage connectivity error:** ${report.gcsError.slice(0, 300)}`);
+  } else if (report.filesFound.length === 0) {
+    const allCount = report.allMcaFiles.length;
+    if (allCount === 0) {
+      gameEmbed.setDescription(
+        "No MCA files exist in storage yet.\n" +
+        "Export data from the Madden Companion App to populate this.",
+      );
+    } else {
+      const listed = report.allMcaFiles.slice(0, 8).map(f => `\`${f}\``).join(", ");
+      gameEmbed.setDescription(
+        `No week schedule files found, but **${allCount} MCA file${allCount !== 1 ? "s" : ""} exist** in storage:\n${listed}` +
+        (allCount > 8 ? ` …and ${allCount - 8} more` : ""),
+      );
+    }
   }
 
   embeds.push(gameEmbed);
@@ -121,6 +133,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       name: "Standings Fallback",
       value: "No standings file found or all teams already had game records.",
       inline: false,
+    });
+  }
+
+  if (report.winBackfillLines.length > 0) {
+    milestoneEmbed.addFields({
+      name: `🔧 Win Counter Backfills (${report.winBackfillLines.length})`,
+      value: report.winBackfillLines.join("\n").slice(0, 1024),
     });
   }
 

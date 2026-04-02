@@ -19,7 +19,7 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
-import { listMcaFiles, readMcaJson, mcaFileExists } from "./gcs-reader.js";
+import { listMcaFilesSafe, readMcaJson, mcaFileExists } from "./gcs-reader.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -159,17 +159,20 @@ export interface FullSyncReport {
   stillUnlinked: { discordId: string; discordUsername: string }[];
   alreadyLinked: number;
   // Phase 2
-  filesFound:       string[];
-  gamesProcessed:   number;
-  gamesDuplicate:   number;
-  gamesCpuVsCpu:    number;
+  filesFound:        string[];
+  allMcaFiles:       string[];   // every file under mca/ (for GCS diagnostics)
+  gcsError?:         string;     // set if GCS connection itself failed
+  gamesProcessed:    number;
+  gamesDuplicate:    number;
+  gamesCpuVsCpu:     number;
   gamesUnregistered: number;
-  payoutLines:      string[];
+  payoutLines:       string[];
   unregisteredLines: string[];
   // Phase 3 (standings fallback)
   standingsFallback: string[];
   // Phase 4 (milestones)
-  milestoneLines: string[];
+  milestoneLines:  string[];
+  winBackfillLines: string[];   // users whose allTimeH2HWins was bumped from user_records
   // Errors
   errors: string[];
 }
@@ -327,13 +330,31 @@ export async function runGcsScheduleProcessing(
   const h2hLoss = await getPayoutValue(PAYOUT_KEYS.H2H_LOSS);
   const cpuWin  = await getPayoutValue(PAYOUT_KEYS.CPU_WIN);
 
-  // Find all week schedule files in GCS
-  const allFiles = await listMcaFiles("mca/week-");
-  const schedFiles = allFiles.filter(f => f.endsWith("-schedules.json"));
+  // ── Scan GCS — surface connectivity errors instead of silently returning [] ──
+  const { files: allWeekFiles, error: gcsErr } = await listMcaFilesSafe("mca/week-");
+  if (gcsErr) {
+    report.gcsError = gcsErr;
+    report.errors.push(`GCS connectivity error: ${gcsErr}`);
+  }
+
+  // Also enumerate the full mca/ directory so admins can see what exists
+  const { files: allMcaFiles } = await listMcaFilesSafe("mca/");
+  report.allMcaFiles.push(...allMcaFiles);
+
+  const schedFiles = allWeekFiles.filter(f => f.endsWith("-schedules.json"));
   report.filesFound.push(...schedFiles);
 
   if (schedFiles.length === 0) {
-    report.errors.push("No week schedule files found in storage. Export game data from MCA first.");
+    if (gcsErr) {
+      report.errors.push("Skipping game payout processing — could not reach object storage.");
+    } else if (allMcaFiles.length === 0) {
+      report.errors.push("No MCA files found in storage at all. Has the MCA webhook sent any data yet?");
+    } else {
+      report.errors.push(
+        `No week schedule files found (checked ${allWeekFiles.length} week-* files). ` +
+        `${allMcaFiles.length} total MCA files exist: ${allMcaFiles.slice(0, 5).join(", ")}`,
+      );
+    }
     return;
   }
 
@@ -568,24 +589,48 @@ export async function runStandingsFallback(seasonId: number, report: FullSyncRep
 }
 
 // ── Phase 4: Milestone sync ────────────────────────────────────────────────────
+// Uses MAX(allTimeH2HWins, SUM(user_records.wins)) — same as /admin-syncmilestones.
+// This ensures milestones are caught even when the MCA webhook never ran.
 
 export async function runMilestoneSync(report: FullSyncReport) {
   const allUsers = await db.select({
     discordId:            usersTable.discordId,
     discordUsername:      usersTable.discordUsername,
     team:                 usersTable.team,
-    allTimeH2HWins:       usersTable.allTimeH2HWins,
+    trackedWins:          usersTable.allTimeH2HWins,
     milestoneTierAwarded: usersTable.milestoneTierAwarded,
   }).from(usersTable);
 
+  // Sum wins across every season from user_records (the authoritative source
+  // when MCA hasn't populated allTimeH2HWins directly)
+  const recordTotals = await db.select({
+    discordId: userRecordsTable.discordId,
+    totalWins: sql<number>`COALESCE(SUM(${userRecordsTable.wins}), 0)`.as("total_wins"),
+  }).from(userRecordsTable).groupBy(userRecordsTable.discordId);
+
+  const totalsMap = new Map(recordTotals.map(r => [r.discordId, Number(r.totalWins)]));
+
   for (const user of allUsers) {
-    const totalWins   = user.allTimeH2HWins ?? 0;
+    const recordsWins = totalsMap.get(user.discordId) ?? 0;
+    const trackedWins = user.trackedWins ?? 0;
+    // Take the higher of the two — guards against stale or never-incremented field
+    const trueWins    = Math.max(recordsWins, trackedWins);
     const currentTier = user.milestoneTierAwarded ?? 0;
     const teamLabel   = user.team ?? user.discordUsername;
 
+    // Backfill allTimeH2HWins if user_records has a higher value
+    if (trueWins > trackedWins) {
+      await db.update(usersTable)
+        .set({ allTimeH2HWins: trueWins, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, user.discordId));
+      report.winBackfillLines.push(
+        `🔧 **${teamLabel}** all-time wins: ${trackedWins} → **${trueWins}** (from season records)`,
+      );
+    }
+
     const owedMilestones = [...H2H_MILESTONES]
-      .reverse() // ascending tier order
-      .filter(m => totalWins >= m.wins && currentTier < m.tier);
+      .reverse() // ascending tier order: 1 → 4
+      .filter(m => trueWins >= m.wins && currentTier < m.tier);
 
     if (owedMilestones.length === 0) continue;
 
@@ -609,19 +654,21 @@ export async function runFullSync(
   guildMembers: Map<string, { username: string; displayName: string }>,
 ): Promise<FullSyncReport> {
   const report: FullSyncReport = {
-    autoLinked:       [],
-    stillUnlinked:    [],
-    alreadyLinked:    0,
-    filesFound:       [],
-    gamesProcessed:   0,
-    gamesDuplicate:   0,
-    gamesCpuVsCpu:    0,
+    autoLinked:        [],
+    stillUnlinked:     [],
+    alreadyLinked:     0,
+    filesFound:        [],
+    allMcaFiles:       [],
+    gamesProcessed:    0,
+    gamesDuplicate:    0,
+    gamesCpuVsCpu:     0,
     gamesUnregistered: 0,
-    payoutLines:      [],
+    payoutLines:       [],
     unregisteredLines: [],
     standingsFallback: [],
-    milestoneLines:   [],
-    errors:           [],
+    milestoneLines:    [],
+    winBackfillLines:  [],
+    errors:            [],
   };
 
   const season = await getOrCreateActiveSeason();

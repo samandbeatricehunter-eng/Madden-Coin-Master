@@ -22,15 +22,25 @@ function makeBucket() {
   return storage.bucket(bucketId);
 }
 
-/** List all GCS file names that start with `prefix`. Returns [] if unavailable. */
+/** List all GCS file names that start with `prefix`.
+ *  Returns [] if the bucket env var isn't set.
+ *  THROWS on GCS auth/network errors so callers can surface the problem. */
 export async function listMcaFiles(prefix: string): Promise<string[]> {
+  const bucket = makeBucket();
+  if (!bucket) return [];
+  const [files] = await bucket.getFiles({ prefix });
+  return files.map(f => f.name).sort();
+}
+
+/** Like listMcaFiles but never throws — returns an object with files and any error. */
+export async function listMcaFilesSafe(prefix: string): Promise<{ files: string[]; error?: string }> {
   try {
     const bucket = makeBucket();
-    if (!bucket) return [];
+    if (!bucket) return { files: [], error: "DEFAULT_OBJECT_STORAGE_BUCKET_ID not configured" };
     const [files] = await bucket.getFiles({ prefix });
-    return files.map(f => f.name).sort();
-  } catch {
-    return [];
+    return { files: files.map(f => f.name).sort() };
+  } catch (err) {
+    return { files: [], error: String(err) };
   }
 }
 
