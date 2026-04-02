@@ -8,6 +8,7 @@ import {
   processPlayerWeekStats,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed } from "../lib/discord-notify.js";
+import { saveMcaPayload } from "../lib/mcaStorage.js";
 
 const router: IRouter = Router();
 
@@ -36,6 +37,7 @@ function validateKey(req: Request, res: Response, next: () => void) {
 
 // ── /leagueteams — team info ───────────────────────────────────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, async (req, res) => {
+  saveMcaPayload("mca/leagueteams.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/leagueteams] Received payload, processing async...");
   const result = await processLeagueTeams(req.body).catch(err => ({ ok: false, message: String(err) }));
@@ -44,6 +46,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, a
 
 // ── /standings — league standings; log structure so we know what fields arrive ─
 router.post("/madden/:leagueKey/:platform/:leagueId/standings", validateKey, (req, res) => {
+  saveMcaPayload("mca/standings.json", req.body);
   res.status(200).json({ status: "received" });
   const body = req.body as Record<string, unknown>;
   const keys = Object.keys(body ?? {});
@@ -55,6 +58,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/standings", validateKey, (re
 
 // ── /teamstats — season-level team stats (some MCA versions send this) ────────
 router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, async (req, res) => {
+  saveMcaPayload("mca/teamstats.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/teamstats] Received payload, processing async...");
   const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
@@ -63,6 +67,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, asy
 
 // ── /schedules — full season schedule ─────────────────────────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, async (req, res) => {
+  saveMcaPayload("mca/schedules.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/schedules] Received payload, processing async...");
   const result = await processSchedules(req.body).catch(err => ({ ok: false, message: String(err) }));
@@ -78,6 +83,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
 
 // ── /freeagents/roster — known EA bug (always empty); just acknowledge ─────────
 router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validateKey, (req, res) => {
+  saveMcaPayload("mca/freeagents-roster.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/freeagents/roster] Acknowledged (EA bug — payload skipped)");
 });
@@ -86,6 +92,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validate
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  saveMcaPayload(`mca/week-${weekType}-${weekNum}-team.json`, req.body);
   res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/team] Received team stats (weekType=${weekType}), processing...`);
   const result = await processTeamWeekStats(req.body, weekType, weekNum).catch(err => ({ ok: false, message: String(err) }));
@@ -100,6 +107,7 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
     async (req, res) => {
       const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
       const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+      saveMcaPayload(`mca/week-${weekType}-${weekNum}-${statType}.json`, req.body);
       res.status(200).json({ status: "received" });
       const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum).catch(err => ({
         ok: false, message: String(err),
@@ -118,6 +126,7 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/schedules", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  saveMcaPayload(`mca/week-${weekType}-${weekNum}-schedules.json`, req.body);
   res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing payouts...`);
   const result = await processWeekScores(req.body, weekNum).catch(err => ({
@@ -216,15 +225,17 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
 // ── /team/:teamId/roster — per-team roster (no-op, we don't use this data) ───
 router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, (req, res) => {
+  const teamId = req.params["teamId"] ?? "unknown";
+  saveMcaPayload(`mca/team-${teamId}-roster.json`, req.body);
   res.status(200).json({ status: "received" });
-  console.log(`[mca/team/${req.params["teamId"]}/roster] Acknowledged (no-op)`);
+  console.log(`[mca/team/${teamId}/roster] Acknowledged (no-op)`);
 });
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
-
+  saveMcaPayload(`mca/week-${weekType}-${weekNum}-scores.json`, req.body);
   res.status(200).json({ status: "received" });
 
   if (weekType !== "reg" || weekNum < 1 || weekNum > 18) {
@@ -340,6 +351,9 @@ router.use("/madden", (req, res) => {
   const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
   console.log(`[mca/UNKNOWN] ${req.method} /madden${req.path} — top-level keys: ${JSON.stringify(keys)}`);
   console.log(`[mca/UNKNOWN] First item sample: ${JSON.stringify(sample)?.slice(0, 400)}`);
+  // Save unknown payloads using a sanitized path as the key
+  const sanitizedPath = req.path.replace(/[^a-zA-Z0-9-_/]/g, "-").replace(/\/+/g, "-").replace(/^-|-$/g, "");
+  saveMcaPayload(`mca/unknown-${sanitizedPath}.json`, req.body);
   res.status(200).json({ status: "received" });
 });
 
