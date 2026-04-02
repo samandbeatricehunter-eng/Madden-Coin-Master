@@ -66,6 +66,7 @@ import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
 import * as adminSyncMilestones from "./commands/admin-syncmilestones.js";
 import * as adminSetPayouts from "./commands/admin-setpayouts.js";
 import * as adminResendArticle from "./commands/admin-resendarticle.js";
+import * as adminLinkTeam from "./commands/admin-linkteam.js";
 import * as setweek from "./commands/setweek.js";
 import { startPollChecker } from "./lib/poll-checker.js";
 
@@ -158,6 +159,7 @@ if (!isProduction && !devBotEnabled) {
     adminSyncMilestones,
     adminSetPayouts,
     adminResendArticle,
+    adminLinkTeam,
     setweek,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },

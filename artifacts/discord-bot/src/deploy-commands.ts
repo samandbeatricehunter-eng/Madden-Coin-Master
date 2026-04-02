@@ -52,6 +52,7 @@ import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
 import * as adminSyncMilestones from "./commands/admin-syncmilestones.js";
 import * as adminSetPayouts from "./commands/admin-setpayouts.js";
 import * as adminResendArticle from "./commands/admin-resendarticle.js";
+import * as adminLinkTeam from "./commands/admin-linkteam.js";
 import * as setweek from "./commands/setweek.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
@@ -83,6 +84,7 @@ const commands = [
   adminSyncMilestones,
   adminSetPayouts,
   adminResendArticle,
+  adminLinkTeam,
   setweek,
 ].map(c => c.data.toJSON());
 
