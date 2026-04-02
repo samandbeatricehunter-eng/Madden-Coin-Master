@@ -679,30 +679,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         return null;
       }
 
+      // Sentinel teamId used in DB for the free agent pool (no real Madden team uses 999)
+      const FA_TEAM_ID = 999;
+
       const rosterUpserts: Promise<any>[] = [];
       for (const p of rawPlayers) {
         if (!p || typeof p !== "object") continue;
 
-        // ── Filter: active 53-man roster only ────────────────────────────────────
-        // Madden CFM exports use boolean flags, not a rosType integer.
-        // isOnPracticeSquad / isOnIR are confirmed present in this export.
-        // Also fall back to the legacy rosType integer for other export formats.
+        // ── Practice squad / IR → always skip ────────────────────────────────────
         if (p.isOnPracticeSquad === true || p.isOnIR === true) continue;
-        if (p.isFreeAgent === true) continue;
-        const rosType = p.rosType ?? p.rosterType ?? p.rostStatus ?? p.rosStatus ?? null;
-        if (rosType != null && Number(rosType) !== ACTIVE_ROS_TYPE) continue;
-
-        const teamId = Number(p.teamId ?? p.teamIndex ?? -1);
-        if (teamId < 0) continue;
 
         const rawId  = p.playerId ?? p.rosterId ?? p.playerIndex ?? p.id;
         const playerId = rawId != null ? Number(rawId) : null;
         if (playerId == null || isNaN(playerId)) continue;
 
-        const teamData = teamMap.get(teamId);
-        if (!teamData) continue;
+        // ── Resolve team membership ───────────────────────────────────────────────
+        const isFreeAgent = p.isFreeAgent === true;
+        const rosType = p.rosType ?? p.rosterType ?? p.rostStatus ?? p.rosStatus ?? null;
+        // For legacy rosType-based exports: skip non-active, non-FA slots
+        if (!isFreeAgent && rosType != null && Number(rosType) !== ACTIVE_ROS_TYPE) continue;
 
-        const user = findUser(teamData.name, teamData.nickname);
+        let teamId: number;
+        let teamName: string;
+        let discordId: string | null = null;
+
+        if (isFreeAgent) {
+          teamId   = FA_TEAM_ID;
+          teamName = "Free Agents";
+        } else {
+          teamId = Number(p.teamId ?? p.teamIndex ?? -1);
+          if (teamId < 0) continue;
+          const teamData = teamMap.get(teamId);
+          if (!teamData) continue;
+          teamName = teamData.name;
+          const user = findUser(teamData.name, teamData.nickname);
+          discordId = user?.discordId ?? null;
+        }
 
         // ── Resolve overall rating — confirmed field for this export is playerBestOvr ──
         const ovrRaw =
@@ -723,24 +735,36 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           ? (POS_NUM[posRaw] ?? String(posRaw))
           : String(posRaw).trim().toUpperCase();
 
+        // ── Capture all *Rating attribute fields from the raw player object ──────
+        const attributes: Record<string, number> = {};
+        for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+          if (typeof v === "number" && k.endsWith("Rating")) attributes[k] = v;
+        }
+
+        const jerseyNum = (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
+          ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
+          : null;
+        const firstName = String(p.firstName ?? "").trim();
+        const lastName  = String(p.lastName  ?? "").trim();
+        const age       = p.age != null ? Number(p.age) : null;
+
         rosterUpserts.push(
           db.insert(franchiseRostersTable)
             .values({
               seasonId:  season.id,
               teamId,
-              teamName:  teamData.name,
-              discordId: user?.discordId ?? null,
+              teamName,
+              discordId,
               playerId,
-              firstName: String(p.firstName ?? "").trim(),
-              lastName:  String(p.lastName  ?? "").trim(),
+              firstName,
+              lastName,
               position,
               overall,
               devTrait:  Number(devTrait),
-              age:       p.age != null ? Number(p.age) : null,
-              jerseyNum: (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
-                ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
-                : null,
+              age,
+              jerseyNum,
               contractYearsLeft: resolveContractYearsLeft(p),
+              attributes: Object.keys(attributes).length > 0 ? attributes : null,
               importedAt: new Date(),
             })
             .onConflictDoUpdate({
@@ -750,18 +774,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 franchiseRostersTable.playerId,
               ],
               set: {
-                teamName:  teamData.name,
-                discordId: user?.discordId ?? null,
-                firstName: String(p.firstName ?? "").trim(),
-                lastName:  String(p.lastName  ?? "").trim(),
+                teamName,
+                discordId,
+                firstName,
+                lastName,
                 position,
                 overall,
                 devTrait:  Number(devTrait),
-                age:       p.age != null ? Number(p.age) : null,
-                jerseyNum: (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
-                  ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
-                  : null,
+                age,
+                jerseyNum,
                 contractYearsLeft: resolveContractYearsLeft(p),
+                attributes: Object.keys(attributes).length > 0 ? attributes : null,
                 importedAt: new Date(),
               },
             })
@@ -823,7 +846,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             ],
           });
         }
-      } else if (scheduleUpserts.length > 0) {
+      } else if (scheduleInserts.length > 0) {
         // No completed games in DB yet — post week 1 upcoming matchups as a preview
         const week1Games = await db.select().from(franchiseScheduleTable)
           .where(and(

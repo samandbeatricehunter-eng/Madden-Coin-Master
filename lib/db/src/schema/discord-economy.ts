@@ -321,6 +321,7 @@ export const franchiseRostersTable = pgTable("franchise_rosters", {
   age:                integer("age"),
   jerseyNum:          integer("jersey_num"),
   contractYearsLeft:  integer("contract_years_left"),   // null = unknown; 1 = final year (contract year)
+  attributes:         json("attributes"),               // Record<string, number> — all *Rating fields from MCA export
   importedAt: timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("franchise_roster_player_season_idx")
