@@ -70,6 +70,7 @@ import * as adminLinkTeam from "./commands/admin-linkteam.js";
 import * as adminFullSync from "./commands/admin-fullsync.js";
 import * as setweek from "./commands/setweek.js";
 import * as standings from "./commands/standings.js";
+import * as viewroster from "./commands/viewroster.js";
 import { startPollChecker } from "./lib/poll-checker.js";
 
 // Events
@@ -165,6 +166,7 @@ if (!isProduction && !devBotEnabled) {
     adminFullSync,
     setweek,
     standings,
+    viewroster,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },
