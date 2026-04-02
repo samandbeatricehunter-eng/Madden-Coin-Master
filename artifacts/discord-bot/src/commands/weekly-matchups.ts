@@ -118,6 +118,48 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // ── Clear previous week's posts ────────────────────────────────────────────
+  try {
+    const tc = targetChannel as TextChannel;
+    let cleared = 0;
+
+    // Fetch up to 100 messages; repeat until the channel is empty
+    while (true) {
+      const fetched = await tc.messages.fetch({ limit: 100 });
+      if (fetched.size === 0) break;
+
+      const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000; // 14 days in ms
+      const recent = fetched.filter(m => m.createdTimestamp > cutoff);
+      const old    = fetched.filter(m => m.createdTimestamp <= cutoff);
+
+      // Bulk-delete messages newer than 14 days (Discord requirement)
+      if (recent.size >= 2) {
+        await tc.bulkDelete(recent);
+        cleared += recent.size;
+      } else if (recent.size === 1) {
+        await recent.first()!.delete();
+        cleared += 1;
+      }
+
+      // Delete older messages individually (rate-limit friendly)
+      for (const msg of old.values()) {
+        await msg.delete().catch(() => {});
+        cleared++;
+        await new Promise(r => setTimeout(r, 500)); // 0.5s between old deletes
+      }
+
+      // If we fetched fewer than 100 there are no more messages
+      if (fetched.size < 100) break;
+    }
+
+    if (cleared > 0) {
+      console.log(`[weeklymatchups] Cleared ${cleared} old message(s) from matchups channel`);
+    }
+  } catch (err) {
+    console.error("[weeklymatchups] Failed to clear channel:", err);
+    // Non-fatal — continue and post anyway
+  }
+
   await (targetChannel as TextChannel).send({ embeds: [embed] });
 
   // ── Compute GOTW scored matchups ───────────────────────────────────────────
