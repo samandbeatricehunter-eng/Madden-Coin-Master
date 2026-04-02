@@ -90,6 +90,31 @@ async function buildLeagueContext(
     parts.push("");
   }
 
+  // ── Upcoming week's actual schedule (so the AI doesn't hallucinate matchups) ─
+  const upcomingWeekIndex = completedWeekIndex + 1;
+  const upcomingGames = await db
+    .select({
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      status:       franchiseScheduleTable.status,
+    })
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId,  seasonId),
+      eq(franchiseScheduleTable.weekIndex, upcomingWeekIndex),
+    ));
+
+  if (upcomingGames.length > 0) {
+    const upcomingWeekNum = upcomingWeekIndex + 1;
+    const h2h = upcomingGames.filter(g => g.status === 3);
+    const cpu  = upcomingGames.filter(g => g.status !== 3);
+    parts.push(`=== WEEK ${upcomingWeekNum} UPCOMING MATCHUPS (use ONLY these when teasing next week) ===`);
+    for (const g of h2h) parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (H2H)`);
+    for (const g of cpu)  parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (vs CPU)`);
+    parts.push("IMPORTANT: Only reference the matchups listed above when looking ahead. Do not invent or reuse games from this week.");
+    parts.push("");
+  }
+
   // ── Passing leaders ──────────────────────────────────────────────────────────
   const passLeaders = await db
     .select({
