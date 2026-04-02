@@ -1,5 +1,6 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder,
+  AllowedMentionsTypes,
 } from "discord.js";
 import { getOrSeedRules, getAllSections } from "../lib/db-helpers.js";
 
@@ -18,9 +19,18 @@ export const data = new SlashCommandBuilder()
       .setRequired(false)
       .setMinValue(1)
   )
+  .addStringOption(opt =>
+    opt.setName("mention")
+      .setDescription("Broadcast to @everyone or @here (overrides the user option)")
+      .setRequired(false)
+      .addChoices(
+        { name: "@everyone — ping the entire server", value: "everyone" },
+        { name: "@here — ping online members only",   value: "here"     },
+      )
+  )
   .addUserOption(opt =>
     opt.setName("user")
-      .setDescription("Tag a member to share this rule with them (makes it visible to everyone)")
+      .setDescription("Tag a specific member to share this rule with them (makes it visible to everyone)")
       .setRequired(false)
   );
 
@@ -37,6 +47,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 export async function execute(interaction: ChatInputCommandInteraction) {
   const section    = interaction.options.getString("section", true);
   const ruleNumber = interaction.options.getInteger("rule_number");
+  const mention    = interaction.options.getString("mention") as "everyone" | "here" | null;
   const taggedUser = interaction.options.getUser("user");
 
   const allSections = await getAllSections();
@@ -47,6 +58,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const rules = await getOrSeedRules(section);
+
+  // ── Resolve how to address the reply ─────────────────────────────────────────
+  // Priority: mention (@everyone/@here) > tagged user > no tag (ephemeral)
+  let prefix   = "";
+  let ephemeral = true;
+  let allowedMentions: { parse: AllowedMentionsTypes[] } | undefined;
+
+  if (mention === "everyone") {
+    prefix          = "@everyone";
+    ephemeral       = false;
+    allowedMentions = { parse: ["everyone"] };
+  } else if (mention === "here") {
+    prefix          = "@here";
+    ephemeral       = false;
+    allowedMentions = { parse: ["everyone"] };   // discord.js uses "everyone" key for both @everyone and @here
+  } else if (taggedUser) {
+    prefix    = taggedUser.toString();
+    ephemeral = false;
+    allowedMentions = undefined;  // default — user mentions are always allowed
+  }
+
+  const leadIn = prefix ? `${prefix} — here's the relevant rule:\n` : undefined;
 
   // ── Single-rule quote ────────────────────────────────────────────────────────
   if (ruleNumber !== null) {
@@ -65,11 +98,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setFooter({ text: `REC League • Rule ${ruleNumber} of ${rules.length} in this section` })
       .setTimestamp();
 
-    const mention = taggedUser ? `${taggedUser.toString()} — here's the relevant rule:\n` : "";
     await interaction.reply({
-      content: mention || undefined,
-      embeds: [embed],
-      ephemeral: !taggedUser,
+      content:         leadIn,
+      embeds:          [embed],
+      ephemeral,
+      allowedMentions,
     });
     return;
   }
@@ -83,10 +116,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setFooter({ text: "REC League • Use /rules to view any section" })
     .setTimestamp();
 
-  const mention = taggedUser ? `${taggedUser.toString()} — here's the relevant rule:\n` : "";
   await interaction.reply({
-    content: mention || undefined,
-    embeds: [embed],
-    ephemeral: !taggedUser,
+    content:         leadIn,
+    embeds:          [embed],
+    ephemeral,
+    allowedMentions,
   });
 }

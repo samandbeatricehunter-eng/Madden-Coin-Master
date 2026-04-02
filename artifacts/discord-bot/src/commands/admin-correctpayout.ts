@@ -9,10 +9,7 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
-
-const H2H_WIN_PAYOUT  = 50;
-const H2H_LOSS_PAYOUT = 20;
-const CPU_WIN_PAYOUT  = 20;
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-correctpayout")
@@ -44,6 +41,11 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+
+  // Load game payout amounts from config (admin-configurable via /admin-setpayouts)
+  const H2H_WIN_PAYOUT  = await getPayoutValue(PAYOUT_KEYS.H2H_WIN);
+  const H2H_LOSS_PAYOUT = await getPayoutValue(PAYOUT_KEYS.H2H_LOSS);
+  const CPU_WIN_PAYOUT  = await getPayoutValue(PAYOUT_KEYS.CPU_WIN);
 
   const week           = interaction.options.getInteger("week", true);
   const homeDiscordUser = interaction.options.getUser("homeuser", true);

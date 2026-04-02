@@ -14,14 +14,13 @@ import {
   addBalance, logTransaction, getOrCreateActiveSeason,
   upsertH2HRecord, appendGameLog,
 } from "../lib/db-helpers.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 // ── Channel IDs ───────────────────────────────────────────────────────────────
 const GENERAL_CHANNEL_ID = process.env["DISCORD_GENERAL_CHANNEL_ID"] ?? "1476321282868908052";
 
-// ── Coin payouts ─────────────────────────────────────────────────────────────
-const H2H_WIN_PAYOUT  = 50;
-const H2H_LOSS_PAYOUT = 20;
-const CPU_WIN_PAYOUT  = 20;
+// ── Coin payouts — loaded from payout_config table (admin-configurable) ──────
+// Resolved inside execute() via getPayoutValue() to allow live overrides.
 
 // ── Madden completed-game status codes ───────────────────────────────────────
 // Madden 24/25 exports use TWO completed-status codes:
@@ -90,6 +89,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const attachment   = interaction.options.getAttachment("file", true);
   const postPayouts  = interaction.options.getBoolean("post_payouts")  ?? true;
   const postRankings = interaction.options.getBoolean("post_rankings") ?? true;
+
+  // Load game payout amounts from config (admin-configurable via /admin-setpayouts)
+  const H2H_WIN_PAYOUT  = await getPayoutValue(PAYOUT_KEYS.H2H_WIN);
+  const H2H_LOSS_PAYOUT = await getPayoutValue(PAYOUT_KEYS.H2H_LOSS);
+  const CPU_WIN_PAYOUT  = await getPayoutValue(PAYOUT_KEYS.CPU_WIN);
 
   if (!attachment.name.toLowerCase().endsWith(".zip")) {
     return interaction.editReply({ content: "❌ Please upload a `.zip` file from your Madden franchise export." });

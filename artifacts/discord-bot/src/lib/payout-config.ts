@@ -3,6 +3,11 @@ import { payoutConfigTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 export const PAYOUT_KEYS = {
+  // ── Game result payouts ──────────────────────────────────────────────────────
+  H2H_WIN:          "h2h_win",
+  H2H_LOSS:         "h2h_loss",
+  CPU_WIN:          "cpu_win",
+  // ── End-of-season bonuses ────────────────────────────────────────────────────
   AWARD_WIN_BONUS:  "award_win_bonus",
   SEASON_PR_1:      "season_pr_1",
   SEASON_PR_2:      "season_pr_2",
@@ -14,14 +19,19 @@ export const PAYOUT_KEYS = {
 
 export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
 
-const DEFAULTS: Record<PayoutKey, { value: number; description: string }> = {
-  award_win_bonus:  { value: 50,  description: "Coins per team that has an in-game season award winner" },
-  season_pr_1:      { value: 150, description: "Season PR bonus — #1 ranked player" },
-  season_pr_2:      { value: 125, description: "Season PR bonus — #2 ranked player" },
-  season_pr_3_6:    { value: 100, description: "Season PR bonus — #3–6 ranked players" },
-  season_pr_7_8:    { value: 75,  description: "Season PR bonus — #7–8 ranked players" },
-  season_pr_9_10:   { value: 50,  description: "Season PR bonus — #9–10 ranked players" },
-  goty_winner_coins:{ value: 100, description: "Coins awarded to each GOTY award winner" },
+const DEFAULTS: Record<PayoutKey, { value: number; description: string; category: string }> = {
+  // ── Game result payouts ──────────────────────────────────────────────────────
+  h2h_win:           { value: 50,  description: "H2H game win (both users played)",            category: "Game Payouts"          },
+  h2h_loss:          { value: 20,  description: "H2H game loss (both users played)",            category: "Game Payouts"          },
+  cpu_win:           { value: 20,  description: "CPU/force win (one-sided or simmed game)",     category: "Game Payouts"          },
+  // ── End-of-season bonuses ────────────────────────────────────────────────────
+  award_win_bonus:   { value: 50,  description: "Coins per team with an in-game award winner",  category: "Season Bonuses"        },
+  season_pr_1:       { value: 150, description: "Season PR bonus — #1 ranked player",           category: "Season Bonuses"        },
+  season_pr_2:       { value: 125, description: "Season PR bonus — #2 ranked player",           category: "Season Bonuses"        },
+  season_pr_3_6:     { value: 100, description: "Season PR bonus — #3–6 ranked players",        category: "Season Bonuses"        },
+  season_pr_7_8:     { value: 75,  description: "Season PR bonus — #7–8 ranked players",        category: "Season Bonuses"        },
+  season_pr_9_10:    { value: 50,  description: "Season PR bonus — #9–10 ranked players",       category: "Season Bonuses"        },
+  goty_winner_coins: { value: 100, description: "Coins awarded to each GOTY award winner",      category: "Season Bonuses"        },
 };
 
 const cache = new Map<PayoutKey, number>();
@@ -62,10 +72,11 @@ export function getPayoutKeyMeta(key: PayoutKey) {
   return DEFAULTS[key];
 }
 
-export function getAllPayoutKeys(): Array<{ key: PayoutKey; description: string; defaultValue: number }> {
+export function getAllPayoutKeys(): Array<{ key: PayoutKey; description: string; defaultValue: number; category: string }> {
   return (Object.values(PAYOUT_KEYS) as PayoutKey[]).map(k => ({
-    key: k,
-    description: DEFAULTS[k].description,
+    key:          k,
+    description:  DEFAULTS[k].description,
     defaultValue: DEFAULTS[k].value,
+    category:     DEFAULTS[k].category,
   }));
 }
