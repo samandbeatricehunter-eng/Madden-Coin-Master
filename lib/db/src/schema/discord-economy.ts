@@ -492,6 +492,37 @@ export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
   uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),
 }));
 
+// ── Configurable payout amounts (key → integer coin value) ───────────────────
+export const payoutConfigTable = pgTable("payout_config", {
+  key:         text("key").primaryKey(),
+  value:       integer("value").notNull(),
+  description: text("description").notNull().default(""),
+  updatedAt:   timestamp("updated_at").notNull().defaultNow(),
+  updatedBy:   text("updated_by"),
+});
+
+// ── Pending polls awaiting expiry + result processing ─────────────────────────
+export const pendingPollsTable = pgTable("pending_polls", {
+  id:                  serial("id").primaryKey(),
+  messageId:           text("message_id").notNull(),
+  channelId:           text("channel_id").notNull(),
+  pollType:            text("poll_type").notNull(),  // "goty" | "loudest" | "heart" | "best_worst" | "worst_worst"
+  seasonId:            integer("season_id").notNull(),
+  expiresAt:           timestamp("expires_at").notNull(),
+  processed:           boolean("processed").notNull().default(false),
+  processedAt:         timestamp("processed_at"),
+  historicalChannelId: text("historical_channel_id"),  // historical records channel for that season
+  metadata:            text("metadata"),               // JSON string for extra context
+  createdAt:           timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── Historical records channel created at wildcard time, per season ──────────
+export const seasonHistoricalChannelsTable = pgTable("season_historical_channels", {
+  seasonId:  integer("season_id").primaryKey(),
+  channelId: text("channel_id").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;
 export type InsertUserRecord = z.infer<typeof insertUserRecordSchema>;

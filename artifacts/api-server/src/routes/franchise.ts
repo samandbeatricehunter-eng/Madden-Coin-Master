@@ -334,6 +334,18 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
   }
 });
 
+// ── /awards — season award winners (sent by MCA at end of regular season) ─────
+router.post("/madden/:leagueKey/:platform/:leagueId/awards", validateKey, (req, res) => {
+  saveMcaPayload("mca/awards.json", req.body);
+  res.status(200).json({ status: "received" });
+  const body = req.body as Record<string, unknown>;
+  const keys = Object.keys(body ?? {});
+  const firstKey = keys[0];
+  const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
+  console.log("[mca/awards] Received. Top-level keys:", keys);
+  console.log("[mca/awards] First item sample:", JSON.stringify(sample)?.slice(0, 600));
+});
+
 // ── Catch-all: log any MCA endpoint we haven't explicitly handled ─────────────
 // Uses router.use() to avoid path-to-regexp wildcard restrictions.
 // validateKey not supported here; check key manually.

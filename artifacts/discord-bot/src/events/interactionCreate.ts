@@ -23,6 +23,7 @@ import { weekLabel } from "../commands/advanceweek.js";
 import {
   scoreH2HMatchups, postGotwToChannel, GOTW_CHANNEL_ID,
 } from "../lib/gotw-helpers.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
@@ -930,12 +931,110 @@ async function handleButton(interaction: ButtonInteraction) {
     });
     return;
   }
+
+  // ── GOTY: commissioner opens winner selection ─────────────────────────────────
+  if (action === "goty_select") {
+    const seasonId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferReply({ ephemeral: true });
+
+    const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
+      .from(usersTable);
+    const teamsWithUsers = allUsers
+      .filter(u => u.team)
+      .sort((a, b) => (a.team ?? "").localeCompare(b.team ?? ""))
+      .slice(0, 25); // Discord select menu max 25
+
+    if (teamsWithUsers.length === 0) {
+      await interaction.editReply({ content: "❌ No users with teams found." });
+      return;
+    }
+
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`goty_winners:${seasonId}`)
+      .setPlaceholder("Select the 2 GOTY winners...")
+      .setMinValues(2)
+      .setMaxValues(2)
+      .addOptions(teamsWithUsers.map(u =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(u.team!)
+          .setValue(u.discordId)
+      ));
+
+    await interaction.editReply({
+      content: "Select **exactly 2** GOTY winners. Each will receive coins + 1 free XF promotion:",
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+    });
+    return;
+  }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────
 async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   const parts     = interaction.customId.split(":");
   const action    = parts[0]!;
+
+  // ── GOTY: commissioner selected the 2 winners ─────────────────────────────────
+  if (action === "goty_winners") {
+    const seasonId   = parseInt(parts[1] ?? "0", 10);
+    const winnerIds  = interaction.values; // 2 Discord user IDs
+
+    await interaction.deferUpdate();
+
+    const gotyCoins = await getPayoutValue(PAYOUT_KEYS.GOTY_WINNER);
+
+    const winnerLines: string[] = [];
+
+    for (const discordId of winnerIds) {
+      const [userRow] = await db.select({ team: usersTable.team })
+        .from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+      const team = userRow?.team ?? "Unknown";
+
+      if (gotyCoins > 0) {
+        await addBalance(discordId, gotyCoins);
+        await logTransaction(discordId, gotyCoins, "addcoins",
+          `GOTY Award Winner — Season ${seasonId}`, interaction.user.id);
+      }
+
+      winnerLines.push(`🏆 <@${discordId}> (${team})`);
+
+      try {
+        const u = await interaction.client.users.fetch(discordId);
+        await u.send(
+          `🎮 **You've been selected as a Game of the Year Award winner!**\n\n` +
+          `**+${gotyCoins} 🪙 coins** have been added to your balance!\n` +
+          `You also receive **1 free XF promotion** for any player — coordinate with the commissioner to apply it!`
+        ).catch(() => {});
+      } catch (_) {}
+    }
+
+    // Post to general channel
+    try {
+      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
+      if (generalChannel?.isTextBased()) {
+        const announceEmbed = new EmbedBuilder()
+          .setTitle("🎮 GAME OF THE YEAR AWARD WINNERS!")
+          .setColor(Colors.Gold)
+          .setDescription(
+            `Congratulations to this season's **Game of the Year** award winners!\n\n` +
+            winnerLines.join("\n") + "\n\n" +
+            `Each winner receives **+${gotyCoins} 🪙** and a **free XF promotion**!`
+          )
+          .setTimestamp();
+        await (generalChannel as TextChannel).send({ content: "@everyone", embeds: [announceEmbed] });
+      }
+    } catch (err) { console.error("Failed to post GOTY announcement:", err); }
+
+    // Update the commissioner message to show done state
+    const doneEmbed = new EmbedBuilder()
+      .setTitle("✅ GOTY Winners Selected")
+      .setColor(Colors.Green)
+      .setDescription(winnerLines.join("\n"))
+      .addFields({ name: "Coins Awarded", value: `+${gotyCoins} 🪙 each`, inline: true })
+      .setFooter({ text: `Selected by ${interaction.user.username}` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [doneEmbed], components: [] });
+    return;
+  }
 
   // ── GOTW: admin selected a specific game ─────────────────────────────────────
   if (action === "gotw_select") {

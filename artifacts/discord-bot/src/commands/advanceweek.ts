@@ -8,6 +8,7 @@ import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { deleteGotwMessages } from "../lib/gotw-helpers.js";
 import { generateFranchiseArticle } from "../lib/franchise-article.js";
+import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
@@ -353,5 +354,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       })();
     }
+  }
+
+  // ── Wildcard automation — fires when advancing from Week 18 → Wildcard ────────
+  if (newWeek === "wildcard" && season.currentWeek === "18") {
+    (async () => {
+      try {
+        await runWildcardAutomation(interaction.client, season.id, season.seasonNumber);
+      } catch (err) {
+        console.error("[advanceweek] Wildcard automation error:", err);
+      }
+    })();
+  }
+
+  // ── Offseason — post season/all-time records to historical channel ─────────────
+  if (newWeek === "offseason") {
+    (async () => {
+      try {
+        await runOffseasonHistoricalPost(interaction.client, season.id, season.seasonNumber);
+      } catch (err) {
+        console.error("[advanceweek] Offseason historical post error:", err);
+      }
+    })();
   }
 }

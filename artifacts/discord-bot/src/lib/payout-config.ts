@@ -1,0 +1,71 @@
+import { db } from "@workspace/db";
+import { payoutConfigTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+
+export const PAYOUT_KEYS = {
+  AWARD_WIN_BONUS:  "award_win_bonus",
+  SEASON_PR_1:      "season_pr_1",
+  SEASON_PR_2:      "season_pr_2",
+  SEASON_PR_3_6:    "season_pr_3_6",
+  SEASON_PR_7_8:    "season_pr_7_8",
+  SEASON_PR_9_10:   "season_pr_9_10",
+  GOTY_WINNER:      "goty_winner_coins",
+} as const;
+
+export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
+
+const DEFAULTS: Record<PayoutKey, { value: number; description: string }> = {
+  award_win_bonus:  { value: 50,  description: "Coins per team that has an in-game season award winner" },
+  season_pr_1:      { value: 150, description: "Season PR bonus — #1 ranked player" },
+  season_pr_2:      { value: 125, description: "Season PR bonus — #2 ranked player" },
+  season_pr_3_6:    { value: 100, description: "Season PR bonus — #3–6 ranked players" },
+  season_pr_7_8:    { value: 75,  description: "Season PR bonus — #7–8 ranked players" },
+  season_pr_9_10:   { value: 50,  description: "Season PR bonus — #9–10 ranked players" },
+  goty_winner_coins:{ value: 100, description: "Coins awarded to each GOTY award winner" },
+};
+
+const cache = new Map<PayoutKey, number>();
+
+export async function getPayoutValue(key: PayoutKey): Promise<number> {
+  if (cache.has(key)) return cache.get(key)!;
+  const [row] = await db.select({ value: payoutConfigTable.value })
+    .from(payoutConfigTable)
+    .where(eq(payoutConfigTable.key, key))
+    .limit(1);
+  const value = row?.value ?? DEFAULTS[key].value;
+  cache.set(key, value);
+  return value;
+}
+
+export async function setPayoutValue(key: PayoutKey, value: number, updatedBy: string): Promise<void> {
+  const desc = DEFAULTS[key].description;
+  await db.insert(payoutConfigTable)
+    .values({ key, value, description: desc, updatedBy, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: payoutConfigTable.key,
+      set: { value, updatedBy, updatedAt: new Date() },
+    });
+  cache.set(key, value);
+}
+
+export async function getAllPayoutConfig(): Promise<Map<PayoutKey, number>> {
+  const rows = await db.select().from(payoutConfigTable);
+  const result = new Map<PayoutKey, number>();
+  for (const key of Object.values(PAYOUT_KEYS) as PayoutKey[]) {
+    const row = rows.find(r => r.key === key);
+    result.set(key, row?.value ?? DEFAULTS[key].value);
+  }
+  return result;
+}
+
+export function getPayoutKeyMeta(key: PayoutKey) {
+  return DEFAULTS[key];
+}
+
+export function getAllPayoutKeys(): Array<{ key: PayoutKey; description: string; defaultValue: number }> {
+  return (Object.values(PAYOUT_KEYS) as PayoutKey[]).map(k => ({
+    key: k,
+    description: DEFAULTS[k].description,
+    defaultValue: DEFAULTS[k].value,
+  }));
+}

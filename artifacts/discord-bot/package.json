@@ -10,6 +10,7 @@
     "rollback-franchise": "tsx src/scripts/rollback-franchise-import.ts"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "@workspace/db": "workspace:*",
     "adm-zip": "^0.5.16",
     "axios": "^1.14.0",

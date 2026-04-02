@@ -218,6 +218,9 @@ importers:
 
   artifacts/discord-bot:
     dependencies:
+      '@google-cloud/storage':
+        specifier: ^7.19.0
+        version: 7.19.0
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db

@@ -64,7 +64,9 @@ import * as webhookurl from "./commands/webhookurl.js";
 import * as adminCatchup from "./commands/admin-catchup.js";
 import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
 import * as adminSyncMilestones from "./commands/admin-syncmilestones.js";
+import * as adminSetPayouts from "./commands/admin-setpayouts.js";
 import * as setweek from "./commands/setweek.js";
+import { startPollChecker } from "./lib/poll-checker.js";
 
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -153,6 +155,7 @@ if (!isProduction && !devBotEnabled) {
     adminCatchup,
     adminFixPlayerNames,
     adminSyncMilestones,
+    adminSetPayouts,
     setweek,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
@@ -183,6 +186,10 @@ if (!isProduction && !devBotEnabled) {
     await normalizeDefensivePositions();
     console.log("✅ Database initialized");
   }
+
+  client.once("ready", () => {
+    startPollChecker(client);
+  });
 
   init()
     .then(() => client.login(token))
