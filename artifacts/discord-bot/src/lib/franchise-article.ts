@@ -5,6 +5,11 @@ import {
   usersTable,
 } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
+import {
+  getWeekResultsFromGcs,
+  getUpcomingMatchupsFromGcs,
+  type GcsGame,
+} from "./gcs-fallback.js";
 
 const openai = new OpenAI({
   baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
@@ -77,22 +82,44 @@ async function buildLeagueContext(
       eq(franchiseScheduleTable.weekIndex, completedWeekIndex),
     ));
 
-  const played = weekGames.filter(g => g.homeScore !== null && g.awayScore !== null);
-  if (played.length > 0) {
-    parts.push(`=== WEEK ${completedWeekIndex + 1} RESULTS ===`);
-    for (const g of played) {
-      const winner = (g.homeScore ?? 0) >= (g.awayScore ?? 0)
-        ? `${g.homeTeamName} ${g.homeScore}–${g.awayScore} ${g.awayTeamName}`
-        : `${g.awayTeamName} ${g.awayScore}–${g.homeScore} ${g.homeTeamName}`;
-      const type = g.status === 3 ? "(H2H)" : "(CPU)";
-      parts.push(`${winner} ${type}`);
+  // ── Completed game results — DB first, GCS fallback ─────────────────────────
+  const weekNum = completedWeekIndex + 1;
+  let playedGames: GcsGame[] = weekGames
+    .filter(g => g.homeScore !== null && g.awayScore !== null)
+    .map(g => ({
+      homeTeamName: g.homeTeamName,
+      awayTeamName: g.awayTeamName,
+      homeScore:    g.homeScore,
+      awayScore:    g.awayScore,
+      isH2H:        g.status === 3,
+    }));
+
+  if (playedGames.length === 0) {
+    // DB has no results — try GCS
+    playedGames = await getWeekResultsFromGcs(weekNum);
+  }
+
+  if (playedGames.length > 0) {
+    parts.push(`=== WEEK ${weekNum} RESULTS ===`);
+    for (const g of playedGames) {
+      const hs = g.homeScore ?? 0, as_ = g.awayScore ?? 0;
+      const winner = hs >= as_
+        ? `${g.homeTeamName} ${hs}–${as_} ${g.awayTeamName}`
+        : `${g.awayTeamName} ${as_}–${hs} ${g.homeTeamName}`;
+      parts.push(`${winner} ${g.isH2H ? "(H2H)" : "(vs CPU)"}`);
     }
+    parts.push("");
+  } else {
+    parts.push(`=== WEEK ${weekNum} RESULTS ===`);
+    parts.push("No game results available for this week. Do NOT invent scores or claim any games were played.");
     parts.push("");
   }
 
-  // ── Upcoming week's actual schedule (so the AI doesn't hallucinate matchups) ─
+  // ── Upcoming week's actual schedule — DB first, GCS fallback ─────────────
   const upcomingWeekIndex = completedWeekIndex + 1;
-  const upcomingGames = await db
+  const upcomingWeekNum   = upcomingWeekIndex + 1;
+
+  let upcomingGamesRaw = await db
     .select({
       homeTeamName: franchiseScheduleTable.homeTeamName,
       awayTeamName: franchiseScheduleTable.awayTeamName,
@@ -104,14 +131,28 @@ async function buildLeagueContext(
       eq(franchiseScheduleTable.weekIndex, upcomingWeekIndex),
     ));
 
+  let upcomingGames: GcsGame[] = upcomingGamesRaw.map(g => ({
+    homeTeamName: g.homeTeamName,
+    awayTeamName: g.awayTeamName,
+    homeScore:    null,
+    awayScore:    null,
+    isH2H:        g.status === 3,
+  }));
+
+  if (upcomingGames.length === 0) {
+    upcomingGames = await getUpcomingMatchupsFromGcs(upcomingWeekIndex);
+  }
+
   if (upcomingGames.length > 0) {
-    const upcomingWeekNum = upcomingWeekIndex + 1;
-    const h2h = upcomingGames.filter(g => g.status === 3);
-    const cpu  = upcomingGames.filter(g => g.status !== 3);
+    const h2h = upcomingGames.filter(g => g.isH2H);
+    const cpu  = upcomingGames.filter(g => !g.isH2H);
     parts.push(`=== WEEK ${upcomingWeekNum} UPCOMING MATCHUPS (use ONLY these when teasing next week) ===`);
     for (const g of h2h) parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (H2H)`);
     for (const g of cpu)  parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (vs CPU)`);
     parts.push("IMPORTANT: Only reference the matchups listed above when looking ahead. Do not invent or reuse games from this week.");
+    parts.push("");
+  } else {
+    parts.push("No upcoming schedule data available. Do not invent or speculate about specific Week " + upcomingWeekNum + " matchups.");
     parts.push("");
   }
 
@@ -266,8 +307,8 @@ async function buildPreviewContext(
     }
   }
 
-  // ── Scheduled matchups for the preview week ───────────────────────────────
-  const matchups = await db
+  // ── Scheduled matchups for the preview week — DB first, GCS fallback ────────
+  const matchupsRaw = await db
     .select({
       homeTeamName: franchiseScheduleTable.homeTeamName,
       awayTeamName: franchiseScheduleTable.awayTeamName,
@@ -279,23 +320,40 @@ async function buildPreviewContext(
       eq(franchiseScheduleTable.weekIndex, weekIndex),
     ));
 
-  const h2hGames = matchups.filter(g => g.status === 3);
-  const cpuGames = matchups.filter(g => g.status !== 3);
+  let matchups: GcsGame[] = matchupsRaw.map(g => ({
+    homeTeamName: g.homeTeamName,
+    awayTeamName: g.awayTeamName,
+    homeScore:    null,
+    awayScore:    null,
+    isH2H:        g.status === 3,
+  }));
 
-  if (h2hGames.length > 0) {
-    parts.push(`=== WEEK ${weekNum} H2H MATCHUPS (user vs user) ===`);
-    for (const g of h2hGames) {
-      parts.push(`${g.awayTeamName} @ ${g.homeTeamName}`);
-    }
-    parts.push("");
+  if (matchups.length === 0) {
+    matchups = await getUpcomingMatchupsFromGcs(weekIndex);
   }
 
-  if (cpuGames.length > 0) {
-    parts.push(`=== WEEK ${weekNum} CPU MATCHUPS ===`);
-    for (const g of cpuGames) {
-      parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (vs CPU)`);
-    }
+  const h2hGames = matchups.filter(g => g.isH2H);
+  const cpuGames = matchups.filter(g => !g.isH2H);
+
+  if (matchups.length === 0) {
+    parts.push(`=== WEEK ${weekNum} MATCHUPS ===`);
+    parts.push("No schedule data available for this week. Do NOT invent matchups.");
     parts.push("");
+  } else {
+    if (h2hGames.length > 0) {
+      parts.push(`=== WEEK ${weekNum} H2H MATCHUPS (user vs user) ===`);
+      for (const g of h2hGames) {
+        parts.push(`${g.awayTeamName} @ ${g.homeTeamName}`);
+      }
+      parts.push("");
+    }
+    if (cpuGames.length > 0) {
+      parts.push(`=== WEEK ${weekNum} CPU MATCHUPS ===`);
+      for (const g of cpuGames) {
+        parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (vs CPU)`);
+      }
+      parts.push("");
+    }
   }
 
   // ── Season stat leaders (context for players to watch) ────────────────────

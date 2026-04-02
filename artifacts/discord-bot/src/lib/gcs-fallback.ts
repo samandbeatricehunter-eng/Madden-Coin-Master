@@ -264,3 +264,114 @@ export async function getStoredWeekNumbers(): Promise<{ reg: number[]; pre: numb
     post: [...new Set(post)].sort((a, b) => a - b),
   };
 }
+
+// ── Shared team-name resolver ─────────────────────────────────────────────────
+// Reads mca/leagueteams.json and returns a map from teamId → { name, isHuman }.
+async function buildTeamNameMap(): Promise<Map<number, { name: string; isHuman: boolean }>> {
+  const map = new Map<number, { name: string; isHuman: boolean }>();
+  try {
+    const raw = await readMcaJson("mca/leagueteams.json");
+    const teams = extractList(raw, "leagueTeamInfoList", "teamInfoList", "teams");
+    for (const t of teams) {
+      const teamId  = Number(t?.teamId ?? t?.teamIndex ?? -1);
+      if (teamId < 0) continue;
+      const nick    = String(t?.nickName ?? t?.teamName ?? `Team${teamId}`).trim();
+      const city    = String(t?.cityName ?? "").trim();
+      const name    = city ? `${city} ${nick}` : nick;
+      const user    = String(t?.userName ?? "CPU").trim();
+      const isHuman = user !== "CPU" && user !== "" && user !== "0";
+      map.set(teamId, { name, isHuman });
+    }
+  } catch {
+    // If leagueteams.json is missing, return empty map — callers handle gracefully
+  }
+  return map;
+}
+
+export type GcsGame = {
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore:    number | null;
+  awayScore:    number | null;
+  isH2H:        boolean;
+};
+
+/**
+ * Reads mca/week-reg-{weekNum}-schedules.json from GCS and returns game results.
+ * Used as a fallback when franchise_schedule DB table is empty for that week.
+ */
+export async function getWeekResultsFromGcs(weekNum: number): Promise<GcsGame[]> {
+  const key = `mca/week-reg-${weekNum}-schedules.json`;
+  if (!await mcaFileExists(key)) return [];
+
+  const raw   = await readMcaJson(key);
+  const games = extractList(raw, "gameScheduleInfoList", "scheduleInfoList", "schedules");
+  const teams = await buildTeamNameMap();
+
+  const results: GcsGame[] = [];
+  for (const g of games) {
+    if (!g || typeof g !== "object") continue;
+    const hId     = Number(g.homeTeamId ?? -1);
+    const aId     = Number(g.awayTeamId ?? -1);
+    if (hId < 0 || aId < 0) continue;
+
+    const hScore  = g.homeScore != null ? Number(g.homeScore) : null;
+    const aScore  = g.awayScore != null ? Number(g.awayScore) : null;
+    if (hScore === null || aScore === null) continue; // skip unplayed
+
+    const status  = Number(g.scheduleStatus ?? g.status ?? 0);
+    const hTeam   = teams.get(hId);
+    const aTeam   = teams.get(aId);
+    const isH2H   = status === 3 && (hTeam?.isHuman ?? false) && (aTeam?.isHuman ?? false);
+
+    results.push({
+      homeTeamName: hTeam?.name ?? `Team${hId}`,
+      awayTeamName: aTeam?.name ?? `Team${aId}`,
+      homeScore:    hScore,
+      awayScore:    aScore,
+      isH2H,
+    });
+  }
+  return results;
+}
+
+/**
+ * Reads mca/schedules.json (full season schedule) and returns matchups for a given weekIndex (0-based).
+ * Used as a fallback when franchise_schedule DB table has no rows for the upcoming week.
+ */
+export async function getUpcomingMatchupsFromGcs(weekIndex: number): Promise<GcsGame[]> {
+  if (!await mcaFileExists("mca/schedules.json")) return [];
+
+  const raw   = await readMcaJson("mca/schedules.json");
+  const games = extractList(raw, "scheduleInfoList", "gameScheduleInfoList", "schedules");
+  const teams = await buildTeamNameMap();
+
+  const matchups: GcsGame[] = [];
+  for (const g of games) {
+    if (!g || typeof g !== "object") continue;
+
+    const weekType = Number(g.weekType ?? 1);
+    if (weekType !== 1) continue; // regular season only
+
+    const wIdx = Number(g.weekIndex ?? g.week ?? -1);
+    if (wIdx !== weekIndex) continue;
+
+    const hId  = Number(g.homeTeamId ?? -1);
+    const aId  = Number(g.awayTeamId ?? -1);
+    if (hId < 0 || aId < 0) continue;
+
+    const hTeam  = teams.get(hId);
+    const aTeam  = teams.get(aId);
+    const status = Number(g.scheduleStatus ?? g.status ?? 0);
+    const isH2H  = (hTeam?.isHuman ?? false) && (aTeam?.isHuman ?? false) && status === 3;
+
+    matchups.push({
+      homeTeamName: hTeam?.name ?? `Team${hId}`,
+      awayTeamName: aTeam?.name ?? `Team${aId}`,
+      homeScore:    g.homeScore != null ? Number(g.homeScore) : null,
+      awayScore:    g.awayScore != null ? Number(g.awayScore) : null,
+      isH2H,
+    });
+  }
+  return matchups;
+}
