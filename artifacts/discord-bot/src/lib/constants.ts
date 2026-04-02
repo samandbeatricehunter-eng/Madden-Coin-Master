@@ -141,3 +141,64 @@ export const NFL_TEAMS = [
 ] as const;
 
 export type NFLTeam = typeof NFL_TEAMS[number];
+
+// ── NFL division + conference lookup ──────────────────────────────────────────
+// Keys are the canonical team nicknames (same as NFL_TEAMS above).
+// Also includes common aliases so alternate team names stored in the DB still match.
+export const NFL_DIVISION_MAP: Record<string, { conference: "AFC" | "NFC"; division: "East" | "North" | "South" | "West" }> = {
+  // AFC East
+  Bills:      { conference: "AFC", division: "East" },
+  Dolphins:   { conference: "AFC", division: "East" },
+  Patriots:   { conference: "AFC", division: "East" },
+  Jets:       { conference: "AFC", division: "East" },
+  // AFC North
+  Ravens:     { conference: "AFC", division: "North" },
+  Bengals:    { conference: "AFC", division: "North" },
+  Browns:     { conference: "AFC", division: "North" },
+  Steelers:   { conference: "AFC", division: "North" },
+  // AFC South
+  Texans:     { conference: "AFC", division: "South" },
+  Colts:      { conference: "AFC", division: "South" },
+  Jaguars:    { conference: "AFC", division: "South" },
+  Titans:     { conference: "AFC", division: "South" },
+  // AFC West
+  Chiefs:     { conference: "AFC", division: "West" },
+  Raiders:    { conference: "AFC", division: "West" },
+  Broncos:    { conference: "AFC", division: "West" },
+  Chargers:   { conference: "AFC", division: "West" },
+  // NFC East
+  Cowboys:    { conference: "NFC", division: "East" },
+  Giants:     { conference: "NFC", division: "East" },
+  Eagles:     { conference: "NFC", division: "East" },
+  Commanders: { conference: "NFC", division: "East" },
+  // NFC North
+  Bears:      { conference: "NFC", division: "North" },
+  Lions:      { conference: "NFC", division: "North" },
+  Packers:    { conference: "NFC", division: "North" },
+  Vikings:    { conference: "NFC", division: "North" },
+  // NFC South
+  Buccaneers: { conference: "NFC", division: "South" },
+  Falcons:    { conference: "NFC", division: "South" },
+  Panthers:   { conference: "NFC", division: "South" },
+  Saints:     { conference: "NFC", division: "South" },
+  // NFC West
+  Cardinals:  { conference: "NFC", division: "West" },
+  Rams:       { conference: "NFC", division: "West" },
+  "49ers":    { conference: "NFC", division: "West" },
+  Seahawks:   { conference: "NFC", division: "West" },
+  // Common aliases
+  Niners:     { conference: "NFC", division: "West" },
+  "G-Men":    { conference: "NFC", division: "East" },
+  "Big Blue": { conference: "NFC", division: "East" },
+  Pack:       { conference: "NFC", division: "North" },
+  Vikes:      { conference: "NFC", division: "North" },
+  Bucs:       { conference: "NFC", division: "South" },
+  Aints:      { conference: "NFC", division: "South" },
+  Phins:      { conference: "AFC", division: "East" },
+  Fins:       { conference: "AFC", division: "East" },
+  Pats:       { conference: "AFC", division: "East" },
+  Jags:       { conference: "AFC", division: "South" },
+  Bolts:      { conference: "AFC", division: "West" },
+  "Silver and Black": { conference: "AFC", division: "West" },
+  Redskins:   { conference: "NFC", division: "East" },
+};

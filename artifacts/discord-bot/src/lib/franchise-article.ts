@@ -19,7 +19,7 @@ async function buildLeagueContext(
 ): Promise<string> {
   const parts: string[] = [];
 
-  parts.push(`Madden CFM League — Season ${seasonNumber}, just finished Week ${completedWeekIndex + 1}`);
+  parts.push(`The R.E.C. League — Season ${seasonNumber}, just finished Week ${completedWeekIndex + 1}`);
   parts.push("");
 
   // ── Standings ────────────────────────────────────────────────────────────────
@@ -44,6 +44,22 @@ async function buildLeagueContext(
       parts.push(`${teamStr} (${r.discordUsername}): ${r.wins}-${r.losses}, Point Diff ${pd}`);
     }
     parts.push("");
+
+    // Explicitly flag notable records so the AI doesn't miss them
+    const gamesPlayed = Math.max(...records.map(r => r.wins + r.losses));
+    if (gamesPlayed > 0) {
+      const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
+      const winless    = records.filter(r => r.wins === 0 && r.losses > 0);
+      if (undefeated.length > 0) {
+        const names = undefeated.map(r => r.team ?? r.discordUsername).join(", ");
+        parts.push(`NOTABLE: The following teams are UNDEFEATED this season (${undefeated[0]!.wins}-0): ${names}`);
+      }
+      if (winless.length > 0) {
+        const names = winless.map(r => r.team ?? r.discordUsername).join(", ");
+        parts.push(`NOTABLE: The following teams are WINLESS this season (0-${winless[0]!.losses}): ${names}`);
+      }
+      if (undefeated.length > 0 || winless.length > 0) parts.push("");
+    }
   }
 
   // ── Last week's scores ───────────────────────────────────────────────────────
