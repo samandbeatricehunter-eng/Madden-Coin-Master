@@ -392,7 +392,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (attrCount === 0) {
     embed.addFields({
       name: "ℹ️ No Attribute Data",
-      value: "Detailed attributes aren't available yet — re-upload the franchise ZIP to populate them.",
+      value: "Detailed attributes aren't available yet. Re-export from MCA to populate them.",
       inline: false,
     });
   }
