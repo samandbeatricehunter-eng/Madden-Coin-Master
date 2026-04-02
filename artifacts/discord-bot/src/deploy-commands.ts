@@ -58,6 +58,7 @@ import * as setweek from "./commands/setweek.js";
 import * as standings from "./commands/standings.js";
 import * as viewroster from "./commands/viewroster.js";
 import * as viewplayerdetails from "./commands/viewplayerdetails.js";
+import * as viewfreeagents from "./commands/viewfreeagents.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -94,6 +95,7 @@ const commands = [
   standings,
   viewroster,
   viewplayerdetails,
+  viewfreeagents,
 ].map(c => c.data.toJSON());
 
 commands.push(

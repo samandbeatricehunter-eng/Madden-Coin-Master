@@ -72,6 +72,7 @@ import * as setweek from "./commands/setweek.js";
 import * as standings from "./commands/standings.js";
 import * as viewroster from "./commands/viewroster.js";
 import * as viewplayerdetails from "./commands/viewplayerdetails.js";
+import * as viewfreeagents from "./commands/viewfreeagents.js";
 import { startPollChecker } from "./lib/poll-checker.js";
 
 // Events
@@ -169,6 +170,7 @@ if (!isProduction && !devBotEnabled) {
     standings,
     viewroster,
     viewplayerdetails,
+    viewfreeagents,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },
