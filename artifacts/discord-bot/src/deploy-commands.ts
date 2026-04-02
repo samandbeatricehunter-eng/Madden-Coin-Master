@@ -55,6 +55,7 @@ import * as adminResendArticle from "./commands/admin-resendarticle.js";
 import * as adminLinkTeam from "./commands/admin-linkteam.js";
 import * as adminFullSync from "./commands/admin-fullsync.js";
 import * as setweek from "./commands/setweek.js";
+import * as standings from "./commands/standings.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -88,6 +89,7 @@ const commands = [
   adminLinkTeam,
   adminFullSync,
   setweek,
+  standings,
 ].map(c => c.data.toJSON());
 
 commands.push(

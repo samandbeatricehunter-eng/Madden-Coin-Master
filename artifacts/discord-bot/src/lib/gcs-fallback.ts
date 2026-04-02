@@ -337,17 +337,22 @@ export async function getArticleStandings(
     try {
       if (!await mcaFileExists(key)) continue;
       const raw   = await readMcaJson(key);
-      const games = extractList(raw, "gameScheduleInfoList", "scheduleInfoList", "schedules");
+      // Use same key order + fallbacks as processWeekScores in franchise-processor
+      const games = extractList(raw, "gameScheduleInfoList", "scheduleInfoList", "games", "schedules");
 
       let weekHadResults = false;
       for (const g of games) {
         if (!g || typeof g !== "object") continue;
+        // Must be a completed game (status >= 2 = CPU sim; 3 = H2H) — same threshold
+        // as MIN_COMPLETED_STATUS in franchise-processor. This prevents unplayed
+        // scheduled games (status 0/1) with 0-0 placeholder scores from being counted.
+        const status = Number(g.scheduleStatus ?? g.status ?? 0);
+        if (status < 2) continue;
         const hId    = Number(g.homeTeamId ?? -1);
         const aId    = Number(g.awayTeamId ?? -1);
         if (hId < 0 || aId < 0) continue;
-        const hScore = g.homeScore != null ? Number(g.homeScore) : null;
-        const aScore = g.awayScore != null ? Number(g.awayScore) : null;
-        if (hScore === null || aScore === null) continue; // game not played yet
+        const hScore = Number(g.homeScore ?? 0);
+        const aScore = Number(g.awayScore ?? 0);
 
         weekHadResults = true;
         const margin = hScore - aScore;
