@@ -14,7 +14,7 @@ import {
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 
 // ── Coin payouts (mirrors discord-bot/franchise-update.ts) ────────────────────
 const H2H_WIN_PAYOUT  = 50;
@@ -1121,5 +1121,202 @@ export async function processWeekScores(
   } catch (err) {
     console.error(`[mca/week${weekNum}/scores] Error:`, err);
     return { ...zero, ok: false, message: String(err) };
+  }
+}
+
+// ── Roster import helpers ─────────────────────────────────────────────────────
+
+const ROSTER_POS_NUM: Record<number, string> = {
+  0: "QB",  1: "HB",  2: "FB",  3: "WR",  4: "TE",
+  5: "LT",  6: "LG",  7: "C",   8: "RG",  9: "RT",
+  10: "LE", 11: "RE", 12: "DT", 13: "LOLB", 14: "MLB", 15: "ROLB",
+  16: "CB", 17: "FS", 18: "SS", 19: "K",  20: "P",
+  21: "KR", 22: "PR", 23: "LS",
+};
+
+const ROSTER_BIO_FIELDS = new Set([
+  "height", "heightInches", "weight",
+  "handedness", "throwingHand", "playerHandedness",
+]);
+
+// Try all known MCA payload shapes and return a flat array of player objects
+function normalizePlayers(body: unknown): any[] {
+  if (!body || typeof body !== "object") return [];
+  if (Array.isArray(body)) return body;
+  const b = body as Record<string, unknown>;
+
+  for (const key of ["playerArray", "rosters", "players", "rosterArray", "playerInfoList"]) {
+    if (Array.isArray(b[key])) return b[key] as any[];
+  }
+
+  // Dictionary of player objects (key = playerId or similar)
+  const vals = Object.values(b);
+  const firstLevel = vals.filter(v => v && typeof v === "object" && !Array.isArray(v)) as Record<string, unknown>[];
+  if (firstLevel.length > 0) {
+    // If values look like player objects, return them directly
+    const isPlayer = (o: Record<string, unknown>) =>
+      o["firstName"] != null || o["lastName"] != null || o["playerId"] != null || o["position"] != null;
+    if (firstLevel.every(isPlayer)) return firstLevel;
+    // Otherwise flatten one more level
+    return firstLevel.flatMap(v =>
+      Object.values(v).filter(inner => inner && typeof inner === "object" && !Array.isArray(inner)),
+    );
+  }
+  return [];
+}
+
+function resolveContractYearsLeftProc(p: any): number | null {
+  if (p.contractYearsLeft != null) return Number(p.contractYearsLeft);
+  if (p.yearsLeft          != null) return Number(p.yearsLeft);
+  if (p.contractLeft       != null) return Number(p.contractLeft);
+  const len = p.contractLength ?? p.contractLen ?? null;
+  const yr  = p.contractYear  ?? p.contractYr  ?? null;
+  if (len != null && yr != null) return Math.max(0, Number(len) - Number(yr) + 1);
+  return null;
+}
+
+function buildPlayerValues(p: any, seasonId: number, teamId: number, teamName: string, discordId: string | null) {
+  const posRaw = p.position ?? p.pos ?? p.positionId ?? "";
+  const position = typeof posRaw === "number"
+    ? (ROSTER_POS_NUM[posRaw as number] ?? String(posRaw))
+    : String(posRaw).trim().toUpperCase();
+
+  const ovrRaw = p.playerBestOvr ?? p.overallRating ?? p.overallRatings ?? p.overall ?? p.ovr ?? p.bestOverall ?? p.playerSkillRating ?? null;
+  const overall = ovrRaw != null ? Math.max(0, Math.min(99, Number(ovrRaw))) : 0;
+
+  const attributes: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+    if (v == null) continue;
+    if (typeof v === "number" && k.endsWith("Rating")) { attributes[k] = v; continue; }
+    if (ROSTER_BIO_FIELDS.has(k)) { attributes[k] = v; }
+  }
+
+  return {
+    seasonId,
+    teamId,
+    teamName,
+    discordId,
+    playerId:          Number(p.playerId ?? p.rosterId ?? p.playerIndex ?? p.id),
+    firstName:         String(p.firstName ?? "").trim(),
+    lastName:          String(p.lastName  ?? "").trim(),
+    position,
+    overall,
+    devTrait:          Number(p.devTrait ?? p.devTraitId ?? p.playerDevTrait ?? 0),
+    age:               p.age != null ? Number(p.age) : null,
+    jerseyNum:         (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
+      ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber) : null,
+    contractYearsLeft: resolveContractYearsLeftProc(p),
+    attributes:        Object.keys(attributes).length > 0 ? attributes : null,
+    importedAt:        new Date(),
+  };
+}
+
+// ── /team/:teamId/roster → upsert active 53-man roster for one team ───────────
+
+export async function processTeamRoster(body: unknown, mcaTeamId: number): Promise<ProcessResult> {
+  try {
+    const season = await getOrCreateActiveSeason();
+
+    const [teamEntry] = await db.select()
+      .from(franchiseMcaTeamsTable)
+      .where(and(
+        eq(franchiseMcaTeamsTable.seasonId, season.id),
+        eq(franchiseMcaTeamsTable.teamId,   mcaTeamId),
+      ))
+      .limit(1);
+
+    if (!teamEntry) {
+      return {
+        ok: false,
+        message: `Team ${mcaTeamId} not found for season ${season.id} — send /leagueteams first`,
+      };
+    }
+
+    const rawPlayers = normalizePlayers(body);
+    if (rawPlayers.length > 0) {
+      const p0 = rawPlayers[0] as Record<string, unknown>;
+      console.log(`[roster/team/${mcaTeamId}] First player keys: ${Object.keys(p0).slice(0, 20).join(", ")}`);
+    }
+
+    const ACTIVE_ROS_TYPE = 0;
+    const rows: ReturnType<typeof buildPlayerValues>[] = [];
+
+    for (const p of rawPlayers) {
+      if (!p || typeof p !== "object") continue;
+      if (p.isOnPracticeSquad === true || p.isOnIR === true) continue;
+
+      const rosType = p.rosType ?? p.rosterType ?? p.rostStatus ?? p.rosStatus ?? null;
+      if (rosType != null && Number(rosType) !== ACTIVE_ROS_TYPE) continue;
+
+      const rawId   = p.playerId ?? p.rosterId ?? p.playerIndex ?? p.id;
+      const playerId = rawId != null ? Number(rawId) : NaN;
+      if (isNaN(playerId) || playerId <= 0) continue;
+
+      rows.push(buildPlayerValues(p, season.id, mcaTeamId, teamEntry.fullName, teamEntry.discordId ?? null));
+    }
+
+    if (rows.length === 0) {
+      return { ok: true, message: `No active players in payload for team ${mcaTeamId} (${teamEntry.fullName})` };
+    }
+
+    // Replace the team's roster: delete old rows, insert fresh ones
+    await db.delete(franchiseRostersTable).where(and(
+      eq(franchiseRostersTable.seasonId, season.id),
+      eq(franchiseRostersTable.teamId,   mcaTeamId),
+    ));
+    await db.insert(franchiseRostersTable).values(rows);
+
+    return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (${teamEntry.fullName})` };
+  } catch (err) {
+    console.error(`[roster/team/${mcaTeamId}] Error:`, err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── /freeagents/roster → upsert the free agent pool (teamId sentinel = 999) ──
+
+const FA_TEAM_ID = 999;
+
+export async function processFreeAgentRoster(body: unknown): Promise<ProcessResult> {
+  try {
+    const season    = await getOrCreateActiveSeason();
+    const rawPlayers = normalizePlayers(body);
+
+    if (rawPlayers.length === 0) {
+      console.log("[roster/freeagents] Payload was empty — EA bug still active or no free agents");
+      return { ok: true, message: "Free agent payload empty — nothing imported" };
+    }
+
+    console.log(`[roster/freeagents] Received ${rawPlayers.length} players`);
+    const p0 = rawPlayers[0] as Record<string, unknown>;
+    console.log(`[roster/freeagents] First player keys: ${Object.keys(p0).slice(0, 20).join(", ")}`);
+
+    const rows: ReturnType<typeof buildPlayerValues>[] = [];
+    for (const p of rawPlayers) {
+      if (!p || typeof p !== "object") continue;
+      if (p.isOnPracticeSquad === true || p.isOnIR === true) continue;
+
+      const rawId   = p.playerId ?? p.rosterId ?? p.playerIndex ?? p.id;
+      const playerId = rawId != null ? Number(rawId) : NaN;
+      if (isNaN(playerId) || playerId <= 0) continue;
+
+      rows.push(buildPlayerValues(p, season.id, FA_TEAM_ID, "Free Agents", null));
+    }
+
+    if (rows.length === 0) {
+      return { ok: true, message: "No valid players in free agent payload" };
+    }
+
+    // Replace the entire FA pool
+    await db.delete(franchiseRostersTable).where(and(
+      eq(franchiseRostersTable.seasonId, season.id),
+      eq(franchiseRostersTable.teamId,   FA_TEAM_ID),
+    ));
+    await db.insert(franchiseRostersTable).values(rows);
+
+    return { ok: true, message: `${rows.length} free agents imported` };
+  } catch (err) {
+    console.error("[roster/freeagents] Error:", err);
+    return { ok: false, message: String(err) };
   }
 }

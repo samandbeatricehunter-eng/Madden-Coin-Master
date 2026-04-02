@@ -7,6 +7,8 @@ import {
   processWeekScores,
   syncWeekScoresToSchedule,
   processPlayerWeekStats,
+  processTeamRoster,
+  processFreeAgentRoster,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed } from "../lib/discord-notify.js";
 import { saveMcaPayload } from "../lib/mcaStorage.js";
@@ -82,11 +84,12 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
   }
 });
 
-// ── /freeagents/roster — known EA bug (always empty); just acknowledge ─────────
-router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validateKey, (req, res) => {
+// ── /freeagents/roster — free agent pool (EA historically sent empty; process if populated) ──
+router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validateKey, async (req, res) => {
   saveMcaPayload("mca/freeagents-roster.json", req.body);
   res.status(200).json({ status: "received" });
-  console.log("[mca/freeagents/roster] Acknowledged (EA bug — payload skipped)");
+  const result = await processFreeAgentRoster(req.body).catch(err => ({ ok: false, message: String(err) }));
+  console.log("[mca/freeagents/roster]", result.message);
 });
 
 // ── /week/:weekType/:weekNum/team — per-week team offense stats ───────────────
@@ -227,12 +230,18 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   }
 });
 
-// ── /team/:teamId/roster — per-team roster (no-op, we don't use this data) ───
-router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, (req, res) => {
-  const teamId = req.params["teamId"] ?? "unknown";
-  saveMcaPayload(`mca/team-${teamId}-roster.json`, req.body);
+// ── /team/:teamId/roster — per-team active 53-man roster ─────────────────────
+router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, async (req, res) => {
+  const teamIdStr = String(req.params["teamId"] ?? "0");
+  const mcaTeamId = parseInt(teamIdStr, 10);
+  saveMcaPayload(`mca/team-${teamIdStr}-roster.json`, req.body);
   res.status(200).json({ status: "received" });
-  console.log(`[mca/team/${teamId}/roster] Acknowledged (no-op)`);
+  if (isNaN(mcaTeamId)) {
+    console.warn(`[mca/team/${teamIdStr}/roster] Invalid teamId — skipping`);
+    return;
+  }
+  const result = await processTeamRoster(req.body, mcaTeamId).catch(err => ({ ok: false, message: String(err) }));
+  console.log(`[mca/team/${teamIdStr}/roster] ${result.message}`);
 });
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
