@@ -46,6 +46,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   try {
     // ── Call GPT ──────────────────────────────────────────────────────────────
+    // Ask the model to return a headline on the first line (prefixed HEADLINE:)
+    // followed by the article body, so we can parse them apart cleanly.
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -56,6 +58,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             "Write in a bold, energetic, ESPN-style voice.",
             "Use vivid prose paragraphs. Do NOT use markdown headers (##, ###) or bullet points — just flowing, punchy paragraphs.",
             "Keep the article between 400–600 words unless the prompt implies a shorter piece.",
+            "IMPORTANT: Always start your response with a single line in exactly this format:",
+            "HEADLINE: <your headline here>",
+            "Then leave one blank line, then write the article body.",
           ].join(" "),
         },
         {
@@ -67,11 +72,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       max_tokens:  1200,
     });
 
-    const article = response.choices[0]?.message?.content?.trim() ?? "";
+    const raw = response.choices[0]?.message?.content?.trim() ?? "";
 
-    if (!article) {
+    if (!raw) {
       return interaction.editReply({ content: "❌ The AI returned an empty response. Try again." });
     }
+
+    // ── Parse headline + body ─────────────────────────────────────────────────
+    const lines = raw.split("\n");
+    const headlineLine = lines[0] ?? "";
+    const headline = headlineLine.startsWith("HEADLINE:")
+      ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim()
+      : null;
+    const article = headline
+      ? lines.slice(1).join("\n").trimStart()
+      : raw;
 
     // ── Post to headlines channel ─────────────────────────────────────────────
     const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
@@ -84,7 +99,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const tc = headlinesChannel as TextChannel;
-    await sendArticleChunked(tc, "", article);
+    // Header: @everyone ping + bold headline on its own line
+    const header = headline
+      ? `@everyone\n**${headline}**\n\n`
+      : `@everyone\n\n`;
+    await sendArticleChunked(tc, header, article);
 
     return interaction.editReply({
       content: `✅ Article posted to <#${HEADLINES_CHANNEL_ID}>.`,
