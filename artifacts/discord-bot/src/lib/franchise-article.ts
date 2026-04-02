@@ -189,7 +189,137 @@ async function buildLeagueContext(
   return parts.join("\n");
 }
 
-// ── Main export — call this from advanceweek ───────────────────────────────────
+// ── Preview context builder ────────────────────────────────────────────────────
+// Pulls current standings + the scheduled matchups for the upcoming week.
+async function buildPreviewContext(
+  seasonId:     number,
+  weekIndex:    number,   // 0-based index of the week being previewed
+  seasonNumber: number,
+): Promise<string> {
+  const parts: string[] = [];
+  const weekNum = weekIndex + 1;
+
+  parts.push(`The R.E.C. League — Season ${seasonNumber}, previewing Week ${weekNum}`);
+  parts.push("");
+
+  // ── Current standings (going into the week) ───────────────────────────────
+  const records = await db
+    .select({
+      discordId:         userRecordsTable.discordId,
+      discordUsername:   userRecordsTable.discordUsername,
+      team:              userRecordsTable.team,
+      wins:              userRecordsTable.wins,
+      losses:            userRecordsTable.losses,
+      pointDifferential: userRecordsTable.pointDifferential,
+    })
+    .from(userRecordsTable)
+    .where(eq(userRecordsTable.seasonId, seasonId))
+    .orderBy(desc(userRecordsTable.wins));
+
+  if (records.length > 0) {
+    parts.push("=== CURRENT STANDINGS (heading into this week) ===");
+    for (const r of records) {
+      const teamStr = r.team ?? r.discordUsername;
+      const pd      = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
+      parts.push(`${teamStr} (${r.discordUsername}): ${r.wins}-${r.losses}, Point Diff ${pd}`);
+    }
+    parts.push("");
+
+    const gamesPlayed = Math.max(...records.map(r => r.wins + r.losses));
+    if (gamesPlayed > 0) {
+      const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
+      const winless    = records.filter(r => r.wins === 0 && r.losses > 0);
+      if (undefeated.length > 0) {
+        const names = undefeated.map(r => r.team ?? r.discordUsername).join(", ");
+        parts.push(`NOTABLE: Still undefeated heading into Week ${weekNum}: ${names}`);
+      }
+      if (winless.length > 0) {
+        const names = winless.map(r => r.team ?? r.discordUsername).join(", ");
+        parts.push(`NOTABLE: Still looking for their first win heading into Week ${weekNum}: ${names}`);
+      }
+      if (undefeated.length > 0 || winless.length > 0) parts.push("");
+    }
+  }
+
+  // ── Scheduled matchups for the preview week ───────────────────────────────
+  const matchups = await db
+    .select({
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      status:       franchiseScheduleTable.status,
+    })
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId,  seasonId),
+      eq(franchiseScheduleTable.weekIndex, weekIndex),
+    ));
+
+  const h2hGames = matchups.filter(g => g.status === 3);
+  const cpuGames = matchups.filter(g => g.status !== 3);
+
+  if (h2hGames.length > 0) {
+    parts.push(`=== WEEK ${weekNum} H2H MATCHUPS (user vs user) ===`);
+    for (const g of h2hGames) {
+      parts.push(`${g.awayTeamName} @ ${g.homeTeamName}`);
+    }
+    parts.push("");
+  }
+
+  if (cpuGames.length > 0) {
+    parts.push(`=== WEEK ${weekNum} CPU MATCHUPS ===`);
+    for (const g of cpuGames) {
+      parts.push(`${g.awayTeamName} @ ${g.homeTeamName} (vs CPU)`);
+    }
+    parts.push("");
+  }
+
+  // ── Season stat leaders (context for players to watch) ────────────────────
+  const passLeaders = await db
+    .select({
+      firstName: playerSeasonStatsTable.firstName,
+      lastName:  playerSeasonStatsTable.lastName,
+      teamName:  playerSeasonStatsTable.teamName,
+      passYds:   playerSeasonStatsTable.passYds,
+      passTDs:   playerSeasonStatsTable.passTDs,
+    })
+    .from(playerSeasonStatsTable)
+    .where(eq(playerSeasonStatsTable.seasonId, seasonId))
+    .orderBy(desc(playerSeasonStatsTable.passYds))
+    .limit(3);
+
+  const rushLeaders = await db
+    .select({
+      firstName: playerSeasonStatsTable.firstName,
+      lastName:  playerSeasonStatsTable.lastName,
+      teamName:  playerSeasonStatsTable.teamName,
+      rushYds:   playerSeasonStatsTable.rushYds,
+      rushTDs:   playerSeasonStatsTable.rushTDs,
+    })
+    .from(playerSeasonStatsTable)
+    .where(eq(playerSeasonStatsTable.seasonId, seasonId))
+    .orderBy(desc(playerSeasonStatsTable.rushYds))
+    .limit(3);
+
+  if (passLeaders.some(p => p.passYds > 0)) {
+    parts.push("=== PLAYERS TO WATCH — PASSING ===");
+    for (const p of passLeaders.filter(p => p.passYds > 0)) {
+      parts.push(`${p.firstName} ${p.lastName} (${p.teamName}): ${p.passYds} yds, ${p.passTDs} TDs this season`);
+    }
+    parts.push("");
+  }
+
+  if (rushLeaders.some(p => p.rushYds > 0)) {
+    parts.push("=== PLAYERS TO WATCH — RUSHING ===");
+    for (const p of rushLeaders.filter(p => p.rushYds > 0)) {
+      parts.push(`${p.firstName} ${p.lastName} (${p.teamName}): ${p.rushYds} yds, ${p.rushTDs} TDs this season`);
+    }
+    parts.push("");
+  }
+
+  return parts.join("\n");
+}
+
+// ── Recap article (default — after a week completes) ─────────────────────────
 export async function generateFranchiseArticle(
   seasonId:            number,
   seasonNumber:        number,
@@ -203,12 +333,51 @@ Write a short, engaging league newsletter article (around 400–500 words) recap
 
 Always refer to the league by its name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic name.
 
-Use the data below to craft real storylines, highlight standout performers, call out any dominant teams or teams in danger, 
-and build excitement for the next week. Reference players and teams by name. Write in an energetic, sports-media tone — 
-like an ESPN or NFL Network column. Avoid generic filler. Make it feel authentic and specific to The R.E.C. League.
+This is a RECAP article. Focus on what happened: scores, standout performers, winners, losers, and any notable storylines from the results.
+Mention how the week affects standings. End with a brief tease of what's coming next (${upcomingWeekLabel}).
 
-Do NOT include headers or markdown. Just write flowing paragraphs as a cohesive article. 
+Use the data below. Reference players and teams by name. Write in an energetic, sports-media tone — like an ESPN or NFL Network column.
+Avoid generic filler. Make it feel authentic and specific to The R.E.C. League.
+
+Do NOT include headers or markdown. Just write flowing paragraphs as a cohesive article.
 Start with a strong opening line that references the week number.
+
+LEAGUE DATA:
+${context}`;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    max_completion_tokens: 1000,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const text = response.choices[0]?.message?.content?.trim();
+  if (!text) throw new Error("OpenAI returned an empty response");
+  return text;
+}
+
+// ── Preview article (hype upcoming matchups before the week is played) ────────
+export async function generateWeekPreview(
+  seasonId:     number,
+  seasonNumber: number,
+  weekIndex:    number,  // 0-based index of the week being previewed
+): Promise<string> {
+  const weekNum = weekIndex + 1;
+  const context = await buildPreviewContext(seasonId, weekIndex, seasonNumber);
+
+  const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise (CFM) simulation league.
+Write a short, engaging league newsletter article (around 400–500 words) previewing Week ${weekNum} — the games have NOT been played yet.
+
+Always refer to the league by its name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic name.
+
+This is a PREVIEW article. Focus on what's coming: hype the key matchups, highlight the stakes for each team based on their current record,
+call out players to watch, and build anticipation. Do NOT report scores or results — the games haven't happened.
+
+Use the data below. Reference players and teams by name. Write in an energetic, sports-media tone — like an ESPN or NFL Network column.
+Avoid generic filler. Make it feel authentic and specific to The R.E.C. League.
+
+Do NOT include headers or markdown. Just write flowing paragraphs as a cohesive article.
+Start with a strong opening line that builds excitement for Week ${weekNum}.
 
 LEAGUE DATA:
 ${context}`;
