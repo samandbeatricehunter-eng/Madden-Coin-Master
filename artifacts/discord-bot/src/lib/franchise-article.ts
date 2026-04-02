@@ -26,7 +26,7 @@ async function buildLeagueContext(
 
   // ── Standings ────────────────────────────────────────────────────────────────
   // Use GCS-first standings so all 32 teams appear (not just bot-registered users)
-  const records = await getArticleStandings(seasonId);
+  const records = await getArticleStandings(seasonId, completedWeekIndex + 1);
 
   if (records.length > 0) {
     parts.push("=== CURRENT STANDINGS (after Week " + (completedWeekIndex + 1) + ") ===");
@@ -256,8 +256,9 @@ async function buildPreviewContext(
   parts.push("");
 
   // ── Current standings (going into the week) ───────────────────────────────
-  // GCS-first so all teams appear, not just bot-registered users
-  const records = await getArticleStandings(seasonId);
+  // GCS-first so all teams appear, not just bot-registered users.
+  // weekNum here is the UPCOMING week, so last completed week = weekNum - 1.
+  const records = await getArticleStandings(seasonId, weekNum - 1);
 
   if (records.length > 0) {
     parts.push(`=== CURRENT STANDINGS (heading into Week ${weekNum}) ===`);

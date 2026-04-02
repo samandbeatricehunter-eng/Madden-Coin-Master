@@ -278,60 +278,131 @@ export interface ArticleStanding {
   pointDifferential: number;
 }
 
-export async function getArticleStandings(seasonId: number): Promise<ArticleStanding[]> {
-  // ── 1. Try GCS standings (complete, all teams) ──────────────────────────────
+/**
+ * Computes standings by aggregating per-week score files from GCS.
+ *
+ * This is more reliable than reading mca/standings.json, which is exported by MCA
+ * before all week results are finalized and can be one week behind.
+ *
+ * @param seasonId       - DB season id (for Discord username lookup)
+ * @param completedWeekNum - 1-based number of the last completed week (e.g. 10)
+ */
+export async function getArticleStandings(
+  seasonId:         number,
+  completedWeekNum: number,
+): Promise<ArticleStanding[]> {
+
+  // ── 1. Build team-name map from leagueteams ──────────────────────────────────
+  const teamNames = new Map<number, string>();
+  try {
+    const lt    = await readMcaJson("mca/leagueteams.json");
+    const teams = extractList(lt, "leagueTeamInfoList", "teamInfoList", "teams");
+    for (const t of teams) {
+      const id   = Number(t?.teamId ?? t?.teamIndex ?? -1);
+      if (id < 0) continue;
+      const nick = String(t?.nickName ?? t?.teamName ?? "").trim();
+      const city = String(t?.cityName ?? "").trim();
+      teamNames.set(id, city ? `${city} ${nick}` : nick);
+    }
+  } catch { /* non-fatal — will fall back to Team{id} */ }
+
+  // ── 2. Build teamId → discordUsername from DB ─────────────────────────────────
+  const discordByTeam = new Map<number, string | null>();
+  try {
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, seasonId));
+    const allUsers = await db.select({
+      discordId: usersTable.discordId, discordUsername: usersTable.discordUsername,
+    }).from(usersTable);
+    const userByDiscord = new Map(allUsers.map(u => [u.discordId, u.discordUsername]));
+    for (const t of mcaTeams) {
+      if (t.discordId) discordByTeam.set(t.teamId, userByDiscord.get(t.discordId) ?? null);
+    }
+  } catch { /* non-fatal */ }
+
+  // ── 3. Aggregate wins / losses / point differential from per-week score files ─
+  // This is the source of truth: each week-reg-{N}-schedules.json has the actual
+  // game results. MCA's standings export can lag behind the latest week; the score
+  // files are always up-to-date because they're written at game-result time.
+  const winsMap   = new Map<number, number>();
+  const lossesMap = new Map<number, number>();
+  const pdMap     = new Map<number, number>();
+  let   scoredWeeks = 0;
+
+  for (let wk = 1; wk <= completedWeekNum; wk++) {
+    const key = `mca/week-reg-${wk}-schedules.json`;
+    try {
+      if (!await mcaFileExists(key)) continue;
+      const raw   = await readMcaJson(key);
+      const games = extractList(raw, "gameScheduleInfoList", "scheduleInfoList", "schedules");
+
+      let weekHadResults = false;
+      for (const g of games) {
+        if (!g || typeof g !== "object") continue;
+        const hId    = Number(g.homeTeamId ?? -1);
+        const aId    = Number(g.awayTeamId ?? -1);
+        if (hId < 0 || aId < 0) continue;
+        const hScore = g.homeScore != null ? Number(g.homeScore) : null;
+        const aScore = g.awayScore != null ? Number(g.awayScore) : null;
+        if (hScore === null || aScore === null) continue; // game not played yet
+
+        weekHadResults = true;
+        const margin = hScore - aScore;
+
+        // home team
+        winsMap.set(hId,   (winsMap.get(hId)   ?? 0) + (hScore > aScore ? 1 : 0));
+        lossesMap.set(hId, (lossesMap.get(hId) ?? 0) + (hScore < aScore ? 1 : 0));
+        pdMap.set(hId,     (pdMap.get(hId)     ?? 0) + margin);
+
+        // away team
+        winsMap.set(aId,   (winsMap.get(aId)   ?? 0) + (aScore > hScore ? 1 : 0));
+        lossesMap.set(aId, (lossesMap.get(aId) ?? 0) + (aScore < hScore ? 1 : 0));
+        pdMap.set(aId,     (pdMap.get(aId)     ?? 0) - margin);
+      }
+      if (weekHadResults) scoredWeeks++;
+    } catch { /* skip a missing/corrupt week file */ }
+  }
+
+  // ── 4. If we got results, build standings from aggregated data ────────────────
+  if (scoredWeeks > 0) {
+    const allTeamIds = new Set([...winsMap.keys(), ...lossesMap.keys()]);
+    const standings: ArticleStanding[] = [];
+    for (const teamId of allTeamIds) {
+      const wins   = winsMap.get(teamId)   ?? 0;
+      const losses = lossesMap.get(teamId) ?? 0;
+      const pd     = pdMap.get(teamId)     ?? 0;
+      const name   = teamNames.get(teamId) ?? `Team${teamId}`;
+      standings.push({
+        teamName:          name,
+        discordUsername:   discordByTeam.get(teamId) ?? null,
+        wins,
+        losses,
+        pointDifferential: pd,
+      });
+    }
+    return standings.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+  }
+
+  // ── 5. No score files found — fall back to mca/standings.json ────────────────
   try {
     if (await mcaFileExists("mca/standings.json")) {
       const body    = await readMcaJson("mca/standings.json");
       const entries = extractList(body, "standingsInfoList", "teamStandingsInfoList", "standings");
-
       if (entries.length > 0) {
-        // Build team-name map from leagueteams for richer names
-        const teamNames = new Map<number, string>();
-        try {
-          const lt    = await readMcaJson("mca/leagueteams.json");
-          const teams = extractList(lt, "leagueTeamInfoList", "teamInfoList", "teams");
-          for (const t of teams) {
-            const id   = Number(t?.teamId ?? t?.teamIndex ?? -1);
-            if (id < 0) continue;
-            const nick = String(t?.nickName ?? t?.teamName ?? "").trim();
-            const city = String(t?.cityName ?? "").trim();
-            teamNames.set(id, city ? `${city} ${nick}` : nick);
-          }
-        } catch { /* leagueteams optional — fall back to standing's own name fields */ }
-
-        // Build teamId → discordUsername map from DB
-        const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
-          .where(eq(franchiseMcaTeamsTable.seasonId, seasonId)).catch(() => []);
-        const allUsers = await db.select({
-          discordId: usersTable.discordId, discordUsername: usersTable.discordUsername,
-        }).from(usersTable).catch(() => []);
-        const userByDiscord = new Map(allUsers.map(u => [u.discordId, u.discordUsername]));
-        const discordByTeam = new Map(
-          mcaTeams.filter(t => t.discordId).map(t => [t.teamId, userByDiscord.get(t.discordId!) ?? null])
-        );
-
         const standings: ArticleStanding[] = [];
         for (const e of entries) {
           const teamId  = Number(e?.teamId ?? e?.teamIndex ?? -1);
-          // Use leagueteams name if available, otherwise fall back to standing's own fields
           const rawNick = String(e?.teamName ?? e?.nickName ?? e?.teamNickname ?? "").trim();
           const rawCity = String(e?.cityName ?? e?.teamCity ?? "").trim();
           const name    = (teamNames.get(teamId) ?? (rawCity ? `${rawCity} ${rawNick}` : rawNick)) || `Team${teamId}`;
-
-          const wins   = Number(e?.wins ?? e?.totalWins   ?? 0);
-          const losses = Number(e?.losses ?? e?.totalLosses ?? 0);
-          const pd     = Number(e?.pointDifferential ?? e?.netPoints ?? 0);
-
           standings.push({
             teamName:          name,
             discordUsername:   discordByTeam.get(teamId) ?? null,
-            wins,
-            losses,
-            pointDifferential: pd,
+            wins:              Number(e?.wins ?? e?.totalWins   ?? 0),
+            losses:            Number(e?.losses ?? e?.totalLosses ?? 0),
+            pointDifferential: Number(e?.pointDifferential ?? e?.netPoints ?? 0),
           });
         }
-
         if (standings.length > 0) {
           return standings.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
         }
@@ -339,7 +410,7 @@ export async function getArticleStandings(seasonId: number): Promise<ArticleStan
     }
   } catch { /* fall through to DB */ }
 
-  // ── 2. Fall back to DB (bot-registered users only) ──────────────────────────
+  // ── 6. Last resort — DB (bot-registered users only, may be stale) ─────────────
   const dbRows = await db.select({
     discordId:         userRecordsTable.discordId,
     discordUsername:   userRecordsTable.discordUsername,
