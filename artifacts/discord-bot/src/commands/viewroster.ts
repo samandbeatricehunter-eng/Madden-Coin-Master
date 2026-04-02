@@ -237,22 +237,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const fields: { name: string; value: string; inline?: boolean }[] = [];
 
+  // Build lines for a position group, sub-grouped by individual position.
+  // A bold **POS** label is inserted between sub-groups when the group has
+  // multiple distinct positions with players. Within each position, players
+  // are sorted by overall descending.
+  function buildGroupLines(positions: string[]): string[] {
+    const filled = positions.filter(pos => (byPos.get(pos)?.length ?? 0) > 0);
+    const showLabel = filled.length > 1;
+    const lines: string[] = [];
+    for (const pos of positions) {
+      const posPlayers = byPos.get(pos) ?? [];
+      if (posPlayers.length === 0) continue;
+      if (showLabel) lines.push(`**${pos}**`);
+      posPlayers
+        .slice()
+        .sort((a, b) => b.overall - a.overall)
+        .forEach(p => lines.push(formatPlayerLine(p)));
+    }
+    return lines;
+  }
+
   for (const group of OFFENSE_GROUPS) {
-    const groupPlayers = group.positions.flatMap(pos => byPos.get(pos) ?? []);
-    if (groupPlayers.length === 0) continue;
-    fields.push(...fieldChunks(`🏈 ${group.label}`, groupPlayers.sort((a, b) => b.overall - a.overall).map(formatPlayerLine)));
+    const lines = buildGroupLines(group.positions);
+    if (lines.length > 0) fields.push(...fieldChunks(`🏈 ${group.label}`, lines));
   }
 
   for (const group of DEFENSE_GROUPS) {
-    const groupPlayers = group.positions.flatMap(pos => byPos.get(pos) ?? []);
-    if (groupPlayers.length === 0) continue;
-    fields.push(...fieldChunks(`🛡️ ${group.label}`, groupPlayers.sort((a, b) => b.overall - a.overall).map(formatPlayerLine)));
+    const lines = buildGroupLines(group.positions);
+    if (lines.length > 0) fields.push(...fieldChunks(`🛡️ ${group.label}`, lines));
   }
 
-  const stPlayers = SPECIAL_TEAMS_POSITIONS.flatMap(pos => byPos.get(pos) ?? []);
-  if (stPlayers.length > 0) {
-    fields.push(...fieldChunks("⚡ Special Teams", stPlayers.sort((a, b) => b.overall - a.overall).map(formatPlayerLine)));
-  }
+  const stLines = buildGroupLines(SPECIAL_TEAMS_POSITIONS);
+  if (stLines.length > 0) fields.push(...fieldChunks("⚡ Special Teams", stLines));
 
   const unknownPlayers = players.filter(p => {
     const pos = p.position.toUpperCase();
