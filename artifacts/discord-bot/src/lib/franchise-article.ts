@@ -140,7 +140,7 @@ async function buildLeagueContext(
   }));
 
   if (upcomingGames.length === 0) {
-    upcomingGames = await getUpcomingMatchupsFromGcs(upcomingWeekIndex);
+    upcomingGames = await getUpcomingMatchupsFromGcs(upcomingWeekNum); // 1-based
   }
 
   if (upcomingGames.length > 0) {
@@ -329,7 +329,7 @@ async function buildPreviewContext(
   }));
 
   if (matchups.length === 0) {
-    matchups = await getUpcomingMatchupsFromGcs(weekIndex);
+    matchups = await getUpcomingMatchupsFromGcs(weekNum); // weekNum is already 1-based
   }
 
   const h2hGames = matchups.filter(g => g.isH2H);

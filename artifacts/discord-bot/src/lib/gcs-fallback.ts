@@ -299,6 +299,9 @@ export type GcsGame = {
 /**
  * Reads mca/week-reg-{weekNum}-schedules.json from GCS and returns game results.
  * Used as a fallback when franchise_schedule DB table is empty for that week.
+ *
+ * H2H detection: scheduleStatus === 3 means Madden treated the game as human vs human.
+ * We trust this value directly rather than cross-referencing leagueteams registration.
  */
 export async function getWeekResultsFromGcs(weekNum: number): Promise<GcsGame[]> {
   const key = `mca/week-reg-${weekNum}-schedules.json`;
@@ -311,18 +314,20 @@ export async function getWeekResultsFromGcs(weekNum: number): Promise<GcsGame[]>
   const results: GcsGame[] = [];
   for (const g of games) {
     if (!g || typeof g !== "object") continue;
-    const hId     = Number(g.homeTeamId ?? -1);
-    const aId     = Number(g.awayTeamId ?? -1);
+    const hId    = Number(g.homeTeamId ?? -1);
+    const aId    = Number(g.awayTeamId ?? -1);
     if (hId < 0 || aId < 0) continue;
 
-    const hScore  = g.homeScore != null ? Number(g.homeScore) : null;
-    const aScore  = g.awayScore != null ? Number(g.awayScore) : null;
+    const hScore = g.homeScore != null ? Number(g.homeScore) : null;
+    const aScore = g.awayScore != null ? Number(g.awayScore) : null;
     if (hScore === null || aScore === null) continue; // skip unplayed
 
-    const status  = Number(g.scheduleStatus ?? g.status ?? 0);
-    const hTeam   = teams.get(hId);
-    const aTeam   = teams.get(aId);
-    const isH2H   = status === 3 && (hTeam?.isHuman ?? false) && (aTeam?.isHuman ?? false);
+    // scheduleStatus === 3 is Madden's own H2H completion flag — trust it directly
+    const status = Number(g.scheduleStatus ?? g.status ?? 0);
+    const isH2H  = status === 3;
+
+    const hTeam = teams.get(hId);
+    const aTeam = teams.get(aId);
 
     results.push({
       homeTeamName: hTeam?.name ?? `Team${hId}`,
@@ -336,10 +341,15 @@ export async function getWeekResultsFromGcs(weekNum: number): Promise<GcsGame[]>
 }
 
 /**
- * Reads mca/schedules.json (full season schedule) and returns matchups for a given weekIndex (0-based).
- * Used as a fallback when franchise_schedule DB table has no rows for the upcoming week.
+ * Reads mca/schedules.json (full season schedule) and returns matchups for a given week.
+ *
+ * @param weekNum - 1-based week number (e.g. 11 for Week 11).
+ *
+ * The MCA schedules export uses either a 1-based `week` field or a 0-based `weekIndex` field
+ * depending on the app version. We accept a match on either (weekNum OR weekNum-1) so the
+ * filter works regardless of which convention the export uses.
  */
-export async function getUpcomingMatchupsFromGcs(weekIndex: number): Promise<GcsGame[]> {
+export async function getUpcomingMatchupsFromGcs(weekNum: number): Promise<GcsGame[]> {
   if (!await mcaFileExists("mca/schedules.json")) return [];
 
   const raw   = await readMcaJson("mca/schedules.json");
@@ -353,17 +363,21 @@ export async function getUpcomingMatchupsFromGcs(weekIndex: number): Promise<Gcs
     const weekType = Number(g.weekType ?? 1);
     if (weekType !== 1) continue; // regular season only
 
-    const wIdx = Number(g.weekIndex ?? g.week ?? -1);
-    if (wIdx !== weekIndex) continue;
+    // Accept 1-based week field (week=11) OR 0-based weekIndex field (weekIndex=10) for week 11
+    const wVal = Number(g.weekIndex ?? g.week ?? -1);
+    if (wVal !== weekNum && wVal !== weekNum - 1) continue;
 
-    const hId  = Number(g.homeTeamId ?? -1);
-    const aId  = Number(g.awayTeamId ?? -1);
+    const hId = Number(g.homeTeamId ?? -1);
+    const aId = Number(g.awayTeamId ?? -1);
     if (hId < 0 || aId < 0) continue;
 
     const hTeam  = teams.get(hId);
     const aTeam  = teams.get(aId);
+    // scheduleStatus === 3 means H2H completed; for unplayed games use isHuman flags
     const status = Number(g.scheduleStatus ?? g.status ?? 0);
-    const isH2H  = (hTeam?.isHuman ?? false) && (aTeam?.isHuman ?? false) && status === 3;
+    const isH2H  = status === 3
+      ? true
+      : (hTeam?.isHuman ?? false) && (aTeam?.isHuman ?? false);
 
     matchups.push({
       homeTeamName: hTeam?.name ?? `Team${hId}`,
