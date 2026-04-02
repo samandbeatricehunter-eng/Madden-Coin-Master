@@ -306,11 +306,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Add attribute group fields (skip groups with no data) ─────────────────────
   let attrCount = 0;
+  const displayedKeys = new Set<string>();
+
   for (const group of ATTR_GROUPS) {
-    const fieldValue = formatAttrField(attrs, group.keys);
+    const presentKeys = group.keys.filter(k => attrs[k] != null && attrs[k] > 0);
+    if (presentKeys.length === 0) continue;
+    const fieldValue = formatAttrField(attrs, presentKeys);
     if (!fieldValue) continue;
     embed.addFields({ name: `${group.emoji} ${group.label}`, value: fieldValue, inline: false });
+    presentKeys.forEach(k => displayedKeys.add(k));
     attrCount++;
+  }
+
+  // ── Catch-all: any stored *Rating key not covered by the groups above ────────
+  const remainingKeys = Object.keys(attrs).filter(k => !displayedKeys.has(k) && attrs[k] > 0);
+  if (remainingKeys.length > 0) {
+    const fieldValue = formatAttrField(attrs, remainingKeys);
+    if (fieldValue) {
+      embed.addFields({ name: "📊 Other Attributes", value: fieldValue, inline: false });
+      attrCount++;
+    }
   }
 
   if (attrCount === 0) {
