@@ -1,13 +1,10 @@
 import OpenAI from "openai";
-import { db } from "@workspace/db";
-import {
-  userRecordsTable, playerSeasonStatsTable, franchiseScheduleTable,
-  usersTable,
-} from "@workspace/db";
+import { db, playerSeasonStatsTable, franchiseScheduleTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import {
   getWeekResultsFromGcs,
   getUpcomingMatchupsFromGcs,
+  getArticleStandings,
   type GcsGame,
 } from "./gcs-fallback.js";
 
@@ -28,25 +25,15 @@ async function buildLeagueContext(
   parts.push("");
 
   // ── Standings ────────────────────────────────────────────────────────────────
-  const records = await db
-    .select({
-      discordId:         userRecordsTable.discordId,
-      discordUsername:   userRecordsTable.discordUsername,
-      team:              userRecordsTable.team,
-      wins:              userRecordsTable.wins,
-      losses:            userRecordsTable.losses,
-      pointDifferential: userRecordsTable.pointDifferential,
-    })
-    .from(userRecordsTable)
-    .where(eq(userRecordsTable.seasonId, seasonId))
-    .orderBy(desc(userRecordsTable.wins));
+  // Use GCS-first standings so all 32 teams appear (not just bot-registered users)
+  const records = await getArticleStandings(seasonId);
 
   if (records.length > 0) {
-    parts.push("=== CURRENT STANDINGS ===");
+    parts.push("=== CURRENT STANDINGS (after Week " + (completedWeekIndex + 1) + ") ===");
     for (const r of records) {
-      const teamStr = r.team ? `${r.team}` : r.discordUsername;
-      const pd      = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
-      parts.push(`${teamStr} (${r.discordUsername}): ${r.wins}-${r.losses}, Point Diff ${pd}`);
+      const pd   = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
+      const user = r.discordUsername ? ` (${r.discordUsername})` : "";
+      parts.push(`${r.teamName}${user}: ${r.wins}-${r.losses}, Point Diff ${pd}`);
     }
     parts.push("");
 
@@ -54,13 +41,13 @@ async function buildLeagueContext(
     const gamesPlayed = Math.max(...records.map(r => r.wins + r.losses));
     if (gamesPlayed > 0) {
       const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
-      const winless    = records.filter(r => r.wins === 0 && r.losses > 0);
+      const winless    = records.filter(r => r.wins  === 0 && r.losses > 0);
       if (undefeated.length > 0) {
-        const names = undefeated.map(r => r.team ?? r.discordUsername).join(", ");
+        const names = undefeated.map(r => r.teamName).join(", ");
         parts.push(`NOTABLE: The following teams are UNDEFEATED this season (${undefeated[0]!.wins}-0): ${names}`);
       }
       if (winless.length > 0) {
-        const names = winless.map(r => r.team ?? r.discordUsername).join(", ");
+        const names = winless.map(r => r.teamName).join(", ");
         parts.push(`NOTABLE: The following teams are WINLESS this season (0-${winless[0]!.losses}): ${names}`);
       }
       if (undefeated.length > 0 || winless.length > 0) parts.push("");
@@ -269,38 +256,28 @@ async function buildPreviewContext(
   parts.push("");
 
   // ── Current standings (going into the week) ───────────────────────────────
-  const records = await db
-    .select({
-      discordId:         userRecordsTable.discordId,
-      discordUsername:   userRecordsTable.discordUsername,
-      team:              userRecordsTable.team,
-      wins:              userRecordsTable.wins,
-      losses:            userRecordsTable.losses,
-      pointDifferential: userRecordsTable.pointDifferential,
-    })
-    .from(userRecordsTable)
-    .where(eq(userRecordsTable.seasonId, seasonId))
-    .orderBy(desc(userRecordsTable.wins));
+  // GCS-first so all teams appear, not just bot-registered users
+  const records = await getArticleStandings(seasonId);
 
   if (records.length > 0) {
-    parts.push("=== CURRENT STANDINGS (heading into this week) ===");
+    parts.push(`=== CURRENT STANDINGS (heading into Week ${weekNum}) ===`);
     for (const r of records) {
-      const teamStr = r.team ?? r.discordUsername;
-      const pd      = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
-      parts.push(`${teamStr} (${r.discordUsername}): ${r.wins}-${r.losses}, Point Diff ${pd}`);
+      const pd   = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
+      const user = r.discordUsername ? ` (${r.discordUsername})` : "";
+      parts.push(`${r.teamName}${user}: ${r.wins}-${r.losses}, Point Diff ${pd}`);
     }
     parts.push("");
 
     const gamesPlayed = Math.max(...records.map(r => r.wins + r.losses));
     if (gamesPlayed > 0) {
       const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
-      const winless    = records.filter(r => r.wins === 0 && r.losses > 0);
+      const winless    = records.filter(r => r.wins  === 0 && r.losses > 0);
       if (undefeated.length > 0) {
-        const names = undefeated.map(r => r.team ?? r.discordUsername).join(", ");
+        const names = undefeated.map(r => r.teamName).join(", ");
         parts.push(`NOTABLE: Still undefeated heading into Week ${weekNum}: ${names}`);
       }
       if (winless.length > 0) {
-        const names = winless.map(r => r.team ?? r.discordUsername).join(", ");
+        const names = winless.map(r => r.teamName).join(", ");
         parts.push(`NOTABLE: Still looking for their first win heading into Week ${weekNum}: ${names}`);
       }
       if (undefeated.length > 0 || winless.length > 0) parts.push("");

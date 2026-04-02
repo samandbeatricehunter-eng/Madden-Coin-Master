@@ -265,6 +265,101 @@ export async function getStoredWeekNumbers(): Promise<{ reg: number[]; pre: numb
   };
 }
 
+// ── Article standings — always GCS-first for complete league coverage ─────────
+// Unlike getSeasonRecords (which only returns bot-registered users), this reads
+// mca/standings.json so the article sees every team in the league, whether or
+// not they have a Discord account linked.
+
+export interface ArticleStanding {
+  teamName:          string;  // e.g. "New England Patriots" or "Patriots"
+  discordUsername:   string | null; // null if not linked to bot
+  wins:              number;
+  losses:            number;
+  pointDifferential: number;
+}
+
+export async function getArticleStandings(seasonId: number): Promise<ArticleStanding[]> {
+  // ── 1. Try GCS standings (complete, all teams) ──────────────────────────────
+  try {
+    if (await mcaFileExists("mca/standings.json")) {
+      const body    = await readMcaJson("mca/standings.json");
+      const entries = extractList(body, "standingsInfoList", "teamStandingsInfoList", "standings");
+
+      if (entries.length > 0) {
+        // Build team-name map from leagueteams for richer names
+        const teamNames = new Map<number, string>();
+        try {
+          const lt    = await readMcaJson("mca/leagueteams.json");
+          const teams = extractList(lt, "leagueTeamInfoList", "teamInfoList", "teams");
+          for (const t of teams) {
+            const id   = Number(t?.teamId ?? t?.teamIndex ?? -1);
+            if (id < 0) continue;
+            const nick = String(t?.nickName ?? t?.teamName ?? "").trim();
+            const city = String(t?.cityName ?? "").trim();
+            teamNames.set(id, city ? `${city} ${nick}` : nick);
+          }
+        } catch { /* leagueteams optional — fall back to standing's own name fields */ }
+
+        // Build teamId → discordUsername map from DB
+        const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+          .where(eq(franchiseMcaTeamsTable.seasonId, seasonId)).catch(() => []);
+        const allUsers = await db.select({
+          discordId: usersTable.discordId, discordUsername: usersTable.discordUsername,
+        }).from(usersTable).catch(() => []);
+        const userByDiscord = new Map(allUsers.map(u => [u.discordId, u.discordUsername]));
+        const discordByTeam = new Map(
+          mcaTeams.filter(t => t.discordId).map(t => [t.teamId, userByDiscord.get(t.discordId!) ?? null])
+        );
+
+        const standings: ArticleStanding[] = [];
+        for (const e of entries) {
+          const teamId  = Number(e?.teamId ?? e?.teamIndex ?? -1);
+          // Use leagueteams name if available, otherwise fall back to standing's own fields
+          const rawNick = String(e?.teamName ?? e?.nickName ?? e?.teamNickname ?? "").trim();
+          const rawCity = String(e?.cityName ?? e?.teamCity ?? "").trim();
+          const name    = (teamNames.get(teamId) ?? (rawCity ? `${rawCity} ${rawNick}` : rawNick)) || `Team${teamId}`;
+
+          const wins   = Number(e?.wins ?? e?.totalWins   ?? 0);
+          const losses = Number(e?.losses ?? e?.totalLosses ?? 0);
+          const pd     = Number(e?.pointDifferential ?? e?.netPoints ?? 0);
+
+          standings.push({
+            teamName:          name,
+            discordUsername:   discordByTeam.get(teamId) ?? null,
+            wins,
+            losses,
+            pointDifferential: pd,
+          });
+        }
+
+        if (standings.length > 0) {
+          return standings.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+        }
+      }
+    }
+  } catch { /* fall through to DB */ }
+
+  // ── 2. Fall back to DB (bot-registered users only) ──────────────────────────
+  const dbRows = await db.select({
+    discordId:         userRecordsTable.discordId,
+    discordUsername:   userRecordsTable.discordUsername,
+    team:              userRecordsTable.team,
+    wins:              userRecordsTable.wins,
+    losses:            userRecordsTable.losses,
+    pointDifferential: userRecordsTable.pointDifferential,
+  }).from(userRecordsTable).where(eq(userRecordsTable.seasonId, seasonId)).catch(() => []);
+
+  return dbRows
+    .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential)
+    .map(r => ({
+      teamName:          r.team ?? r.discordUsername,
+      discordUsername:   r.discordUsername,
+      wins:              r.wins,
+      losses:            r.losses,
+      pointDifferential: r.pointDifferential,
+    }));
+}
+
 // ── Shared team-name resolver ─────────────────────────────────────────────────
 // Reads mca/leagueteams.json and returns a map from teamId → { name, isHuman }.
 async function buildTeamNameMap(): Promise<Map<number, { name: string; isHuman: boolean }>> {
