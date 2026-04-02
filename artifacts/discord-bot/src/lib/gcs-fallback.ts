@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { readMcaJson, mcaFileExists, listMcaFilesSafe } from "./gcs-reader.js";
+import { lookupNflDivision, type NflConference, type NflDivision } from "./constants.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -271,11 +272,13 @@ export async function getStoredWeekNumbers(): Promise<{ reg: number[]; pre: numb
 // not they have a Discord account linked.
 
 export interface ArticleStanding {
-  teamName:          string;  // e.g. "New England Patriots" or "Patriots"
-  discordUsername:   string | null; // null if not linked to bot
+  teamName:          string;           // e.g. "New England Patriots" or "Patriots"
+  discordUsername:   string | null;    // null if not linked to bot
   wins:              number;
   losses:            number;
   pointDifferential: number;
+  conference:        NflConference | null;
+  division:          NflDivision   | null;
 }
 
 /**
@@ -372,12 +375,15 @@ export async function getArticleStandings(
       const losses = lossesMap.get(teamId) ?? 0;
       const pd     = pdMap.get(teamId)     ?? 0;
       const name   = teamNames.get(teamId) ?? `Team${teamId}`;
+      const nfl    = lookupNflDivision(name);
       standings.push({
         teamName:          name,
         discordUsername:   discordByTeam.get(teamId) ?? null,
         wins,
         losses,
         pointDifferential: pd,
+        conference:        nfl?.conference ?? null,
+        division:          nfl?.division   ?? null,
       });
     }
     return standings.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
@@ -395,12 +401,15 @@ export async function getArticleStandings(
           const rawNick = String(e?.teamName ?? e?.nickName ?? e?.teamNickname ?? "").trim();
           const rawCity = String(e?.cityName ?? e?.teamCity ?? "").trim();
           const name    = (teamNames.get(teamId) ?? (rawCity ? `${rawCity} ${rawNick}` : rawNick)) || `Team${teamId}`;
+          const nfl     = lookupNflDivision(name);
           standings.push({
             teamName:          name,
             discordUsername:   discordByTeam.get(teamId) ?? null,
             wins:              Number(e?.wins ?? e?.totalWins   ?? 0),
             losses:            Number(e?.losses ?? e?.totalLosses ?? 0),
             pointDifferential: Number(e?.pointDifferential ?? e?.netPoints ?? 0),
+            conference:        nfl?.conference ?? null,
+            division:          nfl?.division   ?? null,
           });
         }
         if (standings.length > 0) {
@@ -422,13 +431,19 @@ export async function getArticleStandings(
 
   return dbRows
     .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential)
-    .map(r => ({
-      teamName:          r.team ?? r.discordUsername,
-      discordUsername:   r.discordUsername,
-      wins:              r.wins,
-      losses:            r.losses,
-      pointDifferential: r.pointDifferential,
-    }));
+    .map(r => {
+      const name = r.team ?? r.discordUsername;
+      const nfl  = lookupNflDivision(name);
+      return {
+        teamName:          name,
+        discordUsername:   r.discordUsername,
+        wins:              r.wins,
+        losses:            r.losses,
+        pointDifferential: r.pointDifferential,
+        conference:        nfl?.conference ?? null,
+        division:          nfl?.division   ?? null,
+      };
+    });
 }
 
 // ── Shared team-name resolver ─────────────────────────────────────────────────

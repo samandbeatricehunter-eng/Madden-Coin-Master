@@ -145,7 +145,10 @@ export type NFLTeam = typeof NFL_TEAMS[number];
 // ── NFL division + conference lookup ──────────────────────────────────────────
 // Keys are the canonical team nicknames (same as NFL_TEAMS above).
 // Also includes common aliases so alternate team names stored in the DB still match.
-export const NFL_DIVISION_MAP: Record<string, { conference: "AFC" | "NFC"; division: "East" | "North" | "South" | "West" }> = {
+export type NflConference = "AFC" | "NFC";
+export type NflDivision  = "East" | "North" | "South" | "West";
+
+export const NFL_DIVISION_MAP: Record<string, { conference: NflConference; division: NflDivision }> = {
   // AFC East
   Bills:      { conference: "AFC", division: "East" },
   Dolphins:   { conference: "AFC", division: "East" },
@@ -202,3 +205,31 @@ export const NFL_DIVISION_MAP: Record<string, { conference: "AFC" | "NFC"; divis
   "Silver and Black": { conference: "AFC", division: "West" },
   Redskins:   { conference: "NFC", division: "East" },
 };
+
+/**
+ * Given any team name string (full name "Los Angeles Rams", nickname "Rams",
+ * city only "Los Angeles", or alias), returns the conference + division,
+ * or null if the team cannot be identified.
+ *
+ * Strategy: try every trailing word / word-group from the name so that
+ * "New England Patriots" → tries "New England Patriots", "England Patriots",
+ * "Patriots" — and "Patriots" matches.
+ */
+export function lookupNflDivision(
+  teamName: string,
+): { conference: NflConference; division: NflDivision } | null {
+  const name = teamName.trim();
+  if (!name) return null;
+
+  // Direct match first (e.g., "Rams" or "49ers")
+  if (NFL_DIVISION_MAP[name]) return NFL_DIVISION_MAP[name]!;
+
+  // Try each suffix substring (handles "Los Angeles Rams", "New England Patriots", etc.)
+  const words = name.split(/\s+/);
+  for (let i = 1; i < words.length; i++) {
+    const candidate = words.slice(i).join(" ");
+    if (NFL_DIVISION_MAP[candidate]) return NFL_DIVISION_MAP[candidate]!;
+  }
+
+  return null;
+}

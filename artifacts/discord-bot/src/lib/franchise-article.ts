@@ -6,7 +6,105 @@ import {
   getUpcomingMatchupsFromGcs,
   getArticleStandings,
   type GcsGame,
+  type ArticleStanding,
 } from "./gcs-fallback.js";
+
+// ── Divisional standings formatter ────────────────────────────────────────────
+// Builds the standings context section broken out by conference and division,
+// with a current playoff picture (4 division winners + 3 wild cards per conf).
+function formatConferenceStandingsContext(
+  records:   ArticleStanding[],
+  weekLabel: string,
+): string[] {
+  const parts: string[] = [];
+  const CONFERENCES = ["AFC", "NFC"] as const;
+  const DIVISIONS   = ["East", "North", "South", "West"] as const;
+
+  const known   = records.filter(r => r.conference !== null);
+  const unknown = records.filter(r => r.conference === null);
+
+  for (const conf of CONFERENCES) {
+    const confTeams = known
+      .filter(r => r.conference === conf)
+      .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+    if (confTeams.length === 0) continue;
+
+    parts.push(`=== ${conf} STANDINGS (${weekLabel}) ===`);
+
+    // Per-division breakdown
+    for (const div of DIVISIONS) {
+      const divTeams = confTeams
+        .filter(r => r.division === div)
+        .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+      if (divTeams.length === 0) continue;
+      parts.push(`${conf} ${div}:`);
+      for (const t of divTeams) {
+        const pd   = t.pointDifferential >= 0 ? `+${t.pointDifferential}` : `${t.pointDifferential}`;
+        const user = t.discordUsername ? ` (${t.discordUsername})` : "";
+        parts.push(`  ${t.teamName}${user} ${t.wins}-${t.losses} [PD ${pd}]`);
+      }
+    }
+    parts.push("");
+
+    // Playoff picture — top team per division = division winner; next 3 = wild cards
+    const divWinners: ArticleStanding[] = [];
+    for (const div of DIVISIONS) {
+      const top = confTeams
+        .filter(r => r.division === div)
+        .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential)[0];
+      if (top) divWinners.push(top);
+    }
+    const divWinnerSet  = new Set(divWinners.map(t => t.teamName));
+    const sortedWinners = divWinners.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+    const wildCards     = confTeams.filter(t => !divWinnerSet.has(t.teamName)).slice(0, 3);
+    const playoffTeams  = [...sortedWinners, ...wildCards];
+    const bubbleTeams   = confTeams.filter(t => !playoffTeams.some(p => p.teamName === t.teamName)).slice(0, 3);
+
+    parts.push(`${conf} PLAYOFF PICTURE (7 teams make it: 4 division winners + 3 wild cards):`);
+    playoffTeams.forEach((t, i) => {
+      const label = i < 4 ? `#${i + 1} seed — Division Winner` : `#${i + 1} seed — Wild Card`;
+      parts.push(`  ${label}: ${t.teamName} (${t.wins}-${t.losses})`);
+    });
+    if (bubbleTeams.length > 0) {
+      const wcCutline = wildCards[2]?.wins ?? 0;
+      parts.push(`${conf} bubble (chasing last wild card spot):`);
+      for (const t of bubbleTeams) {
+        const gb = wcCutline - t.wins;
+        parts.push(`  ${t.teamName} (${t.wins}-${t.losses}) — ${gb} win${gb !== 1 ? "s" : ""} back`);
+      }
+    }
+    parts.push("");
+  }
+
+  // Notable streaks
+  const gamesPlayed = records.length > 0 ? Math.max(...records.map(r => r.wins + r.losses)) : 0;
+  if (gamesPlayed > 0) {
+    const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
+    const winless    = records.filter(r => r.wins  === 0 && r.losses > 0);
+    if (undefeated.length > 0) {
+      const names = undefeated.map(r => `${r.teamName} (${r.conference ?? "?"} ${r.division ?? "?"})`).join(", ");
+      parts.push(`NOTABLE: UNDEFEATED (${undefeated[0]!.wins}-0): ${names}`);
+      parts.push("");
+    }
+    if (winless.length > 0) {
+      const names = winless.map(r => `${r.teamName} (${r.conference ?? "?"} ${r.division ?? "?"})`).join(", ");
+      parts.push(`NOTABLE: WINLESS (0-${winless[0]!.losses}): ${names}`);
+      parts.push("");
+    }
+  }
+
+  // Any teams the lookup couldn't classify
+  if (unknown.length > 0) {
+    parts.push("=== UNCLASSIFIED TEAMS ===");
+    for (const t of unknown) {
+      const pd = t.pointDifferential >= 0 ? `+${t.pointDifferential}` : `${t.pointDifferential}`;
+      parts.push(`${t.teamName}: ${t.wins}-${t.losses} [PD ${pd}]`);
+    }
+    parts.push("");
+  }
+
+  return parts;
+}
 
 const openai = new OpenAI({
   baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
@@ -29,29 +127,7 @@ async function buildLeagueContext(
   const records = await getArticleStandings(seasonId, completedWeekIndex + 1);
 
   if (records.length > 0) {
-    parts.push("=== CURRENT STANDINGS (after Week " + (completedWeekIndex + 1) + ") ===");
-    for (const r of records) {
-      const pd   = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
-      const user = r.discordUsername ? ` (${r.discordUsername})` : "";
-      parts.push(`${r.teamName}${user}: ${r.wins}-${r.losses}, Point Diff ${pd}`);
-    }
-    parts.push("");
-
-    // Explicitly flag notable records so the AI doesn't miss them
-    const gamesPlayed = Math.max(...records.map(r => r.wins + r.losses));
-    if (gamesPlayed > 0) {
-      const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
-      const winless    = records.filter(r => r.wins  === 0 && r.losses > 0);
-      if (undefeated.length > 0) {
-        const names = undefeated.map(r => r.teamName).join(", ");
-        parts.push(`NOTABLE: The following teams are UNDEFEATED this season (${undefeated[0]!.wins}-0): ${names}`);
-      }
-      if (winless.length > 0) {
-        const names = winless.map(r => r.teamName).join(", ");
-        parts.push(`NOTABLE: The following teams are WINLESS this season (0-${winless[0]!.losses}): ${names}`);
-      }
-      if (undefeated.length > 0 || winless.length > 0) parts.push("");
-    }
+    parts.push(...formatConferenceStandingsContext(records, `after Week ${completedWeekIndex + 1}`));
   }
 
   // ── Last week's scores ───────────────────────────────────────────────────────
@@ -261,28 +337,7 @@ async function buildPreviewContext(
   const records = await getArticleStandings(seasonId, weekNum - 1);
 
   if (records.length > 0) {
-    parts.push(`=== CURRENT STANDINGS (heading into Week ${weekNum}) ===`);
-    for (const r of records) {
-      const pd   = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : String(r.pointDifferential);
-      const user = r.discordUsername ? ` (${r.discordUsername})` : "";
-      parts.push(`${r.teamName}${user}: ${r.wins}-${r.losses}, Point Diff ${pd}`);
-    }
-    parts.push("");
-
-    const gamesPlayed = Math.max(...records.map(r => r.wins + r.losses));
-    if (gamesPlayed > 0) {
-      const undefeated = records.filter(r => r.losses === 0 && r.wins > 0);
-      const winless    = records.filter(r => r.wins  === 0 && r.losses > 0);
-      if (undefeated.length > 0) {
-        const names = undefeated.map(r => r.teamName).join(", ");
-        parts.push(`NOTABLE: Still undefeated heading into Week ${weekNum}: ${names}`);
-      }
-      if (winless.length > 0) {
-        const names = winless.map(r => r.teamName).join(", ");
-        parts.push(`NOTABLE: Still looking for their first win heading into Week ${weekNum}: ${names}`);
-      }
-      if (undefeated.length > 0 || winless.length > 0) parts.push("");
-    }
+    parts.push(...formatConferenceStandingsContext(records, `heading into Week ${weekNum}`));
   }
 
   // ── Scheduled matchups for the preview week — DB first, GCS fallback ────────
@@ -389,13 +444,22 @@ export async function generateFranchiseArticle(
 ): Promise<string> {
   const context = await buildLeagueContext(seasonId, completedWeekIndex, seasonNumber);
 
-  const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise (CFM) simulation league. 
+  const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise simulation league.
 Write a short, engaging league newsletter article (around 400–500 words) recapping the week that just ended and looking ahead to ${upcomingWeekLabel}.
 
-Always refer to the league by its name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic name.
+Always refer to the league by its full name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic label.
 
-This is a RECAP article. Focus on what happened: scores, standout performers, winners, losers, and any notable storylines from the results.
-Mention how the week affects standings. End with a brief tease of what's coming next (${upcomingWeekLabel}).
+This is a RECAP article. Cover what happened: scores, winners, losers, standout performers, and any notable storylines.
+
+CRITICAL — CONFERENCE STRUCTURE:
+The league follows real NFL conference and division alignment. The data includes AFC and NFC standings broken out by division.
+- An AFC team is competing for AFC playoff seeds. An NFC team is competing for NFC playoff seeds.
+- Never pit an AFC team against an NFC team in a "playoff race" discussion — they are in different conferences.
+- When discussing who is "in the hunt" or "fighting for a playoff spot", refer to teams in the same conference.
+- Mention division leaders and how key games affected the divisional and wild-card race within each conference.
+- Reference the playoff picture section to identify which teams are division leaders, wild-card contenders, or on the bubble.
+
+End with a brief tease of what's coming next (${upcomingWeekLabel}).
 
 Use the data below. Reference players and teams by name. Write in an energetic, sports-media tone — like an ESPN or NFL Network column.
 Avoid generic filler. Make it feel authentic and specific to The R.E.C. League.
@@ -426,13 +490,22 @@ export async function generateWeekPreview(
   const weekNum = weekIndex + 1;
   const context = await buildPreviewContext(seasonId, weekIndex, seasonNumber);
 
-  const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise (CFM) simulation league.
+  const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise simulation league.
 Write a short, engaging league newsletter article (around 400–500 words) previewing Week ${weekNum} — the games have NOT been played yet.
 
-Always refer to the league by its name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic name.
+Always refer to the league by its full name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic label.
 
-This is a PREVIEW article. Focus on what's coming: hype the key matchups, highlight the stakes for each team based on their current record,
-call out players to watch, and build anticipation. Do NOT report scores or results — the games haven't happened.
+This is a PREVIEW article. Hype the key matchups, highlight the stakes for each team, call out players to watch, and build anticipation.
+Do NOT report scores or results — the games haven't happened yet.
+
+CRITICAL — CONFERENCE STRUCTURE:
+The league follows real NFL conference and division alignment. The data includes AFC and NFC standings broken out by division.
+- AFC teams compete for AFC playoff seeds; NFC teams compete for NFC playoff seeds. Keep these separate.
+- Never suggest an AFC team is chasing a playoff spot alongside an NFC team — they play for different conferences.
+- When building drama around matchups, frame divisional games as races for division titles and cross-division games
+  as battles for wild-card position within the correct conference.
+- Reference the playoff picture section to identify which teams are locked in, fighting for wild cards, or on the bubble
+  in their respective conference.
 
 Use the data below. Reference players and teams by name. Write in an energetic, sports-media tone — like an ESPN or NFL Network column.
 Avoid generic filler. Make it feel authentic and specific to The R.E.C. League.
