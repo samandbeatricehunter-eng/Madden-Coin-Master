@@ -5,6 +5,7 @@ import {
   processTeamWeekStats,
   processSchedules,
   processWeekScores,
+  syncWeekScoresToSchedule,
   processPlayerWeekStats,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed } from "../lib/discord-notify.js";
@@ -128,7 +129,10 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-schedules.json`, req.body);
   res.status(200).json({ status: "received" });
-  console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing payouts...`);
+  console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing...`);
+  // Write completed scores to franchise_schedule immediately so /seasonschedule
+  // reflects results regardless of whether /schedules is sent before or after this.
+  await syncWeekScoresToSchedule(req.body, weekNum);
   const result = await processWeekScores(req.body, weekNum).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,

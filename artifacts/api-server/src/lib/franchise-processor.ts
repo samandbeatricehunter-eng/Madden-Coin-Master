@@ -687,7 +687,10 @@ export async function processSchedules(body: unknown): Promise<ProcessResult> {
       .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
     const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
 
-    await db.delete(franchiseScheduleTable).where(eq(franchiseScheduleTable.seasonId, season.id));
+    // No delete — use upsert so previously-recorded completed scores are never lost.
+    // If MCA sends /schedules before or after /week/N/schedules, whichever has the
+    // higher status wins: GREATEST(existing.status, incoming.status).
+    // Scores are only written when the incoming row is completed (status >= 2).
 
     type SchedEntry = {
       hId: number; aId: number; weekIdx: number;
@@ -723,9 +726,9 @@ export async function processSchedules(body: unknown): Promise<ProcessResult> {
       }
     }
 
-    const inserts: Promise<any>[] = [];
+    const upserts: Promise<any>[] = [];
     for (const e of schedMap.values()) {
-      inserts.push(
+      upserts.push(
         db.insert(franchiseScheduleTable)
           .values({
             seasonId:     season.id,
@@ -739,10 +742,28 @@ export async function processSchedules(body: unknown): Promise<ProcessResult> {
             status:       e.status,
             importedAt:   new Date(),
           })
-          .onConflictDoNothing()
+          .onConflictDoUpdate({
+            target: [
+              franchiseScheduleTable.seasonId,
+              franchiseScheduleTable.weekIndex,
+              franchiseScheduleTable.homeTeamId,
+              franchiseScheduleTable.awayTeamId,
+            ],
+            set: {
+              // Always refresh team names in case of relocation
+              homeTeamName: sql`excluded.home_team_name`,
+              awayTeamName: sql`excluded.away_team_name`,
+              // Only write scores/status when the incoming data is completed.
+              // GREATEST preserves completed status if DB already has it.
+              homeScore: sql`CASE WHEN excluded.status >= ${MIN_COMPLETED_STATUS} THEN excluded.home_score ELSE ${franchiseScheduleTable.homeScore} END`,
+              awayScore: sql`CASE WHEN excluded.status >= ${MIN_COMPLETED_STATUS} THEN excluded.away_score ELSE ${franchiseScheduleTable.awayScore} END`,
+              status:    sql`GREATEST(${franchiseScheduleTable.status}, excluded.status)`,
+              importedAt: new Date(),
+            },
+          })
       );
     }
-    await Promise.all(inserts);
+    await Promise.all(upserts);
     console.log(`[mca/schedules] Synced ${schedMap.size} schedule entries for season ${season.id}`);
     return { ok: true, message: `${schedMap.size} schedule entries synced`, details: { seasonId: season.id } };
   } catch (err) {
@@ -767,6 +788,56 @@ export interface WeekScoresResult {
   weekNum: number;
   seasonId: number;
   catchupMode: boolean;         // true when catchup mode is active (no payouts/notifications)
+}
+
+/**
+ * Syncs completed game scores from a /week/N/schedules MCA payload into
+ * franchiseScheduleTable. Called before processWeekScores so that results
+ * appear in /seasonschedule immediately, regardless of the order in which
+ * MCA sends /schedules vs /week/N/schedules.
+ */
+export async function syncWeekScoresToSchedule(
+  body: unknown,
+  weekNum: number,
+): Promise<void> {
+  try {
+    const season    = await getOrCreateActiveSeason();
+    const weekIndex = weekNum - 1; // schedule table uses 0-based weekIndex
+    const games     = extractList(body, "gameScheduleInfoList", "scheduleInfoList", "games");
+
+    const updates: Promise<any>[] = [];
+    for (const g of games) {
+      if (!g || typeof g !== "object") continue;
+      const status = Number(g.scheduleStatus ?? g.status ?? 0);
+      if (status < MIN_COMPLETED_STATUS) continue;
+
+      const hId = Number(g.homeTeamId ?? -1);
+      const aId = Number(g.awayTeamId ?? -1);
+      if (hId < 0 || aId < 0) continue;
+
+      const homeScore = Number(g.homeScore ?? 0);
+      const awayScore = Number(g.awayScore ?? 0);
+
+      // Update the existing schedule row with the real score and completed status.
+      // If the row doesn't exist yet (schedule not imported), this is a no-op —
+      // processSchedules will create it when MCA sends /schedules.
+      updates.push(
+        db.update(franchiseScheduleTable)
+          .set({ homeScore, awayScore, status })
+          .where(and(
+            eq(franchiseScheduleTable.seasonId,   season.id),
+            eq(franchiseScheduleTable.weekIndex,  weekIndex),
+            eq(franchiseScheduleTable.homeTeamId, hId),
+            eq(franchiseScheduleTable.awayTeamId, aId),
+          ))
+      );
+    }
+
+    await Promise.all(updates);
+    console.log(`[syncWeekScores] Wrote scores for season ${season.id} week ${weekNum} (${updates.length} games)`);
+  } catch (err) {
+    console.error("[syncWeekScores] Error:", err);
+  }
 }
 
 export async function processWeekScores(
