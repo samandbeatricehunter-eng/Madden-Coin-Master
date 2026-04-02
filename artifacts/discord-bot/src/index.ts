@@ -63,6 +63,7 @@ import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule
 import * as webhookurl from "./commands/webhookurl.js";
 import * as adminCatchup from "./commands/admin-catchup.js";
 import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
+import * as adminSyncMilestones from "./commands/admin-syncmilestones.js";
 import * as setweek from "./commands/setweek.js";
 
 // Events
@@ -151,6 +152,7 @@ if (!isProduction && !devBotEnabled) {
     webhookurl,
     adminCatchup,
     adminFixPlayerNames,
+    adminSyncMilestones,
     setweek,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },

@@ -20,10 +20,10 @@ export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addIntegerOption(o => o
     .setName("week").setDescription("Week number (1–18)").setRequired(true).setMinValue(1).setMaxValue(18))
-  .addStringOption(o => o
-    .setName("hometeam").setDescription("Home team name (as it appears in /seasonschedule)").setRequired(true))
-  .addStringOption(o => o
-    .setName("awayteam").setDescription("Away team name (as it appears in /seasonschedule)").setRequired(true))
+  .addUserOption(o => o
+    .setName("homeuser").setDescription("The player who controlled the HOME team").setRequired(true))
+  .addUserOption(o => o
+    .setName("awayuser").setDescription("The player who controlled the AWAY team").setRequired(true))
   .addStringOption(o => o
     .setName("type").setDescription("The CORRECT payout type for this game").setRequired(true)
     .addChoices(
@@ -32,34 +32,60 @@ export const data = new SlashCommandBuilder()
       { name: "none — void game, no payouts",                   value: "none" },
     ))
   .addStringOption(o => o
-    .setName("winner").setDescription("Winning team name — required when type is h2h or cpu").setRequired(false))
+    .setName("winner").setDescription("Who won — required when type is h2h or cpu").setRequired(false)
+    .addChoices(
+      { name: "Home team",  value: "home" },
+      { name: "Away team",  value: "away" },
+    ))
   .addIntegerOption(o => o
-    .setName("pointdiff").setDescription("Point differential (winning score − losing score) — required when type is h2h").setRequired(false).setMinValue(1))
+    .setName("pointdiff").setDescription("Point differential (winning score − losing score) — required for h2h").setRequired(false).setMinValue(1))
   .addStringOption(o => o
-    .setName("gameid").setDescription("Override: paste the exact game ID if auto-lookup fails (check bot logs or DB)").setRequired(false));
+    .setName("gameid").setDescription("Override: paste the exact game ID if auto-lookup fails").setRequired(false));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const week        = interaction.options.getInteger("week", true);
-  const homeTeam    = interaction.options.getString("hometeam", true).trim();
-  const awayTeam    = interaction.options.getString("awayteam", true).trim();
-  const newType     = interaction.options.getString("type", true) as "h2h" | "cpu" | "none";
-  const winner      = interaction.options.getString("winner")?.trim() ?? null;
-  const pointDiff   = interaction.options.getInteger("pointdiff") ?? null;
+  const week           = interaction.options.getInteger("week", true);
+  const homeDiscordUser = interaction.options.getUser("homeuser", true);
+  const awayDiscordUser = interaction.options.getUser("awayuser", true);
+  const newType        = interaction.options.getString("type", true) as "h2h" | "cpu" | "none";
+  const winnerSide     = interaction.options.getString("winner") as "home" | "away" | null;
+  const pointDiff      = interaction.options.getInteger("pointdiff") ?? null;
   const gameIdOverride = interaction.options.getString("gameid")?.trim() ?? null;
 
   // ── Validate inputs ────────────────────────────────────────────────────────
-  if (newType === "h2h" && (!winner || pointDiff === null)) {
+  if (newType === "h2h" && (!winnerSide || pointDiff === null)) {
     await interaction.editReply("❌ When type is **h2h**, both `winner` and `pointdiff` are required.");
     return;
   }
-  // CPU: winner is optional — if omitted the schedule scores will be used to infer the winner
+
+  // ── Look up each user's registered team from the DB ───────────────────────
+  const [homeUser] = await db.select().from(usersTable)
+    .where(eq(usersTable.discordId, homeDiscordUser.id)).limit(1);
+  const [awayUser] = await db.select().from(usersTable)
+    .where(eq(usersTable.discordId, awayDiscordUser.id)).limit(1);
+
+  if (!homeUser) {
+    await interaction.editReply(`❌ <@${homeDiscordUser.id}> is not registered in the economy system.`);
+    return;
+  }
+  if (!awayUser) {
+    await interaction.editReply(`❌ <@${awayDiscordUser.id}> is not registered in the economy system.`);
+    return;
+  }
+  if (!homeUser.team) {
+    await interaction.editReply(`❌ <@${homeDiscordUser.id}> has no team assigned — cannot look up game.`);
+    return;
+  }
+  if (!awayUser.team) {
+    await interaction.editReply(`❌ <@${awayDiscordUser.id}> has no team assigned — cannot look up game.`);
+    return;
+  }
 
   const season    = await getOrCreateActiveSeason();
   const weekIndex = week - 1;
-  const homeLower = homeTeam.toLowerCase();
-  const awayLower = awayTeam.toLowerCase();
+  const homeLower = homeUser.team.toLowerCase();
+  const awayLower = awayUser.team.toLowerCase();
 
   // ── Find the game in the schedule ─────────────────────────────────────────
   const [schedGame] = await db.select().from(franchiseScheduleTable)
@@ -73,44 +99,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (!schedGame) {
     await interaction.editReply(
-      `❌ No schedule entry found for **${homeTeam} vs ${awayTeam}** in Week ${week}.\n` +
-      `Make sure the team names match exactly (try \`/weeklymatchups\` to see exact names).`,
+      `❌ No schedule entry found for **${homeUser.team} vs ${awayUser.team}** in Week ${week}.\n` +
+      `Make sure the home/away assignment is correct (try \`/weeklymatchups\` to see the matchups).`,
     );
     return;
   }
-
-  // ── Validate winner belongs to this game ─────────────────────────────────
-  if (winner) {
-    const winnerLower = winner.toLowerCase();
-    if (winnerLower !== homeLower && winnerLower !== awayLower) {
-      await interaction.editReply(
-        `❌ \`winner\` must be one of the two teams in this game:\n` +
-        `• **${schedGame.homeTeamName}** (home)\n` +
-        `• **${schedGame.awayTeamName}** (away)\n\n` +
-        `You entered: \`${winner}\``,
-      );
-      return;
-    }
-  }
-
-  // ── Find registered users for both teams ──────────────────────────────────
-  const [homeUser] = await db.select().from(usersTable)
-    .where(sql`lower(${usersTable.team}) = ${homeLower}`).limit(1);
-  const [awayUser] = await db.select().from(usersTable)
-    .where(sql`lower(${usersTable.team}) = ${awayLower}`).limit(1);
 
   // ── Locate the processed game record (multiple fallback strategies) ────────
   type ProcessedGameRow = typeof franchiseProcessedGamesTable.$inferSelect;
   let processedGame: ProcessedGameRow | null = null;
 
-  // Strategy 0: manual gameid override
   if (gameIdOverride) {
     const [r] = await db.select().from(franchiseProcessedGamesTable)
       .where(eq(franchiseProcessedGamesTable.gameId, gameIdOverride)).limit(1);
     processedGame = r ?? null;
   }
 
-  // Strategy 1: new lookup columns (works for games processed after the schema update)
   if (!processedGame) {
     const [r] = await db.select().from(franchiseProcessedGamesTable)
       .where(and(
@@ -123,20 +127,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     processedGame = r ?? null;
   }
 
-  // Strategy 2: use processedGameId stored on the schedule row (works after schedule column added)
   if (!processedGame && schedGame.processedGameId) {
     const [r] = await db.select().from(franchiseProcessedGamesTable)
       .where(eq(franchiseProcessedGamesTable.gameId, schedGame.processedGameId)).limit(1);
     processedGame = r ?? null;
   }
 
-  // Strategy 3: reconstructed gameId format (works when Madden didn't provide its own gameId)
   if (!processedGame) {
-    const hId     = schedGame.homeTeamId;
-    const aId     = schedGame.awayTeamId;
-    const hScore  = schedGame.homeScore ?? 0;
-    const aScore  = schedGame.awayScore ?? 0;
-    const constructedId = `s${season.id}-h${hId}-a${aId}-${hScore}-${aScore}`;
+    const hId  = schedGame.homeTeamId;
+    const aId  = schedGame.awayTeamId;
+    const constructedId = `s${season.id}-h${hId}-a${aId}-${schedGame.homeScore ?? 0}-${schedGame.awayScore ?? 0}`;
     const [r] = await db.select().from(franchiseProcessedGamesTable)
       .where(eq(franchiseProcessedGamesTable.gameId, constructedId)).limit(1);
     processedGame = r ?? null;
@@ -146,12 +146,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const hId = schedGame.homeTeamId;
     const aId = schedGame.awayTeamId;
     await interaction.editReply(
-      `❌ Could not locate the processed game record for **${schedGame.homeTeamName} vs ${schedGame.awayTeamName}** in Week ${week}.\n\n` +
-      `**To fix this manually:**\n` +
-      `Run the command again and add the exact game ID using the \`gameid:\` parameter.\n\n` +
-      `The game ID is either a Madden-provided integer, or in the format:\n` +
-      `\`s${season.id}-h${hId}-a${aId}-${schedGame.homeScore ?? "?"}-${schedGame.awayScore ?? "?"}\`\n\n` +
-      `If you can't find it, run \`/franchiseupdate\` again — the next import will tag the schedule row correctly.`,
+      `❌ Could not locate the processed game record for **${homeUser.team} vs ${awayUser.team}** in Week ${week}.\n\n` +
+      `Add the exact game ID using the \`gameid:\` parameter.\n` +
+      `Expected format: \`s${season.id}-h${hId}-a${aId}-${schedGame.homeScore ?? "?"}-${schedGame.awayScore ?? "?"}\``,
     );
     return;
   }
@@ -164,7 +161,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const oldLoserCoins   = processedGame.loserCoins     ?? 0;
   const oldPointDiff    = processedGame.appliedPointDiff ?? 0;
 
-  // If no metadata (legacy record), infer from schedule and registration
   let inferredType:        string | null = oldType;
   let inferredWinnerId:    string | null = oldWinnerId;
   let inferredLoserId:     string | null = oldLoserId;
@@ -176,12 +172,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const schedAwayScore = schedGame.awayScore ?? 0;
   const schedHomeWon   = schedHomeScore > schedAwayScore;
   const schedSpread    = Math.abs(schedHomeScore - schedAwayScore);
-  const schedStatus    = schedGame.status ?? 0; // 2=CPU-simmed, 3=user-played
+  const schedStatus    = schedGame.status ?? 0;
 
   if (!inferredType) {
-    // Legacy record — infer type from schedule status + registration
     if (homeUser && awayUser) {
-      // Both registered: use schedule status to distinguish H2H from force win/autopilot
       if (schedStatus === 3) {
         inferredType        = "h2h";
         inferredWinnerId    = schedHomeWon ? homeUser.discordId : awayUser.discordId;
@@ -190,47 +184,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         inferredLoserCoins  = H2H_LOSS_PAYOUT;
         inferredPointDiff   = schedSpread;
       } else {
-        // status=2 or unknown — treat as CPU win (force/autopilot)
         inferredType        = "cpu";
         inferredWinnerId    = schedHomeWon ? homeUser.discordId : awayUser.discordId;
         inferredWinnerCoins = CPU_WIN_PAYOUT;
         inferredLoserCoins  = 0;
         inferredPointDiff   = schedSpread;
       }
-    } else if (homeUser || awayUser) {
-      const humanUser  = homeUser ?? awayUser!;
-      const humanScore = homeUser ? schedHomeScore : schedAwayScore;
-      const cpuScore   = homeUser ? schedAwayScore : schedHomeScore;
-      inferredType        = humanScore > cpuScore ? "cpu" : "none";
-      inferredWinnerId    = humanScore > cpuScore ? humanUser.discordId : null;
-      inferredWinnerCoins = CPU_WIN_PAYOUT;
-      inferredLoserCoins  = 0;
-      inferredPointDiff   = schedSpread;
     } else {
       inferredType = "none";
     }
   }
 
-  // If type is known but winner IDs are missing (older MCA-processed games lacked full metadata),
-  // recover them from the schedule scores and user registration.
   if (inferredType && !inferredWinnerId && inferredType !== "none") {
-    if (inferredType === "h2h" && homeUser && awayUser) {
+    if (inferredType === "h2h") {
       inferredWinnerId    = schedHomeWon ? homeUser.discordId : awayUser.discordId;
       inferredLoserId     = schedHomeWon ? awayUser.discordId : homeUser.discordId;
       if (!inferredWinnerCoins) inferredWinnerCoins = H2H_WIN_PAYOUT;
       if (!inferredLoserCoins)  inferredLoserCoins  = H2H_LOSS_PAYOUT;
       if (!inferredPointDiff)   inferredPointDiff   = schedSpread;
     } else if (inferredType === "cpu") {
-      const winnerUser = schedHomeWon ? (homeUser ?? awayUser) : (awayUser ?? homeUser);
-      if (winnerUser) {
-        inferredWinnerId = winnerUser.discordId;
-        if (!inferredWinnerCoins) inferredWinnerCoins = CPU_WIN_PAYOUT;
-        if (!inferredPointDiff)   inferredPointDiff   = schedSpread;
-      }
+      const winnerUser = schedHomeWon ? homeUser : awayUser;
+      inferredWinnerId = winnerUser.discordId;
+      if (!inferredWinnerCoins) inferredWinnerCoins = CPU_WIN_PAYOUT;
+      if (!inferredPointDiff)   inferredPointDiff   = schedSpread;
     }
   }
 
-  // ── Pre-validate new winner/loser before any writes ──────────────────────
+  // ── Resolve new winner/loser from home/away side selection ───────────────
   type UserRow = typeof usersTable.$inferSelect;
   let newWinnerUser: UserRow | null = null;
   let newLoserUser:  UserRow | null = null;
@@ -238,45 +218,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   let newLoserTeamName  = "";
   let newWinIsHome      = false;
 
-  if (newType === "h2h" && winner && pointDiff !== null) {
-    const winnerLower = winner.toLowerCase();
-    const [wu] = await db.select().from(usersTable)
-      .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
-    if (!wu) {
-      await interaction.editReply(`❌ Could not find a registered user for winner team **${winner}**.`);
-      return;
-    }
-    const lu = wu.discordId === homeUser?.discordId ? awayUser : homeUser;
-    if (!lu) {
-      await interaction.editReply(`❌ Could not find the loser user — both teams must be registered for an H2H correction.`);
-      return;
-    }
-    newWinnerUser     = wu;
-    newLoserUser      = lu;
-    newWinnerTeamName = wu.team ?? winner;
-    newLoserTeamName  = lu.team ?? "Unknown";
+  if (newType === "h2h" && winnerSide && pointDiff !== null) {
+    newWinnerUser     = winnerSide === "home" ? homeUser : awayUser;
+    newLoserUser      = winnerSide === "home" ? awayUser : homeUser;
+    newWinnerTeamName = newWinnerUser.team ?? "";
+    newLoserTeamName  = newLoserUser.team  ?? "";
+    newWinIsHome      = winnerSide === "home";
   } else if (newType === "cpu") {
-    // Resolve winner: use explicit `winner` arg, else infer from schedule scores
-    if (!winner && (schedGame.homeScore ?? 0) === (schedGame.awayScore ?? 0)) {
+    const resolvedWinner = winnerSide
+      ? (winnerSide === "home" ? homeUser : awayUser)
+      : (schedHomeWon ? homeUser : awayUser);
+    if (!resolvedWinner) {
       await interaction.editReply("❌ Scores are tied — cannot infer CPU winner automatically. Pass `winner` explicitly.");
       return;
     }
-    const resolvedWinner = winner ?? (
-      (schedGame.homeScore ?? 0) > (schedGame.awayScore ?? 0) ? homeTeam : awayTeam
-    );
-    const winnerLower = resolvedWinner.toLowerCase();
-    const [wu] = await db.select().from(usersTable)
-      .where(sql`lower(${usersTable.team}) = ${winnerLower}`).limit(1);
-    if (!wu) {
-      await interaction.editReply(`❌ Could not find a registered user for winner team **${resolvedWinner}** (inferred from schedule). Pass \`winner\` explicitly if scores are wrong.`);
-      return;
-    }
-    newWinnerUser    = wu;
-    newWinIsHome     = winnerLower === homeLower;
-    newLoserTeamName = newWinIsHome ? awayTeam : homeTeam;
+    newWinnerUser    = resolvedWinner;
+    newWinIsHome     = resolvedWinner.discordId === homeUser.discordId;
+    newLoserTeamName = newWinIsHome ? (awayUser.team ?? "") : (homeUser.team ?? "");
   }
 
-  // ── Find game log entries to remove BEFORE the transaction (read-only) ───
+  // ── Find game log entries to remove (read-only) ──────────────────────────
   let winnerLogId:    number | null = null;
   let loserLogId:     number | null = null;
   let cpuWinnerLogId: number | null = null;
@@ -299,7 +260,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     winnerLogId = wl?.id ?? null;
     loserLogId  = ll?.id ?? null;
   } else if (inferredType === "cpu" && inferredWinnerId) {
-    const cpuLoserTeam  = inferredWinnerId === homeUser?.discordId ? awayTeam : homeTeam;
+    const cpuLoserTeam  = inferredWinnerId === homeUser?.discordId ? awayUser.team ?? "" : homeUser.team ?? "";
     const cpuLabelExact = `[cpu] ${cpuLoserTeam.toLowerCase()}`;
     const cpuLabelPlain = cpuLoserTeam.toLowerCase();
     const [cwl] = await db.select({ id: gameLogTable.id }).from(gameLogTable)
@@ -322,7 +283,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const gameIdToUpdate = processedGame.gameId;
 
   await db.transaction(async (tx) => {
-    // ── Reverse ────────────────────────────────────────────────────────────
+    // ── Reverse prior payout ───────────────────────────────────────────────
     if (inferredType === "h2h" && inferredWinnerId && inferredLoserId) {
       if (inferredWinnerCoins > 0) {
         await tx.update(usersTable)
@@ -382,7 +343,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     }
 
-    // ── Apply ──────────────────────────────────────────────────────────────
+    // ── Apply correct payout ───────────────────────────────────────────────
     if (newType === "h2h" && newWinnerUser && newLoserUser && pointDiff !== null) {
       await tx.update(usersTable)
         .set({ balance: sql`${usersTable.balance} + ${H2H_WIN_PAYOUT}`, updatedAt: new Date() })
@@ -400,7 +361,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
       applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins → **${newWinnerTeamName}** | +${H2H_LOSS_PAYOUT} coins → **${newLoserTeamName}**`);
 
-      // Upsert records — handles case where row doesn't exist yet (early-season / legacy correction)
       await tx.insert(userRecordsTable).values({
         discordId: newWinnerUser.discordId, discordUsername: newWinnerUser.discordUsername,
         team: newWinnerUser.team ?? null, seasonId: season.id,
@@ -447,8 +407,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       };
 
     } else if (newType === "cpu" && newWinnerUser) {
-      const wScore = newWinIsHome ? (schedGame.homeScore ?? 0) : (schedGame.awayScore ?? 0);
-      const lScore = newWinIsHome ? (schedGame.awayScore ?? 0) : (schedGame.homeScore ?? 0);
+      const wScore = newWinIsHome ? schedHomeScore : schedAwayScore;
+      const lScore = newWinIsHome ? schedAwayScore : schedHomeScore;
       await tx.update(usersTable)
         .set({ balance: sql`${usersTable.balance} + ${CPU_WIN_PAYOUT}`, updatedAt: new Date() })
         .where(eq(usersTable.discordId, newWinnerUser.discordId));
@@ -456,7 +416,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         discordId: newWinnerUser.discordId, amount: CPU_WIN_PAYOUT, type: "addcoins",
         description: `[Correction Wk${week}] CPU win vs ${newLoserTeamName} (force/autopilot)`, relatedUserId: null,
       });
-      applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins → **${newWinnerUser.team ?? winner}** *(no record change)*`);
+      applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins → **${newWinnerUser.team ?? ""}** *(no record change)*`);
       await tx.insert(gameLogTable).values({
         discordId: newWinnerUser.discordId, seasonId: season.id, result: "win",
         pointSpread: wScore - lScore, opponentLabel: `[CPU] ${newLoserTeamName}`, gameType: "regular_season",
@@ -486,7 +446,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Reply ─────────────────────────────────────────────────────────────────
   const wasLegacy = !oldType;
   const embed = new EmbedBuilder()
-    .setTitle(`🔧 Payout Corrected — Week ${week}: ${schedGame.homeTeamName} vs ${schedGame.awayTeamName}`)
+    .setTitle(`🔧 Payout Corrected — Week ${week}: ${homeUser.team} vs ${awayUser.team}`)
     .setColor(Colors.Orange)
     .addFields(
       {
