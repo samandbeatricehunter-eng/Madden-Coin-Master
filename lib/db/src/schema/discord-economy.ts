@@ -318,8 +318,9 @@ export const franchiseRostersTable = pgTable("franchise_rosters", {
   position:  text("position").notNull().default(""),
   overall:   integer("overall").notNull().default(0),
   devTrait:  integer("dev_trait").notNull().default(0),  // 0=Normal 1=Impact 2=Star 3=Superstar 4=X-Factor
-  age:       integer("age"),
-  jerseyNum: integer("jersey_num"),
+  age:                integer("age"),
+  jerseyNum:          integer("jersey_num"),
+  contractYearsLeft:  integer("contract_years_left"),   // null = unknown; 1 = final year (contract year)
   importedAt: timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("franchise_roster_player_season_idx")

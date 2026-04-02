@@ -46,10 +46,12 @@ function formatPlayerLine(p: {
   firstName: string; lastName: string;
   position: string; overall: number; devTrait: number;
   jerseyNum: number | null; age: number | null;
+  contractYearsLeft: number | null;
 }): string {
   const num = p.jerseyNum != null ? `#${p.jerseyNum} ` : "";
   const agePart = p.age != null ? ` | Age ${p.age}` : "";
-  return `${num}**${p.firstName} ${p.lastName}** (${p.position}) — OVR ${p.overall}${agePart}${devBadge(p.devTrait)}`;
+  const contractFlag = p.contractYearsLeft === 1 ? " 📋" : "";
+  return `${num}**${p.firstName} ${p.lastName}** (${p.position}) — OVR ${p.overall}${agePart}${devBadge(p.devTrait)}${contractFlag}`;
 }
 
 function fieldChunks(label: string, lines: string[]): { name: string; value: string }[] {

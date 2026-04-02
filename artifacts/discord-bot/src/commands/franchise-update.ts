@@ -664,6 +664,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         console.log("[franchiseupdate] All player keys:", Object.keys(p0).join(", "));
       }
 
+      // Resolve contract years remaining from multiple possible MCA field names.
+      // Returns 1 when the player is in their final (contract) year.
+      // Returns null when no contract data is present in the export.
+      function resolveContractYearsLeft(p: any): number | null {
+        // Direct field — most common in modern MCA exports
+        if (p.contractYearsLeft != null) return Number(p.contractYearsLeft);
+        if (p.yearsLeft          != null) return Number(p.yearsLeft);
+        if (p.contractLeft       != null) return Number(p.contractLeft);
+        // Derive from length + current year: remaining = length - year + 1
+        const len = p.contractLength ?? p.contractLen ?? null;
+        const yr  = p.contractYear  ?? p.contractYr  ?? null;
+        if (len != null && yr != null) return Math.max(0, Number(len) - Number(yr) + 1);
+        return null;
+      }
+
       const rosterUpserts: Promise<any>[] = [];
       for (const p of rawPlayers) {
         if (!p || typeof p !== "object") continue;
@@ -725,6 +740,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
               jerseyNum: (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
                 ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
                 : null,
+              contractYearsLeft: resolveContractYearsLeft(p),
               importedAt: new Date(),
             })
             .onConflictDoUpdate({
@@ -745,6 +761,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 jerseyNum: (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
                   ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber)
                   : null,
+                contractYearsLeft: resolveContractYearsLeft(p),
                 importedAt: new Date(),
               },
             })
