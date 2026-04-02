@@ -182,12 +182,14 @@ export async function generateFranchiseArticle(
 ): Promise<string> {
   const context = await buildLeagueContext(seasonId, completedWeekIndex, seasonNumber);
 
-  const prompt = `You are a sports journalist covering a Madden NFL franchise (CFM) simulation league. 
+  const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise (CFM) simulation league. 
 Write a short, engaging league newsletter article (around 400–500 words) recapping the week that just ended and looking ahead to ${upcomingWeekLabel}.
+
+Always refer to the league by its name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic name.
 
 Use the data below to craft real storylines, highlight standout performers, call out any dominant teams or teams in danger, 
 and build excitement for the next week. Reference players and teams by name. Write in an energetic, sports-media tone — 
-like an ESPN or NFL Network column. Avoid generic filler. Make it feel authentic and specific to this league.
+like an ESPN or NFL Network column. Avoid generic filler. Make it feel authentic and specific to The R.E.C. League.
 
 Do NOT include headers or markdown. Just write flowing paragraphs as a cohesive article. 
 Start with a strong opening line that references the week number.
