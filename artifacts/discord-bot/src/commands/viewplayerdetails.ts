@@ -110,6 +110,7 @@ const ATTR_LABELS: Record<string, string> = {
   playRecognitionRating:      "Play Recognition",
   playRecRating:              "Play Recognition",
   tacklingRating:             "Tackling",
+  tackleRating:               "Tackling",
   hitPowerRating:             "Hit Power",
   blockSheddingRating:        "Block Shedding",
   blockShedRating:            "Block Shedding",
@@ -207,7 +208,7 @@ const ATTR_GROUPS: { emoji: string; label: string; keys: string[] }[] = [
     label: "Defense",
     keys: [
       "playRecognitionRating", "playRecRating",
-      "tacklingRating",
+      "tacklingRating", "tackleRating",
       "hitPowerRating",
       "blockSheddingRating", "blockShedRating",
       "finesseMovesRating",
