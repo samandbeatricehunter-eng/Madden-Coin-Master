@@ -164,12 +164,14 @@ async function buildLeagueContext(
 
   if (playedGames.length > 0) {
     parts.push(`=== WEEK ${weekNum} RESULTS ===`);
+    parts.push("Format: WINNING TEAM defeated LOSING TEAM, WINNER SCORE–LOSER SCORE");
     for (const g of playedGames) {
       const hs = g.homeScore ?? 0, as_ = g.awayScore ?? 0;
-      const winner = hs >= as_
-        ? `${g.homeTeamName} ${hs}–${as_} ${g.awayTeamName}`
-        : `${g.awayTeamName} ${as_}–${hs} ${g.homeTeamName}`;
-      parts.push(`${winner} ${g.isH2H ? "(H2H)" : "(vs CPU)"}`);
+      const [winner, winScore, loser, loseScore] = hs >= as_
+        ? [g.homeTeamName, hs, g.awayTeamName, as_]
+        : [g.awayTeamName, as_, g.homeTeamName, hs];
+      const type = g.isH2H ? "H2H" : "vs CPU";
+      parts.push(`${winner} defeated ${loser}, ${winScore}–${loseScore} [${type}]`);
     }
     parts.push("");
   } else {
@@ -450,6 +452,12 @@ Write a short, engaging league newsletter article (around 400–500 words) recap
 Always refer to the league by its full name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic label.
 
 This is a RECAP article. Cover what happened: scores, winners, losers, standout performers, and any notable storylines.
+
+CRITICAL — FACTUAL ACCURACY ON GAME RESULTS:
+The WEEK RESULTS section below uses the format "WINNER defeated LOSER, WINNER_SCORE–LOSER_SCORE".
+The team listed FIRST is always the WINNER. The team listed SECOND is always the LOSER.
+You MUST report each game exactly as listed — never swap the winner and loser, never invent scores, never omit a result.
+If a result says "Jaguars defeated Texans", then the Jaguars WON and the Texans LOST — do not reverse this under any circumstances.
 
 CRITICAL — CONFERENCE STRUCTURE:
 The league follows real NFL conference and division alignment. The data includes AFC and NFC standings broken out by division.
