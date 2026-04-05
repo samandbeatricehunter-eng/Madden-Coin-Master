@@ -234,7 +234,7 @@ async function buildLeagueContext(
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, seasonId))
     .orderBy(desc(playerSeasonStatsTable.passYds))
-    .limit(5);
+    .limit(10);
 
   const hasPassData = passLeaders.some(p => p.passYds > 0);
   if (hasPassData) {
@@ -258,7 +258,7 @@ async function buildLeagueContext(
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, seasonId))
     .orderBy(desc(playerSeasonStatsTable.rushYds))
-    .limit(5);
+    .limit(10);
 
   const hasRushData = rushLeaders.some(p => p.rushYds > 0);
   if (hasRushData) {
@@ -282,7 +282,7 @@ async function buildLeagueContext(
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, seasonId))
     .orderBy(desc(playerSeasonStatsTable.recYds))
-    .limit(5);
+    .limit(10);
 
   const hasRecData = recLeaders.some(p => p.recYds > 0);
   if (hasRecData) {
@@ -306,7 +306,7 @@ async function buildLeagueContext(
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, seasonId))
     .orderBy(desc(playerSeasonStatsTable.sacks))
-    .limit(5);
+    .limit(10);
 
   const hasSackData = sackLeaders.some(p => p.sacks > 0);
   if (hasSackData) {
@@ -459,6 +459,12 @@ The team listed FIRST is always the WINNER. The team listed SECOND is always the
 You MUST report each game exactly as listed — never swap the winner and loser, never invent scores, never omit a result.
 If a result says "Jaguars defeated Texans", then the Jaguars WON and the Texans LOST — do not reverse this under any circumstances.
 
+CRITICAL — NO INVENTED PLAYER NAMES:
+Only name specific players that appear explicitly in the STATS sections of the LEAGUE DATA below.
+Do NOT use your general knowledge of Madden rosters, NFL rosters, or any outside source to assign players to teams.
+If a team's players do not appear in the stats data, write about that team using only their team name and game result — never guess or invent a player name for them.
+A wrong player name is worse than no player name.
+
 CRITICAL — CONFERENCE STRUCTURE:
 The league follows real NFL conference and division alignment. The data includes AFC and NFC standings broken out by division.
 - An AFC team is competing for AFC playoff seeds. An NFC team is competing for NFC playoff seeds.
@@ -505,6 +511,12 @@ Always refer to the league by its full name: "The R.E.C. League". Never call it 
 
 This is a PREVIEW article. Hype the key matchups, highlight the stakes for each team, call out players to watch, and build anticipation.
 Do NOT report scores or results — the games haven't happened yet.
+
+CRITICAL — NO INVENTED PLAYER NAMES:
+Only name specific players that appear explicitly in the STATS sections of the LEAGUE DATA below.
+Do NOT use your general knowledge of Madden rosters, NFL rosters, or any outside source to assign players to teams.
+If a team's players do not appear in the stats data, preview that team using only their team name and standings — never guess or invent a player name for them.
+A wrong player name is worse than no player name.
 
 CRITICAL — CONFERENCE STRUCTURE:
 The league follows real NFL conference and division alignment. The data includes AFC and NFC standings broken out by division.
