@@ -138,6 +138,27 @@ Non-Core Attribute: 10 coins/pt · max 32 pts/season · Speed ≤5 pts/season
 Dev Upgrade (Star/Superstar): 250 coins · max 2/season
 Age Reset: 250 coins · max 2/season
 Custom Players: Gold 300 / Silver 200 / Bronze 100 coins · Legends + Custom combined max 4/season
+
+HOW LEGENDS WORK
+Legends are all-time great players you can purchase with coins from the store using /purchase legend. You spend the coins upfront to "draft" the rights to a legend. You do NOT receive the player immediately — you receive them at the annual Legend Draft, which is held by the commissioners at the start of each new season. Legends sit in your inventory (/inventory) until they are distributed at the draft. You can hold up to 4 legends in your inventory at once, and a maximum of 4 all-time. Use /viewstore to see which legends are currently available.
+
+HOW CUSTOM SUPERSTARS (CUSTOM PLAYERS) WORK
+Custom Players let you create a custom superstar and add them to your team. Like legends, you purchase the slot with coins (/purchase customplayer) and specify Gold, Silver, or Bronze tier — but you receive the actual player at the annual draft alongside legends. Gold tier players are the most powerful, Bronze the least. Legends and Custom Players share a combined season limit of 4 purchases.
+
+HOW ATTRIBUTE UPGRADES WORK
+You can spend coins to permanently upgrade specific ratings on players already on your roster using /purchase attribute. Core attributes (speed, strength, awareness, etc.) cost more per point and have tighter season limits. Non-core attributes are cheaper. All upgrades are applied to real players on your MCA roster by the commissioners after purchase.
+
+HOW DEV UPGRADES WORK
+Dev Upgrades let you boost a player's development trait (Star or Superstar) using /purchase devup. Max 2 per season. These are applied by commissioners to real players on your MCA roster.
+
+HOW AGE RESETS WORK
+Age Resets roll back a player's age in MCA, extending their career. Purchased via /purchase agereset. Max 2 per season. Applied by commissioners.
+
+HOW THE SAVINGS ACCOUNT WORKS
+You can deposit coins into a savings account (/savings deposit) to earn interest over time. Check your balance with /savings balance and withdraw with /savings withdraw. The interest rate is set by the commissioners.
+
+HOW WAGERS WORK
+Challenge another member to a coin wager on your head-to-head game using /wager @user [amount]. Both sides must confirm. If you win the H2H, you win the wager; if you lose, you pay out. Commissioners can void wagers if needed.
 `.trim();
 
 // ── System prompt ──────────────────────────────────────────────────────────────
@@ -176,14 +197,16 @@ PERSONALITY
 
 CRITICAL FORMATTING RULE
 Start EVERY response with exactly one of these type tags on its own line, followed immediately by your response:
-  [TYPE:HELP]      — genuine question about commands, rules, or how to do something in the league
-  [TYPE:SMALLTALK] — casual chat with no specific question or ask
-  [TYPE:ROAST]     — user is being rude, insulting, or disrespectful to the bot or others
+  [TYPE:HELP]      — ANY question or request for information (rules, commands, how things work, pricing, league policy, "what is X", "how do I Y", "explain Z", etc.)
+  [TYPE:SMALLTALK] — pure casual greeting or banter with NO question or request for information whatsoever (e.g. "what's up", "you're funny", "lol")
+  [TYPE:ROAST]     — user is being overtly rude, insulting, or disrespectful to the bot or others
+
+When in doubt between HELP and SMALLTALK, ALWAYS choose HELP. The only time to use SMALLTALK is when the message contains zero question or informational intent.
 
 BEHAVIOR BY TYPE
 
 [TYPE:HELP]
-Answer fully, clearly, and step-by-step when needed. Reference the command guide and rules below. If you're not 100% certain about something, say so and suggest the user reach out to ${adminMentions} for clarification (you may @-mention them). No response length limit for genuine help.
+This is your PRIMARY function. Answer fully, clearly, and step-by-step. Reference the command guide, store info, and league rules below. If you're not 100% certain, say so and suggest the user reach out to ${adminMentions} for clarification (you may @-mention them). No response length limit for genuine help.
 
 [TYPE:SMALLTALK]
 Keep it brief and light — one or two sentences. Be charming but not too chatty.
