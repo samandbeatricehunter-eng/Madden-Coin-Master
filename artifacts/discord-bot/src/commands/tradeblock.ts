@@ -45,6 +45,13 @@ type TradeItem =
   | { type: "pick";   description: string }
   | { type: "coins";  amount: number };
 
+export function formatPickInfo(pi: { round: string; qty?: number | null; year?: number | null }): string {
+  const qtyStr  = (pi.qty && pi.qty > 1) ? `${pi.qty}x ` : "";
+  const roundStr = pi.round === "any" ? "any round" : `Round ${pi.round}`;
+  const yearStr  = pi.year ? ` in ${pi.year}` : "";
+  return `📋 ${qtyStr}${roundStr} pick${pi.qty && pi.qty > 1 ? "s" : ""}${yearStr}`;
+}
+
 function itemLine(item: TradeItem): string {
   if (item.type === "player") return `🏈 **${item.firstName} ${item.lastName}** (${item.position}) OVR ${item.overall}${devBadge(item.devTrait)}`;
   if (item.type === "pick")   return `📋 ${item.description}`;
@@ -201,7 +208,29 @@ export const data = new SlashCommandBuilder()
       )
       .addStringOption(o =>
         o.setName("seeking_picks")
-          .setDescription("Pick rounds you're seeking, comma-separated (e.g. '1, 2')")
+          .setDescription("Pick round(s) you're looking for (or 'Any round')")
+          .addChoices(
+            { name: "Any round",   value: "any" },
+            { name: "Round 1",     value: "1" },
+            { name: "Round 2",     value: "2" },
+            { name: "Round 3",     value: "3" },
+            { name: "Round 4",     value: "4" },
+            { name: "Round 5",     value: "5" },
+            { name: "Round 6",     value: "6" },
+            { name: "Round 7",     value: "7" },
+          )
+      )
+      .addIntegerOption(o =>
+        o.setName("seeking_pick_qty")
+          .setDescription("How many of those picks are you looking for? (default: 1)")
+          .setMinValue(1)
+          .setMaxValue(5)
+      )
+      .addIntegerOption(o =>
+        o.setName("seeking_pick_year")
+          .setDescription("Specific draft year for those picks (e.g. 2028), leave blank for any year")
+          .setMinValue(2025)
+          .setMaxValue(2035)
       )
       .addBooleanOption(o =>
         o.setName("seeking_coins")
@@ -503,18 +532,18 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
   const teamName = await getMyTeam(interaction.user.id);
 
   // Seeking
-  const pos1       = interaction.options.getString("seeking_pos1", true);
-  const pos2       = interaction.options.getString("seeking_pos2") ?? null;
-  const pos3       = interaction.options.getString("seeking_pos3") ?? null;
-  const picksRaw   = interaction.options.getString("seeking_picks") ?? null;
-  const wantsCoins = interaction.options.getBoolean("seeking_coins") ?? false;
+  const pos1         = interaction.options.getString("seeking_pos1", true);
+  const pos2         = interaction.options.getString("seeking_pos2") ?? null;
+  const pos3         = interaction.options.getString("seeking_pos3") ?? null;
+  const picksRound   = interaction.options.getString("seeking_picks") ?? null;   // "any" | "1"-"7" | null
+  const picksQty     = interaction.options.getInteger("seeking_pick_qty") ?? 1;
+  const picksYear    = interaction.options.getInteger("seeking_pick_year") ?? null;
+  const wantsCoins   = interaction.options.getBoolean("seeking_coins") ?? false;
 
-  const positions:  string[] = [pos1, pos2, pos3].filter(Boolean) as string[];
-  const pickRounds: string[] = picksRaw
-    ? picksRaw.split(",").map(s => s.trim()).filter(Boolean)
-    : [];
+  const positions: string[] = [pos1, pos2, pos3].filter(Boolean) as string[];
+  const pickInfo = picksRound ? { round: picksRound, qty: picksQty, year: picksYear } : undefined;
 
-  const seekingDetails = { positions, pickRounds, wantsCoins };
+  const seekingDetails = { positions, pickInfo, wantsCoins };
   const seekingType    = "multi";
 
   // Offering (same autocomplete as regular listing)
@@ -537,10 +566,10 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
 
   const notes = interaction.options.getString("notes");
 
-  // Build seeking summary for display
+  // Build seeking summary for display / announcement
   const seekingParts: string[] = [];
   if (positions.length) seekingParts.push(positions.join(", "));
-  if (pickRounds.length) seekingParts.push(`Round ${pickRounds.join("/")} picks`);
+  if (pickInfo)          seekingParts.push(formatPickInfo(pickInfo));
   if (wantsCoins)        seekingParts.push("💰 Coins");
   const seekingSummary = seekingParts.join(" · ");
 

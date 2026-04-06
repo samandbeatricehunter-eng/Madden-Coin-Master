@@ -503,8 +503,13 @@ export const tradeBlockISOTable = pgTable("trade_block_iso", {
     position?: string;    // legacy: player_position
     rounds?: string[];    // legacy: draft_pick
     amount?: number;      // legacy: coins
-    positions?: string[]; // new: multi — e.g. ["QB","WR"]
-    pickRounds?: string[]; // new: multi — e.g. ["1","2"]
+    positions?: string[];  // new: multi — e.g. ["QB","WR"]
+    pickRounds?: string[]; // legacy multi — old free-text round list
+    pickInfo?: {           // new structured pick request
+      round: string;       // "any" | "1"-"7"
+      qty?: number | null;
+      year?: number | null;
+    };
     wantsCoins?: boolean;  // new: multi
   }>(),
   offering: json("offering").notNull().$type<{

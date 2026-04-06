@@ -20,6 +20,7 @@ import {
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
 } from "../lib/db-helpers.js";
 import { buildPageResponse } from "../commands/viewtradeblock.js";
+import { formatPickInfo } from "../commands/tradeblock.js";
 import {
   getServerSettings, toggleFeature, buildSettingsEmbed, buildSettingsRows,
   FEATURE_LABELS,
@@ -1527,9 +1528,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     let seekingDesc = "";
     if (iso.seekingType === "multi") {
       const seekParts: string[] = [];
-      if (sd.positions?.length) seekParts.push(sd.positions.join(", "));
-      if (sd.pickRounds?.length) seekParts.push(`Round ${sd.pickRounds.join("/")} picks`);
-      if (sd.wantsCoins)         seekParts.push("Coins");
+      if (sd.positions?.length)  seekParts.push(sd.positions.join(", "));
+      if (sd.pickInfo)           seekParts.push(formatPickInfo(sd.pickInfo));
+      else if (sd.pickRounds?.length) seekParts.push(`Round ${sd.pickRounds.join("/")} picks`);
+      if (sd.wantsCoins)         seekParts.push("💰 Coins");
       seekingDesc = seekParts.join(" · ") || "various assets";
     } else if (iso.seekingType === "player_position") {
       seekingDesc = `${sd.position ?? "?"} player`;

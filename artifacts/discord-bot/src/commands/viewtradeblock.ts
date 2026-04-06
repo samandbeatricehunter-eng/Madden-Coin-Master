@@ -7,6 +7,7 @@ import { tradeBlockListingsTable, tradeBlockISOTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason, isAdminUser } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
+import { formatPickInfo } from "./tradeblock.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -49,7 +50,10 @@ function formatISOSeeking(seekingType: string, seekingDetails: any): string {
   if (seekingType === "multi") {
     const parts: string[] = [];
     if (seekingDetails.positions?.length) parts.push(seekingDetails.positions.join(", "));
-    if (seekingDetails.pickRounds?.length) parts.push(`Round ${seekingDetails.pickRounds.join("/")} picks`);
+    // new structured pick info
+    if (seekingDetails.pickInfo)           parts.push(formatPickInfo(seekingDetails.pickInfo));
+    // legacy free-text pickRounds (old ISOs)
+    else if (seekingDetails.pickRounds?.length) parts.push(`Round ${seekingDetails.pickRounds.join("/")} picks`);
     if (seekingDetails.wantsCoins)         parts.push("💰 Coins");
     return parts.join(" · ") || "*Not specified*";
   }
