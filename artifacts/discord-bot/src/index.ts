@@ -61,6 +61,7 @@ import * as savings from "./commands/savings.js";
 import { startSavingsInterestScheduler } from "./lib/savings-interest.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
+import * as adminSetMilestoneTier from "./commands/admin-setmilestonetier.js";
 import * as statLeaders from "./commands/statleaders.js";
 import * as tradeBlock from "./commands/tradeblock.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
@@ -163,6 +164,7 @@ if (!isProduction && !devBotEnabled) {
     savings,
     weeklyMatchups,
     adminCorrectPayout,
+    adminSetMilestoneTier,
     statLeaders,
     tradeBlock,
     postFullSeasonSchedule,
