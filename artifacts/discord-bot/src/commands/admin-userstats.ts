@@ -6,10 +6,19 @@ import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, coinTransactionsTable,
   inventoryTable, purchasesTable, interviewRequestsTable, seasonStatsTable,
+  userSavingsTable,
 } from "@workspace/db";
-import { eq, and, desc, isNotNull, sql } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
+
+async function getSavings(discordId: string): Promise<number> {
+  const row = await db.select({ balance: userSavingsTable.balance })
+    .from(userSavingsTable)
+    .where(eq(userSavingsTable.discordId, discordId))
+    .limit(1);
+  return row[0]?.balance ?? 0;
+}
 
 const MILESTONE_LABELS: Record<number, string> = {
   0: "None",
@@ -53,20 +62,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Season record ─────────────────────────────────────────────────────────
-  const recordRows = await db.select().from(userRecordsTable)
-    .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
-    .limit(1);
-  const record = recordRows[0];
+  // ── Season record + all-time totals + savings (parallel) ─────────────────
+  const [recordRows, allTimeRows, savingsBalance] = await Promise.all([
+    db.select().from(userRecordsTable)
+      .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
+      .limit(1),
 
-  // ── All-time totals (sum across every season) ─────────────────────────────
-  const allTimeRows = await db.select({
-    totalWins:          sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
-    totalLosses:        sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
-    totalPlayoffWins:   sql<string>`COALESCE(SUM(${userRecordsTable.playoffWins}), 0)`,
-    totalPlayoffLosses: sql<string>`COALESCE(SUM(${userRecordsTable.playoffLosses}), 0)`,
-  }).from(userRecordsTable)
-    .where(eq(userRecordsTable.discordId, target.id));
+    db.select({
+      totalWins:          sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
+      totalLosses:        sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
+      totalPlayoffWins:   sql<string>`COALESCE(SUM(${userRecordsTable.playoffWins}), 0)`,
+      totalPlayoffLosses: sql<string>`COALESCE(SUM(${userRecordsTable.playoffLosses}), 0)`,
+    }).from(userRecordsTable)
+      .where(eq(userRecordsTable.discordId, target.id)),
+
+    getSavings(target.id),
+  ]);
+
+  const record = recordRows[0];
   const allTimeH2HW     = parseInt(allTimeRows[0]?.totalWins ?? "0", 10);
   const allTimeH2HL     = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
   const allTimePlayoffW = parseInt(allTimeRows[0]?.totalPlayoffWins ?? "0", 10);
@@ -110,17 +123,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Build embeds ──────────────────────────────────────────────────────────
 
   // Embed 1: Overview
+  const totalCoins = user.balance + savingsBalance;
   const overviewEmbed = new EmbedBuilder()
     .setColor(Colors.Blurple)
     .setTitle(`📊 User Stats — ${user.team ?? target.username}`)
     .setThumbnail(target.displayAvatarURL())
     .addFields(
-      { name: "Discord",       value: `<@${target.id}>`,                                  inline: true },
-      { name: "Team",          value: user.team ?? "*Not set*",                            inline: true },
-      { name: "Admin",         value: user.isAdmin ? "✅ Yes" : "No",                     inline: true },
-      { name: "💰 Balance",    value: `**${user.balance.toLocaleString()} coins**`,       inline: true },
-      { name: "📅 Current Week", value: weekDisplay,                                      inline: true },
-      { name: "🏆 Legend Purchases (all-time)", value: `${user.totalLegendPurchases}`,   inline: true },
+      { name: "Discord",            value: `<@${target.id}>`,                                    inline: true },
+      { name: "Team",               value: user.team ?? "*Not set*",                              inline: true },
+      { name: "Admin",              value: user.isAdmin ? "✅ Yes" : "No",                       inline: true },
+      { name: "💰 Wallet",          value: `**${user.balance.toLocaleString()} coins**`,         inline: true },
+      { name: "🏦 Savings",         value: `**${savingsBalance.toLocaleString()} coins**`,       inline: true },
+      { name: "💎 Total",           value: `**${totalCoins.toLocaleString()} coins**`,           inline: true },
+      { name: "📅 Current Week",    value: weekDisplay,                                           inline: true },
+      { name: "🏆 Legend Purchases (all-time)", value: `${user.totalLegendPurchases}`,           inline: true },
     )
     .setFooter({ text: `User ID: ${target.id}` });
 

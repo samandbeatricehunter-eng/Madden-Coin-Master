@@ -4,7 +4,8 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, coinTransactionsTable,
-  inventoryTable, purchasesTable, interviewRequestsTable, seasonStatsTable,
+  inventoryTable, purchasesTable, interviewRequestsTable,
+  seasonStatsTable, userSavingsTable,
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
@@ -20,106 +21,138 @@ const MILESTONE_LABELS: Record<number, string> = {
 
 export const data = new SlashCommandBuilder()
   .setName("userstats")
-  .setDescription("View your own stats, coins, and inventory (only visible to you)");
+  .setDescription("View stats, coins, and inventory for any league member")
+  .addUserOption(o =>
+    o.setName("user")
+      .setDescription("League member to look up — leave blank for yourself")
+      .setRequired(false),
+  );
+
+async function getSavings(discordId: string): Promise<number> {
+  const row = await db.select({ balance: userSavingsTable.balance })
+    .from(userSavingsTable)
+    .where(eq(userSavingsTable.discordId, discordId))
+    .limit(1);
+  return row[0]?.balance ?? 0;
+}
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const season      = await getOrCreateActiveSeason();
+  const target  = interaction.options.getUser("user") ?? interaction.user;
+  const isSelf  = target.id === interaction.user.id;
+  const season  = await getOrCreateActiveSeason();
   const weekDisplay = weekLabel((season as any).currentWeek ?? "1");
 
   // ── Core user record ──────────────────────────────────────────────────────
   const userRows = await db.select().from(usersTable)
-    .where(eq(usersTable.discordId, interaction.user.id)).limit(1);
+    .where(eq(usersTable.discordId, target.id)).limit(1);
   const user = userRows[0];
 
   if (!user) {
-    await interaction.editReply({ content: "❌ You don't have a record in the economy system yet. Ask a commissioner to add you." });
+    await interaction.editReply({
+      content: isSelf
+        ? "❌ You don't have a record in the economy system yet. Ask a commissioner to add you."
+        : `❌ <@${target.id}> has no record in the economy system yet.`,
+    });
     return;
   }
 
-  // ── Season record ─────────────────────────────────────────────────────────
-  const recordRows = await db.select().from(userRecordsTable)
-    .where(and(eq(userRecordsTable.discordId, interaction.user.id), eq(userRecordsTable.seasonId, season.id)))
-    .limit(1);
-  const record = recordRows[0];
+  // ── Parallel batch 1: records + savings + streaks ─────────────────────────
+  const [recordRows, allTimeRows, savingsBalance, overallStreak, h2hStreak] = await Promise.all([
+    db.select().from(userRecordsTable)
+      .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
+      .limit(1),
 
-  // ── All-time totals (sum across every season) ─────────────────────────────
-  const allTimeRows = await db.select({
-    totalWins:         sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
-    totalLosses:       sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
-    totalPlayoffWins:  sql<string>`COALESCE(SUM(${userRecordsTable.playoffWins}), 0)`,
-    totalPlayoffLosses:sql<string>`COALESCE(SUM(${userRecordsTable.playoffLosses}), 0)`,
-  }).from(userRecordsTable)
-    .where(eq(userRecordsTable.discordId, interaction.user.id));
+    db.select({
+      totalWins:          sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
+      totalLosses:        sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
+      totalPlayoffWins:   sql<string>`COALESCE(SUM(${userRecordsTable.playoffWins}), 0)`,
+      totalPlayoffLosses: sql<string>`COALESCE(SUM(${userRecordsTable.playoffLosses}), 0)`,
+    }).from(userRecordsTable)
+      .where(eq(userRecordsTable.discordId, target.id)),
+
+    getSavings(target.id),
+    computeStreak(target.id, false),
+    computeStreak(target.id, true),
+  ]);
+
+  // ── Parallel batch 2: inventory + purchases + transactions + interviews ───
+  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews] = await Promise.all([
+    db.select().from(inventoryTable)
+      .where(and(eq(inventoryTable.discordId, target.id), eq(inventoryTable.seasonId, season.id))),
+
+    db.select().from(seasonStatsTable)
+      .where(and(eq(seasonStatsTable.discordId, target.id), eq(seasonStatsTable.seasonId, season.id)))
+      .limit(1),
+
+    db.select().from(purchasesTable)
+      .where(and(eq(purchasesTable.discordId, target.id), eq(purchasesTable.seasonId, season.id)))
+      .orderBy(desc(purchasesTable.createdAt))
+      .limit(20),
+
+    db.select().from(coinTransactionsTable)
+      .where(eq(coinTransactionsTable.discordId, target.id))
+      .orderBy(desc(coinTransactionsTable.createdAt))
+      .limit(10),
+
+    db.select({
+      id:     interviewRequestsTable.id,
+      week:   interviewRequestsTable.week,
+      status: interviewRequestsTable.status,
+    }).from(interviewRequestsTable)
+      .where(eq(interviewRequestsTable.discordId, target.id))
+      .orderBy(desc(interviewRequestsTable.createdAt))
+      .limit(5),
+  ]);
+
+  const record      = recordRows[0];
+  const seasonStats = seasonStatsRows[0];
+
   const allTimeH2HW     = parseInt(allTimeRows[0]?.totalWins ?? "0", 10);
   const allTimeH2HL     = parseInt(allTimeRows[0]?.totalLosses ?? "0", 10);
   const allTimePlayoffW = parseInt(allTimeRows[0]?.totalPlayoffWins ?? "0", 10);
   const allTimePlayoffL = parseInt(allTimeRows[0]?.totalPlayoffLosses ?? "0", 10);
 
-  // ── Streaks ────────────────────────────────────────────────────────────────
-  const [overallStreak, h2hStreak] = await Promise.all([
-    computeStreak(interaction.user.id, false),
-    computeStreak(interaction.user.id, true),
-  ]);
+  const currentLegends   = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "current");
+  const permanentLegends = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "permanent");
+  const customs          = inventory.filter(i =>
+    ["custom_player_gold", "custom_player_silver", "custom_player_bronze"].includes(i.itemType),
+  );
 
-  // ── Inventory (this season, non-legend items only) ───────────────────────
-  const inventory = await db.select().from(inventoryTable)
-    .where(and(eq(inventoryTable.discordId, interaction.user.id), eq(inventoryTable.seasonId, season.id)));
-
-  // ── Legend vault: current season + permanent ──────────────────────────────
-  const currentLegends = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "current");
-  const permanentLegends = await db.select().from(inventoryTable)
-    .where(and(
-      eq(inventoryTable.discordId, interaction.user.id),
-      eq(inventoryTable.itemType, "legend"),
-      sql`${inventoryTable.legendCategory} = 'permanent'`,
-    ));
-
-  // ── Purchases (this season, approved) ────────────────────────────────────
-  const seasonPurchases = await db.select().from(purchasesTable)
-    .where(and(eq(purchasesTable.discordId, interaction.user.id), eq(purchasesTable.seasonId, season.id)))
-    .orderBy(desc(purchasesTable.createdAt))
-    .limit(20);
-
-  // ── Last 10 transactions ──────────────────────────────────────────────────
-  const transactions = await db.select().from(coinTransactionsTable)
-    .where(eq(coinTransactionsTable.discordId, interaction.user.id))
-    .orderBy(desc(coinTransactionsTable.createdAt))
-    .limit(10);
-
-  // ── Interview history ─────────────────────────────────────────────────────
-  const interviews = await db.select({
-    id:     interviewRequestsTable.id,
-    week:   interviewRequestsTable.week,
-    status: interviewRequestsTable.status,
-  }).from(interviewRequestsTable)
-    .where(eq(interviewRequestsTable.discordId, interaction.user.id))
-    .orderBy(desc(interviewRequestsTable.createdAt))
-    .limit(5);
+  const coreAttrUsed    = seasonStats?.coreAttrPurchased    ?? 0;
+  const nonCoreAttrUsed = seasonStats?.nonCoreAttrPurchased ?? 0;
+  const devUpsUsed      = seasonStats?.devUpsPurchased      ?? 0;
+  const ageResetsUsed   = seasonStats?.ageResetsPurchased   ?? 0;
+  const pendingCount    = seasonPurchases.filter(p => p.status === "pending").length;
 
   // ── Build embeds ──────────────────────────────────────────────────────────
+
+  const totalCoins  = user.balance + savingsBalance;
 
   // Embed 1: Overview
   const overviewEmbed = new EmbedBuilder()
     .setColor(Colors.Blurple)
-    .setTitle(`📊 My Stats — ${user.team ?? interaction.user.username}`)
-    .setThumbnail(interaction.user.displayAvatarURL())
+    .setTitle(`📊 ${isSelf ? "My Stats" : "Player Stats"} — ${user.team ?? target.username}`)
+    .setThumbnail(target.displayAvatarURL())
     .addFields(
-      { name: "Team",               value: user.team ?? "*Not set*",                          inline: true },
-      { name: "💰 Balance",         value: `**${user.balance.toLocaleString()} coins**`,     inline: true },
-      { name: "📅 Current Week",    value: weekDisplay,                                       inline: true },
-      { name: "🏆 Legends (all-time)", value: `${user.totalLegendPurchases}`,                inline: true },
+      { name: "Discord",               value: `<@${target.id}>`,                              inline: true },
+      { name: "Team",                  value: user.team ?? "*Not set*",                        inline: true },
+      { name: "📅 Current Week",       value: weekDisplay,                                     inline: true },
+      { name: "💰 Wallet",             value: `**${user.balance.toLocaleString()} coins**`,   inline: true },
+      { name: "🏦 Savings",            value: `**${savingsBalance.toLocaleString()} coins**`, inline: true },
+      { name: "💎 Total",              value: `**${totalCoins.toLocaleString()} coins**`,     inline: true },
+      { name: "🏆 Legends (all-time)", value: `${user.totalLegendPurchases}`,                 inline: true },
     )
-    .setFooter({ text: "Only you can see this message" });
+    .setFooter({ text: isSelf ? "Only you can see this message" : `Viewed by ${interaction.user.username}` });
 
   // Embed 2: Records & Milestones
-  const wins      = record?.wins ?? 0;
-  const losses    = record?.losses ?? 0;
-  const pd        = record?.pointDifferential ?? 0;
-  const pWins     = record?.playoffWins ?? 0;
-  const pLosses   = record?.playoffLosses ?? 0;
-  const allTimeSB = user.allTimeSuperbowlWins ?? 0;
+  const wins    = record?.wins ?? 0;
+  const losses  = record?.losses ?? 0;
+  const pd      = record?.pointDifferential ?? 0;
+  const pWins   = record?.playoffWins ?? 0;
+  const pLosses = record?.playoffLosses ?? 0;
+  const allTimeSB      = user.allTimeSuperbowlWins ?? 0;
   const milestoneLabel = MILESTONE_LABELS[user.milestoneTierAwarded ?? 0] ?? "None";
 
   const playoffSeed = (user as any).playoffSeed;
@@ -150,25 +183,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       { name: "All-Time Playoff Wins",   value: `**${allTimePlayoffW}**`, inline: true },
       { name: "All-Time Playoff Losses", value: `**${allTimePlayoffL}**`, inline: true },
       { name: "All-Time SB Wins",        value: `**${allTimeSB}**`, inline: true },
-      { name: "Highest Win Milestone", value: milestoneLabel, inline: true },
-      { name: "Playoff Seed",          value: seedStr, inline: true },
+      { name: "Highest Win Milestone",   value: milestoneLabel, inline: true },
+      { name: "Playoff Seed",            value: seedStr, inline: true },
     );
 
   // Embed 3: Inventory
-  const customs  = inventory.filter(i =>
-    ["custom_player_gold", "custom_player_silver", "custom_player_bronze"].includes(i.itemType)
-  );
-  // ── Season upgrade counts — source of truth includes admin overrides ──────
-  const seasonStatsRows = await db.select().from(seasonStatsTable)
-    .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)))
-    .limit(1);
-  const seasonStats = seasonStatsRows[0];
-  const coreAttrUsed    = seasonStats?.coreAttrPurchased    ?? 0;
-  const nonCoreAttrUsed = seasonStats?.nonCoreAttrPurchased ?? 0;
-  const devUpsUsed      = seasonStats?.devUpsPurchased      ?? 0;
-  const ageResetsUsed   = seasonStats?.ageResetsPurchased   ?? 0;
-  const pendingCount = seasonPurchases.filter(p => p.status === "pending").length;
-
   const fmtLegend = (arr: typeof currentLegends) =>
     arr.length > 0
       ? arr.map(l => `• **${l.legendName ?? l.playerName ?? "?"}** (${l.playerPosition ?? "?"})`).join("\n")
@@ -181,16 +200,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setColor(Colors.Gold)
     .setTitle("🎒 Season Inventory & Purchases")
     .addFields(
-      { name: `⚡ Current Season Legends (${currentLegends.length})`,                             value: fmtLegend(currentLegends)   },
-      { name: `🔒 Permanent Vault (${permanentLegends.length}/4)`, value: fmtLegend(permanentLegends) },
-      { name: `Custom Players (${customs.length})`, value: customStr },
-      { name: "Core Attr Pts Used",    value: `${coreAttrUsed}`,    inline: true },
-      { name: "Non-Core Attr Pts Used",value: `${nonCoreAttrUsed}`, inline: true },
-      { name: "\u200b",               value: "\u200b",             inline: true },
-      { name: "Dev Upgrades",         value: `${devUpsUsed}`,      inline: true },
-      { name: "Age Resets",           value: `${ageResetsUsed}`,   inline: true },
-      { name: "\u200b",               value: "\u200b",             inline: true },
-      { name: "Pending Purchases",   value: `${pendingCount}`,  inline: true },
+      { name: `⚡ Current Season Legends (${currentLegends.length})`,  value: fmtLegend(currentLegends)   },
+      { name: `🔒 Permanent Vault (${permanentLegends.length}/4)`,     value: fmtLegend(permanentLegends) },
+      { name: `Custom Players (${customs.length})`,                    value: customStr },
+      { name: "Core Attr Pts Used",     value: `${coreAttrUsed}`,    inline: true },
+      { name: "Non-Core Attr Pts Used", value: `${nonCoreAttrUsed}`, inline: true },
+      { name: "\u200b",                 value: "\u200b",             inline: true },
+      { name: "Dev Upgrades Used",      value: `${devUpsUsed}`,      inline: true },
+      { name: "Age Resets Used",        value: `${ageResetsUsed}`,   inline: true },
+      { name: "\u200b",                 value: "\u200b",             inline: true },
+      { name: "Pending Purchases",      value: `${pendingCount}`,    inline: true },
     );
 
   // Embed 4: Recent Activity
