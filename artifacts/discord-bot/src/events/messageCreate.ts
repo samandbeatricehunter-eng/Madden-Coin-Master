@@ -120,45 +120,102 @@ type UserStats = Awaited<ReturnType<typeof fetchUserStats>>;
 // ── Static help summary (mirrors /help command content) ───────────────────────
 
 const HELP_TEXT = `
-AVAILABLE COMMANDS
-Economy: /balance · /sendcoins @user [amount] · /wager @user [amount]
-Savings: /savings balance/deposit/withdraw · /savings set-rate (admin only)
-Store: /viewstore · /purchase legend|attribute|devup|agereset|customplayer · /inventory · /availableupgrades
-Payouts (automatic via MCA upload): H2H Win +50 · H2H Loss +20 · CPU Win +20
-Interview: /interviewrequest — +10 coins (1/week, commissioner approval required)
-Rankings: /userstats [@user] · /recenth2h @user · /seasonpr · /alltimepr
-Schedule: /seasonschedule · /nextopp [@user] · /teamlist · /openteams
-Rules: /rules [section] · /rules [section] [rule_number] · /rules [section] [rule_number] @user
-Trade Block: /tradeblock add|remove|update|iso|send-offer · /viewtradeblock [public] [admin]
+═══════════════════════════════
+COMMAND REFERENCE
+═══════════════════════════════
 
-STORE PRICING & LIMITS (commissioners may adjust per season — use /viewstore for live prices)
-Legends: 1,000 coins · max 4 all-time · max 4 in inventory
-Core Attribute: 25 coins/pt · max 16 pts/season
-Non-Core Attribute: 10 coins/pt · max 32 pts/season · Speed ≤5 pts/season
-Dev Upgrade (Star/Superstar): 250 coins · max 2/season
-Age Reset: 250 coins · max 2/season
+── ECONOMY ──
+/balance — Shows your current coin balance.
+/sendcoins @user [amount] — Send coins directly to another league member.
+/wager @user [amount] — Challenge another member to a coin wager on your upcoming H2H game. Both sides must accept. Winner collects the coins automatically when results are uploaded. Commissioners can void wagers.
+/userstats [@user] — View your own (or another user's) full stats: record, point diff, all-time H2H, coin balance, and more.
+
+── SAVINGS ──
+/savings balance — Check how many coins are in your savings account.
+/savings deposit [amount] — Move coins from your wallet into savings to earn interest.
+/savings withdraw [amount] — Pull coins back out of savings into your wallet.
+/savings set-rate (admin only) — Commissioners use this to set the interest rate for the savings account.
+
+── COIN PAYOUTS (automatic) ──
+Coins are awarded automatically when MCA game results are uploaded by the commissioners:
+  H2H Win: +50 coins · H2H Loss: +20 coins · CPU Win: +20 coins
+There is no payout for CPU losses.
+
+── INTERVIEW ──
+/interviewrequest — Submit a weekly media interview for +10 coins. Limited to once per week. Requires commissioner approval before coins are awarded.
+
+── STORE ──
+/viewstore — Browse everything available in the store with current prices and your remaining limits for this season.
+/purchase legend — Spend coins to claim a legend player. See "HOW THE ANNUAL DRAFT WORKS" below.
+/purchase customplayer — Spend coins to create a custom superstar (Gold/Silver/Bronze tier). See "HOW THE ANNUAL DRAFT WORKS" below.
+/purchase attribute — Spend coins to permanently upgrade a specific rating on a player already on your roster. Core attributes cost more and have tighter limits. Applied to your MCA roster by commissioners.
+/purchase devup — Spend coins to boost a player's development trait (Normal → Star, or Star → Superstar). Max 2 per season. Applied by commissioners.
+/purchase agereset — Spend coins to roll back a player's age in MCA, extending their career. Max 2 per season. Applied by commissioners.
+/inventory — View everything currently in your inventory (legends claimed, custom players, upgrades pending delivery).
+/availableupgrades — See which upgrades are still available to you this season based on your remaining limits.
+
+── STORE PRICING & LIMITS (commissioners may adjust — use /viewstore for live prices) ──
+Legends: 1,000 coins · max 4 legends in inventory · max 4 all-time
 Custom Players: Gold 300 / Silver 200 / Bronze 100 coins · Legends + Custom combined max 4/season
+Core Attribute Upgrade: 25 coins/point · max 16 points/season
+Non-Core Attribute Upgrade: 10 coins/point · max 32 points/season · Speed capped at 5 pts/season
+Dev Upgrade: 250 coins · max 2/season
+Age Reset: 250 coins · max 2/season
 
-HOW LEGENDS WORK
-Legends are all-time great players you can purchase with coins from the store using /purchase legend. You spend the coins upfront to "draft" the rights to a legend. You do NOT receive the player immediately — you receive them at the annual Legend Draft, which is held by the commissioners at the start of each new season. Legends sit in your inventory (/inventory) until they are distributed at the draft. You can hold up to 4 legends in your inventory at once, and a maximum of 4 all-time. Use /viewstore to see which legends are currently available.
+── RULES ──
+/rules — Lists all rule sections in the league rulebook.
+/rules [section] — Shows all rules under a specific section (e.g. /rules Gameplay).
+/rules [section] [rule_number] — Shows a specific rule. (e.g. /rules Gameplay 3)
+/rules [section] [rule_number] @user — Shows the rule and mentions a user at the same time (useful for calling someone out).
 
-HOW CUSTOM SUPERSTARS (CUSTOM PLAYERS) WORK
-Custom Players let you create a custom superstar and add them to your team. Like legends, you purchase the slot with coins (/purchase customplayer) and specify Gold, Silver, or Bronze tier — but you receive the actual player at the annual draft alongside legends. Gold tier players are the most powerful, Bronze the least. Legends and Custom Players share a combined season limit of 4 purchases.
+── SCHEDULE & STANDINGS ──
+/seasonschedule — View the full schedule for the current season.
+/nextopp [@user] — See your next scheduled opponent (or another user's).
+/weeklyMatchups — Shows this week's matchups.
+/teamlist — Lists all teams and which member controls them.
+/openteams — Lists teams that are currently available/unowned.
+/standings — Current league standings.
+/statleaders — Leaderboard of top statistical performers.
 
-HOW ATTRIBUTE UPGRADES WORK
-You can spend coins to permanently upgrade specific ratings on players already on your roster using /purchase attribute. Core attributes (speed, strength, awareness, etc.) cost more per point and have tighter season limits. Non-core attributes are cheaper. All upgrades are applied to real players on your MCA roster by the commissioners after purchase.
+── TRADE BLOCK ──
+/tradeblock add — Post a player or asset you're willing to trade.
+/tradeblock iso — Post an "In Search Of" — what you're looking for in a trade.
+/tradeblock update — Edit an existing listing.
+/tradeblock remove — Remove a listing. If a deal was reached, you'll be prompted to record the trade details.
+/tradeblock send-offer — Send a trade offer directly to another member's listing.
+/viewtradeblock — Browse all active trade listings and ISOs. Admins have extra options.
 
-HOW DEV UPGRADES WORK
-Dev Upgrades let you boost a player's development trait (Star or Superstar) using /purchase devup. Max 2 per season. These are applied by commissioners to real players on your MCA roster.
+── RECORDS & HISTORY ──
+/recenth2h @user — View recent head-to-head results for a specific user.
+/seasonpr — Season personal records leaderboard.
+/alltimepr — All-time personal records leaderboard.
 
-HOW AGE RESETS WORK
-Age Resets roll back a player's age in MCA, extending their career. Purchased via /purchase agereset. Max 2 per season. Applied by commissioners.
+═══════════════════════════════
+HOW THE ANNUAL DRAFT WORKS
+═══════════════════════════════
+The R.E.C. League holds an annual draft at the start of each new season. This is where legends and custom superstars are distributed to the members who purchased them.
 
-HOW THE SAVINGS ACCOUNT WORKS
-You can deposit coins into a savings account (/savings deposit) to earn interest over time. Check your balance with /savings balance and withdraw with /savings withdraw. The interest rate is set by the commissioners.
+Here's exactly how it works:
 
-HOW WAGERS WORK
-Challenge another member to a coin wager on your head-to-head game using /wager @user [amount]. Both sides must confirm. If you win the H2H, you win the wager; if you lose, you pay out. Commissioners can void wagers if needed.
+1. PURCHASING BEFORE THE DRAFT
+   During the season, members spend coins to claim legends (/purchase legend) and custom superstars (/purchase customplayer). You are NOT given the player immediately — you are reserving your rights to that player. They go into your inventory and sit there until the draft.
+
+2. ENTERING PLAYERS INTO THE DRAFT POOL
+   Before the draft, commissioners take all claimed legends and custom superstar slots and enter them into the MCA draft class. To make sure the right person gets their player, the commissioners deliberately lower each player's draft value / overall rating so that they will go completely undrafted by CPU teams and fall all the way to the end of the board.
+
+3. THE DRAFT ITSELF
+   When the live draft happens, members pick their pre-purchased legends and custom stars off the board as they fall. Because the values have been lowered, these players are available to be picked up — owners just select them when it's their turn (or once they fall past all other picks).
+
+4. CUSTOM SUPERSTARS
+   For custom players, the commissioners build the player in MCA before the draft based on the tier purchased (Gold = highest ratings, Silver = mid-tier, Bronze = entry level). The custom player is then entered into the draft class the same way — value lowered so the owner can grab them during the draft.
+
+5. AFTER THE DRAFT
+   Once you draft your legend or custom star, they're on your MCA roster for the season. From there you can use other purchases (attribute upgrades, dev upgrades, age resets) to further develop them.
+
+═══════════════════════════════
+LEAGUE GUIDELINES OVERVIEW
+═══════════════════════════════
+The full rulebook is accessible via /rules. Ask me about any specific rule or section and I'll look it up and explain it. Topics covered in the rulebook include gameplay rules, trade rules, draft rules, conduct guidelines, and more.
 `.trim();
 
 // ── System prompt ──────────────────────────────────────────────────────────────
