@@ -16,7 +16,7 @@ const openai = new OpenAI({
 
 // ── Small-talk throttle ────────────────────────────────────────────────────────
 
-const SMALL_TALK_LIMIT   = 2;          // max idle exchanges per reset window
+const SMALL_TALK_LIMIT   = 4;          // max idle exchanges per reset window
 const SMALL_TALK_RESET_H = 6;          // hours before counter resets
 const smallTalkMap = new Map<string, { count: number; resetAt: number }>();
 
