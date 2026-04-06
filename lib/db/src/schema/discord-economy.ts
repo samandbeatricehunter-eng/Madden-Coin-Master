@@ -41,6 +41,7 @@ export const usersTable = pgTable("economy_users", {
   playoffSeed: integer("playoff_seed"),         // 1–7 within their conference; null = not in playoffs
   playoffConference: text("playoff_conference"), // "NFC" | "AFC" | null
   isAdmin: boolean("is_admin").notNull().default(false),
+  botEscalationLevel: integer("bot_escalation_level").notNull().default(0), // persistent rudeness memory
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

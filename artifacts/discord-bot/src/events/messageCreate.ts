@@ -6,7 +6,7 @@ import {
   franchiseScheduleTable, franchiseRostersTable, franchiseProcessedGamesTable,
   pendingChannelPayoutsTable,
 } from "@workspace/db";
-import { eq, and, or, desc, isNotNull, inArray, count } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull, inArray, count, sql } from "drizzle-orm";
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
 } from "../lib/db-helpers.js";
@@ -18,22 +18,43 @@ const openai = new OpenAI({
   apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"],
 });
 
-// ── Energy escalation tracker ──────────────────────────────────────────────────
-// Tracks consecutive ROAST interactions per user so the bot can match escalating energy.
-// Resets when the user sends a HELP or SMALLTALK message.
+// ── Persistent escalation tracker ─────────────────────────────────────────────
+// Escalation is stored per-user in the DB so it survives restarts.
+// ROAST   → +1 (capped at 10)
+// APOLOGY → −2 (floored at 0); multiple apologies stack
+// HELP / SMALLTALK → no change (history carries forward)
 
-const escalationMap = new Map<string, number>(); // userId → consecutive roast count
-
-function getEscalationLevel(userId: string): number {
-  return escalationMap.get(userId) ?? 0;
+async function getEscalationLevel(userId: string): Promise<number> {
+  const [row] = await db
+    .select({ lvl: usersTable.botEscalationLevel })
+    .from(usersTable)
+    .where(eq(usersTable.discordId, userId))
+    .limit(1);
+  return row?.lvl ?? 0;
 }
 
-function recordInteraction(userId: string, msgType: string) {
-  if (msgType === "ROAST") {
-    escalationMap.set(userId, (escalationMap.get(userId) ?? 0) + 1);
-  } else {
-    // Calm interaction — cool the escalation back down
-    escalationMap.delete(userId);
+async function recordInteraction(userId: string, msgType: string): Promise<void> {
+  try {
+    if (msgType === "ROAST") {
+      await db
+        .update(usersTable)
+        .set({
+          botEscalationLevel: sql`LEAST(10, ${usersTable.botEscalationLevel} + 1)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(usersTable.discordId, userId));
+    } else if (msgType === "APOLOGY") {
+      await db
+        .update(usersTable)
+        .set({
+          botEscalationLevel: sql`GREATEST(0, ${usersTable.botEscalationLevel} - 2)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(usersTable.discordId, userId));
+    }
+    // HELP and SMALLTALK intentionally leave escalation unchanged
+  } catch (err) {
+    console.error("recordInteraction DB error:", err);
   }
 }
 
@@ -408,21 +429,38 @@ STATS ACCURACY RULES — READ CAREFULLY BEFORE USING ANY STAT
 2. "Recent games" = only games that have actually been PLAYED and recorded. Future or unplayed weeks are NEVER included in this list. If someone asks about a team's upcoming schedule, say you only have completed results and they should check /seasonschedule.
 3. If you don't have specific head-to-head history between two teams, say so plainly. Don't invent or estimate records.
 
+THIS USER'S CURRENT ESCALATION LEVEL: ${escalationLevel}
+(0 = clean slate, 10 = maximum offender — see behavior rules below)
+
 CRITICAL FORMATTING RULE
 Start EVERY response with exactly one of these type tags on its own line, followed immediately by your response:
   [TYPE:HELP]      — ANY question or request for information (rules, commands, how things work, pricing, league policy, "what is X", "how do I Y", "explain Z", etc.)
   [TYPE:SMALLTALK] — pure casual greeting or banter with NO question or request for information whatsoever (e.g. "what's up", "you're funny", "lol")
   [TYPE:ROAST]     — user is being overtly rude, insulting, or disrespectful to the bot or others
+  [TYPE:APOLOGY]   — user is genuinely apologizing to the bot or backing down from their attitude
 
 When in doubt between HELP and SMALLTALK, ALWAYS choose HELP. The only time to use SMALLTALK is when the message contains zero question or informational intent.
 
 BEHAVIOR BY TYPE
 
 [TYPE:HELP]
-This is your PRIMARY function. Answer fully, clearly, and step-by-step. Reference the command guide, store info, and league rules below. If you're not 100% certain, say so and suggest the user reach out to ${adminMentions} for clarification (you may @-mention them). No response length limit for genuine help.
+Answer fully and completely — the information must always be accurate and useful. BUT your tone is modulated by escalation level:
+- Level 0: Warm and helpful. Normal friendly bot energy.
+- Level 1–2: Slightly cold. Help them but don't be cheerful about it. Terse, no pleasantries.
+- Level 3–4: Visibly annoyed. Still answers fully but throws in a dig or two. "Here's your answer, since apparently you need it spelled out."
+- Level 5–6: Openly hostile tone while still providing correct help. Make it clear you don't like them but you're doing your job.
+- Level 7–8: Contemptuous. Help them like you're doing them a massive reluctant favor. Heavy sarcasm wrapped around accurate information.
+- Level 9–10: Barely civil. Correct answer delivered with maximum attitude. You're helping because it's your job, not because they deserve it.
+At NO level do you withhold correct information — the help is always real, the attitude is what scales.
 
 [TYPE:SMALLTALK]
-Keep it brief and light — one or two sentences. Be charming but not too chatty.
+- Level 0: Charming, brief, normal.
+- Level 1–3: Cool, slightly clipped. Not unfriendly, just not warm.
+- Level 4–6: Dismissive. Short, pointed, not interested in small talk.
+- Level 7–10: Ice cold. One-line maximum, barely acknowledging them.
+
+[TYPE:APOLOGY]
+The user is backing down or apologizing. Acknowledge it, reduce the hostility noticeably. If escalation is high, still skeptical — "we'll see" energy. If escalation is low, accept it and move on with grace. Never grovel or over-praise them for apologizing.
 
 [TYPE:ROAST]
 ⛔ NEVER classify an admin as ROAST — if they're being playful, use SMALLTALK instead.
@@ -793,7 +831,7 @@ export async function execute(message: Message): Promise<void> {
   ]);
 
   // Build the system prompt with current escalation level for this user
-  const escalationLevel = isAdmin ? 0 : getEscalationLevel(message.author.id);
+  const escalationLevel = isAdmin ? 0 : await getEscalationLevel(message.author.id).catch(() => 0);
   const systemPrompt = buildSystemPrompt(rulesText, adminIds, userStats, isAdmin, mentionedUsersData, escalationLevel);
 
   // Call the model
@@ -814,14 +852,14 @@ export async function execute(message: Message): Promise<void> {
   }
 
   // Parse and strip the type tag
-  const typeMatch = raw.match(/^\[TYPE:(HELP|SMALLTALK|ROAST)\]\n?/i);
+  const typeMatch = raw.match(/^\[TYPE:(HELP|SMALLTALK|ROAST|APOLOGY)\]\n?/i);
   const msgType   = (typeMatch?.[1] ?? "UNKNOWN").toUpperCase();
   const response  = raw.replace(/^\[TYPE:[A-Z]+\]\n?/i, "").trim();
 
   if (!response) return;
 
-  // Update escalation tracker based on interaction type
-  recordInteraction(message.author.id, msgType);
+  // Update persistent escalation in DB (fire-and-forget; don't block the reply)
+  if (!isAdmin) recordInteraction(message.author.id, msgType).catch(() => {});
 
   // Split long responses into ≤1900-char chunks on newline/space boundaries
   const chunks = splitIntoChunks(response, 1900);
