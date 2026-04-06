@@ -1364,34 +1364,44 @@ export async function processDraftPicks(body: unknown, perTeamId?: number): Prom
       .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
     const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
 
-    // Normalise the picks list — try common wrapper keys
+    // Normalise the picks list — try common wrapper keys first, then any array
+    const bodyKeys = body && typeof body === "object" ? Object.keys(body as Record<string, unknown>) : [];
     const rawPicks = (() => {
-      if (!body || typeof body !== "object") return [];
-      if (Array.isArray(body)) return body;
+      if (!body || typeof body !== "object") return { arr: [] as any[], key: "(none)" };
+      if (Array.isArray(body)) return { arr: body, key: "(root array)" };
       const b = body as Record<string, unknown>;
+      // Known keys first
       for (const key of [
         "draftPickInfoList", "draftPicks", "picks",
         "leagueDraftPickList", "leagueDraftPicks",
       ]) {
-        if (Array.isArray(b[key])) return b[key] as any[];
+        if (Array.isArray(b[key])) return { arr: b[key] as any[], key };
       }
-      return [];
+      // Fallback: find the largest array under any key
+      let bestKey = "";
+      let bestArr: any[] = [];
+      for (const [k, v] of Object.entries(b)) {
+        if (Array.isArray(v) && v.length > bestArr.length) { bestKey = k; bestArr = v; }
+      }
+      return { arr: bestArr, key: bestKey || "(none)" };
     })();
 
-    const bodyKeys = body && typeof body === "object" ? Object.keys(body as Record<string, unknown>) : [];
-    console.log(`[mca/draftpicks] Body keys: [${bodyKeys.join(", ")}]  |  raw count: ${rawPicks.length}`);
-    if (rawPicks.length > 0) {
-      console.log(`[mca/draftpicks] Sample pick keys: ${Object.keys(rawPicks[0] as Record<string, unknown>).join(", ")}`);
+    console.log(`[mca/draftpicks] Body keys: [${bodyKeys.join(", ")}]  |  matched key: "${rawPicks.key}"  |  raw count: ${rawPicks.arr.length}`);
+    if (rawPicks.arr.length > 0) {
+      console.log(`[mca/draftpicks] Sample pick keys: ${Object.keys(rawPicks.arr[0] as Record<string, unknown>).join(", ")}`);
+      console.log(`[mca/draftpicks] Sample pick[0]: ${JSON.stringify(rawPicks.arr[0]).slice(0, 300)}`);
+    } else {
+      console.log(`[mca/draftpicks] Raw body (first 400 chars): ${JSON.stringify(body).slice(0, 400)}`);
     }
 
-    if (rawPicks.length === 0) {
-      return { ok: true, message: "Draft picks payload empty — nothing imported" };
+    if (rawPicks.arr.length === 0) {
+      return { ok: true, message: `Draft picks payload empty — body keys were: [${bodyKeys.join(", ")}]` };
     }
 
     type PickRow = typeof franchiseDraftPicksTable.$inferInsert;
     const rows: PickRow[] = [];
 
-    for (const p of rawPicks) {
+    for (const p of rawPicks.arr) {
       if (!p || typeof p !== "object") continue;
 
       const teamId = Number(

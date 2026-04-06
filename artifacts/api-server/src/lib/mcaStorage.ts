@@ -36,6 +36,36 @@ function getBucket() {
 }
 
 /**
+ * Read a previously saved MCA payload from GCS.
+ * Returns null if the file doesn't exist or storage is disabled.
+ */
+export async function readMcaPayload(key: string): Promise<unknown | null> {
+  const bucket = getBucket();
+  if (!bucket) return null;
+  try {
+    const [contents] = await bucket.file(key).download();
+    return JSON.parse(contents.toString("utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List file names under a GCS prefix (e.g. "mca/").
+ * Returns an empty array if storage is disabled or prefix has no files.
+ */
+export async function listMcaPayloads(prefix: string): Promise<string[]> {
+  const bucket = getBucket();
+  if (!bucket) return [];
+  try {
+    const [files] = await bucket.getFiles({ prefix });
+    return files.map(f => f.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Fire-and-forget: write raw MCA payload to GCS as a JSON file.
  * Each key is deterministic so re-exports overwrite the previous file.
  * Deferred via setImmediate so serialization never adds latency to responses.
