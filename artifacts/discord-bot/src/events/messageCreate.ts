@@ -114,7 +114,9 @@ async function fetchUserStats(discordId: string) {
       pointDiff    = rec.pointDifferential;
     }
 
-    // Last 5 completed games involving this team
+    // Last 5 completed games involving this team.
+    // Only include games that have actually been processed (processedGameId set by the MCA webhook).
+    // This prevents unplayed future weeks from showing up even if homeScore defaulted to 0.
     if (teamName !== "Unknown Team") {
       const games = await db
         .select({
@@ -126,13 +128,12 @@ async function fetchUserStats(discordId: string) {
           payoutType:   franchiseProcessedGamesTable.payoutType,
         })
         .from(franchiseScheduleTable)
-        .leftJoin(
+        .innerJoin(
           franchiseProcessedGamesTable,
           eq(franchiseScheduleTable.processedGameId, franchiseProcessedGamesTable.gameId),
         )
         .where(and(
           eq(franchiseScheduleTable.seasonId, season.id),
-          isNotNull(franchiseScheduleTable.homeScore),
           or(
             eq(franchiseScheduleTable.homeTeamName, teamName),
             eq(franchiseScheduleTable.awayTeamName, teamName),
@@ -369,7 +370,7 @@ function buildSystemPrompt(
     lines.push(`Team: ${s.team}`);
     lines.push(`Season record: ${s.seasonWins}W – ${s.seasonLosses}L`);
     lines.push(`Season point differential: ${s.pointDiff >= 0 ? "+" : ""}${s.pointDiff}`);
-    lines.push(`All-time H2H: ${s.allTimeH2HWins}W – ${s.allTimeH2HLosses}L`);
+    lines.push(`All-time H2H record (ALL opponents combined, all seasons): ${s.allTimeH2HWins}W – ${s.allTimeH2HLosses}L`);
     lines.push(`Coin balance: ${s.balance.toLocaleString()}`);
     if (s.recentGames.length > 0) {
       lines.push(`Recent games (most recent first):`);
@@ -400,6 +401,11 @@ PERSONALITY
 - Knowledgeable and thorough when members need real help
 - Savage and witty when disrespected — funny, never hateful
 - Brief by default; in-depth only when answering genuine help questions
+
+STATS ACCURACY RULES — READ CAREFULLY BEFORE USING ANY STAT
+1. "All-time H2H record (ALL opponents combined)" = the user's total wins and losses across every opponent they have ever faced in the league. This is NOT a record against any specific team. NEVER say "Team X is Y-Z against you" based on this number — you don't have per-opponent data.
+2. "Recent games" = only games that have actually been PLAYED and recorded. Future or unplayed weeks are NEVER included in this list. If someone asks about a team's upcoming schedule, say you only have completed results and they should check /seasonschedule.
+3. If you don't have specific head-to-head history between two teams, say so plainly. Don't invent or estimate records.
 
 CRITICAL FORMATTING RULE
 Start EVERY response with exactly one of these type tags on its own line, followed immediately by your response:
