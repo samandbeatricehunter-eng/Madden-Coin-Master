@@ -213,6 +213,62 @@ Here's exactly how it works:
    Once you draft your legend or custom star, they're on your MCA roster for the season. From there you can use other purchases (attribute upgrades, dev upgrades, age resets) to further develop them.
 
 ═══════════════════════════════
+ADMIN / COMMISSIONER COMMANDS
+═══════════════════════════════
+These commands are only available to league commissioners/admins.
+
+── PAYOUT & REWARD CONFIGURATION ──
+/admin-setpayouts view — Shows ALL current economy values in one place: game payouts, season bonuses, GOTY rewards, and store prices.
+/admin-setpayouts set [reward] [amount] — Update any single payout or bonus value. Options include:
+  • H2H Win payout (default 50 coins)
+  • H2H Loss payout (default 20 coins)
+  • CPU/force-win payout (default 20 coins)
+  • Season PR bonus — #1 ranked (top of standings at season end)
+  • Season PR bonus — #2 ranked
+  • Season PR bonus — #3–6 ranked
+  • Season PR bonus — #7–8 ranked
+  • Season PR bonus — #9–10 ranked
+  • In-game award winner bonus (per award category winner)
+  • GOTY award — coins per winner
+
+/endofseasonpayout @user [stats] — Manually trigger the end-of-season stat-based bonus payout for a specific user. Commissioners enter the user's season totals (passing yards, rushing yards, TDs, points scored, red zone %, defensive stats, etc.) and the bot calculates and awards the appropriate bonus coins based on the configured tiers.
+
+── SEASON & ROSTER MANAGEMENT ──
+/admin-season — Configure season settings (store prices, limits, etc.).
+/admin-addcoins @user [amount] — Add coins to a user's balance.
+/admin-removecoins @user [amount] — Remove coins from a user's balance.
+/admin-setuser @user — Update a user's profile or team assignment.
+/admin-clearteam @user — Remove a user's team assignment.
+/admin-listuserteams — List all user-to-team mappings.
+/admin-transactions — View the full coin transaction history.
+/admin-inventory @user — View any user's inventory.
+/admin-userstats @user — View detailed stats for any user.
+/admin-resetweek — Reset the current week's data if something went wrong.
+/admin-correctpayout — Correct a payout that was applied incorrectly.
+/admin-setmilestonetier — Set milestone tiers for the season.
+/admin-syncmilestones — Sync milestone data from MCA.
+/admin-manualscore — Manually enter a game score.
+/admin-setadmin @user — Grant or revoke admin status.
+/admin-rules — Manage the league rulebook (add/edit/delete rules and sections).
+/admin-gotw — Set the Game of the Week matchup.
+/admin-potw — Set the Player of the Week.
+/admin-legend — Manage available legends in the store.
+/admin-legendvault — View the legend vault (all-time legend history).
+/admin-setstatier — Configure stat milestone tiers.
+/admin-linkteam — Link a Discord user to their MCA team.
+/admin-fullsync — Run a full data sync from MCA.
+/admin-catchup — Catch up any missing payouts.
+/admin-fixplayernames — Fix player name inconsistencies.
+/admin-postfullseasonschedule — Post the full season schedule to the server.
+/admin-rollback-franchise — Roll back a franchise import if something went wrong.
+/admin-resendarticle — Resend a generated weekly article.
+/setweek — Manually set the current week number.
+/advanceweek — Advance to the next week.
+/customarticle — Generate a custom AI article.
+/webhookurl — Configure the MCA webhook URL.
+/adminserver — Admin server configuration.
+
+═══════════════════════════════
 LEAGUE GUIDELINES OVERVIEW
 ═══════════════════════════════
 The full rulebook is accessible via /rules. Ask me about any specific rule or section and I'll look it up and explain it. Topics covered in the rulebook include gameplay rules, trade rules, draft rules, conduct guidelines, and more.
@@ -340,7 +396,7 @@ export async function execute(message: Message): Promise<void> {
   try {
     const completion = await openai.chat.completions.create({
       model:                "gpt-5-mini",
-      max_completion_tokens: 700,
+      max_completion_tokens: 2000,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user",   content },
@@ -358,10 +414,12 @@ export async function execute(message: Message): Promise<void> {
   const msgType   = (typeMatch?.[1] ?? "UNKNOWN").toUpperCase();
   const response  = raw.replace(/^\[TYPE:[A-Z]+\]\n?/i, "").trim();
 
+  if (!response) return;
+
   // Update small-talk counter
   if (msgType === "SMALLTALK") {
     bumpSmallTalk(message.author.id);
-    // Warn on the 2nd small-talk so they know the next one will be cut off
+    // Warn on the last small-talk so they know the next one will be cut off
     const newCount = getSmallTalkCount(message.author.id);
     if (newCount >= SMALL_TALK_LIMIT) {
       const suffix = "\n\n*(Last off-topic reply — come back when you've got a real question.)*";
@@ -371,7 +429,29 @@ export async function execute(message: Message): Promise<void> {
     }
   }
 
-  const toSend = response.slice(0, 1900);
-  if (!toSend) return;
-  await message.reply(toSend).catch(() => {});
+  // Split long responses into ≤1900-char chunks on newline/space boundaries
+  const chunks = splitIntoChunks(response, 1900);
+  for (let i = 0; i < chunks.length; i++) {
+    if (i === 0) {
+      await message.reply(chunks[i]!).catch(() => {});
+    } else if ("send" in message.channel) {
+      await (message.channel as any).send(chunks[i]!).catch(() => {});
+    }
+  }
+}
+
+/** Split text into chunks of at most maxLen chars, breaking on newlines then spaces. */
+function splitIntoChunks(text: string, maxLen: number): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    // Prefer breaking on a newline within the window
+    let cut = remaining.lastIndexOf("\n", maxLen);
+    if (cut <= 0) cut = remaining.lastIndexOf(" ", maxLen);
+    if (cut <= 0) cut = maxLen; // no good break point — hard cut
+    chunks.push(remaining.slice(0, cut).trimEnd());
+    remaining = remaining.slice(cut).trimStart();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
 }
