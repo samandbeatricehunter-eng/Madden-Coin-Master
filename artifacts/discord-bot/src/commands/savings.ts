@@ -2,25 +2,23 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userSavingsTable, coinTransactionsTable } from "@workspace/db";
+import { usersTable, userSavingsTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { getServerSettings } from "../lib/server-settings.js";
-import { logTransaction } from "../lib/db-helpers.js";
+import { isAdminUser, logTransaction } from "../lib/db-helpers.js";
+import {
+  getSavingsInterestRateBps,
+  setSavingsInterestRateBps,
+} from "../lib/savings-interest.js";
+
+const SAVINGS_PASSWORD = "interest";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-async function getSavings(discordId: string): Promise<number> {
+async function getSavingsBalance(discordId: string): Promise<number> {
   const row = await db.select({ balance: userSavingsTable.balance })
     .from(userSavingsTable)
     .where(eq(userSavingsTable.discordId, discordId))
-    .limit(1);
-  return row[0]?.balance ?? 0;
-}
-
-async function getWallet(discordId: string): Promise<number> {
-  const row = await db.select({ balance: usersTable.balance })
-    .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
     .limit(1);
   return row[0]?.balance ?? 0;
 }
@@ -38,7 +36,7 @@ export const data = new SlashCommandBuilder()
   .setDescription("Manage your global savings account — accessible from any league server")
   .addSubcommand(sub =>
     sub.setName("balance")
-      .setDescription("View your wallet and savings balances")
+      .setDescription("View your wallet and savings balances, plus the current interest rate")
   )
   .addSubcommand(sub =>
     sub.setName("deposit")
@@ -59,12 +57,34 @@ export const data = new SlashCommandBuilder()
           .setMinValue(1)
           .setRequired(true)
       )
+  )
+  .addSubcommand(sub =>
+    sub.setName("set-rate")
+      .setDescription("(Admin) Set the daily savings interest rate (requires password)")
+      .addNumberOption(o =>
+        o.setName("rate")
+          .setDescription("Daily interest percentage, e.g. 1 = 1%, 0.5 = 0.5%")
+          .setMinValue(0)
+          .setMaxValue(100)
+          .setRequired(true)
+      )
+      .addStringOption(o =>
+        o.setName("password")
+          .setDescription("Admin password")
+          .setRequired(true)
+      )
   );
 
 // ── Execute ────────────────────────────────────────────────────────────────────
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const settings = await getServerSettings();
+
+  const sub = interaction.options.getSubcommand();
+
+  // set-rate is admin-only — skip coinEconomy gate
+  if (sub === "set-rate") return handleSetRate(interaction);
+
   if (!settings.coinEconomy) {
     await interaction.reply({
       content: "❌ The coin economy is currently disabled by the commissioners.",
@@ -73,7 +93,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const sub = interaction.options.getSubcommand();
   if (sub === "balance")  return handleBalance(interaction);
   if (sub === "deposit")  return handleDeposit(interaction);
   if (sub === "withdraw") return handleWithdraw(interaction);
@@ -98,9 +117,11 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
 
   await ensureSavingsRow(discordId);
 
-  const wallet  = userRow[0].balance;
-  const savings = await getSavings(discordId);
-  const total   = wallet + savings;
+  const wallet   = userRow[0].balance;
+  const savings  = await getSavingsBalance(discordId);
+  const total    = wallet + savings;
+  const rateBps  = await getSavingsInterestRateBps();
+  const rateStr  = rateBps > 0 ? `${(rateBps / 100).toFixed(2)}% per day` : "No interest currently set";
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
@@ -121,8 +142,13 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
         value: `**${total.toLocaleString()} coins** across both accounts`,
         inline: false,
       },
+      {
+        name: "📈 Daily Interest Rate",
+        value: rateStr,
+        inline: false,
+      },
     )
-    .setFooter({ text: "Use /savings deposit or /savings withdraw to transfer between accounts" })
+    .setFooter({ text: "Interest is credited daily, rounded up — use /savings deposit to start earning" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
@@ -168,12 +194,16 @@ async function handleDeposit(interaction: ChatInputCommandInteraction) {
   await logTransaction(discordId, amount, "savings_deposit", `Deposited ${amount.toLocaleString()} coins to global savings`);
 
   const newWallet  = walletBalance - amount;
-  const newSavings = await getSavings(discordId);
+  const newSavings = await getSavingsBalance(discordId);
+  const rateBps    = await getSavingsInterestRateBps();
+  const interestPreview = rateBps > 0
+    ? `\n💡 At today's rate (${(rateBps / 100).toFixed(2)}%), your savings will earn **${Math.ceil(newSavings * rateBps / 10000).toLocaleString()} coins** tomorrow.`
+    : "";
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("✅ Deposit Successful")
-    .setDescription(`**${amount.toLocaleString()} coins** moved from your league wallet into your global savings.`)
+    .setDescription(`**${amount.toLocaleString()} coins** moved from your league wallet into your global savings.${interestPreview}`)
     .addFields(
       { name: "💳 New Wallet Balance",  value: `${newWallet.toLocaleString()} coins`,  inline: true },
       { name: "🏦 New Savings Balance", value: `${newSavings.toLocaleString()} coins`, inline: true },
@@ -202,7 +232,7 @@ async function handleWithdraw(interaction: ChatInputCommandInteraction) {
   }
 
   await ensureSavingsRow(discordId);
-  const savingsBalance = await getSavings(discordId);
+  const savingsBalance = await getSavingsBalance(discordId);
 
   if (savingsBalance < amount) {
     await interaction.editReply({
@@ -233,6 +263,44 @@ async function handleWithdraw(interaction: ChatInputCommandInteraction) {
       { name: "🏦 New Savings Balance", value: `${newSavings.toLocaleString()} coins`, inline: true },
       { name: "💳 New Wallet Balance",  value: `${newWallet.toLocaleString()} coins`,  inline: true },
     )
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+// ── /savings set-rate ─────────────────────────────────────────────────────────
+
+async function handleSetRate(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const password = interaction.options.getString("password", true);
+  if (password !== SAVINGS_PASSWORD) {
+    await interaction.editReply({ content: "❌ Incorrect password." });
+    return;
+  }
+
+  const admin = await isAdminUser(interaction.user.id);
+  if (!admin) {
+    await interaction.editReply({ content: "❌ This command is restricted to league admins." });
+    return;
+  }
+
+  const ratePercent = interaction.options.getNumber("rate", true);
+  const rateBps     = Math.round(ratePercent * 100); // e.g. 1.5% → 150 bps
+
+  await setSavingsInterestRateBps(rateBps, interaction.user.id);
+
+  const displayRate = (rateBps / 100).toFixed(2);
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("✅ Interest Rate Updated")
+    .setDescription(
+      rateBps === 0
+        ? "Daily savings interest has been **disabled**."
+        : `Daily savings interest rate set to **${displayRate}% per day**.\n\nInterest is calculated on the savings balance at the time of the nightly payout and rounded up to the nearest whole coin.`,
+    )
+    .setFooter({ text: `Set by ${interaction.user.username}` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });

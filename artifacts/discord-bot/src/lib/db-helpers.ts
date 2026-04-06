@@ -112,7 +112,7 @@ export async function isAdminUser(discordId: string): Promise<boolean> {
 export async function logTransaction(
   discordId: string,
   amount: number,
-  type: "purchase" | "purchase_refund" | "addcoins" | "removecoins" | "sendcoins_sent" | "sendcoins_received" | "season_adjustment" | "setbalance" | "savings_deposit" | "savings_withdraw",
+  type: "purchase" | "purchase_refund" | "addcoins" | "removecoins" | "sendcoins_sent" | "sendcoins_received" | "season_adjustment" | "setbalance" | "savings_deposit" | "savings_withdraw" | "savings_interest",
   description: string,
   relatedUserId?: string,
 ): Promise<void> {

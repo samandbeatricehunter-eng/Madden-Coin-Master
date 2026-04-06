@@ -226,6 +226,7 @@ export const txTypeEnum = pgEnum("tx_type", [
   "setbalance",
   "savings_deposit",
   "savings_withdraw",
+  "savings_interest",
 ]);
 
 export const coinTransactionsTable = pgTable("coin_transactions", {
