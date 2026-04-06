@@ -224,6 +224,8 @@ export const txTypeEnum = pgEnum("tx_type", [
   "sendcoins_received",
   "season_adjustment",
   "setbalance",
+  "savings_deposit",
+  "savings_withdraw",
 ]);
 
 export const coinTransactionsTable = pgTable("coin_transactions", {
@@ -234,6 +236,16 @@ export const coinTransactionsTable = pgTable("coin_transactions", {
   description: text("description").notNull(),
   relatedUserId: text("related_user_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── Global savings account ─────────────────────────────────────────────────────
+// One row per Discord user — keyed only by discordId so the balance is
+// reachable from any guild/server the bot operates in. Users transfer coins
+// in/out of their per-guild wallet via /savings deposit and /savings withdraw.
+export const userSavingsTable = pgTable("user_savings", {
+  discordId:  text("discord_id").primaryKey(),
+  balance:    integer("balance").notNull().default(0),
+  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const wagersTable = pgTable("wagers", {

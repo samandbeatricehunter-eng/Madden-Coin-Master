@@ -57,6 +57,7 @@ import * as customarticle from "./commands/customarticle.js";
 import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 import * as myRoster from "./commands/my-roster.js";
 import * as myPicks from "./commands/my-picks.js";
+import * as savings from "./commands/savings.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as statLeaders from "./commands/statleaders.js";
@@ -158,6 +159,7 @@ if (!isProduction && !devBotEnabled) {
     endofseasonpayout,
     myRoster,
     myPicks,
+    savings,
     weeklyMatchups,
     adminCorrectPayout,
     statLeaders,
