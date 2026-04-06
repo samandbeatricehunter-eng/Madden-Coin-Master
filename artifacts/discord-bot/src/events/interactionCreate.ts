@@ -13,6 +13,7 @@ import {
   tradeBlockListingsTable, tradeBlockISOTable, completedTradesTable,
   franchiseScheduleTable, seasonsTable,
   pendingEosPayoutsTable, seasonStatTierConfigsTable,
+  pendingChannelPayoutsTable,
 } from "@workspace/db";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
@@ -611,6 +612,227 @@ async function handleButton(interaction: ButtonInteraction) {
         `You took **${loserTeam}** and they lost to **${winnerTeam}**. Your **${wager.amount.toLocaleString()} coins** have been paid out to the winner.`
       ).catch(() => {});
     } catch (_) {}
+    return;
+  }
+
+  // ── Stream payout: approve ───────────────────────────────────────────────────
+  if (action === "stream_approve") {
+    const payoutId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    if (!(await isAdminUser(interaction.user.id))) {
+      await interaction.followUp({ content: "❌ Only commissioners can approve payouts.", ephemeral: true });
+      return;
+    }
+
+    const [payout] = await db
+      .select().from(pendingChannelPayoutsTable)
+      .where(eq(pendingChannelPayoutsTable.id, payoutId))
+      .limit(1);
+
+    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
+      return;
+    }
+
+    // Award coins to streamer
+    await addBalance(payout.discordId, payout.amount);
+    await logTransaction(payout.discordId, payout.amount, "addcoins",
+      `Stream payout — Week ${payout.week}`, interaction.user.id);
+
+    // Award coins to H2H opponent if applicable
+    if (payout.opponentDiscordId && payout.opponentAmount) {
+      await addBalance(payout.opponentDiscordId, payout.opponentAmount);
+      await logTransaction(payout.opponentDiscordId, payout.opponentAmount, "addcoins",
+        `Stream payout (opponent) — Week ${payout.week}`, interaction.user.id);
+    }
+
+    await db.update(pendingChannelPayoutsTable)
+      .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(pendingChannelPayoutsTable.id, payoutId));
+
+    // React ✅ to original message
+    try {
+      const origChannel = await interaction.client.channels.fetch(payout.channelId).catch(() => null);
+      if (origChannel?.isTextBased()) {
+        const origMsg = await (origChannel as TextChannel).messages.fetch(payout.messageId).catch(() => null);
+        if (origMsg) await origMsg.react("✅").catch(() => {});
+      }
+    } catch (_) {}
+
+    // DM the streamer
+    try {
+      const u = await interaction.client.users.fetch(payout.discordId);
+      await u.send(`🎮 Your stream payout for Week ${payout.week} was approved! **+${payout.amount} coins** added.`).catch(() => {});
+    } catch (_) {}
+
+    // DM the opponent if applicable
+    if (payout.opponentDiscordId && payout.opponentAmount) {
+      try {
+        const u = await interaction.client.users.fetch(payout.opponentDiscordId);
+        await u.send(`🎮 A league member streamed your Week ${payout.week} game — you received **+${payout.opponentAmount} coins**!`).catch(() => {});
+      } catch (_) {}
+    }
+
+    const approvedEmbed = new EmbedBuilder()
+      .setColor(Colors.Green).setTitle("✅ Stream Payout Approved")
+      .setDescription(
+        `**+${payout.amount} coins** → <@${payout.discordId}>\n` +
+        (payout.opponentDiscordId ? `**+${payout.opponentAmount} coins** → <@${payout.opponentDiscordId}> (opponent)\n` : "") +
+        `Approved by: ${interaction.user.toString()}`
+      )
+      .setFooter({ text: `Payout #${payoutId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds: [approvedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("stream_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
+      )],
+    });
+    return;
+  }
+
+  // ── Stream payout: deny ──────────────────────────────────────────────────────
+  if (action === "stream_deny") {
+    const payoutId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    if (!(await isAdminUser(interaction.user.id))) {
+      await interaction.followUp({ content: "❌ Only commissioners can deny payouts.", ephemeral: true });
+      return;
+    }
+
+    const [payout] = await db
+      .select().from(pendingChannelPayoutsTable)
+      .where(eq(pendingChannelPayoutsTable.id, payoutId))
+      .limit(1);
+
+    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ Already **${payout.status}**.`, ephemeral: true });
+      return;
+    }
+
+    await db.update(pendingChannelPayoutsTable)
+      .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(pendingChannelPayoutsTable.id, payoutId));
+
+    const deniedEmbed = new EmbedBuilder()
+      .setColor(Colors.Red).setTitle("❌ Stream Payout Denied")
+      .setDescription(`Denied by: ${interaction.user.toString()}`)
+      .setFooter({ text: `Payout #${payoutId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds: [deniedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("stream_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
+      )],
+    });
+    return;
+  }
+
+  // ── Highlight payout: approve ────────────────────────────────────────────────
+  if (action === "highlight_approve") {
+    const payoutId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    if (!(await isAdminUser(interaction.user.id))) {
+      await interaction.followUp({ content: "❌ Only commissioners can approve payouts.", ephemeral: true });
+      return;
+    }
+
+    const [payout] = await db
+      .select().from(pendingChannelPayoutsTable)
+      .where(eq(pendingChannelPayoutsTable.id, payoutId))
+      .limit(1);
+
+    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
+      return;
+    }
+
+    await addBalance(payout.discordId, payout.amount);
+    await logTransaction(payout.discordId, payout.amount, "addcoins",
+      `Highlight video payout — Week ${payout.week}`, interaction.user.id);
+
+    await db.update(pendingChannelPayoutsTable)
+      .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(pendingChannelPayoutsTable.id, payoutId));
+
+    // React ✅ to original message
+    try {
+      const origChannel = await interaction.client.channels.fetch(payout.channelId).catch(() => null);
+      if (origChannel?.isTextBased()) {
+        const origMsg = await (origChannel as TextChannel).messages.fetch(payout.messageId).catch(() => null);
+        if (origMsg) await origMsg.react("✅").catch(() => {});
+      }
+    } catch (_) {}
+
+    // DM the poster
+    try {
+      const u = await interaction.client.users.fetch(payout.discordId);
+      await u.send(`🎬 Your highlight video payout for Week ${payout.week} was approved! **+${payout.amount} coins** added.`).catch(() => {});
+    } catch (_) {}
+
+    const approvedEmbed = new EmbedBuilder()
+      .setColor(Colors.Green).setTitle("✅ Highlight Payout Approved")
+      .setDescription(
+        `**+${payout.amount} coins** → <@${payout.discordId}>\n` +
+        `Approved by: ${interaction.user.toString()}`
+      )
+      .setFooter({ text: `Payout #${payoutId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds: [approvedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("highlight_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
+      )],
+    });
+    return;
+  }
+
+  // ── Highlight payout: deny ───────────────────────────────────────────────────
+  if (action === "highlight_deny") {
+    const payoutId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    if (!(await isAdminUser(interaction.user.id))) {
+      await interaction.followUp({ content: "❌ Only commissioners can deny payouts.", ephemeral: true });
+      return;
+    }
+
+    const [payout] = await db
+      .select().from(pendingChannelPayoutsTable)
+      .where(eq(pendingChannelPayoutsTable.id, payoutId))
+      .limit(1);
+
+    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ Already **${payout.status}**.`, ephemeral: true });
+      return;
+    }
+
+    await db.update(pendingChannelPayoutsTable)
+      .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(pendingChannelPayoutsTable.id, payoutId));
+
+    const deniedEmbed = new EmbedBuilder()
+      .setColor(Colors.Red).setTitle("❌ Highlight Payout Denied")
+      .setDescription(`Denied by: ${interaction.user.toString()}`)
+      .setFooter({ text: `Payout #${payoutId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds: [deniedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("highlight_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
+      )],
+    });
     return;
   }
 

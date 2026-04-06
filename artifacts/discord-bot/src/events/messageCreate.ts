@@ -1,11 +1,12 @@
-import { Events, Message } from "discord.js";
+import { Events, Message, EmbedBuilder, Colors, ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel } from "discord.js";
 import OpenAI from "openai";
 import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable,
   franchiseScheduleTable, franchiseRostersTable, franchiseProcessedGamesTable,
+  pendingChannelPayoutsTable,
 } from "@workspace/db";
-import { eq, and, or, desc, isNotNull } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull, inArray, count } from "drizzle-orm";
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
 } from "../lib/db-helpers.js";
@@ -444,15 +445,274 @@ LEAGUE RULES
 ${rulesText}`;
 }
 
+// ── Channel-based payout monitors ─────────────────────────────────────────────
+
+const STREAM_CHANNEL_ID     = "1486369417309978644";
+const HIGHLIGHTS_CHANNEL_ID = "1485643704206229638";
+const TWITCH_URL_RE         = /https?:\/\/(?:www\.)?twitch\.tv\/\S+/i;
+const STREAM_PAYOUT         = 10;
+const HIGHLIGHT_PAYOUT      = 20;
+const HIGHLIGHT_MAX_PER_WEEK = 2; // max payable videos per user per week
+
+async function handleStreamPost(message: Message): Promise<void> {
+  if (!TWITCH_URL_RE.test(message.content)) return;
+
+  const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+  if (!commChannelId) { console.error("DISCORD_COMMISSIONER_CHANNEL_ID not set"); return; }
+
+  try {
+    const season      = await getOrCreateActiveSeason();
+    const currentWeek = (season as any).currentWeek ?? "1";
+
+    // Duplicate guard — one stream payout per user per week
+    const [existing] = await db
+      .select({ id: pendingChannelPayoutsTable.id })
+      .from(pendingChannelPayoutsTable)
+      .where(and(
+        eq(pendingChannelPayoutsTable.type, "stream"),
+        eq(pendingChannelPayoutsTable.discordId, message.author.id),
+        eq(pendingChannelPayoutsTable.seasonId, season.id),
+        eq(pendingChannelPayoutsTable.week, currentWeek),
+        inArray(pendingChannelPayoutsTable.status, ["pending", "approved"]),
+      ))
+      .limit(1);
+
+    if (existing) return; // already submitted or approved this week
+
+    // Look up the streamer's team
+    const [userRow] = await db
+      .select({ team: usersTable.team })
+      .from(usersTable)
+      .where(eq(usersTable.discordId, message.author.id))
+      .limit(1);
+
+    const streamerTeam = userRow?.team ?? null;
+
+    // Find this week's matchup to identify the opponent
+    let opponentDiscordId: string | null = null;
+    let opponentTeam: string | null = null;
+
+    if (streamerTeam) {
+      const weekIndex = parseInt(currentWeek, 10) - 1;
+      const [matchup] = await db
+        .select({
+          homeTeamName: franchiseScheduleTable.homeTeamName,
+          awayTeamName: franchiseScheduleTable.awayTeamName,
+        })
+        .from(franchiseScheduleTable)
+        .where(and(
+          eq(franchiseScheduleTable.seasonId, season.id),
+          eq(franchiseScheduleTable.weekIndex, weekIndex),
+          or(
+            eq(franchiseScheduleTable.homeTeamName, streamerTeam),
+            eq(franchiseScheduleTable.awayTeamName, streamerTeam),
+          ),
+        ))
+        .limit(1);
+
+      if (matchup) {
+        opponentTeam = matchup.homeTeamName === streamerTeam
+          ? matchup.awayTeamName
+          : matchup.homeTeamName;
+
+        // Look up opponent's Discord ID
+        if (opponentTeam) {
+          const [oppRow] = await db
+            .select({ discordId: usersTable.discordId })
+            .from(usersTable)
+            .where(eq(usersTable.team, opponentTeam))
+            .limit(1);
+          opponentDiscordId = oppRow?.discordId ?? null;
+        }
+      }
+    }
+
+    const twitchMatch = message.content.match(TWITCH_URL_RE);
+    const twitchUrl   = twitchMatch ? twitchMatch[0] : "(link)";
+
+    const isH2H      = !!opponentDiscordId;
+    const payoutDesc = isH2H
+      ? `+${STREAM_PAYOUT} coins → <@${message.author.id}>\n+${STREAM_PAYOUT} coins → <@${opponentDiscordId}> (H2H opponent)`
+      : `+${STREAM_PAYOUT} coins → <@${message.author.id}> (CPU game — opponent not awarded)`;
+
+    // Insert pending payout record (without commMessageId yet)
+    const [inserted] = await db
+      .insert(pendingChannelPayoutsTable)
+      .values({
+        type:              "stream",
+        discordId:         message.author.id,
+        amount:            STREAM_PAYOUT,
+        opponentDiscordId: opponentDiscordId ?? undefined,
+        opponentAmount:    isH2H ? STREAM_PAYOUT : undefined,
+        opponentTeam:      opponentTeam ?? undefined,
+        channelId:         message.channelId,
+        messageId:         message.id,
+        guildId:           message.guildId!,
+        seasonId:          season.id,
+        week:              currentWeek,
+      })
+      .returning({ id: pendingChannelPayoutsTable.id });
+
+    const payoutId = inserted?.id;
+    if (!payoutId) return;
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Purple)
+      .setTitle("🎮 Stream Payout — Approval Required")
+      .setDescription(
+        `<@${message.author.id}>${streamerTeam ? ` (${streamerTeam})` : ""} posted a Twitch stream this week.\n\n` +
+        `**Stream:** ${twitchUrl}\n` +
+        (opponentTeam ? `**Opponent:** ${opponentTeam}${opponentDiscordId ? ` — <@${opponentDiscordId}>` : " (no Discord account linked)"}` : `**Opponent:** CPU (no payout)`) +
+        `\n\n**Payout:**\n${payoutDesc}`
+      )
+      .setFooter({ text: `Payout #${payoutId} • Week ${currentWeek}` })
+      .setTimestamp();
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`stream_approve:${payoutId}`)
+        .setLabel("✅ Approve & Pay Out")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`stream_deny:${payoutId}`)
+        .setLabel("❌ Deny")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
+    if (!commChannel?.isTextBased()) return;
+
+    const commMsg = await (commChannel as TextChannel).send({ embeds: [embed], components: [row] });
+
+    // Store the commissioner log message ID so we can update it on approval/denial
+    await db
+      .update(pendingChannelPayoutsTable)
+      .set({ commMessageId: commMsg.id })
+      .where(eq(pendingChannelPayoutsTable.id, payoutId));
+
+  } catch (err) {
+    console.error("handleStreamPost error:", err);
+  }
+}
+
+async function handleHighlightPost(message: Message): Promise<void> {
+  // Must have at least one video attachment
+  const videoAttachments = [...message.attachments.values()].filter(
+    a => a.contentType?.startsWith("video/"),
+  );
+  if (videoAttachments.length === 0) return;
+
+  const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+  if (!commChannelId) { console.error("DISCORD_COMMISSIONER_CHANNEL_ID not set"); return; }
+
+  try {
+    const season      = await getOrCreateActiveSeason();
+    const currentWeek = (season as any).currentWeek ?? "1";
+
+    // Count pending + approved payouts for this user this week
+    const [countRow] = await db
+      .select({ total: count() })
+      .from(pendingChannelPayoutsTable)
+      .where(and(
+        eq(pendingChannelPayoutsTable.type, "highlight"),
+        eq(pendingChannelPayoutsTable.discordId, message.author.id),
+        eq(pendingChannelPayoutsTable.seasonId, season.id),
+        eq(pendingChannelPayoutsTable.week, currentWeek),
+        inArray(pendingChannelPayoutsTable.status, ["pending", "approved"]),
+      ));
+
+    const usedSlots = Number(countRow?.total ?? 0);
+    if (usedSlots >= HIGHLIGHT_MAX_PER_WEEK) return; // max reached — silently ignore
+
+    // Each video in this message is a separate payout request (up to the weekly cap)
+    const [userRow] = await db
+      .select({ team: usersTable.team })
+      .from(usersTable)
+      .where(eq(usersTable.discordId, message.author.id))
+      .limit(1);
+
+    const posterTeam = userRow?.team ?? null;
+
+    let slotsToCreate = Math.min(videoAttachments.length, HIGHLIGHT_MAX_PER_WEEK - usedSlots);
+
+    for (let i = 0; i < slotsToCreate; i++) {
+      const videoNum = usedSlots + i + 1; // 1-indexed
+
+      const [inserted] = await db
+        .insert(pendingChannelPayoutsTable)
+        .values({
+          type:      "highlight",
+          discordId: message.author.id,
+          amount:    HIGHLIGHT_PAYOUT,
+          channelId: message.channelId,
+          messageId: message.id,
+          guildId:   message.guildId!,
+          seasonId:  season.id,
+          week:      currentWeek,
+        })
+        .returning({ id: pendingChannelPayoutsTable.id });
+
+      const payoutId = inserted?.id;
+      if (!payoutId) continue;
+
+      const embed = new EmbedBuilder()
+        .setColor(Colors.Orange)
+        .setTitle("🎬 Highlight Payout — Approval Required")
+        .setDescription(
+          `<@${message.author.id}>${posterTeam ? ` (${posterTeam})` : ""} posted a highlight video.\n\n` +
+          `**Video:** #${videoNum} this week (${HIGHLIGHT_MAX_PER_WEEK} max paid per week)\n` +
+          `**Payout:** +${HIGHLIGHT_PAYOUT} coins → <@${message.author.id}>`
+        )
+        .setFooter({ text: `Payout #${payoutId} • Week ${currentWeek}` })
+        .setTimestamp();
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`highlight_approve:${payoutId}`)
+          .setLabel("✅ Approve & Pay Out")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`highlight_deny:${payoutId}`)
+          .setLabel("❌ Deny")
+          .setStyle(ButtonStyle.Danger),
+      );
+
+      const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
+      if (!commChannel?.isTextBased()) continue;
+
+      const commMsg = await (commChannel as TextChannel).send({ embeds: [embed], components: [row] });
+
+      await db
+        .update(pendingChannelPayoutsTable)
+        .set({ commMessageId: commMsg.id })
+        .where(eq(pendingChannelPayoutsTable.id, payoutId));
+    }
+
+  } catch (err) {
+    console.error("handleHighlightPost error:", err);
+  }
+}
+
 // ── Event export ───────────────────────────────────────────────────────────────
 
 export const name  = Events.MessageCreate;
 export const once  = false;
 
 export async function execute(message: Message): Promise<void> {
-  // Only respond in guilds when the bot is explicitly @mentioned
   if (!message.guild) return;
   if (message.author.bot) return;
+
+  // ── Channel-based payout monitors (run before @mention guard) ─────────────
+  if (message.channelId === STREAM_CHANNEL_ID) {
+    await handleStreamPost(message);
+    return;
+  }
+  if (message.channelId === HIGHLIGHTS_CHANNEL_ID) {
+    await handleHighlightPost(message);
+    return;
+  }
+
+  // Only respond to @mentions from here on
   if (!message.mentions.has(message.client.user!, { ignoreEveryone: true })) return;
 
   // Identify other users mentioned in the message (not the bot itself)

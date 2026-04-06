@@ -666,3 +666,24 @@ export type InsertLegend = z.infer<typeof insertLegendSchema>;
 export type InsertPurchase = z.infer<typeof insertPurchaseSchema>;
 export type InsertInventory = z.infer<typeof insertInventorySchema>;
 export type InsertSeasonStats = z.infer<typeof insertSeasonStatsSchema>;
+
+// ── Pending stream / highlight payouts (awaiting commissioner approval) ───────
+export const pendingChannelPayoutsTable = pgTable("pending_channel_payouts", {
+  id:                 serial("id").primaryKey(),
+  type:               text("type").notNull(),            // "stream" | "highlight"
+  discordId:          text("discord_id").notNull(),       // primary recipient (streamer / poster)
+  amount:             integer("amount").notNull(),        // coins to award primary recipient
+  opponentDiscordId:  text("opponent_discord_id"),        // H2H opponent (stream only; null for CPU)
+  opponentAmount:     integer("opponent_amount"),         // coins to award opponent (stream only)
+  opponentTeam:       text("opponent_team"),              // opponent team name for display
+  channelId:          text("channel_id").notNull(),       // original channel (for reaction)
+  messageId:          text("message_id").notNull(),       // original message (for reaction)
+  guildId:            text("guild_id").notNull(),
+  seasonId:           integer("season_id").notNull(),
+  week:               text("week").notNull(),             // currentWeek at time of submission
+  status:             text("status").notNull().default("pending"), // "pending" | "approved" | "denied"
+  commMessageId:      text("comm_message_id"),            // commissioner log message ID
+  resolvedAt:         timestamp("resolved_at"),
+  resolvedBy:         text("resolved_by"),
+  createdAt:          timestamp("created_at").notNull().defaultNow(),
+});
