@@ -189,9 +189,10 @@ Answer fully, clearly, and step-by-step when needed. Reference the command guide
 Keep it brief and light — one or two sentences. Be charming but not too chatty.
 
 [TYPE:ROAST]
-Go in. Use their stats below to make it personal and league-relevant. Point out their record, point differential, or coin situation. Be creative and funny. Don't hold back.
+⛔ NEVER classify an admin as ROAST — if they're being playful, use SMALLTALK instead.
+For non-admins: go in. Use their stats below to make it personal and league-relevant. Point out their record, point differential, or coin situation. Be creative and funny. Don't hold back.
 
-ADMIN RULE
+ADMIN RULE (overrides everything — highest priority)
 ${adminRule}
 
 CURRENT USER STATS (use these for context — especially for roasts)
@@ -224,21 +225,12 @@ export async function execute(message: Message): Promise<void> {
     return;
   }
 
-  // Small-talk limit check — no API call needed
-  const stCount = getSmallTalkCount(message.author.id);
-  if (stCount >= SMALL_TALK_LIMIT) {
-    await message.reply(
-      "I'm not here for small talk. Ask me something about the league or leave me alone. 🏈"
-    ).catch(() => {});
-    return;
-  }
-
   // Show typing while we work (guild text channels support this)
   if ("sendTyping" in message.channel) {
     await (message.channel as any).sendTyping().catch(() => {});
   }
 
-  // Gather all context in parallel
+  // Gather all context in parallel — we need isAdmin before applying throttle
   const [isAdmin, userStats, rulesText, adminIds] = await Promise.all([
     isAdminUser(message.author.id).catch(() => false),
     fetchUserStats(message.author.id).catch(() => ({
@@ -249,6 +241,17 @@ export async function execute(message: Message): Promise<void> {
     getCachedRules().catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
   ]);
+
+  // Small-talk limit check — admins are never throttled
+  if (!isAdmin) {
+    const stCount = getSmallTalkCount(message.author.id);
+    if (stCount >= SMALL_TALK_LIMIT) {
+      await message.reply(
+        "I'm not here for small talk. Ask me something about the league or leave me alone. 🏈"
+      ).catch(() => {});
+      return;
+    }
+  }
 
   const systemPrompt = buildSystemPrompt(rulesText, adminIds, userStats, isAdmin);
 
