@@ -158,10 +158,25 @@ export const gameLogTable = pgTable("game_log", {
   seasonId: integer("season_id").notNull(),
   result: text("result").notNull(), // "win" | "loss"
   pointSpread: integer("point_spread").notNull(),
-  opponentLabel: text("opponent_label"), // team name or free text
+  opponentLabel: text("opponent_label"),    // team name or free text
+  opponentDiscordId: text("opponent_discord_id"), // null for CPU games; used by rollback to reverse matchup records
   gameType: gameTypeEnum("game_type").notNull().default("regular_season"),
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
+
+// ── All-time per-opponent H2H records ──────────────────────────────────────────
+// Pair stored in canonical order: discordId1 < discordId2 (lexicographic).
+// wins1 = wins for discordId1; wins2 = wins for discordId2.
+export const h2hMatchupRecordsTable = pgTable("h2h_matchup_records", {
+  id:         serial("id").primaryKey(),
+  discordId1: text("discord_id_1").notNull(),
+  discordId2: text("discord_id_2").notNull(),
+  wins1:      integer("wins_1").notNull().default(0),
+  wins2:      integer("wins_2").notNull().default(0),
+  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniquePair: uniqueIndex("h2h_matchup_pair_idx").on(t.discordId1, t.discordId2),
+}));
 
 export const rulesTable = pgTable("rules", {
   section: text("section").primaryKey(),

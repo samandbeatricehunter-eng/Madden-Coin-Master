@@ -5,7 +5,7 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, franchiseScheduleTable, franchiseProcessedGamesTable,
-  gameLogTable, coinTransactionsTable,
+  gameLogTable, h2hMatchupRecordsTable, coinTransactionsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
@@ -323,6 +323,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await tx.update(usersTable)
         .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} - 1`, updatedAt: new Date() })
         .where(eq(usersTable.discordId, inferredLoserId));
+      // Reverse per-opponent matchup record
+      {
+        const [id1, id2] = inferredWinnerId < inferredLoserId
+          ? [inferredWinnerId, inferredLoserId]
+          : [inferredLoserId, inferredWinnerId];
+        const winnerIsId1 = inferredWinnerId === id1;
+        await tx.update(h2hMatchupRecordsTable)
+          .set(winnerIsId1
+            ? { wins1: sql`GREATEST(0, ${h2hMatchupRecordsTable.wins1} - 1)`, updatedAt: new Date() }
+            : { wins2: sql`GREATEST(0, ${h2hMatchupRecordsTable.wins2} - 1)`, updatedAt: new Date() })
+          .where(and(
+            eq(h2hMatchupRecordsTable.discordId1, id1),
+            eq(h2hMatchupRecordsTable.discordId2, id2),
+          ));
+      }
       reversalLines.push("❌ Reversed H2H win/loss records and all-time counters");
       if (winnerLogId) await tx.delete(gameLogTable).where(eq(gameLogTable.id, winnerLogId));
       if (loserLogId)  await tx.delete(gameLogTable).where(eq(gameLogTable.id, loserLogId));
@@ -408,11 +423,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       await tx.insert(gameLogTable).values({
         discordId: newWinnerUser.discordId, seasonId: season.id, result: "win",
-        pointSpread: pointDiff, opponentLabel: newLoserTeamName, gameType: "regular_season",
+        pointSpread: pointDiff, opponentLabel: newLoserTeamName,
+        opponentDiscordId: newLoserUser.discordId, gameType: "regular_season",
       });
       await tx.insert(gameLogTable).values({
         discordId: newLoserUser.discordId, seasonId: season.id, result: "loss",
-        pointSpread: -pointDiff, opponentLabel: newWinnerTeamName, gameType: "regular_season",
+        pointSpread: -pointDiff, opponentLabel: newWinnerTeamName,
+        opponentDiscordId: newWinnerUser.discordId, gameType: "regular_season",
       });
       await tx.update(usersTable)
         .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() })
@@ -420,6 +437,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await tx.update(usersTable)
         .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
         .where(eq(usersTable.discordId, newLoserUser.discordId));
+      // Per-opponent matchup record
+      {
+        const [id1, id2] = newWinnerUser.discordId < newLoserUser.discordId
+          ? [newWinnerUser.discordId, newLoserUser.discordId]
+          : [newLoserUser.discordId, newWinnerUser.discordId];
+        const winnerIsId1 = newWinnerUser.discordId === id1;
+        await tx.insert(h2hMatchupRecordsTable)
+          .values({ discordId1: id1, discordId2: id2, wins1: winnerIsId1 ? 1 : 0, wins2: winnerIsId1 ? 0 : 1 })
+          .onConflictDoUpdate({
+            target: [h2hMatchupRecordsTable.discordId1, h2hMatchupRecordsTable.discordId2],
+            set: winnerIsId1
+              ? { wins1: sql`${h2hMatchupRecordsTable.wins1} + 1`, updatedAt: new Date() }
+              : { wins2: sql`${h2hMatchupRecordsTable.wins2} + 1`, updatedAt: new Date() },
+          });
+      }
       newPayoutMeta = {
         payoutType: "h2h", winnerDiscordId: newWinnerUser.discordId, loserDiscordId: newLoserUser.discordId,
         winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT, appliedPointDiff: pointDiff,

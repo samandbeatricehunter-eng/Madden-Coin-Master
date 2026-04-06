@@ -5,6 +5,7 @@ import {
   userRecordsTable,
   coinTransactionsTable,
   gameLogTable,
+  h2hMatchupRecordsTable,
   franchiseScheduleTable,
   franchiseProcessedGamesTable,
   franchiseGameParticipantsTable,
@@ -101,11 +102,32 @@ async function appendGameLog(
   result: "win" | "loss",
   pointSpread: number,
   opponentLabel: string,
+  opponentDiscordId?: string,
 ): Promise<void> {
   await db.insert(gameLogTable).values({
     discordId, seasonId, result, pointSpread, opponentLabel,
+    opponentDiscordId: opponentDiscordId ?? null,
     gameType: "regular_season",
   });
+}
+
+// Upsert per-opponent H2H matchup record.
+// Pair is stored in canonical (alphabetically ascending) order.
+async function upsertH2HMatchup(winnerId: string, loserId: string): Promise<void> {
+  const [id1, id2] = winnerId < loserId ? [winnerId, loserId] : [loserId, winnerId];
+  const winnerIsId1 = winnerId === id1;
+  await db.insert(h2hMatchupRecordsTable)
+    .values({
+      discordId1: id1, discordId2: id2,
+      wins1: winnerIsId1 ? 1 : 0,
+      wins2: winnerIsId1 ? 0 : 1,
+    })
+    .onConflictDoUpdate({
+      target: [h2hMatchupRecordsTable.discordId1, h2hMatchupRecordsTable.discordId2],
+      set: winnerIsId1
+        ? { wins1: sql`${h2hMatchupRecordsTable.wins1} + 1`, updatedAt: new Date() }
+        : { wins2: sql`${h2hMatchupRecordsTable.wins2} + 1`, updatedAt: new Date() },
+    });
 }
 
 export async function getOrCreateActiveSeason() {
@@ -1012,8 +1034,8 @@ export async function processWeekScores(
 
           await upsertH2HRecord(winnerId, season.id, true,    spread);
           await upsertH2HRecord(loserId,  season.id, false, -spread);
-          await appendGameLog(winnerId, season.id, "win",  spread,  loserTeam);
-          await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam);
+          await appendGameLog(winnerId, season.id, "win",  spread,  loserTeam,   loserId);
+          await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam,  winnerId);
 
           await db.update(usersTable)
             .set({ allTimeH2HWins: sql`${usersTable.allTimeH2HWins} + 1`, updatedAt: new Date() })
@@ -1021,6 +1043,7 @@ export async function processWeekScores(
           await db.update(usersTable)
             .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
             .where(eq(usersTable.discordId, loserId));
+          await upsertH2HMatchup(winnerId, loserId);
 
           const winnerRow = await db.select({ allTimeH2HWins: usersTable.allTimeH2HWins, milestoneTierAwarded: usersTable.milestoneTierAwarded })
             .from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1);

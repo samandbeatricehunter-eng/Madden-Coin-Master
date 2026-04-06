@@ -22,7 +22,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  usersTable, userRecordsTable,
+  usersTable, userRecordsTable, h2hMatchupRecordsTable,
   franchiseProcessedGamesTable, franchiseGameParticipantsTable,
 } from "@workspace/db";
 import { eq, and, gte, sql, inArray } from "drizzle-orm";
@@ -39,13 +39,14 @@ const coinTransactionsTable = pgTable("coin_transactions", {
 });
 
 const gameLogTable = pgTable("game_log", {
-  id:            serial("id").primaryKey(),
-  discordId:     text("discord_id").notNull(),
-  seasonId:      integer("season_id").notNull(),
-  result:        text("result").notNull(),
-  pointSpread:   integer("point_spread").notNull().default(0),
-  opponentLabel: text("opponent_label").notNull().default(""),
-  recordedAt:    timestamp("recorded_at").notNull().defaultNow(),
+  id:                serial("id").primaryKey(),
+  discordId:         text("discord_id").notNull(),
+  seasonId:          integer("season_id").notNull(),
+  result:            text("result").notNull(),
+  pointSpread:       integer("point_spread").notNull().default(0),
+  opponentLabel:     text("opponent_label").notNull().default(""),
+  opponentDiscordId: text("opponent_discord_id"),
+  recordedAt:        timestamp("recorded_at").notNull().defaultNow(),
 });
 
 // ── Command ──────────────────────────────────────────────────────────────────
@@ -103,14 +104,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // Determine record corrections per (discordId, seasonId)
   type RecordKey = string; // `${discordId}:${seasonId}`
-  const recordDeltas  = new Map<RecordKey, { wins: number; losses: number; pd: number }>();
-  const allTimeDeltas = new Map<string, { wins: number; losses: number }>();
+  type MatchupKey = string; // `${id1}:${id2}` canonical
+  const recordDeltas   = new Map<RecordKey,  { wins: number; losses: number; pd: number }>();
+  const allTimeDeltas  = new Map<string,     { wins: number; losses: number }>();
+  // wins1/wins2 to subtract per canonical pair
+  const matchupDeltas  = new Map<MatchupKey, { wins1: number; wins2: number }>();
 
   for (const log of gameLogs) {
-    const key    = `${log.discordId}:${log.seasonId}`;
-    const isH2H  = !log.opponentLabel.startsWith("[CPU]");
+    const key   = `${log.discordId}:${log.seasonId}`;
+    const isH2H = log.opponentDiscordId != null;
 
-    if (!recordDeltas.has(key))       recordDeltas.set(key, { wins: 0, losses: 0, pd: 0 });
+    if (!recordDeltas.has(key))            recordDeltas.set(key, { wins: 0, losses: 0, pd: 0 });
     if (!allTimeDeltas.has(log.discordId)) allTimeDeltas.set(log.discordId, { wins: 0, losses: 0 });
 
     if (isH2H) {
@@ -118,6 +122,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const at = allTimeDeltas.get(log.discordId)!;
       if (log.result === "win")  { rd.wins++;   rd.pd += log.pointSpread; at.wins++; }
       if (log.result === "loss") { rd.losses++; rd.pd += log.pointSpread; at.losses++; }
+
+      // Build per-pair matchup delta (only count the "win" side to avoid double-counting)
+      if (log.result === "win" && log.opponentDiscordId) {
+        const [id1, id2] = log.discordId < log.opponentDiscordId
+          ? [log.discordId, log.opponentDiscordId]
+          : [log.opponentDiscordId, log.discordId];
+        const mKey = `${id1}:${id2}`;
+        if (!matchupDeltas.has(mKey)) matchupDeltas.set(mKey, { wins1: 0, wins2: 0 });
+        const md = matchupDeltas.get(mKey)!;
+        if (log.discordId === id1) md.wins1++; else md.wins2++;
+      }
     }
   }
 
@@ -219,6 +234,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         updatedAt: new Date(),
       })
       .where(eq(usersTable.discordId, discordId));
+  }
+
+  // 5d.5. Correct per-opponent matchup records
+  for (const [mKey, md] of matchupDeltas) {
+    const [id1, id2] = mKey.split(":") as [string, string];
+    if (!md.wins1 && !md.wins2) continue;
+    await db.update(h2hMatchupRecordsTable)
+      .set({
+        wins1: md.wins1 ? sql`GREATEST(0, ${h2hMatchupRecordsTable.wins1} - ${md.wins1})` : undefined,
+        wins2: md.wins2 ? sql`GREATEST(0, ${h2hMatchupRecordsTable.wins2} - ${md.wins2})` : undefined,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(h2hMatchupRecordsTable.discordId1, id1),
+        eq(h2hMatchupRecordsTable.discordId2, id2),
+      ));
   }
 
   // 5e. Delete game_log entries

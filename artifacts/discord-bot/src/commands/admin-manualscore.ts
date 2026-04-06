@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userRecordsTable, gameLogTable, coinTransactionsTable } from "@workspace/db";
+import { usersTable, userRecordsTable, gameLogTable, h2hMatchupRecordsTable, coinTransactionsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { addBalance, logTransaction, getOrCreateActiveSeason, isAdminUser } from "../lib/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -198,16 +198,36 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
         .where(eq(usersTable.discordId, loser.discordId));
 
-      // Game log
+      // Per-opponent matchup record
+      {
+        const [id1, id2] = winner.discordId < loser.discordId
+          ? [winner.discordId, loser.discordId]
+          : [loser.discordId, winner.discordId];
+        const winnerIsId1 = winner.discordId === id1;
+        await tx.insert(h2hMatchupRecordsTable)
+          .values({ discordId1: id1, discordId2: id2, wins1: winnerIsId1 ? 1 : 0, wins2: winnerIsId1 ? 0 : 1 })
+          .onConflictDoUpdate({
+            target: [h2hMatchupRecordsTable.discordId1, h2hMatchupRecordsTable.discordId2],
+            set: winnerIsId1
+              ? { wins1: sql`${h2hMatchupRecordsTable.wins1} + 1`, updatedAt: new Date() }
+              : { wins2: sql`${h2hMatchupRecordsTable.wins2} + 1`, updatedAt: new Date() },
+          });
+      }
+
+      // Game log (this is always a true H2H — both users provided)
       await tx.insert(gameLogTable).values({
         discordId: winner.discordId, seasonId: season.id,
         result: "win", pointSpread: pointDiff,
-        opponentLabel: loser.team ?? loser.discordUsername, gameType,
+        opponentLabel: loser.team ?? loser.discordUsername,
+        opponentDiscordId: loser.discordId,
+        gameType,
       });
       await tx.insert(gameLogTable).values({
         discordId: loser.discordId, seasonId: season.id,
         result: "loss", pointSpread: -pointDiff,
-        opponentLabel: winner.team ?? winner.discordUsername, gameType,
+        opponentLabel: winner.team ?? winner.discordUsername,
+        opponentDiscordId: winner.discordId,
+        gameType,
       });
 
       resultLines.push(`🏆 **${winner.team ?? winDiscord.username}** defeats **${loser.team ?? loseDiscord.username}**, **${Math.max(homeScore, awayScore)}–${Math.min(homeScore, awayScore)}**`);
