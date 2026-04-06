@@ -45,9 +45,10 @@ export const data = new SlashCommandBuilder()
         { name: "📊 Season PR bonus — #9–10 ranked players",             value: PAYOUT_KEYS.SEASON_PR_9_10  },
         { name: "🎮 GOTY award — coins per winner",                      value: PAYOUT_KEYS.GOTY_WINNER     },
         // ── Individual player bonuses ──────────────────────────────────────────
-        { name: "🏃 EOS bonus — RB 7.0+ YPC (100+ carries)",             value: PAYOUT_KEYS.EOS_RB_YPC_BONUS },
-        { name: "🏈 EOS bonus — QB 8.5+ YPA (150+ attempts)",            value: PAYOUT_KEYS.EOS_QB_YPA_BONUS },
-        { name: "🛡️ EOS bonus — DB individual player 8+ INTs",           value: PAYOUT_KEYS.EOS_DB_INT_BONUS },
+        { name: "🏃 EOS bonus — RB 7.0+ YPC (100+ carries)",             value: PAYOUT_KEYS.EOS_RB_YPC_BONUS    },
+        { name: "🏈 EOS bonus — QB 8.5+ YPA (150+ attempts)",            value: PAYOUT_KEYS.EOS_QB_YPA_BONUS    },
+        { name: "🛡️ EOS bonus — DB individual player 8+ INTs",           value: PAYOUT_KEYS.EOS_DB_INT_BONUS    },
+        { name: "😔 EOS consolation — missed playoffs (user team)",       value: PAYOUT_KEYS.EOS_MISSED_PLAYOFFS },
       ))
     .addIntegerOption(o => o
       .setName("amount")

@@ -47,13 +47,17 @@ export const data = new SlashCommandBuilder()
     .setName("db_int_bonus")
     .setDescription("DB qualified: individual player with 8+ INTs?")
     .setRequired(false))
-  // ── Awards ─────────────────────────────────────────────────────────────────
+  // ── Awards & consolation ───────────────────────────────────────────────────
   .addIntegerOption(o => o
     .setName("award_count")
     .setDescription("Number of in-game award winners on this team (each pays award_win_bonus coins)")
     .setRequired(false)
     .setMinValue(0)
     .setMaxValue(20))
+  .addBooleanOption(o => o
+    .setName("missed_playoffs")
+    .setDescription("Did this user-controlled team miss the playoffs? Awards the consolation payout.")
+    .setRequired(false))
   .addBooleanOption(o => o
     .setName("dry_run")
     .setDescription("Preview payout breakdown without posting to commissioner (default: false)")
@@ -62,12 +66,13 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const targetUser   = interaction.options.getUser("user", true);
-  const dryRun       = interaction.options.getBoolean("dry_run") ?? false;
-  const rbYpcBonus   = interaction.options.getBoolean("rb_ypc_bonus") ?? false;
-  const qbYpaBonus   = interaction.options.getBoolean("qb_ypa_bonus") ?? false;
-  const dbIntBonus   = interaction.options.getBoolean("db_int_bonus") ?? false;
-  const awardCount   = interaction.options.getInteger("award_count") ?? 0;
+  const targetUser    = interaction.options.getUser("user", true);
+  const dryRun        = interaction.options.getBoolean("dry_run") ?? false;
+  const rbYpcBonus    = interaction.options.getBoolean("rb_ypc_bonus") ?? false;
+  const qbYpaBonus    = interaction.options.getBoolean("qb_ypa_bonus") ?? false;
+  const dbIntBonus    = interaction.options.getBoolean("db_int_bonus") ?? false;
+  const missedPlayoffs = interaction.options.getBoolean("missed_playoffs") ?? false;
+  const awardCount    = interaction.options.getInteger("award_count") ?? 0;
 
   // Collect all entered stat values
   const enteredStats: Record<string, number> = {};
@@ -77,7 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const hasStats       = Object.keys(enteredStats).length > 0;
-  const hasAnyBonus    = rbYpcBonus || qbYpaBonus || dbIntBonus || awardCount > 0;
+  const hasAnyBonus    = rbYpcBonus || qbYpaBonus || dbIntBonus || missedPlayoffs || awardCount > 0;
   if (!hasStats && !hasAnyBonus) {
     await interaction.editReply({ content: "❌ Enter at least one stat value or bonus." });
     return;
@@ -128,11 +133,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Load individual bonus payout amounts ────────────────────────────────────
-  const [rbBonusAmt, qbBonusAmt, dbBonusAmt, awardBonusAmt] = await Promise.all([
+  const [rbBonusAmt, qbBonusAmt, dbBonusAmt, awardBonusAmt, missedPlayoffsAmt] = await Promise.all([
     getPayoutValue(PAYOUT_KEYS.EOS_RB_YPC_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_QB_YPA_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
     getPayoutValue(PAYOUT_KEYS.AWARD_WIN_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_MISSED_PLAYOFFS),
   ]);
 
   // ── Evaluate each stat tier ─────────────────────────────────────────────────
@@ -179,6 +185,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     displayLines.push(`• **Awards**: ${awardCount} award winner(s) × ${awardBonusAmt} coins → +${awardTotal} coins`);
     breakdown.push({ label: `Awards (${awardCount}×)`, statValue: awardCount, unit: "awards", tier: 1, coins: awardTotal });
     totalCoins += awardTotal;
+  }
+
+  // ── Missed playoffs consolation ──────────────────────────────────────────────
+  if (missedPlayoffs) {
+    displayLines.push(`• **Missed Playoffs Consolation**: user-controlled team, did not qualify → +${missedPlayoffsAmt} coins`);
+    breakdown.push({ label: "Missed Playoffs Consolation", statValue: 1, unit: "", tier: 1, coins: missedPlayoffsAmt });
+    totalCoins += missedPlayoffsAmt;
   }
 
   // ── Dry run: just show the preview ───────────────────────────────────────────
