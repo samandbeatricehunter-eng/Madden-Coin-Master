@@ -6,9 +6,8 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable,
-  franchiseDraftPicksTable,
 } from "@workspace/db";
-import { eq, and, asc, count } from "drizzle-orm";
+import { eq, and, count } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 
@@ -144,9 +143,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick1").setDescription("Draft pick to offer, e.g. '2027 Round 1' or '2026 Round 2 (from Raiders)'"))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)"))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return (describes to other managers)"))
   )
@@ -178,9 +177,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick1").setDescription("Draft pick to offer, e.g. '2027 Round 1' or '2026 Round 2 (from Raiders)'"))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)"))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return"))
   )
@@ -242,9 +241,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster you're offering").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick1").setDescription("Pick you're offering, e.g. '2027 Round 1' or '2026 Round 2 (from Raiders)'"))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)"))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins you're offering in return").setMinValue(1))
       .addStringOption(o => o.setName("notes").setDescription("Any additional details about what you're seeking"))
   )
@@ -259,9 +258,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick1").setDescription("Pick to offer, e.g. '2027 Round 1' or '2026 Round 2 (from Raiders)'"))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)"))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include in the offer").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return"))
       .addStringOption(o => o.setName("message").setDescription("Optional personal message"))
@@ -300,34 +299,6 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
         name:  `${p.firstName} ${p.lastName} (${p.position}) OVR ${p.overall} — ${devLabel(p.devTrait)}`.slice(0, 100),
         value: `${p.playerId}|${p.firstName} ${p.lastName}|${p.position}|${p.overall}|${p.devTrait}`.slice(0, 100),
       }))
-    ).catch(() => {});
-    return;
-  }
-
-  // Pick autocomplete — covers add, update, iso (offering side), send-offer
-  if (["pick1","pick2","pick3"].includes(focused.name)) {
-    const season = await getOrCreateActiveSeason();
-    const picks  = await db.select().from(franchiseDraftPicksTable)
-      .where(and(
-        eq(franchiseDraftPicksTable.seasonId, season.id),
-        eq(franchiseDraftPicksTable.discordId, interaction.user.id),
-      ))
-      .orderBy(asc(franchiseDraftPicksTable.draftYear), asc(franchiseDraftPicksTable.round), asc(franchiseDraftPicksTable.pickNum))
-      .limit(200);
-
-    function pickLabel(p: typeof picks[0]) {
-      const pickStr = p.pickNum > 0 ? `, Pick #${p.pickNum}` : "";
-      const origStr = p.originalTeamName ? ` (from ${p.originalTeamName})` : "";
-      return `${p.draftYear} Round ${p.round}${pickStr}${origStr}`;
-    }
-
-    const filtered = query ? picks.filter(p => pickLabel(p).toLowerCase().includes(query)) : picks;
-
-    await interaction.respond(
-      filtered.slice(0, 25).map(p => {
-        const label = pickLabel(p);
-        return { name: label.slice(0, 100), value: label.slice(0, 100) };
-      })
     ).catch(() => {});
     return;
   }
