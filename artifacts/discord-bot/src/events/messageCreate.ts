@@ -276,11 +276,14 @@ The full rulebook is accessible via /rules. Ask me about any specific rule or se
 
 // ── System prompt ──────────────────────────────────────────────────────────────
 
+type MentionedUser = { displayName: string; stats: UserStats };
+
 function buildSystemPrompt(
   rulesText: string,
   adminIds: string[],
   stats: UserStats,
   callerIsAdmin: boolean,
+  mentionedUsers: MentionedUser[] = [],
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -293,6 +296,20 @@ function buildSystemPrompt(
     `All-time H2H: ${stats.allTimeH2HWins}W – ${stats.allTimeH2HLosses}L`,
     `Coin balance: ${stats.balance.toLocaleString()}`,
   ].join("\n");
+
+  const mentionedBlock = mentionedUsers.length > 0
+    ? "\n\nMENTIONED LEAGUE MEMBERS (use these when the user asks about another member)\n" +
+      mentionedUsers.map(m => {
+        const s = m.stats;
+        return [
+          `${m.displayName} (${s.team})`,
+          `  Season record: ${s.seasonWins}W – ${s.seasonLosses}L`,
+          `  Season point differential: ${s.pointDiff >= 0 ? "+" : ""}${s.pointDiff}`,
+          `  All-time H2H: ${s.allTimeH2HWins}W – ${s.allTimeH2HLosses}L`,
+          `  Coin balance: ${s.balance.toLocaleString()}`,
+        ].join("\n");
+      }).join("\n\n")
+    : "";
 
   const adminRule = callerIsAdmin
     ? "⚠️ THIS USER IS A LEAGUE ADMINISTRATOR. You MUST treat them with complete respect at all times. Never insult, roast, or be dismissive toward them. If they're being playful, be playful back — but keep it classy."
@@ -331,8 +348,8 @@ For non-admins: go in. Use their stats below to make it personal and league-rele
 ADMIN RULE (overrides everything — highest priority)
 ${adminRule}
 
-CURRENT USER STATS (use these for context — especially for roasts)
-${statBlock}
+CURRENT USER STATS (the person speaking to you right now)
+${statBlock}${mentionedBlock}
 
 COMMAND GUIDE
 ${HELP_TEXT}
@@ -352,8 +369,22 @@ export async function execute(message: Message): Promise<void> {
   if (message.author.bot) return;
   if (!message.mentions.has(message.client.user!, { ignoreEveryone: true })) return;
 
-  // Strip all @mentions from the content and trim
-  const content = message.content.replace(/<@!?\d+>/g, "").trim();
+  // Identify other users mentioned in the message (not the bot itself)
+  const otherMentioned = [...message.mentions.users.values()].filter(
+    u => u.id !== message.client.user!.id && u.id !== message.author.id,
+  );
+
+  // Replace each non-bot mention with the user's display name so the content reads naturally
+  let content = message.content;
+  // Strip the bot's own mention
+  content = content.replace(new RegExp(`<@!?${message.client.user!.id}>`, "g"), "");
+  // Replace other user mentions with their server display name
+  for (const u of otherMentioned) {
+    const member = message.mentions.members?.get(u.id) ?? message.guild?.members.cache.get(u.id);
+    const displayName = member?.displayName ?? u.username;
+    content = content.replace(new RegExp(`<@!?${u.id}>`, "g"), displayName);
+  }
+  content = content.trim();
 
   // Empty mention — prompt them to ask something
   if (!content) {
@@ -367,15 +398,23 @@ export async function execute(message: Message): Promise<void> {
   }
 
   // Gather all context in parallel — we need isAdmin before applying throttle
-  const [isAdmin, userStats, rulesText, adminIds] = await Promise.all([
+  const defaultStats = () => ({
+    team: "Unknown", balance: 0,
+    allTimeH2HWins: 0, allTimeH2HLosses: 0,
+    seasonWins: 0, seasonLosses: 0, pointDiff: 0,
+  });
+
+  const [isAdmin, userStats, rulesText, adminIds, mentionedUsersData] = await Promise.all([
     isAdminUser(message.author.id).catch(() => false),
-    fetchUserStats(message.author.id).catch(() => ({
-      team: "Unknown", balance: 0,
-      allTimeH2HWins: 0, allTimeH2HLosses: 0,
-      seasonWins: 0, seasonLosses: 0, pointDiff: 0,
-    })),
+    fetchUserStats(message.author.id).catch(defaultStats),
     getCachedRules().catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
+    Promise.all(otherMentioned.map(async u => {
+      const member = message.mentions.members?.get(u.id) ?? message.guild?.members.cache.get(u.id);
+      const displayName = member?.displayName ?? u.username;
+      const stats = await fetchUserStats(u.id).catch(defaultStats);
+      return { displayName, stats } as MentionedUser;
+    })),
   ]);
 
   // Small-talk limit check — admins are never throttled
@@ -389,7 +428,7 @@ export async function execute(message: Message): Promise<void> {
     }
   }
 
-  const systemPrompt = buildSystemPrompt(rulesText, adminIds, userStats, isAdmin);
+  const systemPrompt = buildSystemPrompt(rulesText, adminIds, userStats, isAdmin, mentionedUsersData);
 
   // Call the model
   let raw = "";
