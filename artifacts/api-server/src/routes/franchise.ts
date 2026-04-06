@@ -248,6 +248,20 @@ router.post("/madden/:leagueKey/:platform/:leagueId/leaguedraftpicks", validateK
   console.log("[mca/leaguedraftpicks]", result.message);
 });
 
+// ── /team/:teamId/draftpicks — per-team picks (MCA sends one per team) ────────
+// The MCA issues one POST per team when exporting draft picks. We accumulate
+// all individual payloads through the same processDraftPicks upsert so the
+// table ends up with the full league ledger once all 32 teams have posted.
+router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/draftpicks", validateKey, async (req, res) => {
+  const teamIdStr = String(req.params["teamId"] ?? "0");
+  const mcaTeamId = parseInt(teamIdStr, 10);
+  saveMcaPayload(`mca/team-${teamIdStr}-draftpicks.json`, req.body);
+  res.status(200).json({ status: "received" });
+  const result = await processDraftPicks(req.body, isNaN(mcaTeamId) ? undefined : mcaTeamId)
+    .catch(err => ({ ok: false, message: String(err) }));
+  console.log(`[mca/team/${teamIdStr}/draftpicks]`, result.message);
+});
+
 // ── /team/:teamId/roster — per-team active 53-man roster ─────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, async (req, res) => {
   const teamIdStr = String(req.params["teamId"] ?? "0");

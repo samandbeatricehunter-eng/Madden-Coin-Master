@@ -1351,7 +1351,11 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
 // Fields seen in the wild:
 //   teamId, originalTeamId, draftYear (or year), round (or roundNum),
 //   pickNum (or normalizedPickNumber), currentTeam*, origTeam*
-export async function processDraftPicks(body: unknown): Promise<ProcessResult> {
+//
+// perTeamId: when set (per-team endpoint), only delete/replace that team's
+// existing picks instead of nuking the whole season — this lets 32 individual
+// team payloads accumulate without each one wiping the previous teams' data.
+export async function processDraftPicks(body: unknown, perTeamId?: number): Promise<ProcessResult> {
   try {
     const season = await getOrCreateActiveSeason();
 
@@ -1440,9 +1444,19 @@ export async function processDraftPicks(body: unknown): Promise<ProcessResult> {
       return { ok: true, message: "No valid draft picks parsed from payload" };
     }
 
-    // Atomic replace: clear all picks for this season then insert fresh batch
-    await db.delete(franchiseDraftPicksTable)
-      .where(eq(franchiseDraftPicksTable.seasonId, season.id));
+    // Atomic replace:
+    // - Per-team mode  → only wipe that team's existing picks (accumulate 32 posts)
+    // - League-wide    → wipe the whole season and replace with the full flat list
+    if (perTeamId !== undefined) {
+      await db.delete(franchiseDraftPicksTable)
+        .where(and(
+          eq(franchiseDraftPicksTable.seasonId, season.id),
+          eq(franchiseDraftPicksTable.teamId, perTeamId),
+        ));
+    } else {
+      await db.delete(franchiseDraftPicksTable)
+        .where(eq(franchiseDraftPicksTable.seasonId, season.id));
+    }
     await db.insert(franchiseDraftPicksTable).values(rows);
 
     console.log(`[mca/draftpicks] Imported ${rows.length} picks for season ${season.id}`);
