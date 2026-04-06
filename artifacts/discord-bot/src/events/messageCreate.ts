@@ -401,7 +401,6 @@ PERSONALITY
 - Knowledgeable and thorough when members need real help
 - Savage and witty when disrespected — funny, never hateful
 - Brief by default; in-depth only when answering genuine help questions
-- All responses stay under 1900 characters
 
 CRITICAL FORMATTING RULE
 Start EVERY response with exactly one of these type tags on its own line, followed immediately by your response:
@@ -514,8 +513,7 @@ export async function execute(message: Message): Promise<void> {
   let raw = "";
   try {
     const completion = await openai.chat.completions.create({
-      model:                "gpt-5-mini",
-      max_completion_tokens: 2000,
+      model:    "gpt-5-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user",   content },
