@@ -986,6 +986,8 @@ export async function processWeekScores(
         winnerCoins?: number | null;
         loserCoins?: number | null;
         appliedPointDiff?: number | null;
+        milestoneBonus?: number | null;
+        milestonePrevTier?: number | null;
       } = { payoutType: "none" };
 
       if (isTrueH2H) {
@@ -1022,7 +1024,9 @@ export async function processWeekScores(
 
           const winnerRow = await db.select({ allTimeH2HWins: usersTable.allTimeH2HWins, milestoneTierAwarded: usersTable.milestoneTierAwarded })
             .from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1);
-          const milestone = checkMilestone(winnerRow[0]?.allTimeH2HWins ?? 0, winnerRow[0]?.milestoneTierAwarded ?? 0);
+          const prevMilestoneTier = winnerRow[0]?.milestoneTierAwarded ?? 0;
+          const milestone = checkMilestone(winnerRow[0]?.allTimeH2HWins ?? 0, prevMilestoneTier);
+          let milestoneBonusAwarded: number | null = null;
           if (milestone) {
             await addBalance(winnerId, milestone.bonus);
             await logTransaction(winnerId, milestone.bonus, "addcoins", `Career milestone: ${milestone.label} (MCA webhook)`);
@@ -1030,6 +1034,7 @@ export async function processWeekScores(
               .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
               .where(eq(usersTable.discordId, winnerId));
             milestoneLines.push(`🎯 **${winnerTeam}** hit **${milestone.label}** → +${milestone.bonus} coins`);
+            milestoneBonusAwarded = milestone.bonus;
           }
 
           payoutMeta = {
@@ -1037,6 +1042,8 @@ export async function processWeekScores(
             winnerDiscordId: winnerId, loserDiscordId: loserId,
             winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT,
             appliedPointDiff: spread,
+            milestoneBonus:    milestoneBonusAwarded,
+            milestonePrevTier: milestoneBonusAwarded !== null ? prevMilestoneTier : null,
           };
           await db.insert(franchiseGameParticipantsTable)
             .values([

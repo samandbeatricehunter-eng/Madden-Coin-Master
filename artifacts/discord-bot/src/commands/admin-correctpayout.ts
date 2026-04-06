@@ -328,6 +328,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (loserLogId)  await tx.delete(gameLogTable).where(eq(gameLogTable.id, loserLogId));
       reversalLines.push("❌ Removed incorrect H2H game log entries");
 
+      // Reverse milestone bonus if one was awarded for this specific game
+      const milestoneBonus    = processedGame.milestoneBonus    ?? 0;
+      const milestonePrevTier = processedGame.milestonePrevTier ?? 0;
+      if (milestoneBonus > 0 && inferredWinnerId) {
+        await tx.update(usersTable)
+          .set({ balance: sql`${usersTable.balance} - ${milestoneBonus}`, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, inferredWinnerId));
+        await tx.insert(coinTransactionsTable).values({
+          discordId: inferredWinnerId, amount: -milestoneBonus, type: "removecoins",
+          description: `[Correction Wk${week}] Reversed milestone bonus (game reclassified as CPU)`, relatedUserId: null,
+        });
+        await tx.update(usersTable)
+          .set({ milestoneTierAwarded: milestonePrevTier, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, inferredWinnerId));
+        reversalLines.push(`❌ Reversed milestone bonus of ${milestoneBonus} coins — tier reset to ${milestonePrevTier}`);
+      }
+
     } else if (inferredType === "cpu" && inferredWinnerId) {
       if (inferredWinnerCoins > 0) {
         await tx.update(usersTable)

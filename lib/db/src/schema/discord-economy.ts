@@ -280,6 +280,9 @@ export const franchiseProcessedGamesTable = pgTable("franchise_processed_games",
   winnerCoins:      integer("winner_coins"),   // coins awarded to winner
   loserCoins:       integer("loser_coins"),    // coins awarded to loser (0 for cpu)
   appliedPointDiff: integer("applied_point_diff"), // point spread used for H2H record delta
+  // Milestone reversal metadata — set when a career milestone bonus fires for this game
+  milestoneBonus:   integer("milestone_bonus"),    // bonus coins awarded (null if no milestone fired)
+  milestonePrevTier: integer("milestone_prev_tier"), // milestoneTierAwarded value BEFORE this milestone
   // Lookup fields — allow admin-correctpayout to find this entry by season/week/teams
   seasonIdRef:   integer("season_id_ref"),
   weekIndexRef:  integer("week_index_ref"),
