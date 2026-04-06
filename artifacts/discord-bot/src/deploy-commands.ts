@@ -46,6 +46,12 @@ import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as statLeaders from "./commands/statleaders.js";
 import * as tradeBlock from "./commands/tradeblock.js";
+import * as viewTradeBlock from "./commands/viewtradeblock.js";
+import * as myPicks from "./commands/my-picks.js";
+import * as savings from "./commands/savings.js";
+import * as adminSetMilestoneTier from "./commands/admin-setmilestonetier.js";
+import * as adminServer from "./commands/adminserver.js";
+import * as adminManualScore from "./commands/admin-manualscore.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
 import * as webhookurl from "./commands/webhookurl.js";
 import * as adminCatchup from "./commands/admin-catchup.js";
@@ -79,10 +85,16 @@ const commands = [
   seasonschedule, nextopp,
   adminRollbackFranchise, adminSetStatTier, customarticle, endofseasonpayout,
   myRoster,
+  myPicks,
+  savings,
   weeklyMatchups,
   adminCorrectPayout,
+  adminSetMilestoneTier,
   statLeaders,
   tradeBlock,
+  viewTradeBlock,
+  adminServer,
+  adminManualScore,
   postFullSeasonSchedule,
   webhookurl,
   adminCatchup,
