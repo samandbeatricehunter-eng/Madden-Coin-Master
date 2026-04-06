@@ -44,6 +44,10 @@ export const data = new SlashCommandBuilder()
         { name: "📊 Season PR bonus — #7–8 ranked players",              value: PAYOUT_KEYS.SEASON_PR_7_8   },
         { name: "📊 Season PR bonus — #9–10 ranked players",             value: PAYOUT_KEYS.SEASON_PR_9_10  },
         { name: "🎮 GOTY award — coins per winner",                      value: PAYOUT_KEYS.GOTY_WINNER     },
+        // ── Individual player bonuses ──────────────────────────────────────────
+        { name: "🏃 EOS bonus — RB 7.0+ YPC (100+ carries)",             value: PAYOUT_KEYS.EOS_RB_YPC_BONUS },
+        { name: "🏈 EOS bonus — QB 8.5+ YPA (150+ attempts)",            value: PAYOUT_KEYS.EOS_QB_YPA_BONUS },
+        { name: "🛡️ EOS bonus — DB individual player 8+ INTs",           value: PAYOUT_KEYS.EOS_DB_INT_BONUS },
       ))
     .addIntegerOption(o => o
       .setName("amount")
@@ -80,6 +84,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return `**${current} 🪙** — ${description} ${tag}`;
     });
 
+    // ── Section 2b: Individual Player Bonuses ───────────────────────────────
+    const indivKeys  = keys.filter(k => k.category === "Individual Bonuses");
+    const indivLines = indivKeys.map(({ key, description, defaultValue }) => {
+      const current = config.get(key) ?? defaultValue;
+      const tag     = current === defaultValue ? "*(default)*" : "*(custom)*";
+      return `**${current} 🪙** — ${description} ${tag}`;
+    });
+
     // ── Section 3: Store Prices (from season rules) ──────────────────────────
     const storeLines = [
       `**${rules.legendCost.toLocaleString()} 🪙** — Legend card${rules.legendCost !== COSTS.legend ? " *(custom)*" : " *(default)*"}`,
@@ -109,6 +121,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         {
           name:   "🏆 End-of-Season Bonuses",
           value:  bonusLines.join("\n"),
+          inline: false,
+        },
+        {
+          name:   "🏃 Individual Player Bonuses *(set via /admin-setpayouts set)*",
+          value:  indivLines.join("\n"),
           inline: false,
         },
         {

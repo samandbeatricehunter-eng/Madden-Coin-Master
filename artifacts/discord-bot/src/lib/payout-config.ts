@@ -15,23 +15,31 @@ export const PAYOUT_KEYS = {
   SEASON_PR_7_8:    "season_pr_7_8",
   SEASON_PR_9_10:   "season_pr_9_10",
   GOTY_WINNER:      "goty_winner_coins",
+  // ── End-of-season individual player bonuses ──────────────────────────────────
+  EOS_RB_YPC_BONUS: "eos_rb_ypc_bonus",
+  EOS_QB_YPA_BONUS: "eos_qb_ypa_bonus",
+  EOS_DB_INT_BONUS: "eos_db_int_bonus",
 } as const;
 
 export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
 
 const DEFAULTS: Record<PayoutKey, { value: number; description: string; category: string }> = {
   // ── Game result payouts ──────────────────────────────────────────────────────
-  h2h_win:           { value: 50,  description: "H2H game win (both users played)",            category: "Game Payouts"          },
-  h2h_loss:          { value: 20,  description: "H2H game loss (both users played)",            category: "Game Payouts"          },
-  cpu_win:           { value: 20,  description: "CPU/force win (one-sided or simmed game)",     category: "Game Payouts"          },
+  h2h_win:           { value: 50,  description: "H2H game win (both users played)",                           category: "Game Payouts"          },
+  h2h_loss:          { value: 20,  description: "H2H game loss (both users played)",                           category: "Game Payouts"          },
+  cpu_win:           { value: 20,  description: "CPU/force win (one-sided or simmed game)",                    category: "Game Payouts"          },
   // ── End-of-season bonuses ────────────────────────────────────────────────────
-  award_win_bonus:   { value: 50,  description: "Coins per team with an in-game award winner",  category: "Season Bonuses"        },
-  season_pr_1:       { value: 150, description: "Season PR bonus — #1 ranked player",           category: "Season Bonuses"        },
-  season_pr_2:       { value: 125, description: "Season PR bonus — #2 ranked player",           category: "Season Bonuses"        },
-  season_pr_3_6:     { value: 100, description: "Season PR bonus — #3–6 ranked players",        category: "Season Bonuses"        },
-  season_pr_7_8:     { value: 75,  description: "Season PR bonus — #7–8 ranked players",        category: "Season Bonuses"        },
-  season_pr_9_10:    { value: 50,  description: "Season PR bonus — #9–10 ranked players",       category: "Season Bonuses"        },
-  goty_winner_coins: { value: 100, description: "Coins awarded to each GOTY award winner",      category: "Season Bonuses"        },
+  award_win_bonus:   { value: 50,  description: "Coins per team with an in-game award winner",                 category: "Season Bonuses"        },
+  season_pr_1:       { value: 150, description: "Season PR bonus — #1 ranked player",                          category: "Season Bonuses"        },
+  season_pr_2:       { value: 125, description: "Season PR bonus — #2 ranked player",                          category: "Season Bonuses"        },
+  season_pr_3_6:     { value: 100, description: "Season PR bonus — #3–6 ranked players",                       category: "Season Bonuses"        },
+  season_pr_7_8:     { value: 75,  description: "Season PR bonus — #7–8 ranked players",                       category: "Season Bonuses"        },
+  season_pr_9_10:    { value: 50,  description: "Season PR bonus — #9–10 ranked players",                      category: "Season Bonuses"        },
+  goty_winner_coins: { value: 100, description: "Coins awarded to each GOTY award winner",                     category: "Season Bonuses"        },
+  // ── Individual player bonuses ─────────────────────────────────────────────────
+  eos_rb_ypc_bonus:  { value: 100, description: "EOS individual bonus — RB 7.0+ YPC (100+ carries)",           category: "Individual Bonuses"    },
+  eos_qb_ypa_bonus:  { value: 100, description: "EOS individual bonus — QB 8.5+ YPA (150+ attempts)",          category: "Individual Bonuses"    },
+  eos_db_int_bonus:  { value: 100, description: "EOS individual bonus — DB individual player 8+ INTs",         category: "Individual Bonuses"    },
 };
 
 const cache = new Map<PayoutKey, number>();

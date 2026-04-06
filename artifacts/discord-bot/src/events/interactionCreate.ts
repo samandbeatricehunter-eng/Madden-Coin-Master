@@ -12,8 +12,9 @@ import {
   interviewRequestsTable, wagersTable,
   tradeBlockListingsTable, tradeBlockISOTable, completedTradesTable,
   franchiseScheduleTable, seasonsTable,
-  pendingEosPayoutsTable,
+  pendingEosPayoutsTable, seasonStatTierConfigsTable,
 } from "@workspace/db";
+import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
@@ -1101,6 +1102,69 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Server settings: done ─────────────────────────────────────────────────────
   if (action === "settings_done") {
     await interaction.update({ components: [] });
+    return;
+  }
+
+  // ── Admin: seed default stat tiers for a season ───────────────────────────────
+  if (action === "seed_stat_defaults") {
+    const seasonId = parseInt(secondPart ?? "0", 10);
+    if (!seasonId) { await interaction.reply({ content: "❌ Invalid season ID.", ephemeral: true }); return; }
+
+    const adminCheck = await isAdminUser(interaction.user.id).catch(() => false);
+    if (!adminCheck) {
+      await interaction.reply({ content: "❌ Only admins can seed stat tier defaults.", ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    // Load existing tiers so we don't overwrite customized values
+    const existing = await db.select()
+      .from(seasonStatTierConfigsTable)
+      .where(eq(seasonStatTierConfigsTable.seasonId, seasonId));
+
+    const existingKeys = new Set(existing.map(r => `${r.statCategory}:${r.tier}`));
+
+    const toInsert: { seasonId: number; statCategory: string; tier: number; threshold: number; payout: number; updatedAt: Date }[] = [];
+
+    for (const cat of STAT_CATEGORIES) {
+      const defaults = STAT_TIER_DEFAULTS[cat.key];
+      if (!defaults) continue;
+      defaults.forEach((d, i) => {
+        const tier = i + 1;
+        const key = `${cat.key}:${tier}`;
+        if (!existingKeys.has(key)) {
+          toInsert.push({ seasonId, statCategory: cat.key, tier, threshold: d.threshold, payout: d.payout, updatedAt: new Date() });
+        }
+      });
+    }
+
+    if (toInsert.length === 0) {
+      await interaction.editReply({ content: "✅ All tiers are already configured — nothing to seed." });
+      return;
+    }
+
+    await db.insert(seasonStatTierConfigsTable).values(toInsert).onConflictDoNothing();
+
+    const seededCategories = [...new Set(toInsert.map(r => r.statCategory))];
+    const catLabels = seededCategories.map(key => {
+      const cat = STAT_CATEGORIES.find(c => c.key === key);
+      return cat ? `• **${cat.label}**` : `• ${key}`;
+    });
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🌱 Default Stat Tiers Seeded")
+          .setColor(Colors.Green)
+          .setDescription(
+            `Seeded **${toInsert.length} missing tiers** across **${seededCategories.length} categories** for Season ${seasonId}:\n\n` +
+            catLabels.join("\n"),
+          )
+          .setFooter({ text: "Existing custom tiers were not overwritten. Use /admin-set-stat-tier to adjust individual tiers." })
+          .setTimestamp(),
+      ],
+    });
     return;
   }
 

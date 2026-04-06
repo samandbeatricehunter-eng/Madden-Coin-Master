@@ -9,6 +9,7 @@ import {
 import { eq } from "drizzle-orm";
 import { getOrCreateActiveSeason, getUserByDiscordId } from "../lib/db-helpers.js";
 import { STAT_CATEGORIES, evaluateTier } from "../lib/stat-categories.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 
@@ -20,17 +21,39 @@ export const data = new SlashCommandBuilder()
     .setName("user")
     .setDescription("The Discord user (team owner) to pay out")
     .setRequired(true))
-  .addNumberOption(o => o.setName("off_pass_yds").setDescription("Offensive Passing Yards (total)").setRequired(false))
-  .addNumberOption(o => o.setName("off_rush_yds").setDescription("Offensive Rushing Yards (total)").setRequired(false))
-  .addNumberOption(o => o.setName("off_pass_tds").setDescription("Offensive Passing TDs (total)").setRequired(false))
-  .addNumberOption(o => o.setName("off_rush_tds").setDescription("Offensive Rushing TDs (total)").setRequired(false))
-  .addNumberOption(o => o.setName("off_pts_scored").setDescription("Total Points Scored").setRequired(false))
-  .addNumberOption(o => o.setName("off_redzone_pct").setDescription("Offensive Red Zone % (e.g. 68.5)").setRequired(false))
-  .addNumberOption(o => o.setName("def_rush_yds").setDescription("Defensive Rushing Yards Allowed").setRequired(false))
-  .addNumberOption(o => o.setName("def_pass_yds").setDescription("Defensive Passing Yards Allowed").setRequired(false))
-  .addNumberOption(o => o.setName("def_ints").setDescription("Defensive Interceptions").setRequired(false))
-  .addNumberOption(o => o.setName("def_redzone_pct").setDescription("Defensive Red Zone % Allowed (e.g. 42.1)").setRequired(false))
+  // ── Offense ────────────────────────────────────────────────────────────────
+  .addNumberOption(o => o.setName("off_pass_yds").setDescription("Passing Yards (season total)").setRequired(false))
+  .addNumberOption(o => o.setName("off_rush_yds").setDescription("Rushing Yards (season total)").setRequired(false))
+  .addNumberOption(o => o.setName("off_pts_per_game").setDescription("Points Per Game (PPG, e.g. 31.5)").setRequired(false))
+  .addNumberOption(o => o.setName("off_redzone_pct").setDescription("Offensive Red Zone % (e.g. 72.4)").setRequired(false))
+  // ── Defense ────────────────────────────────────────────────────────────────
+  .addNumberOption(o => o.setName("def_pass_yds").setDescription("Passing Yards Allowed (season total)").setRequired(false))
+  .addNumberOption(o => o.setName("def_rush_yds").setDescription("Rushing Yards Allowed (season total)").setRequired(false))
   .addNumberOption(o => o.setName("def_pts_allowed").setDescription("Total Points Allowed").setRequired(false))
+  .addNumberOption(o => o.setName("def_sacks").setDescription("Defensive Sacks (season total)").setRequired(false))
+  .addNumberOption(o => o.setName("def_ints").setDescription("Defensive Interceptions (season total)").setRequired(false))
+  .addNumberOption(o => o.setName("def_fumbles_rec").setDescription("Recovered Fumbles (season total)").setRequired(false))
+  .addNumberOption(o => o.setName("def_redzone_pct").setDescription("Defensive Red Zone % Allowed (e.g. 48.2)").setRequired(false))
+  // ── Individual player bonuses ──────────────────────────────────────────────
+  .addBooleanOption(o => o
+    .setName("rb_ypc_bonus")
+    .setDescription("RB qualified: 7.0+ YPC with 100+ carries?")
+    .setRequired(false))
+  .addBooleanOption(o => o
+    .setName("qb_ypa_bonus")
+    .setDescription("QB qualified: 8.5+ YPA with 150+ attempts?")
+    .setRequired(false))
+  .addBooleanOption(o => o
+    .setName("db_int_bonus")
+    .setDescription("DB qualified: individual player with 8+ INTs?")
+    .setRequired(false))
+  // ── Awards ─────────────────────────────────────────────────────────────────
+  .addIntegerOption(o => o
+    .setName("award_count")
+    .setDescription("Number of in-game award winners on this team (each pays award_win_bonus coins)")
+    .setRequired(false)
+    .setMinValue(0)
+    .setMaxValue(20))
   .addBooleanOption(o => o
     .setName("dry_run")
     .setDescription("Preview payout breakdown without posting to commissioner (default: false)")
@@ -39,17 +62,24 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const targetUser = interaction.options.getUser("user", true);
-  const dryRun     = interaction.options.getBoolean("dry_run") ?? false;
+  const targetUser   = interaction.options.getUser("user", true);
+  const dryRun       = interaction.options.getBoolean("dry_run") ?? false;
+  const rbYpcBonus   = interaction.options.getBoolean("rb_ypc_bonus") ?? false;
+  const qbYpaBonus   = interaction.options.getBoolean("qb_ypa_bonus") ?? false;
+  const dbIntBonus   = interaction.options.getBoolean("db_int_bonus") ?? false;
+  const awardCount   = interaction.options.getInteger("award_count") ?? 0;
 
+  // Collect all entered stat values
   const enteredStats: Record<string, number> = {};
   for (const cat of STAT_CATEGORIES) {
     const val = interaction.options.getNumber(cat.key);
     if (val != null) enteredStats[cat.key] = val;
   }
 
-  if (Object.keys(enteredStats).length === 0) {
-    await interaction.editReply({ content: "❌ Enter at least one stat value." });
+  const hasStats       = Object.keys(enteredStats).length > 0;
+  const hasAnyBonus    = rbYpcBonus || qbYpaBonus || dbIntBonus || awardCount > 0;
+  if (!hasStats && !hasAnyBonus) {
+    await interaction.editReply({ content: "❌ Enter at least one stat value or bonus." });
     return;
   }
 
@@ -63,6 +93,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const season = await getOrCreateActiveSeason();
 
+  // Load tier configs from DB for only the stats entered
   const allTierRows = await db.select()
     .from(seasonStatTierConfigsTable)
     .where(eq(seasonStatTierConfigsTable.seasonId, season.id));
@@ -74,6 +105,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     arr.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
   }
 
+  // Check for missing tier configs only for stats that were actually entered
   const missingCategories: string[] = [];
   for (const cat of STAT_CATEGORIES) {
     if (!(cat.key in enteredStats)) continue;
@@ -89,13 +121,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({
       content:
         `❌ Some stat tier configs are not set for Season ${season.id}. ` +
-        `Use \`/admin-set-stat-tier\` to configure:\n` +
+        `Use \`/admin-stat-tiers\` to seed defaults or \`/admin-set-stat-tier\` to configure manually:\n` +
         missingCategories.map(m => `• ${m}`).join("\n"),
     });
     return;
   }
 
-  // ── Evaluate each stat ────────────────────────────────────────────────────
+  // ── Load individual bonus payout amounts ────────────────────────────────────
+  const [rbBonusAmt, qbBonusAmt, dbBonusAmt, awardBonusAmt] = await Promise.all([
+    getPayoutValue(PAYOUT_KEYS.EOS_RB_YPC_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_QB_YPA_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
+    getPayoutValue(PAYOUT_KEYS.AWARD_WIN_BONUS),
+  ]);
+
+  // ── Evaluate each stat tier ─────────────────────────────────────────────────
   type BreakdownRow = { label: string; statValue: number; unit: string; tier: number; coins: number };
   const breakdown: BreakdownRow[] = [];
   const displayLines: string[] = [];
@@ -116,19 +156,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   }
 
-  // ── Dry run: just show the preview ───────────────────────────────────────
+  // ── Individual bonuses ───────────────────────────────────────────────────────
+  if (rbYpcBonus) {
+    displayLines.push(`• **RB YPC Bonus**: 7.0+ YPC (100+ carries) qualified → +${rbBonusAmt} coins`);
+    breakdown.push({ label: "RB YPC Bonus", statValue: 1, unit: "", tier: 1, coins: rbBonusAmt });
+    totalCoins += rbBonusAmt;
+  }
+  if (qbYpaBonus) {
+    displayLines.push(`• **QB YPA Bonus**: 8.5+ YPA (150+ attempts) qualified → +${qbBonusAmt} coins`);
+    breakdown.push({ label: "QB YPA Bonus", statValue: 1, unit: "", tier: 1, coins: qbBonusAmt });
+    totalCoins += qbBonusAmt;
+  }
+  if (dbIntBonus) {
+    displayLines.push(`• **DB INT Bonus**: individual player 8+ INTs qualified → +${dbBonusAmt} coins`);
+    breakdown.push({ label: "DB INT Bonus", statValue: 1, unit: "", tier: 1, coins: dbBonusAmt });
+    totalCoins += dbBonusAmt;
+  }
+
+  // ── Awards ───────────────────────────────────────────────────────────────────
+  if (awardCount > 0) {
+    const awardTotal = awardCount * awardBonusAmt;
+    displayLines.push(`• **Awards**: ${awardCount} award winner(s) × ${awardBonusAmt} coins → +${awardTotal} coins`);
+    breakdown.push({ label: `Awards (${awardCount}×)`, statValue: awardCount, unit: "awards", tier: 1, coins: awardTotal });
+    totalCoins += awardTotal;
+  }
+
+  // ── Dry run: just show the preview ───────────────────────────────────────────
   if (dryRun) {
     const embed = new EmbedBuilder()
       .setTitle("🧪 End-of-Season Payout — DRY RUN")
       .setColor(Colors.Yellow)
       .setDescription(
         `**Team:** <@${targetUser.id}> (${user.team ?? "No team set"})\n\n` +
-        (displayLines.length ? displayLines.join("\n") : "*No stats entered.*"),
+        (displayLines.length ? displayLines.join("\n") : "*No qualifying stats entered.*"),
       )
       .addFields(
-        { name: "Season",             value: `Season ${season.id}`, inline: true },
+        { name: "Season",                    value: `Season ${season.id}`, inline: true },
         { name: "Total Coins (if approved)", value: `${totalCoins}`,       inline: true },
-        { name: "Mode",               value: "DRY RUN — no coins will be awarded", inline: true },
+        { name: "Mode",                      value: "DRY RUN — no coins awarded", inline: true },
       )
       .setFooter({ text: "Run without dry_run=true to post for commissioner approval." })
       .setTimestamp();
@@ -136,7 +201,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Create pending payout record ─────────────────────────────────────────
+  // ── Create pending payout record ─────────────────────────────────────────────
   const [pending] = await db.insert(pendingEosPayoutsTable).values({
     discordId: targetUser.id,
     teamName:  user.team ?? null,
@@ -151,7 +216,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Build commissioner embed ──────────────────────────────────────────────
+  // ── Build commissioner embed ──────────────────────────────────────────────────
   const commEmbed = new EmbedBuilder()
     .setColor(Colors.Gold)
     .setTitle("🏆 End-of-Season Payout — Pending Approval")
@@ -160,9 +225,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       (displayLines.length ? displayLines.join("\n") : "*No qualifying tiers.*"),
     )
     .addFields(
-      { name: "Season",      value: `Season ${season.id}`,          inline: true },
-      { name: "Total Coins", value: `**${totalCoins.toLocaleString()} coins**`, inline: true },
-      { name: "Status",      value: "⏳ Pending commissioner approval",          inline: false },
+      { name: "Season",      value: `Season ${season.id}`,                          inline: true },
+      { name: "Total Coins", value: `**${totalCoins.toLocaleString()} coins**`,     inline: true },
+      { name: "Status",      value: "⏳ Pending commissioner approval",              inline: false },
     )
     .setFooter({ text: `Payout ID: ${pending.id} • Calculated by ${interaction.user.username}` })
     .setTimestamp();
@@ -178,7 +243,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setStyle(ButtonStyle.Secondary),
   );
 
-  // ── Post to commissioner channel ─────────────────────────────────────────
+  // ── Post to commissioner channel ──────────────────────────────────────────────
   let commMessageId: string | null = null;
   if (COMMISSIONER_CHANNEL_ID) {
     try {
@@ -200,7 +265,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setColor(Colors.Green)
     .setTitle("✅ Payout Posted for Approval")
     .setDescription(
-      `Payout for <@${targetUser.id}> (**${totalCoins} coins**) has been posted to the commissioner log.\n` +
+      `Payout for <@${targetUser.id}> (**${totalCoins.toLocaleString()} coins**) has been posted to the commissioner log.\n` +
       `A commissioner must click **Approve** before coins are awarded.` +
       (commMessageId ? "" : "\n⚠️ Could not reach the commissioner channel — check the channel ID."),
     )
