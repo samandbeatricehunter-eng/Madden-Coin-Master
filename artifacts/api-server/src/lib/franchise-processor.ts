@@ -926,10 +926,34 @@ export async function processWeekScores(
 
       const isTie   = homeScore === awayScore;
       const homeWon = homeScore > awayScore;
-      const status  = Number(g.scheduleStatus ?? g.status ?? 3);
+      const status  = Number(g.scheduleStatus ?? g.status ?? 2);
       const bothReg = homeIsHuman && awayIsHuman;
-      const isTrueH2H   = bothReg && status === 3;
-      const isForcedCPU = bothReg && status === 2;
+
+      // Detect force/autopilot games via explicit MCA fields.
+      // NOTE: Madden 24/25 MCA sends scheduleStatus=2 for ALL completed games
+      // (both legit H2H and simulated), so status alone cannot reliably
+      // distinguish them. Prefer explicit force fields when present.
+      const hasForceFlag = !!(
+        g.isForceWin        || g.isForced        || g.forceWin    ||
+        g.homeForceWin      || g.awayForceWin    ||
+        g.homeAutoPilot     || g.awayAutoPilot   ||
+        g.isSimulated       || g.wasSimulated     || g.isAutopilot  ||
+        g.homeIsForceWin    || g.awayIsForceWin
+      );
+
+      // Log status + force fields to help diagnose mismatches
+      if (bothReg) {
+        console.log(
+          `[h2h-detect] ${hData.fullName} vs ${aData.fullName}` +
+          ` status=${status} hasForceFlag=${hasForceFlag}` +
+          ` keys=[${Object.keys(g as Record<string,unknown>).join(",")}]`
+        );
+      }
+
+      // When both teams are registered humans, default to H2H unless an
+      // explicit force indicator is present on the game object.
+      const isTrueH2H   = bothReg && !hasForceFlag;
+      const isForcedCPU = bothReg && hasForceFlag;
 
       // ── Catchup mode: log result + mark processed, skip all payouts/coins ──
       if (season.catchupMode) {

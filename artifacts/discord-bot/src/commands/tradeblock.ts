@@ -377,8 +377,9 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({ content: "❌ You must include at least one player, pick, or coin amount." });
     return;
   }
-  if (items.length > 7) {
-    await interaction.editReply({ content: "❌ You can list at most 7 items at a time." });
+  const nonCoinCount = items.filter(i => i.type !== "coins").length;
+  if (nonCoinCount > 7) {
+    await interaction.editReply({ content: "❌ You can list at most 7 players/picks per trade. Coins are unlimited and don't count toward this limit." });
     return;
   }
 
@@ -496,8 +497,8 @@ async function handleUpdate(interaction: ChatInputCommandInteraction) {
   const finalItems = items.length > 0 ? items : (listing.items as TradeItem[]);
   const finalNotes = interaction.options.getString("looking_for") ?? listing.notes ?? null;
 
-  if (finalItems.length > 7) {
-    await interaction.editReply({ content: "❌ You can list at most 7 items at a time." });
+  if (finalItems.filter(i => i.type !== "coins").length > 7) {
+    await interaction.editReply({ content: "❌ You can list at most 7 players/picks per trade. Coins don't count toward this limit." });
     return;
   }
 
@@ -676,8 +677,8 @@ async function handleSendOffer(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({ content: "❌ You must include at least one player, pick, or coin amount in your offer." });
     return;
   }
-  if (items.length > 7) {
-    await interaction.editReply({ content: "❌ You can include at most 7 items in a single offer." });
+  if (items.filter(i => i.type !== "coins").length > 7) {
+    await interaction.editReply({ content: "❌ You can include at most 7 players/picks in a single offer. Coins don't count toward this limit." });
     return;
   }
 
