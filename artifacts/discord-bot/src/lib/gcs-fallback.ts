@@ -473,12 +473,22 @@ export async function getWeekResultsFromGcs(weekNum: number): Promise<GcsGame[]>
     const aScore = g.awayScore != null ? Number(g.awayScore) : null;
     if (hScore === null || aScore === null) continue; // skip unplayed
 
-    // scheduleStatus === 3 is Madden's own H2H completion flag — trust it directly
-    const status = Number(g.scheduleStatus ?? g.status ?? 0);
-    const isH2H  = status === 3;
-
     const hTeam = teams.get(hId);
     const aTeam = teams.get(aId);
+
+    // Detect force/autopilot games — same field list as franchise-processor.ts
+    const hasForceFlag = !!(
+      g.isForceWin     || g.isForced       || g.forceWin    ||
+      g.homeForceWin   || g.awayForceWin   ||
+      g.homeAutoPilot  || g.awayAutoPilot  ||
+      g.isSimulated    || g.wasSimulated   || g.isAutopilot ||
+      g.homeIsForceWin || g.awayIsForceWin
+    );
+
+    // Prefer isHuman flags when available — MCA 24/25 sends scheduleStatus=2
+    // for ALL completed games, so status===3 is no longer a reliable H2H signal.
+    const bothHuman = (hTeam?.isHuman ?? false) && (aTeam?.isHuman ?? false);
+    const isH2H = bothHuman && !hasForceFlag;
 
     results.push({
       homeTeamName: hTeam?.name ?? `Team${hId}`,

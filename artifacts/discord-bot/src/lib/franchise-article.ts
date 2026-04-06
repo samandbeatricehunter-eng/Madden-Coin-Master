@@ -1,5 +1,8 @@
 import OpenAI from "openai";
-import { db, playerSeasonStatsTable, franchiseScheduleTable, completedTradesTable } from "@workspace/db";
+import {
+  db, playerSeasonStatsTable, franchiseScheduleTable, completedTradesTable,
+  franchiseProcessedGamesTable, franchiseMcaTeamsTable,
+} from "@workspace/db";
 import { eq, desc, and, isNull, inArray } from "drizzle-orm";
 import {
   getWeekResultsFromGcs,
@@ -163,16 +166,22 @@ async function buildLeagueContext(
     parts.push(...formatConferenceStandingsContext(records, `after Week ${completedWeekIndex + 1}`));
   }
 
-  // ── Last week's scores ───────────────────────────────────────────────────────
+  // ── Last week's scores ────────────────────────────────────────────────────────
+  // Join with franchise_processed_games so we can use payoutType ("h2h" | "cpu") to
+  // distinguish true H2H from force-win games — status alone is unreliable in MCA 24/25.
   const weekGames = await db
     .select({
       homeTeamName: franchiseScheduleTable.homeTeamName,
       awayTeamName: franchiseScheduleTable.awayTeamName,
       homeScore:    franchiseScheduleTable.homeScore,
       awayScore:    franchiseScheduleTable.awayScore,
-      status:       franchiseScheduleTable.status,
+      payoutType:   franchiseProcessedGamesTable.payoutType, // "h2h" | "cpu" | null
     })
     .from(franchiseScheduleTable)
+    .leftJoin(
+      franchiseProcessedGamesTable,
+      eq(franchiseScheduleTable.processedGameId, franchiseProcessedGamesTable.gameId),
+    )
     .where(and(
       eq(franchiseScheduleTable.seasonId,  seasonId),
       eq(franchiseScheduleTable.weekIndex, completedWeekIndex),
@@ -187,7 +196,7 @@ async function buildLeagueContext(
       awayTeamName: g.awayTeamName,
       homeScore:    g.homeScore,
       awayScore:    g.awayScore,
-      isH2H:        g.status === 3,
+      isH2H:        g.payoutType === "h2h", // authoritative: only true for processed H2H games
     }));
 
   if (playedGames.length === 0) {
@@ -217,11 +226,21 @@ async function buildLeagueContext(
   const upcomingWeekIndex = completedWeekIndex + 1;
   const upcomingWeekNum   = upcomingWeekIndex + 1;
 
+  // Build a set of human team names for this season so we can label matchups accurately.
+  // Unplayed games all have status=0, so status alone can't distinguish H2H from CPU.
+  const humanTeamRows = await db
+    .select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      eq(franchiseMcaTeamsTable.isHuman, true),
+    ));
+  const humanTeamSet = new Set(humanTeamRows.map(r => r.fullName));
+
   let upcomingGamesRaw = await db
     .select({
       homeTeamName: franchiseScheduleTable.homeTeamName,
       awayTeamName: franchiseScheduleTable.awayTeamName,
-      status:       franchiseScheduleTable.status,
     })
     .from(franchiseScheduleTable)
     .where(and(
@@ -234,7 +253,9 @@ async function buildLeagueContext(
     awayTeamName: g.awayTeamName,
     homeScore:    null,
     awayScore:    null,
-    isH2H:        g.status === 3,
+    isH2H: humanTeamSet.size > 0
+      ? humanTeamSet.has(g.homeTeamName) && humanTeamSet.has(g.awayTeamName)
+      : false,
   }));
 
   if (upcomingGames.length === 0) {
@@ -380,11 +401,21 @@ async function buildPreviewContext(
   }
 
   // ── Scheduled matchups for the preview week — DB first, GCS fallback ────────
+  // Build human team set for this season to distinguish H2H from CPU matchups.
+  // Status is 0 for all unplayed games, so it can't be used here.
+  const previewHumanRows = await db
+    .select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      eq(franchiseMcaTeamsTable.isHuman, true),
+    ));
+  const previewHumanSet = new Set(previewHumanRows.map(r => r.fullName));
+
   const matchupsRaw = await db
     .select({
       homeTeamName: franchiseScheduleTable.homeTeamName,
       awayTeamName: franchiseScheduleTable.awayTeamName,
-      status:       franchiseScheduleTable.status,
     })
     .from(franchiseScheduleTable)
     .where(and(
@@ -397,7 +428,9 @@ async function buildPreviewContext(
     awayTeamName: g.awayTeamName,
     homeScore:    null,
     awayScore:    null,
-    isH2H:        g.status === 3,
+    isH2H: previewHumanSet.size > 0
+      ? previewHumanSet.has(g.homeTeamName) && previewHumanSet.has(g.awayTeamName)
+      : false,
   }));
 
   if (matchups.length === 0) {
