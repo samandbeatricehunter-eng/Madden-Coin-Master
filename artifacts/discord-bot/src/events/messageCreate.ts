@@ -1,8 +1,11 @@
 import { Events, Message } from "discord.js";
 import OpenAI from "openai";
 import { db } from "@workspace/db";
-import { usersTable, userRecordsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import {
+  usersTable, userRecordsTable,
+  franchiseScheduleTable, franchiseRostersTable, franchiseProcessedGamesTable,
+} from "@workspace/db";
+import { eq, and, or, desc, isNotNull } from "drizzle-orm";
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
 } from "../lib/db-helpers.js";
@@ -70,6 +73,10 @@ async function getCachedAdminIds(): Promise<string[]> {
 
 // ── User stat fetcher ──────────────────────────────────────────────────────────
 
+const DEV_TRAIT_LABEL: Record<number, string> = {
+  0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
+};
+
 async function fetchUserStats(discordId: string) {
   const [user] = await db
     .select({
@@ -82,9 +89,15 @@ async function fetchUserStats(discordId: string) {
     .where(eq(usersTable.discordId, discordId))
     .limit(1);
 
+  const teamName = user?.team ?? "Unknown Team";
   let seasonWins = 0, seasonLosses = 0, pointDiff = 0;
+  let recentGames: { label: string }[] = [];
+  let topPlayers: { label: string }[] = [];
+
   try {
     const season = await getOrCreateActiveSeason();
+
+    // Season record
     const [rec] = await db
       .select({
         wins:              userRecordsTable.wins,
@@ -98,20 +111,82 @@ async function fetchUserStats(discordId: string) {
       ))
       .limit(1);
     if (rec) {
-      seasonWins  = rec.wins;
+      seasonWins   = rec.wins;
       seasonLosses = rec.losses;
-      pointDiff   = rec.pointDifferential;
+      pointDiff    = rec.pointDifferential;
+    }
+
+    // Last 5 completed games involving this team
+    if (teamName !== "Unknown Team") {
+      const games = await db
+        .select({
+          weekIndex:    franchiseScheduleTable.weekIndex,
+          homeTeamName: franchiseScheduleTable.homeTeamName,
+          awayTeamName: franchiseScheduleTable.awayTeamName,
+          homeScore:    franchiseScheduleTable.homeScore,
+          awayScore:    franchiseScheduleTable.awayScore,
+          payoutType:   franchiseProcessedGamesTable.payoutType,
+        })
+        .from(franchiseScheduleTable)
+        .leftJoin(
+          franchiseProcessedGamesTable,
+          eq(franchiseScheduleTable.processedGameId, franchiseProcessedGamesTable.gameId),
+        )
+        .where(and(
+          eq(franchiseScheduleTable.seasonId, season.id),
+          isNotNull(franchiseScheduleTable.homeScore),
+          or(
+            eq(franchiseScheduleTable.homeTeamName, teamName),
+            eq(franchiseScheduleTable.awayTeamName, teamName),
+          ),
+        ))
+        .orderBy(desc(franchiseScheduleTable.weekIndex))
+        .limit(5);
+
+      recentGames = games.map(g => {
+        const isHome  = g.homeTeamName === teamName;
+        const myScore = isHome ? g.homeScore! : g.awayScore!;
+        const oppScore= isHome ? g.awayScore! : g.homeScore!;
+        const opp     = isHome ? g.awayTeamName : g.homeTeamName;
+        const result  = myScore > oppScore ? "W" : "L";
+        const type    = g.payoutType === "h2h" ? "H2H" : "CPU";
+        return { label: `Wk${g.weekIndex + 1}: ${result} ${myScore}-${oppScore} vs ${opp} (${type})` };
+      });
+
+      // Top 12 players by overall
+      const roster = await db
+        .select({
+          firstName: franchiseRostersTable.firstName,
+          lastName:  franchiseRostersTable.lastName,
+          position:  franchiseRostersTable.position,
+          overall:   franchiseRostersTable.overall,
+          devTrait:  franchiseRostersTable.devTrait,
+          age:       franchiseRostersTable.age,
+        })
+        .from(franchiseRostersTable)
+        .where(and(
+          eq(franchiseRostersTable.seasonId, season.id),
+          eq(franchiseRostersTable.teamName, teamName),
+        ))
+        .orderBy(desc(franchiseRostersTable.overall))
+        .limit(12);
+
+      topPlayers = roster.map(p => ({
+        label: `${p.firstName} ${p.lastName} | ${p.position} | OVR ${p.overall} | ${DEV_TRAIT_LABEL[p.devTrait] ?? "Normal"}${p.age ? ` | Age ${p.age}` : ""}`,
+      }));
     }
   } catch (_) {}
 
   return {
-    team:             user?.team ?? "Unknown Team",
+    team:             teamName,
     balance:          user?.balance ?? 0,
     allTimeH2HWins:   user?.allTimeH2HWins ?? 0,
     allTimeH2HLosses: user?.allTimeH2HLosses ?? 0,
     seasonWins,
     seasonLosses,
     pointDiff,
+    recentGames,
+    topPlayers,
   };
 }
 
@@ -289,26 +364,29 @@ function buildSystemPrompt(
     ? adminIds.map(id => `<@${id}>`).join(" or ")
     : "the commissioners";
 
-  const statBlock = [
-    `Team: ${stats.team}`,
-    `Season record: ${stats.seasonWins}W – ${stats.seasonLosses}L`,
-    `Season point differential: ${stats.pointDiff >= 0 ? "+" : ""}${stats.pointDiff}`,
-    `All-time H2H: ${stats.allTimeH2HWins}W – ${stats.allTimeH2HLosses}L`,
-    `Coin balance: ${stats.balance.toLocaleString()}`,
-  ].join("\n");
+  const formatStatBlock = (s: UserStats, label?: string) => {
+    const lines: string[] = [];
+    if (label) lines.push(label);
+    lines.push(`Team: ${s.team}`);
+    lines.push(`Season record: ${s.seasonWins}W – ${s.seasonLosses}L`);
+    lines.push(`Season point differential: ${s.pointDiff >= 0 ? "+" : ""}${s.pointDiff}`);
+    lines.push(`All-time H2H: ${s.allTimeH2HWins}W – ${s.allTimeH2HLosses}L`);
+    lines.push(`Coin balance: ${s.balance.toLocaleString()}`);
+    if (s.recentGames.length > 0) {
+      lines.push(`Recent games (most recent first):`);
+      for (const g of s.recentGames) lines.push(`  ${g.label}`);
+    }
+    if (s.topPlayers.length > 0) {
+      lines.push(`Top roster players (by OVR):`);
+      for (const p of s.topPlayers) lines.push(`  ${p.label}`);
+    }
+    return lines.join("\n");
+  };
 
+  const statBlock    = formatStatBlock(stats);
   const mentionedBlock = mentionedUsers.length > 0
     ? "\n\nMENTIONED LEAGUE MEMBERS (use these when the user asks about another member)\n" +
-      mentionedUsers.map(m => {
-        const s = m.stats;
-        return [
-          `${m.displayName} (${s.team})`,
-          `  Season record: ${s.seasonWins}W – ${s.seasonLosses}L`,
-          `  Season point differential: ${s.pointDiff >= 0 ? "+" : ""}${s.pointDiff}`,
-          `  All-time H2H: ${s.allTimeH2HWins}W – ${s.allTimeH2HLosses}L`,
-          `  Coin balance: ${s.balance.toLocaleString()}`,
-        ].join("\n");
-      }).join("\n\n")
+      mentionedUsers.map(m => formatStatBlock(m.stats, `── ${m.displayName} ──`)).join("\n\n")
     : "";
 
   const adminRule = callerIsAdmin
@@ -402,6 +480,8 @@ export async function execute(message: Message): Promise<void> {
     team: "Unknown", balance: 0,
     allTimeH2HWins: 0, allTimeH2HLosses: 0,
     seasonWins: 0, seasonLosses: 0, pointDiff: 0,
+    recentGames: [] as { label: string }[],
+    topPlayers:  [] as { label: string }[],
   });
 
   const [isAdmin, userStats, rulesText, adminIds, mentionedUsersData] = await Promise.all([
