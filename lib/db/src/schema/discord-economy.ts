@@ -498,16 +498,26 @@ export const tradeBlockISOTable = pgTable("trade_block_iso", {
   discordId:      text("discord_id").notNull(),
   teamName:       text("team_name").notNull().default(""),
   seasonId:       integer("season_id").notNull(),
-  seekingType:    text("seeking_type").notNull(),    // "player_position" | "draft_pick" | "coins"
+  seekingType:    text("seeking_type").notNull(),    // "player_position" | "draft_pick" | "coins" | "multi"
   seekingDetails: json("seeking_details").notNull().$type<{
-    position?: string;   // for player_position
-    rounds?: string[];   // for draft_pick
-    amount?: number;     // for coins
+    position?: string;    // legacy: player_position
+    rounds?: string[];    // legacy: draft_pick
+    amount?: number;      // legacy: coins
+    positions?: string[]; // new: multi — e.g. ["QB","WR"]
+    pickRounds?: string[]; // new: multi — e.g. ["1","2"]
+    wantsCoins?: boolean;  // new: multi
   }>(),
   offering: json("offering").notNull().$type<{
+    // legacy free-text format
     players?: string;
     picks?: string;
     coins?: number;
+    // new autocomplete items format
+    items?: Array<
+      | { type: "player"; firstName: string; lastName: string; position: string; overall: number; devTrait: number; playerId: number }
+      | { type: "pick";   description: string }
+      | { type: "coins";  amount: number }
+    >;
   }>(),
   messageId: text("message_id"),
   channelId: text("channel_id"),

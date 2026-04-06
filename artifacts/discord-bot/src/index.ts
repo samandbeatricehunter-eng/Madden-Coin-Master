@@ -64,6 +64,7 @@ import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as adminSetMilestoneTier from "./commands/admin-setmilestonetier.js";
 import * as statLeaders from "./commands/statleaders.js";
 import * as tradeBlock from "./commands/tradeblock.js";
+import * as viewTradeBlock from "./commands/viewtradeblock.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
 import * as webhookurl from "./commands/webhookurl.js";
 import * as adminCatchup from "./commands/admin-catchup.js";
@@ -167,6 +168,7 @@ if (!isProduction && !devBotEnabled) {
     adminSetMilestoneTier,
     statLeaders,
     tradeBlock,
+    viewTradeBlock,
     postFullSeasonSchedule,
     webhookurl,
     adminCatchup,
