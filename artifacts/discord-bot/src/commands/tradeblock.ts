@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import { usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 const TRADE_BLOCK_CHANNEL_ID = "1476975713734099067";
 
@@ -296,6 +297,12 @@ async function getMyTeam(discordId: string): Promise<string> {
 
 // ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction) {
+  const settings = await getServerSettings();
+  if (!settings.tradeBlockEnabled) {
+    await interaction.reply({ content: "❌ The trade block is currently disabled by the commissioners.", ephemeral: true });
+    return;
+  }
+
   const sub = interaction.options.getSubcommand();
   if (sub === "add")         return handleAdd(interaction);
   if (sub === "remove")      return handleRemove(interaction);

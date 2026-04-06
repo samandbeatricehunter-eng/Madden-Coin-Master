@@ -10,6 +10,7 @@ import {
   getLegendPurchaseHistory, getSeasonRules,
 } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
+import { getServerSettings } from "../lib/server-settings.js";
 import { findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
@@ -38,6 +39,12 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+
+  const settings = await getServerSettings();
+  if (!settings.coinEconomy) {
+    await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
+    return;
+  }
 
   const targetUser = interaction.options.getUser("user");
   const teamName   = interaction.options.getString("team")?.trim();

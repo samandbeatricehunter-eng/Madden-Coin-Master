@@ -12,12 +12,17 @@ import {
   interviewRequestsTable, wagersTable,
   tradeBlockListingsTable, tradeBlockISOTable,
   franchiseScheduleTable, seasonsTable,
+  pendingEosPayoutsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
   getOrCreateActiveSeason, getOrCreateUser,
 } from "../lib/db-helpers.js";
+import {
+  getServerSettings, toggleFeature, buildSettingsEmbed, buildSettingsRows,
+  FEATURE_LABELS,
+} from "../lib/server-settings.js";
 import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import {
@@ -932,6 +937,100 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Server settings: toggle feature flag ─────────────────────────────────────
+  if (action === "settings_toggle") {
+    const featureKey = secondPart as keyof typeof FEATURE_LABELS | undefined;
+    if (!featureKey) { await interaction.reply({ content: "❌ Unknown feature key.", ephemeral: true }); return; }
+
+    await interaction.deferUpdate();
+    const updated = await toggleFeature(featureKey as any);
+    const label   = FEATURE_LABELS[featureKey as keyof typeof FEATURE_LABELS] ?? featureKey;
+    const state   = (updated as any)[featureKey] ? "✅ Enabled" : "❌ Disabled";
+
+    await interaction.editReply({
+      embeds:     [buildSettingsEmbed(updated)],
+      components: buildSettingsRows(updated),
+    });
+    await interaction.followUp({
+      content: `**${label}** toggled → ${state}`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // ── Server settings: done ─────────────────────────────────────────────────────
+  if (action === "settings_done") {
+    await interaction.update({ components: [] });
+    return;
+  }
+
+  // ── EOS payout: commissioner approves ────────────────────────────────────────
+  if (action === "eos_approve") {
+    const payoutId  = parseInt(secondPart ?? "0", 10);
+    const discordId = userId!;
+    await interaction.deferUpdate();
+
+    const [payout] = await db.select().from(pendingEosPayoutsTable)
+      .where(eq(pendingEosPayoutsTable.id, payoutId)).limit(1);
+
+    if (!payout) { await interaction.followUp({ content: "❌ Payout not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
+      return;
+    }
+
+    await addBalance(discordId, payout.totalCoins);
+    await logTransaction(discordId, payout.totalCoins, "addcoins",
+      `EOS Season ${payout.seasonId} payout — approved by ${interaction.user.username}`,
+      interaction.user.id);
+    await db.update(pendingEosPayoutsTable)
+      .set({ status: "approved", approvedBy: interaction.user.id, approvedAt: new Date() })
+      .where(eq(pendingEosPayoutsTable.id, payoutId));
+
+    const eosApprovedEmbed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ EOS Payout Approved")
+      .setDescription(
+        `**${payout.totalCoins.toLocaleString()} coins** awarded to <@${discordId}>${payout.teamName ? ` (${payout.teamName})` : ""}.\n` +
+        `Approved by: ${interaction.user.toString()}`,
+      )
+      .setTimestamp();
+    await interaction.editReply({
+      embeds:     [eosApprovedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("eos_approved_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
+      )],
+    });
+
+    try {
+      const u = await interaction.client.users.fetch(discordId);
+      await u.send(`🏆 **End-of-Season Payout Approved!**\n**+${payout.totalCoins.toLocaleString()} coins** have been added to your balance!`).catch(() => {});
+    } catch (_) {}
+    return;
+  }
+
+  // ── EOS payout: commissioner edits amount ────────────────────────────────────
+  if (action === "eos_edit") {
+    const payoutId = secondPart!;
+    const modal = new ModalBuilder()
+      .setCustomId(`eos_edit_modal:${payoutId}`)
+      .setTitle("Edit EOS Payout Amount");
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("new_amount")
+          .setLabel("New coin amount to award")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder("e.g. 500"),
+      ),
+    );
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (eos_edit) error:", err);
+    });
+    return;
+  }
+
   // ── GOTY: commissioner opens winner selection ─────────────────────────────────
   if (action === "goty_select") {
     const seasonId = parseInt(secondPart ?? "0", 10);
@@ -1267,6 +1366,60 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (_) {}
 
     await interaction.editReply({ content: "✅ Your offer has been sent! The other manager will reach out if they're interested." });
+    return;
+  }
+
+  // ── EOS payout: edit amount submitted ────────────────────────────────────────
+  if (action === "eos_edit_modal") {
+    const payoutId = parseInt(idStr ?? "0", 10);
+    const rawAmount = interaction.fields.getTextInputValue("new_amount").trim();
+    const newAmount = parseInt(rawAmount, 10);
+
+    if (isNaN(newAmount) || newAmount <= 0) {
+      await interaction.reply({ content: "❌ Invalid amount — enter a positive whole number.", ephemeral: true });
+      return;
+    }
+
+    const [payout] = await db.select().from(pendingEosPayoutsTable)
+      .where(eq(pendingEosPayoutsTable.id, payoutId)).limit(1);
+    if (!payout) { await interaction.reply({ content: "❌ Payout not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.reply({ content: `⚠️ This payout is already **${payout.status}** and can't be edited.`, ephemeral: true });
+      return;
+    }
+
+    await db.update(pendingEosPayoutsTable)
+      .set({ totalCoins: newAmount })
+      .where(eq(pendingEosPayoutsTable.id, payoutId));
+
+    // Update the commissioner message buttons with new amount
+    if (payout.commissionerMessageId) {
+      try {
+        const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+        const ch = await interaction.client.channels.fetch(commChannelId);
+        if (ch?.isTextBased()) {
+          const msg = await (ch as TextChannel).messages.fetch(payout.commissionerMessageId).catch(() => null);
+          if (msg) {
+            const updatedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`eos_approve:${payoutId}:${payout.discordId}`)
+                .setLabel(`✅ Approve (${newAmount.toLocaleString()} coins)`)
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`eos_edit:${payoutId}`)
+                .setLabel("✏️ Edit Amount")
+                .setStyle(ButtonStyle.Secondary),
+            );
+            await msg.edit({ components: [updatedRow] });
+          }
+        }
+      } catch (err) { console.error("Failed to update commissioner message after EOS edit:", err); }
+    }
+
+    await interaction.reply({
+      content: `✅ Payout #${payoutId} updated to **${newAmount.toLocaleString()} coins**. Click Approve to award.`,
+      ephemeral: true,
+    });
     return;
   }
 

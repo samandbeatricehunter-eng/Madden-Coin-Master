@@ -139,6 +139,7 @@ export const userRecordsTable = pgTable("user_records", {
   seasonId: integer("season_id").notNull(),
   wins: integer("wins").notNull().default(0),
   losses: integer("losses").notNull().default(0),
+  ties: integer("ties").notNull().default(0),
   pointDifferential: integer("point_differential").notNull().default(0),
   // Separate playoff / superbowl tracking (still counted in wins/losses above)
   playoffWins: integer("playoff_wins").notNull().default(0),
@@ -526,6 +527,40 @@ export const seasonHistoricalChannelsTable = pgTable("season_historical_channels
   channelId: text("channel_id").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ── Server feature settings (admin-toggleable per guild) ───────────────────────
+export const serverSettingsTable = pgTable("server_settings", {
+  id:                      serial("id").primaryKey(),
+  guildId:                 text("guild_id").notNull().unique().default("global"),
+  coinEconomy:             boolean("coin_economy").notNull().default(true),
+  legendsEnabled:          boolean("legends_enabled").notNull().default(true),
+  customSuperstarsEnabled: boolean("custom_superstars_enabled").notNull().default(true),
+  attributeUpgradesEnabled: boolean("attribute_upgrades_enabled").notNull().default(true),
+  devUpgradesEnabled:      boolean("dev_upgrades_enabled").notNull().default(true),
+  ageResetsEnabled:        boolean("age_resets_enabled").notNull().default(true),
+  wagerEnabled:            boolean("wager_enabled").notNull().default(true),
+  tradeBlockEnabled:       boolean("trade_block_enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ── Pending end-of-season stat payouts (awaiting commissioner approval) ─────────
+export const pendingEosPayoutsTable = pgTable("pending_eos_payouts", {
+  id:           serial("id").primaryKey(),
+  discordId:    text("discord_id").notNull(),
+  teamName:     text("team_name"),
+  seasonId:     integer("season_id").notNull(),
+  statBreakdown: json("stat_breakdown").notNull().$type<Array<{
+    label: string; statValue: number; unit: string; tier: number; coins: number;
+  }>>(),
+  totalCoins:              integer("total_coins").notNull(),
+  status:                  text("status").notNull().default("pending"),
+  commissionerMessageId:   text("commissioner_message_id"),
+  approvedBy:              text("approved_by"),
+  approvedAt:              timestamp("approved_at"),
+  createdAt:               timestamp("created_at").notNull().defaultNow(),
+});
+
+export type ServerSettings = typeof serverSettingsTable.$inferSelect;
 
 export const insertUserRecordSchema = createInsertSchema(userRecordsTable).omit({ id: true });
 export type UserRecord = typeof userRecordsTable.$inferSelect;

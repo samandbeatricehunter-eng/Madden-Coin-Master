@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction } from "discord.js";
 import { getOrCreateUser, getUserBalance, deductBalance, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed } from "../lib/embeds.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("sendcoins")
@@ -14,6 +15,12 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+
+  const settings = await getServerSettings();
+  if (!settings.coinEconomy) {
+    await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
+    return;
+  }
 
   const target = interaction.options.getUser("user", true);
   const amount = interaction.options.getInteger("amount", true);

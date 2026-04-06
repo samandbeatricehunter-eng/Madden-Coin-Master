@@ -69,6 +69,8 @@ import * as adminSetPayouts from "./commands/admin-setpayouts.js";
 import * as adminResendArticle from "./commands/admin-resendarticle.js";
 import * as adminLinkTeam from "./commands/admin-linkteam.js";
 import * as adminFullSync from "./commands/admin-fullsync.js";
+import * as adminServer from "./commands/adminserver.js";
+import * as adminManualScore from "./commands/admin-manualscore.js";
 import * as setweek from "./commands/setweek.js";
 import * as standings from "./commands/standings.js";
 import * as viewroster from "./commands/viewroster.js";
@@ -167,6 +169,8 @@ if (!isProduction && !devBotEnabled) {
     adminResendArticle,
     adminLinkTeam,
     adminFullSync,
+    adminServer,
+    adminManualScore,
     setweek,
     standings,
     viewroster,

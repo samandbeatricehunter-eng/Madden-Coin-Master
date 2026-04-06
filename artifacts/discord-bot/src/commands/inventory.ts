@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("inventory")
@@ -10,6 +11,12 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+
+  const settings = await getServerSettings();
+  if (!settings.coinEconomy) {
+    await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
+    return;
+  }
 
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const season = await getOrCreateActiveSeason();

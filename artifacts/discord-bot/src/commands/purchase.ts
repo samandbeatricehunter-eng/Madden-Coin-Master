@@ -13,6 +13,7 @@ import {
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
@@ -171,7 +172,34 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const sub = interaction.options.getSubcommand();
+  const sub      = interaction.options.getSubcommand();
+  const settings = await getServerSettings();
+
+  if (!settings.coinEconomy) {
+    await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
+    return;
+  }
+  if (sub === "legend" && !settings.legendsEnabled) {
+    await interaction.editReply({ content: "❌ Legend purchases are currently disabled." });
+    return;
+  }
+  if (sub === "customplayer" && !settings.customSuperstarsEnabled) {
+    await interaction.editReply({ content: "❌ Custom superstar purchases are currently disabled." });
+    return;
+  }
+  if (sub === "attribute" && !settings.attributeUpgradesEnabled) {
+    await interaction.editReply({ content: "❌ Attribute upgrades are currently disabled." });
+    return;
+  }
+  if (sub === "devup" && !settings.devUpgradesEnabled) {
+    await interaction.editReply({ content: "❌ Development upgrades are currently disabled." });
+    return;
+  }
+  if (sub === "agereset" && !settings.ageResetsEnabled) {
+    await interaction.editReply({ content: "❌ Age resets are currently disabled." });
+    return;
+  }
+
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
   const season = await getOrCreateActiveSeason();
   const stats = await getSeasonStats(interaction.user.id, season.id);

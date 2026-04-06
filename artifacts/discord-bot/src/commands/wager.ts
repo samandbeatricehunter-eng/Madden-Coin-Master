@@ -7,6 +7,7 @@ import { wagersTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getOrCreateUser } from "../lib/db-helpers.js";
 import { NFL_TEAMS } from "../lib/constants.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("wager")
@@ -45,6 +46,16 @@ export async function autocomplete(interaction: any) {
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+
+  const settings = await getServerSettings();
+  if (!settings.coinEconomy) {
+    await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
+    return;
+  }
+  if (!settings.wagerEnabled) {
+    await interaction.editReply({ content: "❌ Wagers are currently disabled by the commissioners." });
+    return;
+  }
 
   const opponent   = interaction.options.getUser("opponent", true);
   const amount     = interaction.options.getInteger("amount", true);
