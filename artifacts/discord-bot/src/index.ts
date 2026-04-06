@@ -116,7 +116,12 @@ if (!isProduction && !devBotEnabled) {
 } else {
   // ── Active mode: connect to Discord ───────────────────────────────────────
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent, // privileged — must be enabled in Dev Portal
+    ],
   }) as Client & { commands: Collection<string, any> };
 
   client.commands = new Collection();
