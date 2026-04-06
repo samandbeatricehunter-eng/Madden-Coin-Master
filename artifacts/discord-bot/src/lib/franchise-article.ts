@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { db, playerSeasonStatsTable, franchiseScheduleTable, completedTradesTable } from "@workspace/db";
-import { eq, desc, and, gte } from "drizzle-orm";
+import { eq, desc, and, isNull, inArray } from "drizzle-orm";
 import {
   getWeekResultsFromGcs,
   getUpcomingMatchupsFromGcs,
@@ -111,26 +111,36 @@ const openai = new OpenAI({
   apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "dummy",
 });
 
-// ── Recent completed trades (past 7 days, any season) ─────────────────────────
-async function fetchRecentTradesContext(daysBack = 7): Promise<string[]> {
-  const since = new Date(Date.now() - daysBack * 86_400_000);
+// ── Completed trades not yet covered in any article ───────────────────────────
+// Returns the context lines AND the trade IDs so we can mark them after generation.
+async function fetchUnreferencedTrades(): Promise<{ lines: string[]; ids: number[] }> {
   const trades = await db
     .select()
     .from(completedTradesTable)
-    .where(gte(completedTradesTable.announcedAt, since))
+    .where(isNull(completedTradesTable.articledAt))
     .orderBy(completedTradesTable.announcedAt);
 
-  if (trades.length === 0) return [];
+  if (trades.length === 0) return { lines: [], ids: [] };
 
-  const parts: string[] = [`=== COMPLETED TRADES (last ${daysBack} days) ===`];
+  const lines: string[] = ["=== RECENTLY COMPLETED TRADES (not yet covered in an article) ==="];
   for (const t of trades) {
-    parts.push(
+    lines.push(
       `• ${t.team1Name} ↔ ${t.team2Name}: ` +
-      `${t.team1Name} sent [${t.whatTeam1Sent}] | ${t.team2Name} sent [${t.whatTeam1Received}]`,
+      `${t.team1Name} sent [${t.whatTeam1Sent}] | ` +
+      `${t.team2Name} sent [${t.whatTeam1Received}]`,
     );
   }
-  parts.push("");
-  return parts;
+  lines.push("");
+  return { lines, ids: trades.map(t => t.id) };
+}
+
+// Mark trades as covered so they won't appear in future articles
+async function markTradesArticled(ids: number[]): Promise<void> {
+  if (ids.length === 0) return;
+  await db
+    .update(completedTradesTable)
+    .set({ articledAt: new Date() })
+    .where(inArray(completedTradesTable.id, ids));
 }
 
 // ── Pull all league data needed for the article ────────────────────────────────
@@ -138,6 +148,7 @@ async function buildLeagueContext(
   seasonId: number,
   completedWeekIndex: number,
   seasonNumber: number,
+  tradeLines: string[] = [],
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -243,8 +254,7 @@ async function buildLeagueContext(
     parts.push("");
   }
 
-  // ── Recent completed trades ───────────────────────────────────────────────────
-  const tradeLines = await fetchRecentTradesContext(7).catch(() => [] as string[]);
+  // ── Completed trades (injected by caller — only new/uncovered trades) ─────────
   if (tradeLines.length > 0) parts.push(...tradeLines);
 
   // ── Passing leaders ──────────────────────────────────────────────────────────
@@ -352,6 +362,7 @@ async function buildPreviewContext(
   seasonId:     number,
   weekIndex:    number,   // 0-based index of the week being previewed
   seasonNumber: number,
+  tradeLines:   string[] = [],
 ): Promise<string> {
   const parts: string[] = [];
   const weekNum = weekIndex + 1;
@@ -417,9 +428,8 @@ async function buildPreviewContext(
     }
   }
 
-  // ── Recent completed trades ───────────────────────────────────────────────────
-  const previewTradeLines = await fetchRecentTradesContext(7).catch(() => [] as string[]);
-  if (previewTradeLines.length > 0) parts.push(...previewTradeLines);
+  // ── Completed trades (injected by caller — only new/uncovered trades) ─────────
+  if (tradeLines.length > 0) parts.push(...tradeLines);
 
   // ── Season stat leaders (context for players to watch) ────────────────────
   const passLeaders = await db
@@ -474,7 +484,9 @@ export async function generateFranchiseArticle(
   completedWeekIndex:  number,  // 0-based index of the week that just finished
   upcomingWeekLabel:   string,  // e.g. "Week 7" or "Wildcard"
 ): Promise<string> {
-  const context = await buildLeagueContext(seasonId, completedWeekIndex, seasonNumber);
+  // Fetch trades not yet covered by any article — they'll be mentioned once, then marked done
+  const { lines: tradeLines, ids: tradeIds } = await fetchUnreferencedTrades().catch(() => ({ lines: [], ids: [] }));
+  const context = await buildLeagueContext(seasonId, completedWeekIndex, seasonNumber, tradeLines);
 
   const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise simulation league.
 Write a short, engaging league newsletter article (around 400–500 words) recapping the week that just ended and looking ahead to ${upcomingWeekLabel}.
@@ -523,6 +535,12 @@ ${context}`;
 
   const text = response.choices[0]?.message?.content?.trim();
   if (!text) throw new Error("OpenAI returned an empty response");
+
+  // Article generated successfully — mark those trades as covered so they don't repeat
+  await markTradesArticled(tradeIds).catch(err =>
+    console.error("[generateFranchiseArticle] Failed to mark trades articled:", err),
+  );
+
   return text;
 }
 
@@ -533,7 +551,9 @@ export async function generateWeekPreview(
   weekIndex:    number,  // 0-based index of the week being previewed
 ): Promise<string> {
   const weekNum = weekIndex + 1;
-  const context = await buildPreviewContext(seasonId, weekIndex, seasonNumber);
+  // Fetch trades not yet covered — they'll be mentioned once, then marked done
+  const { lines: tradeLines, ids: tradeIds } = await fetchUnreferencedTrades().catch(() => ({ lines: [], ids: [] }));
+  const context = await buildPreviewContext(seasonId, weekIndex, seasonNumber, tradeLines);
 
   const prompt = `You are a sports journalist covering The R.E.C. League — a Madden NFL franchise simulation league.
 Write a short, engaging league newsletter article (around 400–500 words) previewing Week ${weekNum} — the games have NOT been played yet.
@@ -576,5 +596,11 @@ ${context}`;
 
   const text = response.choices[0]?.message?.content?.trim();
   if (!text) throw new Error("OpenAI returned an empty response");
+
+  // Article generated successfully — mark those trades as covered so they don't repeat
+  await markTradesArticled(tradeIds).catch(err =>
+    console.error("[generateWeekPreview] Failed to mark trades articled:", err),
+  );
+
   return text;
 }

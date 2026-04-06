@@ -543,6 +543,7 @@ export const completedTradesTable = pgTable("completed_trades", {
   whatTeam1Sent:     text("what_team1_sent").notNull(),
   whatTeam1Received: text("what_team1_received").notNull(),
   announcedAt:       timestamp("announced_at").notNull().defaultNow(),
+  articledAt:        timestamp("articled_at"),  // set after the trade is first covered in a generated article
 });
 
 // ── MCA (Madden Companion App) team map ──────────────────────────────────────
