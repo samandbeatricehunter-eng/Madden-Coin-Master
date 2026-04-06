@@ -214,7 +214,7 @@ export async function execute(message: Message): Promise<void> {
   // Only respond in guilds when the bot is explicitly @mentioned
   if (!message.guild) return;
   if (message.author.bot) return;
-  if (!message.mentions.has(message.client.user!)) return;
+  if (!message.mentions.has(message.client.user!, { ignoreEveryone: true })) return;
 
   // Strip all @mentions from the content and trim
   const content = message.content.replace(/<@!?\d+>/g, "").trim();
