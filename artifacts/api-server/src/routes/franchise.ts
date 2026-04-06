@@ -9,6 +9,7 @@ import {
   processPlayerWeekStats,
   processTeamRoster,
   processFreeAgentRoster,
+  processDraftPicks,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed } from "../lib/discord-notify.js";
 import { saveMcaPayload } from "../lib/mcaStorage.js";
@@ -228,6 +229,23 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       }).catch(() => {});
     }
   }
+});
+
+// ── /draftpicks — league-wide draft pick ledger (next 3 classes) ─────────────
+// The MCA exports all 32 teams' picks in one flat list. We accept both the
+// top-level /draftpicks slug and the per-team variant /team/:teamId/draftpicks.
+router.post("/madden/:leagueKey/:platform/:leagueId/draftpicks", validateKey, async (req, res) => {
+  saveMcaPayload("mca/draftpicks.json", req.body);
+  res.status(200).json({ status: "received" });
+  const result = await processDraftPicks(req.body).catch(err => ({ ok: false, message: String(err) }));
+  console.log("[mca/draftpicks]", result.message);
+});
+
+router.post("/madden/:leagueKey/:platform/:leagueId/leaguedraftpicks", validateKey, async (req, res) => {
+  saveMcaPayload("mca/draftpicks.json", req.body);
+  res.status(200).json({ status: "received" });
+  const result = await processDraftPicks(req.body).catch(err => ({ ok: false, message: String(err) }));
+  console.log("[mca/leaguedraftpicks]", result.message);
 });
 
 // ── /team/:teamId/roster — per-team active 53-man roster ─────────────────────

@@ -3,8 +3,8 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable, franchiseDraftPicksTable } from "@workspace/db";
+import { eq, and, asc } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 
@@ -118,7 +118,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("picks").setDescription("Draft picks (e.g. '2025 Round 1, 2026 Round 2')"))
+      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return"))
   )
@@ -136,7 +138,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("picks").setDescription("Draft picks"))
+      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return"))
   )
@@ -149,7 +153,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
       .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("picks").setDescription("Draft picks to include (e.g. '2025 Round 1, 2026 Round 2')"))
+      .addStringOption(o => o.setName("pick1").setDescription("Draft pick from your roster").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)").setAutocomplete(true))
+      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)").setAutocomplete(true))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include in the offer").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return (players, picks, coins, etc.)"))
       .addStringOption(o => o.setName("message").setDescription("Optional personal message to include"))
@@ -222,6 +228,43 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       const name = `${p.firstName} ${p.lastName} (${p.position}) OVR ${p.overall} — ${devLabel(p.devTrait)}`;
       const value = `${p.playerId}|${p.firstName} ${p.lastName}|${p.position}|${p.overall}|${p.devTrait}`;
       return { name: name.slice(0, 100), value: value.slice(0, 100) };
+    });
+
+    await interaction.respond(choices).catch(() => {});
+    return;
+  }
+
+  // Pick autocomplete (pick1-3) — covers add, update, and send-offer subcommands
+  if (["pick1","pick2","pick3"].includes(focused.name)) {
+    const season = await getOrCreateActiveSeason();
+    const picks = await db.select()
+      .from(franchiseDraftPicksTable)
+      .where(
+        and(
+          eq(franchiseDraftPicksTable.seasonId, season.id),
+          eq(franchiseDraftPicksTable.discordId, interaction.user.id),
+        ),
+      )
+      .orderBy(
+        asc(franchiseDraftPicksTable.draftYear),
+        asc(franchiseDraftPicksTable.round),
+        asc(franchiseDraftPicksTable.pickNum),
+      )
+      .limit(200);
+
+    function pickLabel(p: typeof picks[0]): string {
+      const pickStr = p.pickNum > 0 ? `, Pick #${p.pickNum}` : "";
+      const origStr = p.originalTeamName ? ` (from ${p.originalTeamName})` : "";
+      return `${p.draftYear} Round ${p.round}${pickStr}${origStr}`;
+    }
+
+    const filtered = query
+      ? picks.filter(p => pickLabel(p).toLowerCase().includes(query))
+      : picks;
+
+    const choices = filtered.slice(0, 25).map(p => {
+      const label = pickLabel(p);
+      return { name: label.slice(0, 100), value: label.slice(0, 100) };
     });
 
     await interaction.respond(choices).catch(() => {});
@@ -323,11 +366,9 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
     const p = parsePlayerOption(interaction.options.getString(key));
     if (p) items.push(p);
   }
-  const picksRaw = interaction.options.getString("picks");
-  if (picksRaw) {
-    for (const pick of picksRaw.split(",").map(s => s.trim()).filter(Boolean)) {
-      items.push({ type: "pick", description: pick });
-    }
+  for (const key of ["pick1","pick2","pick3"] as const) {
+    const desc = interaction.options.getString(key)?.trim();
+    if (desc) items.push({ type: "pick", description: desc });
   }
   const coins = interaction.options.getInteger("coins");
   if (coins) items.push({ type: "coins", amount: coins });
@@ -444,11 +485,9 @@ async function handleUpdate(interaction: ChatInputCommandInteraction) {
     const p = parsePlayerOption(interaction.options.getString(key));
     if (p) items.push(p);
   }
-  const picksRaw = interaction.options.getString("picks");
-  if (picksRaw) {
-    for (const pick of picksRaw.split(",").map(s => s.trim()).filter(Boolean)) {
-      items.push({ type: "pick", description: pick });
-    }
+  for (const key of ["pick1","pick2","pick3"] as const) {
+    const desc = interaction.options.getString(key)?.trim();
+    if (desc) items.push({ type: "pick", description: desc });
   }
   const coins = interaction.options.getInteger("coins");
   if (coins) items.push({ type: "coins", amount: coins });
@@ -626,11 +665,9 @@ async function handleSendOffer(interaction: ChatInputCommandInteraction) {
     const p = parsePlayerOption(interaction.options.getString(key));
     if (p) items.push(p);
   }
-  const picksRaw = interaction.options.getString("picks");
-  if (picksRaw) {
-    for (const pick of picksRaw.split(",").map(s => s.trim()).filter(Boolean)) {
-      items.push({ type: "pick", description: pick });
-    }
+  for (const key of ["pick1","pick2","pick3"] as const) {
+    const desc = interaction.options.getString(key)?.trim();
+    if (desc) items.push({ type: "pick", description: desc });
   }
   const coins = interaction.options.getInteger("coins");
   if (coins) items.push({ type: "coins", amount: coins });

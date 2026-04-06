@@ -10,6 +10,7 @@ import {
   franchiseGameParticipantsTable,
   franchiseMcaTeamsTable,
   franchiseRostersTable,
+  franchiseDraftPicksTable,
   teamSeasonStatsTable,
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
@@ -1286,6 +1287,114 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
     return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (${teamEntry.fullName})` };
   } catch (err) {
     console.error(`[roster/team/${mcaTeamId}] Error:`, err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── /draftpicks → import all teams' draft picks for the next 3 classes ────────
+// MCA sends a flat list of picks covering every team. Each pick records the
+// current holder (teamId) and optionally the original owner (originalTeamId).
+// Fields seen in the wild:
+//   teamId, originalTeamId, draftYear (or year), round (or roundNum),
+//   pickNum (or normalizedPickNumber), currentTeam*, origTeam*
+export async function processDraftPicks(body: unknown): Promise<ProcessResult> {
+  try {
+    const season = await getOrCreateActiveSeason();
+
+    // Pull the current team roster so we can match teamId → name + discordId
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+
+    // Normalise the picks list — try common wrapper keys
+    const rawPicks = (() => {
+      if (!body || typeof body !== "object") return [];
+      if (Array.isArray(body)) return body;
+      const b = body as Record<string, unknown>;
+      for (const key of [
+        "draftPickInfoList", "draftPicks", "picks",
+        "leagueDraftPickList", "leagueDraftPicks",
+      ]) {
+        if (Array.isArray(b[key])) return b[key] as any[];
+      }
+      return [];
+    })();
+
+    const bodyKeys = body && typeof body === "object" ? Object.keys(body as Record<string, unknown>) : [];
+    console.log(`[mca/draftpicks] Body keys: [${bodyKeys.join(", ")}]  |  raw count: ${rawPicks.length}`);
+    if (rawPicks.length > 0) {
+      console.log(`[mca/draftpicks] Sample pick keys: ${Object.keys(rawPicks[0] as Record<string, unknown>).join(", ")}`);
+    }
+
+    if (rawPicks.length === 0) {
+      return { ok: true, message: "Draft picks payload empty — nothing imported" };
+    }
+
+    type PickRow = typeof franchiseDraftPicksTable.$inferInsert;
+    const rows: PickRow[] = [];
+
+    for (const p of rawPicks) {
+      if (!p || typeof p !== "object") continue;
+
+      const teamId = Number(
+        p.teamId ?? p.currentTeamId ?? p.holdingTeamId ?? p.ownerTeamId ?? -1,
+      );
+      if (isNaN(teamId) || teamId < 0) continue;
+
+      const draftYear = Number(
+        p.draftYear ?? p.year ?? p.draftClassYear ?? p.draft_year ?? 0,
+      );
+      if (!draftYear || draftYear < 2020 || draftYear > 2040) continue;
+
+      const round = Number(p.round ?? p.roundNum ?? p.roundNumber ?? 0);
+      if (!round || round < 1 || round > 7) continue;
+
+      const pickNum = Number(
+        p.pickNum ?? p.normalizedPickNumber ?? p.pickNumber ?? p.pick ?? 0,
+      );
+
+      const originalTeamId: number | null = (() => {
+        const raw = p.originalTeamId ?? p.origTeamId ?? p.previousTeamId ?? null;
+        if (raw == null) return null;
+        const n = Number(raw);
+        return isNaN(n) || n < 0 || n === teamId ? null : n;
+      })();
+
+      const teamEntry       = teamMap.get(teamId);
+      const origTeamEntry   = originalTeamId != null ? teamMap.get(originalTeamId) : undefined;
+
+      const teamName        = teamEntry?.fullName ?? String(p.currentTeamName ?? p.teamName ?? teamId);
+      const discordId       = teamEntry?.discordId ?? null;
+      const originalTeamName: string | null = origTeamEntry?.fullName
+        ?? (p.originalTeamName ?? p.origTeamName ?? null);
+
+      rows.push({
+        seasonId: season.id,
+        teamId,
+        teamName,
+        discordId,
+        draftYear,
+        round,
+        pickNum,
+        originalTeamId: originalTeamId ?? null,
+        originalTeamName: originalTeamName ?? null,
+        importedAt: new Date(),
+      });
+    }
+
+    if (rows.length === 0) {
+      return { ok: true, message: "No valid draft picks parsed from payload" };
+    }
+
+    // Atomic replace: clear all picks for this season then insert fresh batch
+    await db.delete(franchiseDraftPicksTable)
+      .where(eq(franchiseDraftPicksTable.seasonId, season.id));
+    await db.insert(franchiseDraftPicksTable).values(rows);
+
+    console.log(`[mca/draftpicks] Imported ${rows.length} picks for season ${season.id}`);
+    return { ok: true, message: `${rows.length} draft picks imported`, details: { seasonId: season.id, count: rows.length } };
+  } catch (err) {
+    console.error("[mca/draftpicks] Error:", err);
     return { ok: false, message: String(err) };
   }
 }

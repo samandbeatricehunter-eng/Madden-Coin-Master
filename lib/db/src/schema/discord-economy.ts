@@ -329,6 +329,26 @@ export const franchiseRostersTable = pgTable("franchise_rosters", {
     .on(t.seasonId, t.teamId, t.playerId),
 }));
 
+// ── Franchise draft picks (imported from MCA /draftpicks webhook) ─────────────
+// Madden shows the next 3 draft classes on each team's roster. We store one row
+// per pick: the team currently holding it + original owner if traded away.
+export const franchiseDraftPicksTable = pgTable("franchise_draft_picks", {
+  id:             serial("id").primaryKey(),
+  seasonId:       integer("season_id").notNull(),
+  teamId:         integer("team_id").notNull(),     // MCA teamId of current holder
+  teamName:       text("team_name").notNull().default(""),
+  discordId:      text("discord_id"),               // null if CPU team
+  draftYear:      integer("draft_year").notNull(),  // calendar year of the draft (e.g. 2026)
+  round:          integer("round").notNull(),        // 1-7
+  pickNum:        integer("pick_num").notNull().default(0),   // overall pick# in round (0 = unknown)
+  originalTeamId: integer("original_team_id"),      // MCA teamId of original owner (null = own pick)
+  originalTeamName: text("original_team_name"),     // display name of original owner
+  importedAt:     timestamp("imported_at").notNull().defaultNow(),
+}, (t) => ({
+  uniquePick: uniqueIndex("franchise_draft_picks_unique_idx")
+    .on(t.seasonId, t.teamId, t.draftYear, t.round, t.pickNum),
+}));
+
 // ── End-of-season stat payout tier configuration ──────────────────────────────
 // Each row defines one tier (1-4) for one stat category in a season.
 // For "higher is better" stats (offense, def INTs): threshold = minimum value to qualify.
