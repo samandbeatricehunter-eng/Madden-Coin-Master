@@ -18,7 +18,7 @@ const H2H_MILESTONES = [
 
 export const data = new SlashCommandBuilder()
   .setName("admin-syncmilestones")
-  .setDescription("Admin: sync win counters and issue any missing milestone bonuses")
+  .setDescription("Admin: sync win/loss counters and issue any missing milestone bonuses")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   // ── Optional manual override for a single player ─────────────────────────
   .addUserOption(o => o
@@ -27,23 +27,29 @@ export const data = new SlashCommandBuilder()
     .setRequired(false))
   .addIntegerOption(o => o
     .setName("wins")
-    .setDescription("Manually set this player's all-time H2H wins (required when targeting a single user)")
+    .setDescription("Correct this player's all-time H2H wins to this exact number")
+    .setRequired(false)
+    .setMinValue(0))
+  .addIntegerOption(o => o
+    .setName("losses")
+    .setDescription("Correct this player's all-time H2H losses to this exact number")
     .setRequired(false)
     .setMinValue(0));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const targetUser  = interaction.options.getUser("user");
-  const manualWins  = interaction.options.getInteger("wins");
+  const targetUser   = interaction.options.getUser("user");
+  const manualWins   = interaction.options.getInteger("wins");
+  const manualLosses = interaction.options.getInteger("losses");
 
   // ── MANUAL SINGLE-USER OVERRIDE ───────────────────────────────────────────
   if (targetUser) {
-    if (manualWins === null) {
+    if (manualWins === null && manualLosses === null) {
       return interaction.editReply({
         embeds: [new EmbedBuilder()
           .setColor(Colors.Red)
-          .setDescription("❌ When targeting a single user, you must also provide **wins** (their real all-time H2H win count).")],
+          .setDescription("❌ When targeting a single user, provide **wins**, **losses**, or both.")],
       });
     }
 
@@ -58,24 +64,36 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    const currentTier = userRow[0].milestoneTierAwarded ?? 0;
-    const currentWins = userRow[0].allTimeH2HWins ?? 0;
-    const teamLabel   = userRow[0].team ?? userRow[0].discordUsername;
+    const currentTier   = userRow[0].milestoneTierAwarded ?? 0;
+    const currentWins   = userRow[0].allTimeH2HWins ?? 0;
+    const currentLosses = userRow[0].allTimeH2HLosses ?? 0;
+    const teamLabel     = userRow[0].team ?? userRow[0].discordUsername;
 
+    const effectiveWins = manualWins ?? currentWins;
     const owedMilestones = [...H2H_MILESTONES]
       .reverse() // ascending: tier 1 → 4
-      .filter(m => manualWins >= m.wins && currentTier < m.tier);
+      .filter(m => effectiveWins >= m.wins && currentTier < m.tier);
 
     const changes: string[] = [];
 
     await db.transaction(async (tx) => {
-      // 1. Set all_time_h2h_wins to the provided value
-      await tx.update(usersTable)
-        .set({ allTimeH2HWins: manualWins, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, targetUser.id));
-      changes.push(`📊 **All-time wins** set: ${currentWins} → **${manualWins}**`);
+      // 1. Correct wins if provided
+      if (manualWins !== null) {
+        await tx.update(usersTable)
+          .set({ allTimeH2HWins: manualWins, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, targetUser.id));
+        changes.push(`📊 **All-time wins** corrected: ${currentWins} → **${manualWins}**`);
+      }
 
-      // 2. Award each owed milestone in order
+      // 2. Correct losses if provided
+      if (manualLosses !== null) {
+        await tx.update(usersTable)
+          .set({ allTimeH2HLosses: manualLosses, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, targetUser.id));
+        changes.push(`📊 **All-time losses** corrected: ${currentLosses} → **${manualLosses}**`);
+      }
+
+      // 3. Award each owed milestone in order (based on effective wins)
       let newTier = currentTier;
       for (const m of owedMilestones) {
         await tx.update(usersTable)
@@ -92,7 +110,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         newTier = m.tier;
       }
 
-      // 3. Update milestone tier
+      // 4. Update milestone tier
       if (newTier !== currentTier) {
         await tx.update(usersTable)
           .set({ milestoneTierAwarded: newTier, updatedAt: new Date() })
@@ -101,14 +119,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     });
 
-    if (owedMilestones.length === 0) {
-      changes.push(`✅ No new milestones owed at ${manualWins} wins (already tier ${currentTier})`);
+    if (owedMilestones.length === 0 && manualWins !== null) {
+      changes.push(`✅ No new milestones owed at ${effectiveWins} wins (already tier ${currentTier})`);
     }
 
     return interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(Colors.Green)
-        .setTitle(`✅ Milestone Sync — ${teamLabel}`)
+        .setTitle(`✅ Record Corrected — ${teamLabel}`)
         .setDescription(changes.join("\n"))
         .setTimestamp()],
     });

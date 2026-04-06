@@ -136,6 +136,63 @@ async function fetchUserStats(discordId: string) {
       pointDiff    = rec.pointDifferential;
     }
 
+    // ── All-time H2H self-correction ─────────────────────────────────────────
+    // Compute true all-time H2H wins/losses from actual processed game data
+    // across ALL seasons, then use MAX(computed, stored) so the number never
+    // goes backward. If computed exceeds stored, silently fix the stored counter.
+    if (teamName !== "Unknown Team") {
+      try {
+        const [h2hTotals] = await db
+          .select({
+            h2hWins:   sql<number>`COUNT(*) FILTER (WHERE
+              (${franchiseScheduleTable.homeTeamName} = ${teamName} AND ${franchiseScheduleTable.homeScore} > ${franchiseScheduleTable.awayScore}) OR
+              (${franchiseScheduleTable.awayTeamName} = ${teamName} AND ${franchiseScheduleTable.awayScore} > ${franchiseScheduleTable.homeScore})
+            )`,
+            h2hLosses: sql<number>`COUNT(*) FILTER (WHERE
+              (${franchiseScheduleTable.homeTeamName} = ${teamName} AND ${franchiseScheduleTable.homeScore} < ${franchiseScheduleTable.awayScore}) OR
+              (${franchiseScheduleTable.awayTeamName} = ${teamName} AND ${franchiseScheduleTable.awayScore} < ${franchiseScheduleTable.homeScore})
+            )`,
+          })
+          .from(franchiseScheduleTable)
+          .innerJoin(
+            franchiseProcessedGamesTable,
+            eq(franchiseScheduleTable.processedGameId, franchiseProcessedGamesTable.gameId),
+          )
+          .where(and(
+            or(
+              eq(franchiseScheduleTable.homeTeamName, teamName),
+              eq(franchiseScheduleTable.awayTeamName, teamName),
+            ),
+            eq(franchiseProcessedGamesTable.payoutType, "h2h"),
+            isNotNull(franchiseScheduleTable.homeScore),
+            isNotNull(franchiseScheduleTable.awayScore),
+          ));
+
+        const computedWins   = Number(h2hTotals?.h2hWins   ?? 0);
+        const computedLosses = Number(h2hTotals?.h2hLosses ?? 0);
+        const storedWins     = user?.allTimeH2HWins   ?? 0;
+        const storedLosses   = user?.allTimeH2HLosses ?? 0;
+
+        // Always show the higher of the two (never display less than what's tracked)
+        if (computedWins > storedWins || computedLosses > storedLosses) {
+          const healedWins   = Math.max(computedWins,   storedWins);
+          const healedLosses = Math.max(computedLosses, storedLosses);
+          // Mutate user object so the corrected values flow through to the return
+          if (user) {
+            user.allTimeH2HWins   = healedWins;
+            user.allTimeH2HLosses = healedLosses;
+          }
+          // Silently fix the stored counter in the background
+          db.update(usersTable)
+            .set({ allTimeH2HWins: healedWins, allTimeH2HLosses: healedLosses, updatedAt: new Date() })
+            .where(eq(usersTable.discordId, discordId))
+            .catch((err) => console.error("H2H auto-correct error:", err));
+        }
+      } catch (err) {
+        console.error("H2H self-correction query error:", err);
+      }
+    }
+
     // Last 5 completed games involving this team.
     // Only include games that have actually been processed (processedGameId set by the MCA webhook).
     // This prevents unplayed future weeks from showing up even if homeScore defaulted to 0.
