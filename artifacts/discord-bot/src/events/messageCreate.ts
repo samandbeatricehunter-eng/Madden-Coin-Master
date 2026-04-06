@@ -17,25 +17,23 @@ const openai = new OpenAI({
   apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"],
 });
 
-// ── Small-talk throttle ────────────────────────────────────────────────────────
+// ── Energy escalation tracker ──────────────────────────────────────────────────
+// Tracks consecutive ROAST interactions per user so the bot can match escalating energy.
+// Resets when the user sends a HELP or SMALLTALK message.
 
-const SMALL_TALK_LIMIT   = 4;          // max idle exchanges per reset window
-const SMALL_TALK_RESET_H = 6;          // hours before counter resets
-const smallTalkMap = new Map<string, { count: number; resetAt: number }>();
+const escalationMap = new Map<string, number>(); // userId → consecutive roast count
 
-function getSmallTalkCount(userId: string): number {
-  const e = smallTalkMap.get(userId);
-  if (!e) return 0;
-  if (Date.now() > e.resetAt) { smallTalkMap.delete(userId); return 0; }
-  return e.count;
+function getEscalationLevel(userId: string): number {
+  return escalationMap.get(userId) ?? 0;
 }
 
-function bumpSmallTalk(userId: string) {
-  const count = getSmallTalkCount(userId);
-  smallTalkMap.set(userId, {
-    count:   count + 1,
-    resetAt: Date.now() + SMALL_TALK_RESET_H * 3_600_000,
-  });
+function recordInteraction(userId: string, msgType: string) {
+  if (msgType === "ROAST") {
+    escalationMap.set(userId, (escalationMap.get(userId) ?? 0) + 1);
+  } else {
+    // Calm interaction — cool the escalation back down
+    escalationMap.delete(userId);
+  }
 }
 
 // ── Simple caches (avoid hammering DB on every mention) ───────────────────────
@@ -359,6 +357,7 @@ function buildSystemPrompt(
   stats: UserStats,
   callerIsAdmin: boolean,
   mentionedUsers: MentionedUser[] = [],
+  escalationLevel: number = 0,
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -420,7 +419,11 @@ Keep it brief and light — one or two sentences. Be charming but not too chatty
 
 [TYPE:ROAST]
 ⛔ NEVER classify an admin as ROAST — if they're being playful, use SMALLTALK instead.
-For non-admins: go in. Use their stats below to make it personal and league-relevant. Point out their record, point differential, or coin situation. Be creative and funny. Don't hold back.
+For non-admins: match their energy exactly. Current escalation level: ${escalationLevel}.
+- Level 0 (first jab): Witty and sharp — land one clean hit, be funny about it.
+- Level 1–2 (keeping it going): More personal, more pointed. Use their record, roster, and recent losses. Make it sting.
+- Level 3–4 (they asked for it): Ruthless. Bring everything — their record, their losses, their weak roster, their coins. Go line by line if you have to.
+- Level 5+ (no mercy): Full destruction mode. They have been warned multiple times. Absolutely roast them into the ground using every stat and fact available. Be creative, be thorough, be savage. They earned this.
 
 ADMIN RULE (overrides everything — highest priority)
 ${adminRule}
@@ -496,18 +499,9 @@ export async function execute(message: Message): Promise<void> {
     })),
   ]);
 
-  // Small-talk limit check — admins are never throttled
-  if (!isAdmin) {
-    const stCount = getSmallTalkCount(message.author.id);
-    if (stCount >= SMALL_TALK_LIMIT) {
-      await message.reply(
-        "I'm not here for small talk. Ask me something about the league or leave me alone. 🏈"
-      ).catch(() => {});
-      return;
-    }
-  }
-
-  const systemPrompt = buildSystemPrompt(rulesText, adminIds, userStats, isAdmin, mentionedUsersData);
+  // Build the system prompt with current escalation level for this user
+  const escalationLevel = isAdmin ? 0 : getEscalationLevel(message.author.id);
+  const systemPrompt = buildSystemPrompt(rulesText, adminIds, userStats, isAdmin, mentionedUsersData, escalationLevel);
 
   // Call the model
   let raw = "";
@@ -533,18 +527,8 @@ export async function execute(message: Message): Promise<void> {
 
   if (!response) return;
 
-  // Update small-talk counter
-  if (msgType === "SMALLTALK") {
-    bumpSmallTalk(message.author.id);
-    // Warn on the last small-talk so they know the next one will be cut off
-    const newCount = getSmallTalkCount(message.author.id);
-    if (newCount >= SMALL_TALK_LIMIT) {
-      const suffix = "\n\n*(Last off-topic reply — come back when you've got a real question.)*";
-      const trimmed = response.slice(0, 1900 - suffix.length);
-      await message.reply(trimmed + suffix).catch(() => {});
-      return;
-    }
-  }
+  // Update escalation tracker based on interaction type
+  recordInteraction(message.author.id, msgType);
 
   // Split long responses into ≤1900-char chunks on newline/space boundaries
   const chunks = splitIntoChunks(response, 1900);
