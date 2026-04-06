@@ -86,6 +86,7 @@ import { startPollChecker } from "./lib/poll-checker.js";
 // Events
 import * as interactionCreate from "./events/interactionCreate.js";
 import * as ready from "./events/ready.js";
+import * as messageCreate from "./events/messageCreate.js";
 
 // ── Global crash protection ────────────────────────────────────────────────────
 process.on("unhandledRejection", (reason) => {
@@ -195,7 +196,7 @@ if (!isProduction && !devBotEnabled) {
     client.commands.set(command.data.name, command);
   }
 
-  const events = [interactionCreate, ready];
+  const events = [interactionCreate, ready, messageCreate];
   for (const event of events) {
     if ((event as any).once) {
       client.once(event.name, (...args) => event.execute(...args as [any]));
