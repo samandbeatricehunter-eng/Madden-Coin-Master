@@ -530,6 +530,21 @@ export const tradeBlockISOTable = pgTable("trade_block_iso", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ── Completed trades (announced in general channel) ──────────────────────────
+// Recorded when a user confirms a deal was reached on cancelling a trade block listing.
+export const completedTradesTable = pgTable("completed_trades", {
+  id:                serial("id").primaryKey(),
+  seasonId:          integer("season_id").notNull(),
+  listingId:         integer("listing_id"),                        // nullable — ISO or command-removed
+  listingType:       text("listing_type").notNull().default("listing"), // "listing" | "iso"
+  team1DiscordId:    text("team1_discord_id").notNull(),           // listing owner
+  team1Name:         text("team1_name").notNull(),
+  team2Name:         text("team2_name").notNull(),                 // other party (free text)
+  whatTeam1Sent:     text("what_team1_sent").notNull(),
+  whatTeam1Received: text("what_team1_received").notNull(),
+  announcedAt:       timestamp("announced_at").notNull().defaultNow(),
+});
+
 // ── MCA (Madden Companion App) team map ──────────────────────────────────────
 // Populated by the /leagueteams webhook; used by /week scorer and /schedules handler.
 // Gives us teamId → fullName, nickName, userName so we know who is human vs CPU

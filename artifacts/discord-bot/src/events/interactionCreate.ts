@@ -10,7 +10,7 @@ import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   interviewRequestsTable, wagersTable,
-  tradeBlockListingsTable, tradeBlockISOTable,
+  tradeBlockListingsTable, tradeBlockISOTable, completedTradesTable,
   franchiseScheduleTable, seasonsTable,
   pendingEosPayoutsTable,
 } from "@workspace/db";
@@ -721,11 +721,10 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Trade Block: Cancel own listing ──────────────────────────────────────────
+  // ── Trade Block: Cancel own listing → ask if a deal was reached ──────────────
   if (action === "tb_cancel" || action === "tb_close") {
     const listingId = parseInt(secondPart ?? "0", 10);
 
-    // For tb_cancel buttons the posterId isn't in the custom ID (user must own it)
     const [listing] = await db.select().from(tradeBlockListingsTable)
       .where(and(eq(tradeBlockListingsTable.id, listingId), eq(tradeBlockListingsTable.status, "active")))
       .limit(1);
@@ -739,9 +738,21 @@ async function handleButton(interaction: ButtonInteraction) {
       return;
     }
 
-    await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
-    await interaction.update({ embeds: interaction.message.embeds, components: [] }).catch(() => {});
-    await interaction.followUp({ content: `✅ Listing #${listingId} has been removed from the trade block.`, ephemeral: true }).catch(() => {});
+    const dealRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`tb_deal_yes:${listingId}:L`)
+        .setLabel("✅ Yes — We made a deal")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`tb_deal_no:${listingId}:L`)
+        .setLabel("❌ No deal, just remove")
+        .setStyle(ButtonStyle.Secondary),
+    );
+    await interaction.reply({
+      content: "🤝 **Was a trade deal reached through this listing?**\nIf yes, we'll announce it to the server!",
+      components: [dealRow],
+      ephemeral: true,
+    });
     return;
   }
 
@@ -793,7 +804,7 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Trade Block ISO: Cancel own ISO ──────────────────────────────────────────
+  // ── Trade Block ISO: Cancel own ISO → ask if a deal was reached ──────────────
   if (action === "tb_cancel_iso" || action === "tb_iso_close") {
     const isoId = parseInt(secondPart ?? "0", 10);
 
@@ -810,9 +821,78 @@ async function handleButton(interaction: ButtonInteraction) {
       return;
     }
 
-    await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, isoId));
-    await interaction.update({ embeds: interaction.message.embeds, components: [] }).catch(() => {});
-    await interaction.followUp({ content: `✅ ISO #${isoId} has been removed from the trade block.`, ephemeral: true }).catch(() => {});
+    const dealRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`tb_deal_yes:${isoId}:I`)
+        .setLabel("✅ Yes — We made a deal")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`tb_deal_no:${isoId}:I`)
+        .setLabel("❌ No deal, just remove")
+        .setStyle(ButtonStyle.Secondary),
+    );
+    await interaction.reply({
+      content: "🤝 **Was a trade deal reached through this ISO post?**\nIf yes, we'll announce it to the server!",
+      components: [dealRow],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // ── Trade Block: Deal reached → show details modal ────────────────────────────
+  if (action === "tb_deal_yes") {
+    const listingId   = parseInt(secondPart ?? "0", 10);
+    const listingType = userId ?? "L"; // L = regular listing, I = ISO
+
+    const modal = new ModalBuilder()
+      .setCustomId(`tb_deal_modal:${listingId}:${listingType}`)
+      .setTitle("📢 Announce Completed Trade");
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("other_team")
+          .setLabel("Who did you trade with? (team name)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100)
+          .setPlaceholder("e.g. Dallas Cowboys"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("what_sent")
+          .setLabel("What did YOU send?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+          .setPlaceholder("e.g. Tyreek Hill (WR, 97 OVR) + 2026 Round 1 Pick"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("what_received")
+          .setLabel("What did YOU receive?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+          .setPlaceholder("e.g. Davante Adams (WR, 95 OVR) + 200 coins"),
+      ),
+    );
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (tb_deal_yes) error:", err);
+    });
+    return;
+  }
+
+  // ── Trade Block: No deal, remove silently ─────────────────────────────────────
+  if (action === "tb_deal_no") {
+    const listingId   = parseInt(secondPart ?? "0", 10);
+    const listingType = userId ?? "L";
+
+    if (listingType === "I") {
+      await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, listingId));
+    } else {
+      await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
+    }
+    await interaction.update({ content: "✅ Listing removed from the trade block.", components: [] });
     return;
   }
 
@@ -1572,6 +1652,97 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (_) {}
 
     await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Negotiate / Decline buttons in their DM." });
+    return;
+  }
+
+  // ── Trade Block: Deal announcement modal submitted ───────────────────────────
+  if (action === "tb_deal_modal") {
+    const listingId   = parseInt(idStr ?? "0", 10);
+    const listingType = parts[2] ?? "L"; // L = listing, I = ISO
+
+    const otherTeam   = interaction.fields.getTextInputValue("other_team").trim();
+    const whatSent    = interaction.fields.getTextInputValue("what_sent").trim();
+    const whatReceived = interaction.fields.getTextInputValue("what_received").trim();
+
+    await interaction.deferReply({ ephemeral: true });
+
+    // Fetch the listing/ISO to get team1's info
+    let team1Name = "Unknown Team";
+    let seasonId  = 0;
+    try {
+      const season = await getOrCreateActiveSeason();
+      seasonId = season.id;
+      if (listingType === "I") {
+        const [iso] = await db.select({ teamName: tradeBlockISOTable.teamName, discordId: tradeBlockISOTable.discordId })
+          .from(tradeBlockISOTable).where(eq(tradeBlockISOTable.id, listingId)).limit(1);
+        if (iso) {
+          team1Name = iso.teamName || "Unknown Team";
+          if (iso.discordId !== interaction.user.id) {
+            await interaction.editReply({ content: "❌ This listing doesn't belong to you." });
+            return;
+          }
+        }
+        await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, listingId));
+      } else {
+        const [listing] = await db.select({ teamName: tradeBlockListingsTable.teamName, discordId: tradeBlockListingsTable.discordId })
+          .from(tradeBlockListingsTable).where(eq(tradeBlockListingsTable.id, listingId)).limit(1);
+        if (listing) {
+          team1Name = listing.teamName || "Unknown Team";
+          if (listing.discordId !== interaction.user.id) {
+            await interaction.editReply({ content: "❌ This listing doesn't belong to you." });
+            return;
+          }
+        }
+        await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
+      }
+    } catch (err) {
+      console.error("[tb_deal_modal] DB error:", err);
+    }
+
+    // Record the completed trade
+    try {
+      await db.insert(completedTradesTable).values({
+        seasonId,
+        listingId:         listingId || null,
+        listingType:       listingType === "I" ? "iso" : "listing",
+        team1DiscordId:    interaction.user.id,
+        team1Name,
+        team2Name:         otherTeam,
+        whatTeam1Sent:     whatSent,
+        whatTeam1Received: whatReceived,
+      });
+    } catch (err) {
+      console.error("[tb_deal_modal] Failed to insert completedTrade:", err);
+    }
+
+    // Build trade announcement embed
+    const tradeEmbed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("🔔 TRADE ALERT")
+      .setDescription(`**${team1Name}** and **${otherTeam}** have completed a trade!`)
+      .addFields(
+        { name: `📤 ${team1Name} sends`, value: whatSent },
+        { name: `📥 ${team1Name} receives`, value: whatReceived },
+      )
+      .setFooter({ text: "Trade reported via The R.E.C. League trade block" })
+      .setTimestamp();
+
+    // Post to general channel with @everyone
+    try {
+      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID);
+      if (generalChannel?.isTextBased()) {
+        await (generalChannel as TextChannel).send({
+          content: "@everyone",
+          embeds: [tradeEmbed],
+        });
+      }
+    } catch (err) {
+      console.error("[tb_deal_modal] Failed to post announcement:", err);
+    }
+
+    await interaction.editReply({
+      content: `✅ Trade announced in the server! **${team1Name}** ↔ **${otherTeam}** is now on record.`,
+    });
     return;
   }
 }

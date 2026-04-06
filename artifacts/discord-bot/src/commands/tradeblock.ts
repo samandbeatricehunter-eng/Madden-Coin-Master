@@ -469,9 +469,22 @@ async function handleRemove(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
-
-  await interaction.editReply({ content: `✅ Listing #${listingId} has been removed from the trade block.` });
+  // Ask if a deal was reached before removing
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import("discord.js");
+  const dealRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tb_deal_yes:${listingId}:L`)
+      .setLabel("✅ Yes — We made a deal")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`tb_deal_no:${listingId}:L`)
+      .setLabel("❌ No deal, just remove")
+      .setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.editReply({
+    content: "🤝 **Was a trade deal reached through this listing?**\nIf yes, we'll announce it to the server!",
+    components: [dealRow],
+  });
 }
 
 // ── /tradeblock update ────────────────────────────────────────────────────────

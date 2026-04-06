@@ -1,6 +1,6 @@
 import OpenAI from "openai";
-import { db, playerSeasonStatsTable, franchiseScheduleTable } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
+import { db, playerSeasonStatsTable, franchiseScheduleTable, completedTradesTable } from "@workspace/db";
+import { eq, desc, and, gte } from "drizzle-orm";
 import {
   getWeekResultsFromGcs,
   getUpcomingMatchupsFromGcs,
@@ -111,6 +111,28 @@ const openai = new OpenAI({
   apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "dummy",
 });
 
+// ── Recent completed trades (past 7 days, any season) ─────────────────────────
+async function fetchRecentTradesContext(daysBack = 7): Promise<string[]> {
+  const since = new Date(Date.now() - daysBack * 86_400_000);
+  const trades = await db
+    .select()
+    .from(completedTradesTable)
+    .where(gte(completedTradesTable.announcedAt, since))
+    .orderBy(completedTradesTable.announcedAt);
+
+  if (trades.length === 0) return [];
+
+  const parts: string[] = [`=== COMPLETED TRADES (last ${daysBack} days) ===`];
+  for (const t of trades) {
+    parts.push(
+      `• ${t.team1Name} ↔ ${t.team2Name}: ` +
+      `${t.team1Name} sent [${t.whatTeam1Sent}] | ${t.team2Name} sent [${t.whatTeam1Received}]`,
+    );
+  }
+  parts.push("");
+  return parts;
+}
+
 // ── Pull all league data needed for the article ────────────────────────────────
 async function buildLeagueContext(
   seasonId: number,
@@ -220,6 +242,10 @@ async function buildLeagueContext(
     parts.push("No upcoming schedule data available. Do not invent or speculate about specific Week " + upcomingWeekNum + " matchups.");
     parts.push("");
   }
+
+  // ── Recent completed trades ───────────────────────────────────────────────────
+  const tradeLines = await fetchRecentTradesContext(7).catch(() => [] as string[]);
+  if (tradeLines.length > 0) parts.push(...tradeLines);
 
   // ── Passing leaders ──────────────────────────────────────────────────────────
   const passLeaders = await db
@@ -391,6 +417,10 @@ async function buildPreviewContext(
     }
   }
 
+  // ── Recent completed trades ───────────────────────────────────────────────────
+  const previewTradeLines = await fetchRecentTradesContext(7).catch(() => [] as string[]);
+  if (previewTradeLines.length > 0) parts.push(...previewTradeLines);
+
   // ── Season stat leaders (context for players to watch) ────────────────────
   const passLeaders = await db
     .select({
@@ -452,6 +482,7 @@ Write a short, engaging league newsletter article (around 400–500 words) recap
 Always refer to the league by its full name: "The R.E.C. League". Never call it a "simulation league", "CFM league", or any other generic label.
 
 This is a RECAP article. Cover what happened: scores, winners, losers, standout performers, and any notable storylines.
+If the COMPLETED TRADES section appears in the LEAGUE DATA, reference those trades as off-season or in-season moves affecting the league's landscape. Mention which teams were involved and what each side received.
 
 CRITICAL — FACTUAL ACCURACY ON GAME RESULTS:
 The WEEK RESULTS section below uses the format "WINNER defeated LOSER, WINNER_SCORE–LOSER_SCORE".
@@ -511,6 +542,7 @@ Always refer to the league by its full name: "The R.E.C. League". Never call it 
 
 This is a PREVIEW article. Hype the key matchups, highlight the stakes for each team, call out players to watch, and build anticipation.
 Do NOT report scores or results — the games haven't happened yet.
+If the COMPLETED TRADES section appears in the LEAGUE DATA, briefly mention any recent trades as roster moves that could affect upcoming matchups or playoff races.
 
 CRITICAL — NO INVENTED PLAYER NAMES:
 Only name specific players that appear explicitly in the STATS sections of the LEAGUE DATA below.
