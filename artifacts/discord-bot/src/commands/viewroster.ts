@@ -6,7 +6,7 @@ import {
   Colors,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, franchiseRostersTable, franchiseDraftPicksTable, seasonsTable } from "@workspace/db";
+import { usersTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, ilike, asc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -74,13 +74,6 @@ function fieldChunks(label: string, lines: string[]): { name: string; value: str
     chunks.push({ name: chunks.length === 0 ? label : `${label} (cont.)`, value: current.join("\n") });
   }
   return chunks;
-}
-
-function ordinal(n: number): string {
-  if (n === 1) return "1st";
-  if (n === 2) return "2nd";
-  if (n === 3) return "3rd";
-  return `${n}th`;
 }
 
 // ── Command definition ─────────────────────────────────────────────────────────
@@ -236,19 +229,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Fetch draft picks for this team ───────────────────────────────────────
-  const picks = await db.select()
-    .from(franchiseDraftPicksTable)
-    .where(and(
-      eq(franchiseDraftPicksTable.seasonId,  season.id),
-      eq(franchiseDraftPicksTable.teamName,  resolvedTeamName),
-    ))
-    .orderBy(
-      asc(franchiseDraftPicksTable.draftYear),
-      asc(franchiseDraftPicksTable.round),
-      asc(franchiseDraftPicksTable.pickNum),
-    );
-
   // ── Organise by position group ─────────────────────────────────────────────
   const byPos = new Map<string, typeof players>();
   for (const p of players) {
@@ -320,37 +300,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       embed.setTitle(`📋 ${resolvedTeamName} Roster (cont.)`);
     }
     embeds.push(embed);
-  }
-
-  // ── Draft picks embed ──────────────────────────────────────────────────────
-  if (picks.length > 0) {
-    const byYear = new Map<number, typeof picks>();
-    for (const p of picks) {
-      const arr = byYear.get(p.draftYear) ?? [];
-      arr.push(p);
-      byYear.set(p.draftYear, arr);
-    }
-
-    const picksEmbed = new EmbedBuilder()
-      .setColor(Colors.Gold)
-      .setTitle(`📋 ${resolvedTeamName} — Draft Picks`)
-      .setDescription(
-        `**Season ${season.seasonNumber}** • ${picks.length} pick${picks.length !== 1 ? "s" : ""} across ${byYear.size} class${byYear.size !== 1 ? "es" : ""}`,
-      )
-      .setFooter({ text: "Picks imported from the Madden Companion App" });
-
-    const sortedYears = [...byYear.keys()].sort((a, b) => a - b);
-    for (const year of sortedYears) {
-      const yearPicks = byYear.get(year)!;
-      const lines = yearPicks.map(p => {
-        const pickStr = p.pickNum > 0 ? `, Pick #${p.pickNum}` : "";
-        const origStr = p.originalTeamName ? ` *(from ${p.originalTeamName})*` : "";
-        return `• ${ordinal(p.round)} Round${pickStr}${origStr}`;
-      });
-      picksEmbed.addFields({ name: `🗓️ ${year} Draft`, value: lines.join("\n"), inline: false });
-    }
-
-    embeds.push(picksEmbed);
   }
 
   for (let i = 0; i < embeds.length; i += 10) {

@@ -56,7 +56,6 @@ import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
 import * as customarticle from "./commands/customarticle.js";
 import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 import * as myRoster from "./commands/my-roster.js";
-import * as myPicks from "./commands/my-picks.js";
 import * as savings from "./commands/savings.js";
 import { startSavingsInterestScheduler } from "./lib/savings-interest.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
@@ -82,7 +81,6 @@ import * as viewroster from "./commands/viewroster.js";
 import * as viewplayerdetails from "./commands/viewplayerdetails.js";
 import * as viewfreeagents from "./commands/viewfreeagents.js";
 import * as h2hrecord from "./commands/h2hrecord.js";
-import * as adminDebugPicks from "./commands/admin-debugpicks.js";
 import { startPollChecker } from "./lib/poll-checker.js";
 
 // Events
@@ -169,7 +167,6 @@ if (!isProduction && !devBotEnabled) {
     customarticle,
     endofseasonpayout,
     myRoster,
-    myPicks,
     savings,
     weeklyMatchups,
     adminCorrectPayout,
@@ -194,7 +191,6 @@ if (!isProduction && !devBotEnabled) {
     viewplayerdetails,
     viewfreeagents,
     h2hrecord,
-    adminDebugPicks,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },

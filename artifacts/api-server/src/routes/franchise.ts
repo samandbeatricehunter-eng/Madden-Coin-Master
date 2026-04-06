@@ -12,7 +12,7 @@ import {
   processDraftPicks,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed } from "../lib/discord-notify.js";
-import { saveMcaPayload, readMcaPayload, listMcaPayloads } from "../lib/mcaStorage.js";
+import { saveMcaPayload } from "../lib/mcaStorage.js";
 
 const router: IRouter = Router();
 
@@ -389,40 +389,6 @@ router.post("/madden/:leagueKey/:platform/:leagueId/awards", validateKey, (req, 
   const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
   console.log("[mca/awards] Received. Top-level keys:", keys);
   console.log("[mca/awards] First item sample:", JSON.stringify(sample)?.slice(0, 600));
-});
-
-// ── /admin/picks-debug — inspect saved MCA pick payloads (admin only) ─────────
-router.get("/admin/picks-debug", async (req, res) => {
-  const expectedKey = process.env["MADDEN_WEBHOOK_KEY"];
-  if (expectedKey && req.query["key"] !== expectedKey) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
-  try {
-    const allFiles = await listMcaPayloads("mca/");
-    const pickFiles = allFiles.filter(f =>
-      f.includes("draftpick") || f.includes("draftPick") || f.includes("draft-pick") ||
-      f.includes("unknown"),
-    );
-
-    const samples: Record<string, unknown> = {};
-    for (const file of pickFiles.slice(0, 10)) {
-      const body = await readMcaPayload(file);
-      if (!body || typeof body !== "object") { samples[file] = null; continue; }
-      const keys = Object.keys(body as Record<string, unknown>);
-      const firstArrKey = keys.find(k => Array.isArray((body as any)[k]));
-      const firstItem = firstArrKey ? (body as any)[firstArrKey][0] : body;
-      samples[file] = { keys, firstItem, arrayKey: firstArrKey ?? null };
-    }
-
-    res.json({
-      allMcaFiles: allFiles,
-      pickFiles,
-      samples,
-    });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
 });
 
 // ── Catch-all: log any MCA endpoint we haven't explicitly handled ─────────────
