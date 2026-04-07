@@ -106,8 +106,7 @@ async function fetchLeagueContext(): Promise<string> {
   try {
     const season = await getOrCreateActiveSeason();
 
-    const [records, teamStats, rosterAvgs, topRosterPlayers,
-      passLeaders, rushLeaders, recLeaders, sackLeaders, intLeaders] = await Promise.all([
+    const [records, teamStats, rosterAvgs, topRosterPlayers, allPlayerStats] = await Promise.all([
 
       // Season standings for all user-owned teams
       db.select({
@@ -146,22 +145,36 @@ async function fetchLeagueContext(): Promise<string> {
         .orderBy(desc(franchiseRostersTable.overall))
         .limit(200),
 
-      // Individual stat leaders
-      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.passYds, td: playerSeasonStatsTable.passTDs })
-        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.passYds, 1)))
-        .orderBy(desc(playerSeasonStatsTable.passYds)).limit(5),
-      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.rushYds, td: playerSeasonStatsTable.rushTDs })
-        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.rushYds, 1)))
-        .orderBy(desc(playerSeasonStatsTable.rushYds)).limit(5),
-      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.recYds, td: playerSeasonStatsTable.recTDs })
-        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.recYds, 1)))
-        .orderBy(desc(playerSeasonStatsTable.recYds)).limit(5),
-      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.sacks })
-        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.sacks, 1)))
-        .orderBy(desc(playerSeasonStatsTable.sacks)).limit(5),
-      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.defInts })
-        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.defInts, 1)))
-        .orderBy(desc(playerSeasonStatsTable.defInts)).limit(5),
+      // ALL player season stats for every player with any recorded production
+      db.select({
+        firstName:    playerSeasonStatsTable.firstName,
+        lastName:     playerSeasonStatsTable.lastName,
+        position:     playerSeasonStatsTable.position,
+        teamName:     playerSeasonStatsTable.teamName,
+        passYds:      playerSeasonStatsTable.passYds,
+        passTDs:      playerSeasonStatsTable.passTDs,
+        rushYds:      playerSeasonStatsTable.rushYds,
+        rushTDs:      playerSeasonStatsTable.rushTDs,
+        recYds:       playerSeasonStatsTable.recYds,
+        recTDs:       playerSeasonStatsTable.recTDs,
+        sacks:        playerSeasonStatsTable.sacks,
+        defInts:      playerSeasonStatsTable.defInts,
+        totalTackles: playerSeasonStatsTable.totalTackles,
+        tackleSolo:   playerSeasonStatsTable.tackleSolo,
+        tackleAssist: playerSeasonStatsTable.tackleAssist,
+      }).from(playerSeasonStatsTable)
+        .where(and(
+          eq(playerSeasonStatsTable.seasonId, season.id),
+          or(
+            gte(playerSeasonStatsTable.passYds,      1),
+            gte(playerSeasonStatsTable.rushYds,      1),
+            gte(playerSeasonStatsTable.recYds,       1),
+            gte(playerSeasonStatsTable.sacks,        1),
+            gte(playerSeasonStatsTable.defInts,      1),
+            gte(playerSeasonStatsTable.totalTackles, 1),
+          ),
+        ))
+        .orderBy(playerSeasonStatsTable.teamName, playerSeasonStatsTable.position),
     ]);
 
     const teamStatsMap = new Map(teamStats.map(t => [t.teamName, t]));
@@ -201,22 +214,34 @@ async function fetchLeagueContext(): Promise<string> {
       }
     }
 
-    // ── Individual stat leaders ──
-    const addLeaders = (label: string, rows: { f: string; l: string; t: string; v: number; td?: number }[]) => {
-      if (!rows.length) return;
+    // ── Full player season stats (all teams, all players with production) ──
+    if (allPlayerStats.length > 0) {
       lines.push("");
-      lines.push(label);
-      rows.forEach((p, i) => {
-        const tdStr = p.td !== undefined ? `  ${p.td} TDs` : "";
-        lines.push(`#${i + 1}  ${p.f} ${p.l} (${p.t})  ${p.v}${tdStr}`);
-      });
-    };
+      lines.push(`FULL PLAYER SEASON STATS — Season ${(season as any).seasonNumber ?? season.id}`);
+      lines.push("(every player who has recorded at least 1 stat; grouped by team)");
 
-    addLeaders("PASSING YARDS LEADERS",    passLeaders as any);
-    addLeaders("RUSHING YARDS LEADERS",    rushLeaders as any);
-    addLeaders("RECEIVING YARDS LEADERS",  recLeaders  as any);
-    addLeaders("SACKS LEADERS",            sackLeaders .map(p => ({ ...p, v: p.v })) as any);
-    addLeaders("INTERCEPTIONS LEADERS",    intLeaders  .map(p => ({ ...p, v: p.v })) as any);
+      // Group by team
+      const byTeam = new Map<string, typeof allPlayerStats>();
+      for (const p of allPlayerStats) {
+        if (!byTeam.has(p.teamName)) byTeam.set(p.teamName, []);
+        byTeam.get(p.teamName)!.push(p);
+      }
+
+      for (const [team, players] of byTeam) {
+        lines.push(`  ${team}:`);
+        for (const p of players) {
+          const parts: string[] = [`    ${p.firstName} ${p.lastName} ${p.position}`];
+          if (p.passYds  > 0) parts.push(`Pass: ${p.passYds}yd ${p.passTDs}TD`);
+          if (p.rushYds  > 0) parts.push(`Rush: ${p.rushYds}yd ${p.rushTDs}TD`);
+          if (p.recYds   > 0) parts.push(`Rec: ${p.recYds}yd ${p.recTDs}TD`);
+          if (p.sacks    > 0) parts.push(`Sacks: ${p.sacks}`);
+          if (p.defInts  > 0) parts.push(`INTs: ${p.defInts}`);
+          const tkl = p.totalTackles > 0 ? p.totalTackles : p.tackleSolo + p.tackleAssist;
+          if (tkl > 0) parts.push(`Tkl: ${tkl}`);
+          lines.push(parts.join(" | "));
+        }
+      }
+    }
 
     const text = lines.join("\n");
     leagueCtxCache = { text, at: Date.now() };
