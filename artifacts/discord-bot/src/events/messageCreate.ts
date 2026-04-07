@@ -5,8 +5,9 @@ import {
   usersTable, userRecordsTable,
   franchiseScheduleTable, franchiseRostersTable, franchiseProcessedGamesTable,
   pendingChannelPayoutsTable, coinTransactionsTable,
+  playerSeasonStatsTable, teamSeasonStatsTable,
 } from "@workspace/db";
-import { eq, and, or, desc, isNotNull, inArray, count, sql } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
 } from "../lib/db-helpers.js";
@@ -89,6 +90,142 @@ async function getCachedAdminIds(): Promise<string[]> {
   const ids = rows.map(r => r.discordId);
   adminCache = { ids, at: Date.now() };
   return ids;
+}
+
+// ── League-wide context (standings + stats + roster quality) ──────────────────
+
+let leagueCtxCache: { text: string; at: number } | null = null;
+
+const DEV_LABEL: Record<number, string> = {
+  0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
+};
+
+async function fetchLeagueContext(): Promise<string> {
+  if (leagueCtxCache && Date.now() - leagueCtxCache.at < CACHE_TTL) return leagueCtxCache.text;
+
+  try {
+    const season = await getOrCreateActiveSeason();
+
+    const [records, teamStats, rosterAvgs, topRosterPlayers,
+      passLeaders, rushLeaders, recLeaders, sackLeaders, intLeaders] = await Promise.all([
+
+      // Season standings for all user-owned teams
+      db.select({
+        discordUsername:   userRecordsTable.discordUsername,
+        team:              userRecordsTable.team,
+        wins:              userRecordsTable.wins,
+        losses:            userRecordsTable.losses,
+        pointDifferential: userRecordsTable.pointDifferential,
+      }).from(userRecordsTable)
+        .where(eq(userRecordsTable.seasonId, season.id))
+        .orderBy(desc(userRecordsTable.wins), desc(userRecordsTable.pointDifferential)),
+
+      // Team season stats (user-owned)
+      db.select().from(teamSeasonStatsTable)
+        .where(and(eq(teamSeasonStatsTable.seasonId, season.id), isNotNull(teamSeasonStatsTable.discordId))),
+
+      // Avg OVR per team (user-owned)
+      db.select({
+        teamName: franchiseRostersTable.teamName,
+        avgOvr:   sql<number>`ROUND(AVG(${franchiseRostersTable.overall}), 0)`,
+      }).from(franchiseRostersTable)
+        .where(and(eq(franchiseRostersTable.seasonId, season.id), isNotNull(franchiseRostersTable.discordId)))
+        .groupBy(franchiseRostersTable.teamName),
+
+      // Top 3 players per user-owned team (sorted by OVR)
+      db.select({
+        teamName: franchiseRostersTable.teamName,
+        firstName: franchiseRostersTable.firstName,
+        lastName:  franchiseRostersTable.lastName,
+        position:  franchiseRostersTable.position,
+        overall:   franchiseRostersTable.overall,
+        devTrait:  franchiseRostersTable.devTrait,
+        age:       franchiseRostersTable.age,
+      }).from(franchiseRostersTable)
+        .where(and(eq(franchiseRostersTable.seasonId, season.id), isNotNull(franchiseRostersTable.discordId)))
+        .orderBy(desc(franchiseRostersTable.overall))
+        .limit(200),
+
+      // Individual stat leaders
+      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.passYds, td: playerSeasonStatsTable.passTDs })
+        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.passYds, 1)))
+        .orderBy(desc(playerSeasonStatsTable.passYds)).limit(5),
+      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.rushYds, td: playerSeasonStatsTable.rushTDs })
+        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.rushYds, 1)))
+        .orderBy(desc(playerSeasonStatsTable.rushYds)).limit(5),
+      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.recYds, td: playerSeasonStatsTable.recTDs })
+        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.recYds, 1)))
+        .orderBy(desc(playerSeasonStatsTable.recYds)).limit(5),
+      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.sacks })
+        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.sacks, 1)))
+        .orderBy(desc(playerSeasonStatsTable.sacks)).limit(5),
+      db.select({ f: playerSeasonStatsTable.firstName, l: playerSeasonStatsTable.lastName, t: playerSeasonStatsTable.teamName, v: playerSeasonStatsTable.defInts })
+        .from(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.seasonId, season.id), gte(playerSeasonStatsTable.defInts, 1)))
+        .orderBy(desc(playerSeasonStatsTable.defInts)).limit(5),
+    ]);
+
+    const teamStatsMap = new Map(teamStats.map(t => [t.teamName, t]));
+    const avgOvrMap    = new Map(rosterAvgs.map(r => [r.teamName, Number(r.avgOvr)]));
+
+    // Group top roster players by team (already OVR-sorted; take first 3 per team)
+    const topByTeam = new Map<string, typeof topRosterPlayers>();
+    for (const p of topRosterPlayers) {
+      if (!topByTeam.has(p.teamName)) topByTeam.set(p.teamName, []);
+      const arr = topByTeam.get(p.teamName)!;
+      if (arr.length < 3) arr.push(p);
+    }
+
+    const lines: string[] = [];
+
+    // ── Standings ──
+    lines.push(`LEAGUE STANDINGS — Season ${(season as any).seasonNumber ?? season.id}`);
+    records.forEach((r, i) => {
+      const ts  = teamStatsMap.get(r.team ?? "");
+      const pd  = r.pointDifferential >= 0 ? `+${r.pointDifferential}` : `${r.pointDifferential}`;
+      const off = ts ? `Off: ${ts.offYds}yds` : "";
+      const def = ts ? `Def allowed: ${ts.defPassYds + ts.defRushYds}yds` : "";
+      const extra = [off, def].filter(Boolean).join(", ");
+      lines.push(`#${i + 1}  ${r.team ?? "?"}  (${r.discordUsername})  ${r.wins}W-${r.losses}L  PD: ${pd}${extra ? `  [${extra}]` : ""}`);
+    });
+
+    // ── Roster quality ──
+    if (topByTeam.size > 0) {
+      lines.push("");
+      lines.push("ROSTER QUALITY (user-owned teams — avg OVR + top 3 players)");
+      for (const [teamName, players] of topByTeam) {
+        const avg     = avgOvrMap.get(teamName) ?? 0;
+        const roster  = players.map(p =>
+          `${p.firstName} ${p.lastName} ${p.position} ${p.overall}OVR ${DEV_LABEL[p.devTrait] ?? "Normal"}${p.age ? ` age ${p.age}` : ""}`
+        ).join(" | ");
+        lines.push(`${teamName}  Avg ${avg}OVR  →  ${roster}`);
+      }
+    }
+
+    // ── Individual stat leaders ──
+    const addLeaders = (label: string, rows: { f: string; l: string; t: string; v: number; td?: number }[]) => {
+      if (!rows.length) return;
+      lines.push("");
+      lines.push(label);
+      rows.forEach((p, i) => {
+        const tdStr = p.td !== undefined ? `  ${p.td} TDs` : "";
+        lines.push(`#${i + 1}  ${p.f} ${p.l} (${p.t})  ${p.v}${tdStr}`);
+      });
+    };
+
+    addLeaders("PASSING YARDS LEADERS",    passLeaders as any);
+    addLeaders("RUSHING YARDS LEADERS",    rushLeaders as any);
+    addLeaders("RECEIVING YARDS LEADERS",  recLeaders  as any);
+    addLeaders("SACKS LEADERS",            sackLeaders .map(p => ({ ...p, v: p.v })) as any);
+    addLeaders("INTERCEPTIONS LEADERS",    intLeaders  .map(p => ({ ...p, v: p.v })) as any);
+
+    const text = lines.join("\n");
+    leagueCtxCache = { text, at: Date.now() };
+    return text;
+
+  } catch (err) {
+    console.error("fetchLeagueContext error:", err);
+    return "(league context unavailable)";
+  }
 }
 
 // ── User stat fetcher ──────────────────────────────────────────────────────────
@@ -440,6 +577,7 @@ function buildSystemPrompt(
   escalationLevel: number = 0,
   isCommissioner: boolean = false,
   channelContext: { id: string; name: string }[] = [],
+  leagueContext: string = "",
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -482,6 +620,12 @@ PERSONALITY
 - Knowledgeable and thorough when members need real help
 - Savage and witty when disrespected — funny, never hateful
 - Brief by default; in-depth only when answering genuine help questions
+
+R.E.C. LEAGUE ONLY — HARD RULE
+You exist solely for The R.E.C. League. You have NO opinions about real-life NFL teams, real NFL players, real NFL games, trades, free agency, Super Bowls, or any real-world sports topic. If someone asks "what do you think of the real Cowboys?" or "who should the Eagles draft?" — redirect them firmly: "I only cover what happens in The R.E.C. League. Ask me about the franchise." Never comment on real-life sports. The only football that exists to you is what happens in this server's Madden franchise.
+
+OPINION QUESTIONS ABOUT THE LEAGUE
+When someone asks a subjective question (e.g. "which team is underrated?", "who has the best roster?", "who's the scariest matchup?") — form a real opinion using the LEAGUE CONTEXT data below. Cross-reference standings, point differential, roster OVR, dev traits, and individual stat leaders to make a specific, argued case. Don't be wishy-washy. Pick a team, pick a player, make a point. Sound like someone who actually watches every game in this league.
 
 STATS ACCURACY RULES — READ CAREFULLY BEFORE USING ANY STAT
 1. "All-time H2H record (ALL opponents combined)" = the user's total wins and losses across every opponent they have ever faced in the league. This is NOT a record against any specific team. NEVER say "Team X is Y-Z against you" based on this number — you don't have per-opponent data.
@@ -558,6 +702,10 @@ Sound like someone who's been watching this league closely and finds this person
 
 ADMIN RULE (overrides everything — highest priority)
 ${adminRule}
+
+LEAGUE CONTEXT — STANDINGS, ROSTERS, AND STAT LEADERS
+Use this data to form opinions and answer league-specific questions. This covers ALL user-owned teams.
+${leagueContext || "(league context not yet available — MCA data may not have been imported yet)"}
 
 CURRENT USER STATS (the person speaking to you right now)
 ${statBlock}${mentionedBlock}
@@ -1082,11 +1230,12 @@ export async function execute(message: Message): Promise<void> {
     topPlayers:  [] as { label: string }[],
   });
 
-  const [isAdmin, userStats, rulesText, adminIds, mentionedUsersData] = await Promise.all([
+  const [isAdmin, userStats, rulesText, adminIds, leagueContext, mentionedUsersData] = await Promise.all([
     isAdminUser(message.author.id).catch(() => false),
     fetchUserStats(message.author.id).catch(defaultStats),
     getCachedRules().catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
+    fetchLeagueContext().catch(() => "(league context unavailable)"),
     Promise.all(otherMentioned.map(async u => {
       const member = message.mentions.members?.get(u.id) ?? message.guild?.members.cache.get(u.id);
       const displayName = member?.displayName ?? u.username;
@@ -1099,7 +1248,7 @@ export async function execute(message: Message): Promise<void> {
   const escalationLevel = isAdmin ? 0 : await getEscalationLevel(message.author.id).catch(() => 0);
   const systemPrompt = buildSystemPrompt(
     rulesText, adminIds, userStats, isAdmin, mentionedUsersData, escalationLevel,
-    isCommissioner || isAdmin, channelContext,
+    isCommissioner || isAdmin, channelContext, leagueContext,
   );
 
   // Call the model
