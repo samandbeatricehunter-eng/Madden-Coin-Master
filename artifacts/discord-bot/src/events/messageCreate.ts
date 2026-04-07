@@ -250,6 +250,9 @@ async function fetchUserStats(discordId: string) {
   let seasonWins = 0, seasonLosses = 0, pointDiff = 0;
   let recentGames: { label: string }[] = [];
   let topPlayers: { label: string }[] = [];
+  let rosterByGroup:  Record<string, string[]> = {};
+  let teamSeasonStats: string = "";
+  let playerStatLines: string[] = [];
 
   try {
     const season = await getOrCreateActiveSeason();
@@ -368,9 +371,9 @@ async function fetchUserStats(discordId: string) {
         return { label: `Wk${g.weekIndex + 1}: ${result} ${myScore}-${oppScore} vs ${opp} (${type})` };
       });
 
-      // Top 12 players by overall
-      const roster = await db
-        .select({
+      // Full roster + team stats + player stats — all in parallel
+      const [fullRoster, teamStatRow, playerStats] = await Promise.all([
+        db.select({
           firstName: franchiseRostersTable.firstName,
           lastName:  franchiseRostersTable.lastName,
           position:  franchiseRostersTable.position,
@@ -383,12 +386,78 @@ async function fetchUserStats(discordId: string) {
           eq(franchiseRostersTable.seasonId, season.id),
           eq(franchiseRostersTable.teamName, teamName),
         ))
-        .orderBy(desc(franchiseRostersTable.overall))
-        .limit(12);
+        .orderBy(desc(franchiseRostersTable.overall)),
 
-      topPlayers = roster.map(p => ({
+        db.select()
+          .from(teamSeasonStatsTable)
+          .where(and(
+            eq(teamSeasonStatsTable.seasonId, season.id),
+            eq(teamSeasonStatsTable.teamName, teamName),
+          ))
+          .limit(1),
+
+        db.select()
+          .from(playerSeasonStatsTable)
+          .where(and(
+            eq(playerSeasonStatsTable.seasonId, season.id),
+            eq(playerSeasonStatsTable.teamName, teamName),
+          )),
+      ]);
+
+      // Keep top 12 for backward compat (used in CURRENT USER STATS header)
+      topPlayers = fullRoster.slice(0, 12).map(p => ({
         label: `${p.firstName} ${p.lastName} | ${p.position} | OVR ${p.overall} | ${DEV_TRAIT_LABEL[p.devTrait] ?? "Normal"}${p.age ? ` | Age ${p.age}` : ""}`,
       }));
+
+      // Position groups for matchup analysis
+      const POS_GROUPS: Record<string, string[]> = {
+        "QB":  ["QB"],
+        "HB":  ["HB", "FB"],
+        "WR":  ["WR"],
+        "TE":  ["TE"],
+        "OL":  ["LT", "LG", "C", "RG", "RT"],
+        "DL":  ["RE", "LE", "DT"],
+        "LB":  ["MLB", "ROLB", "LOLB"],
+        "DB":  ["CB", "FS", "SS"],
+        "K/P": ["K", "P"],
+      };
+      const grouped: Record<string, string[]> = {};
+      for (const [group, positions] of Object.entries(POS_GROUPS)) {
+        const players = fullRoster.filter(p => positions.includes(p.position)).slice(0, 3);
+        if (players.length > 0) {
+          grouped[group] = players.map(p =>
+            `${p.firstName} ${p.lastName} ${p.overall}OVR ${DEV_TRAIT_LABEL[p.devTrait] ?? "Normal"}${p.age ? ` age ${p.age}` : ""}`
+          );
+        }
+      }
+      rosterByGroup = grouped;
+
+      // Team season stats
+      const ts = teamStatRow[0];
+      if (ts) {
+        const totalOff = ts.offYds;
+        const totalDef = ts.defPassYds + ts.defRushYds;
+        teamSeasonStats = [
+          `Offense: ${totalOff} total yds (${ts.offPassYds} pass / ${ts.offRushYds} rush) | ${ts.offTDs} pts scored`,
+          `Defense: ${totalDef} total yds allowed (${ts.defPassYds} pass / ${ts.defRushYds} rush) | ${ts.defTDs} pts allowed`,
+        ].join(" | ");
+      }
+
+      // Individual player season stats — show top performers on this team
+      if (playerStats.length > 0) {
+        const lines: string[] = [];
+        const topPasser  = [...playerStats].sort((a, b) => b.passYds - a.passYds)[0];
+        const topRusher  = [...playerStats].sort((a, b) => b.rushYds - a.rushYds)[0];
+        const topReceiver= [...playerStats].sort((a, b) => b.recYds  - a.recYds )[0];
+        const topSacks   = [...playerStats].sort((a, b) => b.sacks   - a.sacks  )[0];
+        const topInts    = [...playerStats].sort((a, b) => b.defInts - a.defInts)[0];
+        if (topPasser?.passYds  > 0) lines.push(`Passing:   ${topPasser.firstName} ${topPasser.lastName} — ${topPasser.passYds} yds ${topPasser.passTDs} TDs`);
+        if (topRusher?.rushYds  > 0) lines.push(`Rushing:   ${topRusher.firstName} ${topRusher.lastName} — ${topRusher.rushYds} yds ${topRusher.rushTDs} TDs`);
+        if (topReceiver?.recYds > 0) lines.push(`Receiving: ${topReceiver.firstName} ${topReceiver.lastName} — ${topReceiver.recYds} yds ${topReceiver.recTDs} TDs`);
+        if (topSacks?.sacks     > 0) lines.push(`Sacks:     ${topSacks.firstName} ${topSacks.lastName} — ${topSacks.sacks} sacks`);
+        if (topInts?.defInts    > 0) lines.push(`INTs:      ${topInts.firstName} ${topInts.lastName} — ${topInts.defInts} INTs`);
+        playerStatLines = lines;
+      }
     }
   } catch (_) {}
 
@@ -402,6 +471,9 @@ async function fetchUserStats(discordId: string) {
     pointDiff,
     recentGames,
     topPlayers,
+    rosterByGroup,
+    teamSeasonStats,
+    playerStatLines,
   };
 }
 
@@ -591,13 +663,25 @@ function buildSystemPrompt(
     lines.push(`Season point differential: ${s.pointDiff >= 0 ? "+" : ""}${s.pointDiff}`);
     lines.push(`All-time H2H record (ALL opponents combined, all seasons): ${s.allTimeH2HWins}W – ${s.allTimeH2HLosses}L`);
     lines.push(`Coin balance: ${s.balance.toLocaleString()}`);
+    if (s.teamSeasonStats) {
+      lines.push(`Team stats this season: ${s.teamSeasonStats}`);
+    }
     if (s.recentGames.length > 0) {
       lines.push(`Recent games (most recent first):`);
       for (const g of s.recentGames) lines.push(`  ${g.label}`);
     }
-    if (s.topPlayers.length > 0) {
+    if (Object.keys(s.rosterByGroup).length > 0) {
+      lines.push(`Roster by position group (top players, OVR | Dev | Age):`);
+      for (const [group, players] of Object.entries(s.rosterByGroup)) {
+        lines.push(`  ${group}: ${players.join(" / ")}`);
+      }
+    } else if (s.topPlayers.length > 0) {
       lines.push(`Top roster players (by OVR):`);
       for (const p of s.topPlayers) lines.push(`  ${p.label}`);
+    }
+    if (s.playerStatLines.length > 0) {
+      lines.push(`Season stat leaders on this team:`);
+      for (const l of s.playerStatLines) lines.push(`  ${l}`);
     }
     return lines.join("\n");
   };
@@ -626,6 +710,18 @@ You exist solely for The R.E.C. League. You have NO opinions about real-life NFL
 
 OPINION QUESTIONS ABOUT THE LEAGUE
 When someone asks a subjective question (e.g. "which team is underrated?", "who has the best roster?", "who's the scariest matchup?") — form a real opinion using the LEAGUE CONTEXT data below. Cross-reference standings, point differential, roster OVR, dev traits, and individual stat leaders to make a specific, argued case. Don't be wishy-washy. Pick a team, pick a player, make a point. Sound like someone who actually watches every game in this league.
+
+MATCHUP BREAKDOWNS
+When a user asks for a breakdown of their matchup, their upcoming game, how they stack up against an opponent, or anything along those lines:
+1. Use CURRENT USER STATS (this user's full positional roster + team stats + player stat leaders)
+2. Use MENTIONED LEAGUE MEMBERS section for the opponent's data (position groups, team stats, stat leaders)
+3. Go through each position group and compare: QB vs QB, HB vs HB, WR/TE vs DB, OL vs DL, etc.
+4. Highlight specific player matchups worth watching — e.g., if their WR1 is a 94 OVR X-Factor going against a 78 OVR CB, say that.
+5. Identify each team's clear strengths and weaknesses based on OVR, dev traits, and season stats
+6. Factor in season stat performance — a team running for 900 yards has a ground game to worry about even if the HB's OVR isn't elite
+7. Give a prediction. Take a side. Don't hedge.
+The user must @mention the opponent for their data to be available. If no opponent is mentioned, tell the user to @mention their opponent so you can pull their data.
+IMPORTANT: If you have both teams' data, always do the full breakdown — don't give a partial answer. This is the most useful thing the bot can do.
 
 STATS ACCURACY RULES — READ CAREFULLY BEFORE USING ANY STAT
 1. "All-time H2H record (ALL opponents combined)" = the user's total wins and losses across every opponent they have ever faced in the league. This is NOT a record against any specific team. NEVER say "Team X is Y-Z against you" based on this number — you don't have per-opponent data.
@@ -1226,8 +1322,11 @@ export async function execute(message: Message): Promise<void> {
     team: "Unknown", balance: 0,
     allTimeH2HWins: 0, allTimeH2HLosses: 0,
     seasonWins: 0, seasonLosses: 0, pointDiff: 0,
-    recentGames: [] as { label: string }[],
-    topPlayers:  [] as { label: string }[],
+    recentGames:    [] as { label: string }[],
+    topPlayers:     [] as { label: string }[],
+    rosterByGroup:  {} as Record<string, string[]>,
+    teamSeasonStats: "",
+    playerStatLines: [] as string[],
   });
 
   const [isAdmin, userStats, rulesText, adminIds, leagueContext, mentionedUsersData] = await Promise.all([
