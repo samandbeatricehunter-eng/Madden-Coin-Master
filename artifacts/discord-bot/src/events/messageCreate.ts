@@ -328,7 +328,7 @@ async function fetchUserStats(discordId: string) {
               eq(franchiseScheduleTable.homeTeamName, teamName),
               eq(franchiseScheduleTable.awayTeamName, teamName),
             ),
-            eq(franchiseProcessedGamesTable.payoutType, "h2h"),
+            inArray(franchiseProcessedGamesTable.payoutType, ["h2h", "playoff"]),
             isNotNull(franchiseScheduleTable.homeScore),
             isNotNull(franchiseScheduleTable.awayScore),
           ));

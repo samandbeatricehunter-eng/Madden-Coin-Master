@@ -126,8 +126,18 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
   );
 }
 
+// ── Playoff round label helper ─────────────────────────────────────────────────
+function weekLabel(weekType: string, weekNum: number): string {
+  if (weekType === "reg") return `Week ${weekNum}`;
+  const ROUNDS: Record<number, string> = {
+    1: "Wild Card", 2: "Divisional Round", 3: "Conference Championship", 4: "Super Bowl",
+  };
+  return ROUNDS[weekNum] ?? `Playoff Round ${weekNum}`;
+}
+
 // ── /week/:weekType/:weekNum/schedules — per-week game results → payouts ──────
 // The MCA sends scores here (NOT /scores). This is the primary payout trigger.
+// Handles both regular season (weekType=reg) and playoffs (weekType=post, etc.)
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/schedules", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
@@ -136,8 +146,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing...`);
   // Write completed scores to franchise_schedule immediately so /seasonschedule
   // reflects results regardless of whether /schedules is sent before or after this.
-  await syncWeekScoresToSchedule(req.body, weekNum);
-  const result = await processWeekScores(req.body, weekNum).catch(err => ({
+  await syncWeekScoresToSchedule(req.body, weekNum, weekType);
+  const result = await processWeekScores(req.body, weekNum, weekType).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -158,6 +168,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     return;
   }
 
+  const roundLabel = weekLabel(weekType, weekNum);
+
   if (COMMISSIONER_CHANNEL_ID) {
     // ── Catchup mode: send a minimal commissioner-only confirmation, no payouts ──
     if (result.catchupMode) {
@@ -165,7 +177,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
         ? result.resultLines.slice(0, 15).join("\n")
         : "No completed games found";
       await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-        title: `📋 Week ${weekNum} — MCA Import (Catchup Mode)`,
+        title: `📋 ${roundLabel} — MCA Import (Catchup Mode)`,
         description: `Scores logged — no payouts issued\n\n${gameLines}`,
         color: 0x5865f2,
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
@@ -205,7 +217,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     fields.push({ name: "📊 Summary", value: summaryParts.join("\n") || "Nothing to process", inline: false });
 
     await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-      title: `✅ Week ${weekNum} — MCA Import`,
+      title: `✅ ${roundLabel} — MCA Import`,
       color: result.gamesProcessed > 0 ? 0x57f287 : 0x5865f2,
       fields,
       footer: { text: `Season ${result.seasonId} · Madden Companion App` },
@@ -223,7 +235,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       });
     if (lines.length > 0) {
       await sendDiscordEmbed(GENERAL_CHANNEL_ID, {
-        title: `🏈 Week ${weekNum} Results`,
+        title: `🏈 ${roundLabel} Results`,
         description: lines.join("\n"),
         color: 0xf0b132,
       }).catch(() => {});
@@ -277,19 +289,16 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
 });
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
+// Fallback endpoint — MCA primarily uses /week/:weekType/:weekNum/schedules, but some
+// versions also fire /scores. Supports both regular season and playoffs.
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-scores.json`, req.body);
   res.status(200).json({ status: "received" });
 
-  if (weekType !== "reg" || weekNum < 1 || weekNum > 18) {
-    console.log(`[mca] Ignoring non-regular-season scores: weekType=${weekType} weekNum=${weekNum}`);
-    return;
-  }
-
-  console.log(`[mca/week${weekNum}/scores] Received, processing payouts...`);
-  const result = await processWeekScores(req.body, weekNum).catch(err => ({
+  console.log(`[mca/week${weekNum}/scores] Received (weekType=${weekType}), processing payouts...`);
+  const result = await processWeekScores(req.body, weekNum, weekType).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -297,11 +306,13 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     weekNum, seasonId: 0, catchupMode: false,
   }));
 
+  const scoresRoundLabel = weekLabel(weekType, weekNum);
+
   if (!result.ok) {
     console.error(`[mca/week${weekNum}/scores] Processing failed:`, result.message);
     if (COMMISSIONER_CHANNEL_ID) {
       sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-        title: `❌ Week ${weekNum} Import Failed`,
+        title: `❌ ${scoresRoundLabel} Import Failed`,
         description: result.message,
         color: 0xed4245,
       }).catch(() => {});
@@ -315,7 +326,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
         ? result.resultLines.slice(0, 15).join("\n")
         : "No completed games found";
       await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-        title: `📋 Week ${weekNum} — MCA Import (Catchup Mode)`,
+        title: `📋 ${scoresRoundLabel} — MCA Import (Catchup Mode)`,
         description: `Scores logged — no payouts issued\n\n${gameLines}`,
         color: 0x5865f2,
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
@@ -353,7 +364,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     });
 
     await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-      title: `✅ Week ${weekNum} — MCA Import Complete`,
+      title: `✅ ${scoresRoundLabel} — MCA Import Complete`,
       color: 0x57f287,
       fields,
       footer: { text: `Season ${result.seasonId} · Madden Companion App` },
@@ -371,7 +382,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
 
     if (lines.length > 0) {
       await sendDiscordEmbed(GENERAL_CHANNEL_ID, {
-        title: `🏈 Week ${weekNum} Results`,
+        title: `🏈 ${scoresRoundLabel} Results`,
         description: lines.join("\n"),
         color: 0xf0b132,
       }).catch(() => {});

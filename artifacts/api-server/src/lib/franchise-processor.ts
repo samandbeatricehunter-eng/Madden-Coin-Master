@@ -728,11 +728,13 @@ export async function processSchedules(body: unknown): Promise<ProcessResult> {
       const aId = Number(g.awayTeamId ?? -1);
       if (hId < 0 || aId < 0) continue;
 
-      const weekIdx   = Number(g.weekIndex ?? g.week ?? -1);
-      if (weekIdx < 0) continue;
+      const rawWeekIdx = Number(g.weekIndex ?? g.week ?? -1);
+      if (rawWeekIdx < 0) continue;
 
       const weekType = Number(g.weekType ?? 1);
-      if (weekType !== 1) continue; // reg season only
+      // Regular season = weekType 1. Playoffs use weekType 2+ (Wild Card, Divisional, etc.).
+      // Offset playoff weekIndex by 1000 so they never collide with reg-season rows.
+      const weekIdx = weekType !== 1 ? 1000 + rawWeekIdx : rawWeekIdx;
 
       const hData  = teamMap.get(hId);
       const aData  = teamMap.get(aId);
@@ -822,10 +824,12 @@ export interface WeekScoresResult {
 export async function syncWeekScoresToSchedule(
   body: unknown,
   weekNum: number,
+  weekType = "reg",
 ): Promise<void> {
   try {
     const season    = await getOrCreateActiveSeason();
-    const weekIndex = weekNum - 1; // schedule table uses 0-based weekIndex
+    // Playoff weeks use a 1000+ offset so they never collide with reg-season rows
+    const weekIndex = weekType === "reg" ? weekNum - 1 : 1000 + weekNum - 1;
     const games     = extractList(body, "gameScheduleInfoList", "scheduleInfoList", "games");
 
     const updates: Promise<any>[] = [];
@@ -866,6 +870,7 @@ export async function syncWeekScoresToSchedule(
 export async function processWeekScores(
   body: unknown,
   weekNum: number,
+  weekType = "reg",
 ): Promise<WeekScoresResult> {
   const zero: WeekScoresResult = {
     ok: false, message: "", gamesProcessed: 0, gamesDuplicate: 0,
@@ -891,7 +896,10 @@ export async function processWeekScores(
       .from(franchiseProcessedGamesTable);
     const processedSet = new Set(allProcessed.map(r => r.gameId));
 
-    const weekIndexTarget = weekNum - 1; // MCA week 1 = weekIndex 0
+    // Playoff weeks use a 1000+ offset so they never collide with reg-season rows.
+    // e.g. Wild Card (weekType=post, weekNum=1) → weekIndex 1000
+    const isPlayoff       = weekType !== "reg";
+    const weekIndexTarget = isPlayoff ? 1000 + weekNum - 1 : weekNum - 1;
 
     let gamesProcessed    = 0;
     let gamesDuplicate    = 0;
@@ -919,9 +927,10 @@ export async function processWeekScores(
       const awayScore = Number(g.awayScore ?? 0);
 
       const rawId  = g.scheduleId ?? g.gameId ?? null;
+      // Include weekType in fallback ID so playoff week 1 never collides with reg week 1
       const gameId = rawId != null
         ? String(rawId)
-        : `s${season.id}-w${weekNum}-h${hId}-a${aId}-${homeScore}-${awayScore}`;
+        : `s${season.id}-${weekType}-w${weekNum}-h${hId}-a${aId}-${homeScore}-${awayScore}`;
 
       if (processedSet.has(gameId)) { gamesDuplicate++; continue; }
 
@@ -1022,15 +1031,20 @@ export async function processWeekScores(
           const loScore    = Math.min(homeScore, awayScore);
           const spread     = hiScore - loScore;
 
+          const roundLabel = isPlayoff
+            ? ` (Playoff Round ${weekNum})`
+            : ` (Week ${weekNum})`;
+
           await addBalance(winnerId, H2H_WIN_PAYOUT);
           await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
-            `MCA webhook: H2H win vs ${loserTeam} (${hiScore}–${loScore})`);
+            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} win vs ${loserTeam} (${hiScore}–${loScore})${roundLabel}`);
           await addBalance(loserId, H2H_LOSS_PAYOUT);
           await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
-            `MCA webhook: H2H loss vs ${winnerTeam} (${loScore}–${hiScore})`);
+            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} loss vs ${winnerTeam} (${loScore}–${hiScore})${roundLabel}`);
 
-          payoutLines.push(`🏆 **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
-          resultLines.push(`🏆 **${winnerTeam}** ${hiScore} — ${loScore} **${loserTeam}**`);
+          const resultPrefix = isPlayoff ? "🏆🏈" : "🏆";
+          payoutLines.push(`${resultPrefix} **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
+          resultLines.push(`${resultPrefix} **${winnerTeam}** ${hiScore} — ${loScore} **${loserTeam}**`);
 
           await upsertH2HRecord(winnerId, season.id, true,    spread);
           await upsertH2HRecord(loserId,  season.id, false, -spread);
@@ -1044,6 +1058,16 @@ export async function processWeekScores(
             .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
             .where(eq(usersTable.discordId, loserId));
           await upsertH2HMatchup(winnerId, loserId);
+
+          // Track playoff wins/losses separately in userRecordsTable
+          if (isPlayoff) {
+            await db.update(userRecordsTable)
+              .set({ playoffWins: sql`${userRecordsTable.playoffWins} + 1` })
+              .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+            await db.update(userRecordsTable)
+              .set({ playoffLosses: sql`${userRecordsTable.playoffLosses} + 1` })
+              .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+          }
 
           const winnerRow = await db.select({ allTimeH2HWins: usersTable.allTimeH2HWins, milestoneTierAwarded: usersTable.milestoneTierAwarded })
             .from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1);
@@ -1061,7 +1085,7 @@ export async function processWeekScores(
           }
 
           payoutMeta = {
-            payoutType: "h2h",
+            payoutType: isPlayoff ? "playoff" : "h2h",
             winnerDiscordId: winnerId, loserDiscordId: loserId,
             winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT,
             appliedPointDiff: spread,
