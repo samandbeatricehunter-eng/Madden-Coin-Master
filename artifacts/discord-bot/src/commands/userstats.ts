@@ -6,6 +6,7 @@ import {
   usersTable, userRecordsTable, coinTransactionsTable,
   inventoryTable, purchasesTable, interviewRequestsTable,
   seasonStatsTable, userSavingsTable,
+  customPlayersTable, customPlayerSettingsTable,
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
@@ -79,8 +80,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     computeStreak(target.id, true),
   ]);
 
-  // ── Parallel batch 2: inventory + purchases + transactions + interviews ───
-  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews] = await Promise.all([
+  // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs ─
+  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, cpSettings] = await Promise.all([
     db.select().from(inventoryTable)
       .where(and(eq(inventoryTable.discordId, target.id), eq(inventoryTable.seasonId, season.id))),
 
@@ -106,6 +107,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .where(eq(interviewRequestsTable.discordId, target.id))
       .orderBy(desc(interviewRequestsTable.createdAt))
       .limit(5),
+
+    db.select({
+      id:           customPlayersTable.id,
+      firstName:    customPlayersTable.firstName,
+      lastName:     customPlayersTable.lastName,
+      position:     customPlayersTable.position,
+      archetypeName: customPlayersTable.archetypeName,
+      devTrait:     customPlayersTable.devTrait,
+      packageTier:  customPlayersTable.packageTier,
+      status:       customPlayersTable.status,
+    }).from(customPlayersTable)
+      .where(and(
+        eq(customPlayersTable.discordId, target.id),
+        eq(customPlayersTable.seasonId, season.id),
+      ))
+      .orderBy(desc(customPlayersTable.createdAt)),
+
+    db.select().from(customPlayerSettingsTable).limit(1),
   ]);
 
   const record      = recordRows[0];
@@ -118,9 +137,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const currentLegends   = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "current");
   const permanentLegends = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "permanent");
-  const customs          = inventory.filter(i =>
-    ["custom_player_gold", "custom_player_silver", "custom_player_bronze"].includes(i.itemType),
-  );
+
+  // Custom players from the dedicated table (richer data than inventory)
+  const cpLimit      = cpSettings?.[0]?.seasonLimit ?? 0;
+  const activeCustoms = (customPlayers ?? []).filter(cp => cp.status !== "refunded");
+  const refundedCount = (customPlayers ?? []).filter(cp => cp.status === "refunded").length;
 
   const coreAttrUsed    = seasonStats?.coreAttrPurchased    ?? 0;
   const nonCoreAttrUsed = seasonStats?.nonCoreAttrPurchased ?? 0;
@@ -194,9 +215,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     arr.length > 0
       ? arr.map(l => `• **${l.legendName ?? l.playerName ?? "?"}** (${l.playerPosition ?? "?"})`).join("\n")
       : "*None*";
-  const customStr = customs.length > 0
-    ? customs.map(c => `• **${c.playerName ?? "?"}** — ${c.customPlayerTier?.toUpperCase() ?? "?"}`).join("\n")
-    : "*None*";
+
+  // Custom player display — rich data from customPlayersTable
+  const statusIcon = (s: string) => s === "applied" ? "✅" : s === "refunded" ? "♻️" : "⏳";
+  const tierLabel  = (t: string) => t === "kp" ? "K/P" : t.charAt(0).toUpperCase() + t.slice(1);
+  const traitLabel = (t: string) => t === "superstar" ? "SS" : t === "star" ? "★" : "";
+
+  const cpLimitStr = cpLimit > 0
+    ? `${activeCustoms.length} / ${cpLimit} used this season`
+    : `${activeCustoms.length} this season`;
+
+  const customStr = activeCustoms.length > 0
+    ? activeCustoms.map(cp => {
+        const trait = traitLabel(cp.devTrait);
+        return (
+          `${statusIcon(cp.status)} **${cp.firstName} ${cp.lastName}** ` +
+          `(${cp.position} / ${cp.archetypeName})` +
+          (trait ? ` ${trait}` : "") +
+          ` — *${tierLabel(cp.packageTier)}*`
+        );
+      }).join("\n")
+    : "*None this season*";
 
   const inventoryEmbed = new EmbedBuilder()
     .setColor(Colors.Gold)
@@ -204,7 +243,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .addFields(
       { name: `⚡ Current Season Legends (${currentLegends.length})`,  value: fmtLegend(currentLegends)   },
       { name: `🔒 Permanent Vault (${permanentLegends.length}/4)`,     value: fmtLegend(permanentLegends) },
-      { name: `Custom Players (${customs.length})`,                    value: customStr },
+      {
+        name:  `🏈 Custom Players (${cpLimitStr}${refundedCount > 0 ? `, ${refundedCount} refunded` : ""})`,
+        value: customStr,
+      },
       { name: "Core Attr Pts Used",     value: `${coreAttrUsed}`,    inline: true },
       { name: "Non-Core Attr Pts Used", value: `${nonCoreAttrUsed}`, inline: true },
       { name: "\u200b",                 value: "\u200b",             inline: true },

@@ -12,7 +12,7 @@ export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub => sub
     .setName("view")
-    .setDescription("View current package settings"),
+    .setDescription("View current package settings and season limit"),
   )
   .addSubcommand(sub => sub
     .setName("set")
@@ -30,26 +30,52 @@ export const data = new SlashCommandBuilder()
     )
     .addIntegerOption(o => o.setName("points").setDescription("Creation points").setRequired(false).setMinValue(1).setMaxValue(500))
     .addIntegerOption(o => o.setName("cost").setDescription("Coin cost").setRequired(false).setMinValue(0).setMaxValue(9999)),
+  )
+  .addSubcommand(sub => sub
+    .setName("setlimit")
+    .setDescription("Set the maximum custom players allowed per season (0 = unlimited)")
+    .addIntegerOption(o => o
+      .setName("limit")
+      .setDescription("Max custom players per season (0 = unlimited)")
+      .setRequired(true)
+      .setMinValue(0)
+      .setMaxValue(99),
+    ),
   );
+
+function buildSettingsEmbed(s: Awaited<ReturnType<typeof getSettings>>, title: string): EmbedBuilder {
+  const limitStr = s.seasonLimit === 0 ? "Unlimited" : `${s.seasonLimit} per season`;
+  return new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(title)
+    .addFields(
+      { name: "Bronze",            value: `${s.bronzePoints} pts — ${s.bronzeCost} coins`, inline: true },
+      { name: "Silver",            value: `${s.silverPoints} pts — ${s.silverCost} coins`, inline: true },
+      { name: "Gold",              value: `${s.goldPoints} pts — ${s.goldCost} coins`,     inline: true },
+      { name: "K/P Default",       value: `${s.kpPoints} pts — ${s.kpCost} coins`,         inline: true },
+      { name: "Season Limit",      value: limitStr,                                         inline: true },
+    )
+    .setTimestamp();
+}
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
-
   const sub = interaction.options.getSubcommand();
 
   if (sub === "view") {
     const s = await getSettings();
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle("⚙️ Custom Player Package Settings")
-      .addFields(
-        { name: "Bronze",      value: `${s.bronzePoints} pts — ${s.bronzeCost} coins`, inline: true },
-        { name: "Silver",      value: `${s.silverPoints} pts — ${s.silverCost} coins`, inline: true },
-        { name: "Gold",        value: `${s.goldPoints} pts — ${s.goldCost} coins`,   inline: true },
-        { name: "K/P Default", value: `${s.kpPoints} pts — ${s.kpCost} coins`,       inline: true },
-      )
-      .setTimestamp();
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [buildSettingsEmbed(s, "⚙️ Custom Player Package Settings")] });
+    return;
+  }
+
+  if (sub === "setlimit") {
+    const limit = interaction.options.getInteger("limit", true);
+    await db.update(customPlayerSettingsTable).set({ seasonLimit: limit, updatedAt: new Date() });
+    const s = await getSettings();
+    await interaction.editReply({
+      content: `✅ Season limit set to **${limit === 0 ? "Unlimited" : `${limit} per season`}**.`,
+      embeds:  [buildSettingsEmbed(s, "✅ Custom Player Settings Updated")],
+    });
     return;
   }
 
@@ -81,17 +107,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   await db.update(customPlayerSettingsTable).set(update);
-
-  const s2  = await getSettings();
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle("✅ Package Settings Updated")
-    .addFields(
-      { name: "Bronze",      value: `${s2.bronzePoints} pts — ${s2.bronzeCost} coins`, inline: true },
-      { name: "Silver",      value: `${s2.silverPoints} pts — ${s2.silverCost} coins`, inline: true },
-      { name: "Gold",        value: `${s2.goldPoints} pts — ${s2.goldCost} coins`,   inline: true },
-      { name: "K/P Default", value: `${s2.kpPoints} pts — ${s2.kpCost} coins`,       inline: true },
-    )
-    .setTimestamp();
-  await interaction.editReply({ embeds: [embed] });
+  const s2 = await getSettings();
+  await interaction.editReply({ embeds: [buildSettingsEmbed(s2, "✅ Package Settings Updated")] });
 }
