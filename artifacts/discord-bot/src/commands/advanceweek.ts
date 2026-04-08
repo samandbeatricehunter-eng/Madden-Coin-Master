@@ -9,6 +9,7 @@ import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
 import { sendArticleChunked } from "../lib/send-article.js";
+import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
@@ -405,6 +406,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         await runOffseasonHistoricalPost(interaction.client, season.id, season.seasonNumber);
       } catch (err) {
         console.error("[advanceweek] Offseason historical post error:", err);
+      }
+    })();
+  }
+
+  // ── Auto-run weekly matchups flow for regular-season advances ─────────────
+  // Fires when advancing TO a regular season week (1–18).
+  // Pays GOTW voters for the week we just LEFT (oldWeekNum), clears channels,
+  // posts new matchups, and sends admin an ephemeral GOTW prompt.
+  const _newWeekNum = parseInt(newWeek, 10);
+  if (!isNaN(_newWeekNum) && _newWeekNum >= 1 && _newWeekNum <= 18) {
+    // Send the GOTW admin prompt as a separate ephemeral follow-up so it
+    // doesn't interfere with the main advance-week summary embed.
+    (async () => {
+      try {
+        await runWeeklyMatchupsFlow({
+          client:          interaction.client,
+          guild:           interaction.guild,
+          season,
+          displayWeekNum:  _newWeekNum,
+          payoutWeekIndex: (!isNaN(oldWeekNum) && oldWeekNum >= 1) ? oldWeekNum - 1 : null,
+          replyFn: async ({ content, components }) => {
+            await interaction.followUp({
+              content,
+              components: components ?? [],
+              ephemeral:  true,
+            });
+          },
+        });
+      } catch (err) {
+        console.error("[advanceweek] Weekly matchups flow error:", err);
+        try {
+          await interaction.followUp({
+            content: `⚠️ Advance week completed, but the weekly matchups flow failed: ${err}`,
+            ephemeral: true,
+          });
+        } catch { /* nothing we can do */ }
       }
     })();
   }

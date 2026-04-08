@@ -8,6 +8,7 @@ import {
 import { db } from "@workspace/db";
 import { franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, asc, desc, ilike, or } from "drizzle-orm";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // ── Dev trait label ───────────────────────────────────────────────────────────
 
@@ -352,6 +353,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const isPublic    = interaction.options.getBoolean("public") ?? false;
 
   await interaction.deferReply({ ephemeral: !isPublic });
+  if (!await requireMcaEnabled(interaction)) return;
 
   const [season] = await db.select()
     .from(seasonsTable)

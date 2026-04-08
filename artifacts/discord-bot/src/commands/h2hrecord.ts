@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { h2hMatchupRecordsTable, usersTable } from "@workspace/db";
 import { eq, and, or } from "drizzle-orm";
 import { getUserByDiscordId } from "../lib/db-helpers.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("h2hrecord")
@@ -16,6 +17,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
+  if (!await requireMcaEnabled(interaction)) return;
 
   const callerId   = interaction.user.id;
   const opponentUser = interaction.options.getUser("opponent", true);

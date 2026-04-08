@@ -4,6 +4,7 @@ import {
 } from "discord.js";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getSeasonRecords, getAllTimeRecords } from "../lib/gcs-fallback.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // ─── Power Ranking Formula ────────────────────────────────────────────────────
 function calcPRScore(wins: number, losses: number, pointDiff: number): number {
@@ -44,6 +45,7 @@ export const seasonPRData = new SlashCommandBuilder()
 
 export async function executeSeasonPR(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
+  if (!await requireMcaEnabled(interaction)) return;
 
   const season = await getOrCreateActiveSeason();
   const { records, source } = await getSeasonRecords(season.id);
@@ -97,6 +99,7 @@ export const allTimePRData = new SlashCommandBuilder()
 
 export async function executeAllTimePR(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
+  if (!await requireMcaEnabled(interaction)) return;
 
   const { records, source } = await getAllTimeRecords();
 

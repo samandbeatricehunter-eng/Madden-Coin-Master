@@ -4,6 +4,7 @@ import {
 import { db } from "@workspace/db";
 import { usersTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // ── Position grouping ─────────────────────────────────────────────────────────
 const OFFENSE_GROUPS: { label: string; positions: string[] }[] = [
@@ -83,6 +84,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+  if (!await requireMcaEnabled(interaction)) return;
 
   // ── Look up the calling user ───────────────────────────────────────────────
   const [user] = await db.select()

@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { eq, gte, and, aliasedTable } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // ── Player stat category definitions ─────────────────────────────────────────
 interface PlayerStatCat {
@@ -89,6 +90,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const ephemeral   = !(wantsPublic && isAdmin);
 
   await interaction.deferReply({ ephemeral });
+  if (!await requireMcaEnabled(interaction)) return;
 
   const category = interaction.options.getString("category", true);
   const season   = await getOrCreateActiveSeason();

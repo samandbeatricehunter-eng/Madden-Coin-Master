@@ -10,6 +10,7 @@ import {
 import { eq, and, desc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 const MILESTONE_LABELS: Record<number, string> = {
   0: "None",
@@ -38,6 +39,7 @@ async function getSavings(discordId: string): Promise<number> {
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+  if (!await requireMcaEnabled(interaction)) return;
 
   const target  = interaction.options.getUser("user") ?? interaction.user;
   const isSelf  = target.id === interaction.user.id;

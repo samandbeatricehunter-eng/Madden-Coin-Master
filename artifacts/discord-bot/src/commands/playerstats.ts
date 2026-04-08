@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { playerSeasonStatsTable, franchiseRostersTable } from "@workspace/db";
 import { eq, and, or, ilike, desc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("playerstats")
@@ -16,6 +17,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
+  if (!await requireMcaEnabled(interaction)) return;
 
   const query = interaction.options.getString("player", true).trim();
   if (query.length < 2) {

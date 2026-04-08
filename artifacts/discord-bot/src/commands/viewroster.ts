@@ -9,6 +9,7 @@ import { db } from "@workspace/db";
 import { usersTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, ilike, asc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // ── Position grouping (mirrors my-roster.ts) ─────────────────────────────────
 
@@ -145,6 +146,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.deferReply({ ephemeral: !isPublic });
+  if (!await requireMcaEnabled(interaction)) return;
 
   // ── Find the active season ─────────────────────────────────────────────────
   const [season] = await db.select()

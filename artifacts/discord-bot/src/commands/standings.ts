@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getArticleStandings, type ArticleStanding } from "../lib/gcs-fallback.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // NFL regular season game total — used for clinch magic-number math
 const TOTAL_GAMES = 18;
@@ -230,6 +231,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const isPublic   = interaction.options.getBoolean("public") ?? false;
 
   await interaction.deferReply({ ephemeral: !isPublic });
+  if (!await requireMcaEnabled(interaction)) return;
 
   const season      = await getOrCreateActiveSeason();
   const allStandings = await getArticleStandings(season.id, TOTAL_GAMES);

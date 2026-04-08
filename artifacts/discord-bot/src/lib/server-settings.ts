@@ -4,7 +4,9 @@ import { eq } from "drizzle-orm";
 import {
   EmbedBuilder, Colors,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ChatInputCommandInteraction, PermissionFlagsBits,
 } from "discord.js";
+import { isAdminUser } from "./db-helpers.js";
 
 export type { ServerSettings };
 
@@ -31,6 +33,37 @@ export async function toggleFeature(feature: FeatureKey): Promise<ServerSettings
   return updated!;
 }
 
+/**
+ * Call after `deferReply`. Returns true if the command should proceed.
+ * Returns false (and edits the reply with an error) when MCA import is
+ * disabled and the caller is not an admin.
+ */
+export async function requireMcaEnabled(
+  interaction: ChatInputCommandInteraction,
+): Promise<boolean> {
+  const settings = await getServerSettings();
+  if (settings.mcaImportEnabled) return true;
+
+  // Admins bypass the gate
+  const member = interaction.guild?.members.cache.get(interaction.user.id)
+    ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+  const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  if (isDiscordAdmin || isDbAdmin) return true;
+
+  const msg =
+    "❌ **MCA Import is currently disabled.**\n" +
+    "This command relies on live MCA data which the commissioner is managing manually. " +
+    "Please ask a commissioner for this information.";
+
+  try {
+    await interaction.editReply({ content: msg });
+  } catch {
+    await interaction.reply({ content: msg, ephemeral: true }).catch(() => {});
+  }
+  return false;
+}
+
 export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: string }> = [
   { key: "coinEconomy",             label: "Coin Economy",       description: "Master toggle — all economy features" },
   { key: "legendsEnabled",          label: "Legends",            description: "Legends in store & slash commands" },
@@ -40,6 +73,7 @@ export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: 
   { key: "ageResetsEnabled",        label: "Age Resets",         description: "Age reset purchases" },
   { key: "wagerEnabled",            label: "Wagers",             description: "Coin wager system" },
   { key: "tradeBlockEnabled",       label: "Trade Block",        description: "Trade block listings & ISO" },
+  { key: "mcaImportEnabled",        label: "MCA Import",         description: "Stat/schedule commands for all users (off = admin-only)" },
 ];
 
 export const FEATURE_LABELS: Record<FeatureKey, string> =
@@ -71,8 +105,8 @@ export function buildSettingsRows(s: ServerSettings): ActionRowBuilder<ButtonBui
   const row3 = new ActionRowBuilder<ButtonBuilder>();
 
   const chunks = [
-    FEATURE_META.slice(0, 4),
-    FEATURE_META.slice(4, 8),
+    FEATURE_META.slice(0, 5),
+    FEATURE_META.slice(5, 9),
   ];
 
   chunks[0]!.forEach(f => {

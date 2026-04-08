@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { franchiseScheduleTable } from "@workspace/db";
 import { eq, and, or, asc, lt, sql } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // Madden: 1=upcoming, 2=CPU-completed, 3=H2H-completed — upcoming games have status < 2
 
@@ -14,6 +15,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+  if (!await requireMcaEnabled(interaction)) return;
 
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
 
