@@ -7,12 +7,14 @@ import {
   usersTable, userRecordsTable,
   franchiseScheduleTable, franchiseRostersTable, franchiseProcessedGamesTable,
   pendingChannelPayoutsTable, coinTransactionsTable,
-  playerSeasonStatsTable, teamSeasonStatsTable,
+  playerSeasonStatsTable, teamSeasonStatsTable, seasonStatTierConfigsTable,
 } from "@workspace/db";
 import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
 } from "../lib/db-helpers.js";
+import { getAllPayoutConfig, PAYOUT_KEYS } from "../lib/payout-config.js";
+import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
 
 // ── OpenAI client ──────────────────────────────────────────────────────────────
 
@@ -59,6 +61,34 @@ async function recordInteraction(userId: string, msgType: string): Promise<void>
   } catch (err) {
     console.error("recordInteraction DB error:", err);
   }
+}
+
+// ── Per-user conversation history (in-memory, survives per process run) ───────
+// Keeps up to HISTORY_MAX_MESSAGES recent turns (user + assistant alternating)
+// so the AI carries context forward. Entries expire after HISTORY_TTL_MS of
+// inactivity — the user gets a fresh start if they haven't chatted for 30 min.
+
+interface HistoryEntry { role: "user" | "assistant"; content: string; at: number }
+const conversationHistory = new Map<string, HistoryEntry[]>();
+const HISTORY_MAX_MESSAGES = 10;     // 5 back-and-forth exchanges
+const HISTORY_TTL_MS = 30 * 60_000; // 30 minutes
+
+function getConversationHistory(userId: string): Array<{ role: "user" | "assistant"; content: string }> {
+  const all = conversationHistory.get(userId) ?? [];
+  const cutoff = Date.now() - HISTORY_TTL_MS;
+  const fresh = all.filter(m => m.at > cutoff);
+  if (fresh.length !== all.length) conversationHistory.set(userId, fresh);
+  return fresh.map(({ role, content }) => ({ role, content }));
+}
+
+function appendToHistory(userId: string, userMsg: string, botReply: string): void {
+  const all = conversationHistory.get(userId) ?? [];
+  const cutoff = Date.now() - HISTORY_TTL_MS;
+  const fresh = all.filter(m => m.at > cutoff);
+  const now = Date.now();
+  fresh.push({ role: "user",      content: userMsg, at: now });
+  fresh.push({ role: "assistant", content: botReply, at: now });
+  conversationHistory.set(userId, fresh.slice(-HISTORY_MAX_MESSAGES));
 }
 
 // ── Simple caches (avoid hammering DB on every mention) ───────────────────────
@@ -252,6 +282,142 @@ async function fetchLeagueContext(): Promise<string> {
   } catch (err) {
     console.error("fetchLeagueContext error:", err);
     return "(league context unavailable)";
+  }
+}
+
+// ── EOS payout context fetcher ────────────────────────────────────────────────
+// Builds a full "payout reference card" for the AI: tier thresholds, bonus
+// amounts, and each user-owned team's current stats with pre-evaluated tiers.
+// Cached for CACHE_TTL like the league context.
+
+let eosCtxCache: { text: string; at: number } | null = null;
+
+async function fetchEosPayoutContext(): Promise<string> {
+  if (eosCtxCache && Date.now() - eosCtxCache.at < CACHE_TTL) return eosCtxCache.text;
+
+  try {
+    const season = await getOrCreateActiveSeason();
+
+    const [allTierRows, payoutConfig, teamStats, playerAggs] = await Promise.all([
+      db.select().from(seasonStatTierConfigsTable)
+        .where(eq(seasonStatTierConfigsTable.seasonId, season.id)),
+
+      getAllPayoutConfig(),
+
+      db.select().from(teamSeasonStatsTable)
+        .where(and(
+          eq(teamSeasonStatsTable.seasonId, season.id),
+          isNotNull(teamSeasonStatsTable.discordId),
+        )),
+
+      db.select({
+        teamName: playerSeasonStatsTable.teamName,
+        sacks:    sql<number>`SUM(${playerSeasonStatsTable.sacks})`,
+        defInts:  sql<number>`SUM(${playerSeasonStatsTable.defInts})`,
+      }).from(playerSeasonStatsTable)
+        .where(eq(playerSeasonStatsTable.seasonId, season.id))
+        .groupBy(playerSeasonStatsTable.teamName),
+    ]);
+
+    // Build tiersByCategory from DB rows, falling back to hard-coded defaults
+    const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
+    for (const row of allTierRows) {
+      if (!tiersByCategory.has(row.statCategory)) tiersByCategory.set(row.statCategory, []);
+      tiersByCategory.get(row.statCategory)!.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
+    }
+    for (const [key, defaults] of Object.entries(STAT_TIER_DEFAULTS)) {
+      if (!tiersByCategory.has(key)) {
+        tiersByCategory.set(key, defaults.map((d, i) => ({ tier: i + 1, threshold: d.threshold, payout: d.payout })));
+      }
+    }
+
+    const rbYpcAmt  = payoutConfig.get(PAYOUT_KEYS.EOS_RB_YPC_BONUS)    ?? 100;
+    const qbYpaAmt  = payoutConfig.get(PAYOUT_KEYS.EOS_QB_YPA_BONUS)    ?? 100;
+    const dbIntAmt  = payoutConfig.get(PAYOUT_KEYS.EOS_DB_INT_BONUS)    ?? 100;
+    const missAmt   = payoutConfig.get(PAYOUT_KEYS.EOS_MISSED_PLAYOFFS) ?? 400;
+    const awardAmt  = payoutConfig.get(PAYOUT_KEYS.AWARD_WIN_BONUS)     ?? 50;
+
+    const playerAggMap = new Map(playerAggs.map(p => [p.teamName, { sacks: Number(p.sacks), defInts: Number(p.defInts) }]));
+
+    const lines: string[] = [];
+    lines.push("END-OF-SEASON PAYOUT STRUCTURE");
+    lines.push("Use this to calculate exact payout estimates from the live DB stats below.");
+    lines.push("");
+    lines.push("STAT TIER THRESHOLDS & COIN PAYOUTS:");
+
+    const dirSymbol = (dir: string) => dir === "higher" ? "≥" : "≤";
+
+    for (const cat of STAT_CATEGORIES) {
+      const tiers = tiersByCategory.get(cat.key);
+      if (!tiers) continue;
+      const sorted = [...tiers].sort((a, b) => a.tier - b.tier);
+      const sym = dirSymbol(cat.direction);
+      const tierStr = sorted.map(t => `T${t.tier}: ${sym}${t.threshold.toLocaleString()} → ${t.payout}c`).join(" | ");
+      lines.push(`  ${cat.label}: ${tierStr}`);
+    }
+
+    lines.push("");
+    lines.push("INDIVIDUAL BONUSES (cannot be auto-detected — must be confirmed manually):");
+    lines.push(`  RB 7.0+ YPC with 100+ carries: +${rbYpcAmt} coins`);
+    lines.push(`  QB 8.5+ YPA with 150+ attempts: +${qbYpaAmt} coins`);
+    lines.push(`  DB individual player with 8+ INTs: +${dbIntAmt} coins`);
+    lines.push(`  Missed playoffs (user-controlled team): +${missAmt} coins`);
+    lines.push(`  Per in-game award winner on the team: +${awardAmt} coins each`);
+    lines.push("");
+    lines.push("STATS NOT IN DB (cannot be auto-computed — note them as unknown when estimating):");
+    lines.push("  off_redzone_pct, def_fumbles_rec, def_redzone_pct");
+    lines.push("");
+    lines.push(`CURRENT TEAM EOS ESTIMATES — Season ${(season as any).seasonNumber ?? season.id}:`);
+    lines.push("(user-owned teams only; based on stats available in the DB right now)");
+
+    for (const ts of teamStats) {
+      const games     = ts.wins + ts.losses;
+      const ppg       = games > 0 ? ts.offTDs / games : 0;
+      const agg       = playerAggMap.get(ts.teamName) ?? { sacks: 0, defInts: 0 };
+
+      const statsMap: Record<string, number> = {
+        off_pass_yds:     ts.offPassYds,
+        off_rush_yds:     ts.offRushYds,
+        off_pts_per_game: ppg,
+        def_pass_yds:     ts.defPassYds,
+        def_rush_yds:     ts.defRushYds,
+        def_pts_allowed:  ts.defTDs,
+        def_sacks:        agg.sacks,
+        def_ints:         agg.defInts,
+      };
+
+      let dbEstimate = 0;
+      const qualifying: string[] = [];
+
+      for (const cat of STAT_CATEGORIES) {
+        const tiers = tiersByCategory.get(cat.key);
+        const val   = statsMap[cat.key];
+        if (!tiers || val === undefined) continue;
+        const result = evaluateTier(tiers, val, cat.direction);
+        if (result) {
+          dbEstimate += result.payout;
+          qualifying.push(`${cat.label} T${result.tier} (+${result.payout}c)`);
+        }
+      }
+
+      lines.push(`  ${ts.teamName}:`);
+      lines.push(`    Pass Yds Off: ${ts.offPassYds.toLocaleString()} | Rush Yds Off: ${ts.offRushYds.toLocaleString()} | PPG: ${ppg.toFixed(1)} | Pass Def: ${ts.defPassYds.toLocaleString()} | Rush Def: ${ts.defRushYds.toLocaleString()} | Pts Allowed: ${ts.defTDs.toLocaleString()} | Team Sacks: ${agg.sacks} | Team INTs: ${agg.defInts}`);
+      if (qualifying.length > 0) {
+        lines.push(`    Qualifying: ${qualifying.join(" | ")}`);
+        lines.push(`    DB-based coin estimate: ${dbEstimate} coins (+ any individual bonuses above)`);
+      } else {
+        lines.push(`    Qualifying: none from available DB stats`);
+        lines.push(`    DB-based coin estimate: 0 coins (+ any individual bonuses above)`);
+      }
+    }
+
+    const text = lines.join("\n");
+    eosCtxCache = { text, at: Date.now() };
+    return text;
+
+  } catch (err) {
+    console.error("fetchEosPayoutContext error:", err);
+    return "(EOS payout context unavailable)";
   }
 }
 
@@ -678,6 +844,7 @@ function buildSystemPrompt(
   channelContext: { id: string; name: string }[] = [],
   leagueContext: string = "",
   isCoCommissioner: boolean = false,
+  eosContext: string = "",
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -885,6 +1052,8 @@ ${adminRule}
 LEAGUE CONTEXT — STANDINGS, ROSTERS, AND STAT LEADERS
 Use this data to form opinions and answer league-specific questions. This covers ALL user-owned teams.
 ${leagueContext || "(league context not yet available — MCA data may not have been imported yet)"}
+
+${eosContext || ""}
 
 CURRENT USER STATS (the person speaking to you right now)
 ${statBlock}${mentionedBlock}
@@ -1352,12 +1521,13 @@ export async function execute(message: Message): Promise<void> {
     playerStatLines: [] as string[],
   });
 
-  const [isAdmin, userStats, rulesText, adminIds, leagueContext, mentionedUsersData] = await Promise.all([
+  const [isAdmin, userStats, rulesText, adminIds, leagueContext, eosContext, mentionedUsersData] = await Promise.all([
     isAdminUser(message.author.id).catch(() => false),
     fetchUserStats(message.author.id).catch(defaultStats),
     getCachedRules().catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
     fetchLeagueContext().catch(() => "(league context unavailable)"),
+    fetchEosPayoutContext().catch(() => ""),
     Promise.all(otherMentioned.map(async u => {
       const member = message.mentions.members?.get(u.id) ?? message.guild?.members.cache.get(u.id);
       const displayName = member?.displayName ?? u.username;
@@ -1373,15 +1543,18 @@ export async function execute(message: Message): Promise<void> {
     rulesText, adminIds, userStats, isAdmin, mentionedUsersData, escalationLevel,
     promptIsCommissioner, channelContext, leagueContext,
     isCoComm && !isAdmin,
+    eosContext,
   );
 
-  // Call the model
+  // Call the model (include per-user conversation history for context)
+  const priorHistory = getConversationHistory(message.author.id);
   let raw = "";
   try {
     const completion = await openai.chat.completions.create({
       model:    "gpt-5-mini",
       messages: [
         { role: "system", content: systemPrompt },
+        ...priorHistory,
         { role: "user",   content },
       ],
     });
@@ -1476,6 +1649,9 @@ export async function execute(message: Message): Promise<void> {
 
   // Update persistent escalation in DB (fire-and-forget; don't block the reply)
   if (!isAdmin) recordInteraction(message.author.id, msgType).catch(() => {});
+
+  // Save this exchange to per-user conversation history (fire-and-forget)
+  appendToHistory(message.author.id, content, response);
 
   // Split long responses into ≤1900-char chunks on newline/space boundaries
   const chunks = splitIntoChunks(response, 1900);
