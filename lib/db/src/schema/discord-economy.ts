@@ -410,9 +410,12 @@ export const teamSeasonStatsTable = pgTable("team_season_stats", {
   offPassYds: integer("off_pass_yds").notNull().default(0), // offensive passing yards
   offRushYds: integer("off_rush_yds").notNull().default(0), // offensive rushing yards
   offTDs:     integer("off_tds").notNull().default(0),      // points scored (ptsFor fallback)
+  offPtsPerGame: real("off_pts_per_game").notNull().default(0), // PPG from MCA (0 = not yet set)
   defPassYds: integer("def_pass_yds").notNull().default(0),
   defRushYds: integer("def_rush_yds").notNull().default(0),
   defTDs:     integer("def_tds").notNull().default(0),      // points allowed (ptsAgainst fallback)
+  teamSacks:  integer("team_sacks").notNull().default(0),   // total sacks by this team's defense
+  teamInts:   integer("team_ints").notNull().default(0),    // total INTs by this team's defense
   offRedZonePct: real("off_redzone_pct").notNull().default(0),  // offensive red zone % (0–100)
   defRedZonePct: real("def_redzone_pct").notNull().default(0),  // defensive red zone % allowed (0–100)
   defFumblesRec: integer("def_fumbles_rec").notNull().default(0), // fumbles recovered on defense

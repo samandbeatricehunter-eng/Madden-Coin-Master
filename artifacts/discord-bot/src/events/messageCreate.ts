@@ -1189,7 +1189,8 @@ If the commissioner is NOT giving an admin action order (just chatting), use the
 
 const STREAM_CHANNEL_ID     = "1486369417309978644";
 const HIGHLIGHTS_CHANNEL_ID = "1485643704206229638";
-const TWITCH_URL_RE         = /https?:\/\/(?:www\.)?twitch\.tv\/\S+/i;
+// Matches any twitch.tv URL (including clips.twitch.tv, www.twitch.tv, etc.)
+const TWITCH_URL_RE         = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
 const STREAM_PAYOUT         = 10;
 const HIGHLIGHT_PAYOUT      = 20;
 const HIGHLIGHT_MAX_PER_WEEK = 2; // max payable videos per user per week
@@ -1199,6 +1200,13 @@ async function handleStreamPost(message: Message): Promise<void> {
 
   const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
   if (!commChannelId) { console.error("DISCORD_COMMISSIONER_CHANNEL_ID not set"); return; }
+
+  // Fetch commissioner channel FIRST — if unreachable, fail before touching the DB
+  const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
+  if (!commChannel?.isTextBased()) {
+    console.error(`[handleStreamPost] Cannot reach commissioner channel ${commChannelId} — skipping stream payout for ${message.author.id}`);
+    return;
+  }
 
   try {
     const season      = await getOrCreateActiveSeason();
@@ -1319,9 +1327,6 @@ async function handleStreamPost(message: Message): Promise<void> {
         .setStyle(ButtonStyle.Danger),
     );
 
-    const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
-    if (!commChannel?.isTextBased()) return;
-
     const commMsg = await (commChannel as TextChannel).send({ embeds: [embed], components: [row] });
 
     // Store the commissioner log message ID so we can update it on approval/denial
@@ -1344,6 +1349,13 @@ async function handleHighlightPost(message: Message): Promise<void> {
 
   const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
   if (!commChannelId) { console.error("DISCORD_COMMISSIONER_CHANNEL_ID not set"); return; }
+
+  // Fetch commissioner channel FIRST — if unreachable, fail before touching the DB
+  const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
+  if (!commChannel?.isTextBased()) {
+    console.error(`[handleHighlightPost] Cannot reach commissioner channel ${commChannelId} — skipping highlight payout for ${message.author.id}`);
+    return;
+  }
 
   try {
     const season      = await getOrCreateActiveSeason();
@@ -1416,9 +1428,6 @@ async function handleHighlightPost(message: Message): Promise<void> {
           .setLabel("❌ Deny")
           .setStyle(ButtonStyle.Danger),
       );
-
-      const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
-      if (!commChannel?.isTextBased()) continue;
 
       const commMsg = await (commChannel as TextChannel).send({ embeds: [embed], components: [row] });
 

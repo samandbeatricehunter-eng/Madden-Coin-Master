@@ -353,6 +353,12 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       getN(t, "defRedZonePct","defensiveRedZonePct","defRedZoneAllowedPct","defRZPct","defenseRedZonePct","defRedzonePct");
     const getDefFumblesRec = (t: any): number =>
       getN(t, "defFumblesRec","fumblesRecovered","fumRec","fumRecovered","totalFumRec","defensiveFumblesRec","recoveredFumbles","fumbleRecoveries");
+    const getTeamSacks = (t: any): number =>
+      getN(t, "defSacks","totalSacks","sacks","teamSacks","sacksTotal","defTotalSacks","sacksFor","sacksAllowed","numSacks");
+    const getTeamInts = (t: any): number =>
+      getN(t, "defInterceptions","totalInts","ints","teamInts","defTotalInts","interceptionsFor","numInterceptions","defInts","interceptions");
+    const getOffPpg = (t: any): number =>
+      getN(t, "ptsPerGame","pointsPerGame","offPtsPerGame","ppg","avgPointsScored","avgPtsFor","pointsPerGameFor","offPpg");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -373,14 +379,17 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       const offRedZonePct = getOffRedZonePct(t);
       const defRedZonePct = getDefRedZonePct(t);
       const defFumblesRec = getDefFumblesRec(t);
+      const teamSacks     = getTeamSacks(t);
+      const teamInts      = getTeamInts(t);
+      const offPtsPerGame = getOffPpg(t);
       const wins          = getN(t, "wins","totalWins","seasonWins");
       const losses        = getN(t, "losses","totalLosses","seasonLosses");
       const updatedAt     = new Date();
       const insertVals: typeof teamSeasonStatsTable.$inferInsert = {
         seasonId: season.id, teamId, discordId: teamEntry.discordId ?? null,
         teamName: teamEntry.fullName, offYds, offPassYds, offRushYds,
-        offTDs, defPassYds, defRushYds, defTDs,
-        offRedZonePct, defRedZonePct, defFumblesRec,
+        offTDs, offPtsPerGame, defPassYds, defRushYds, defTDs,
+        teamSacks, teamInts, offRedZonePct, defRedZonePct, defFumblesRec,
         wins, losses, updatedAt,
       };
       ops.push(
@@ -390,7 +399,8 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
             target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId],
             set: {
               discordId: teamEntry.discordId ?? null, teamName: teamEntry.fullName,
-              offYds, offPassYds, offRushYds, offTDs, defPassYds, defRushYds, defTDs,
+              offYds, offPassYds, offRushYds, offTDs, offPtsPerGame,
+              defPassYds, defRushYds, defTDs, teamSacks, teamInts,
               offRedZonePct, defRedZonePct, defFumblesRec,
               wins, losses, updatedAt,
             },

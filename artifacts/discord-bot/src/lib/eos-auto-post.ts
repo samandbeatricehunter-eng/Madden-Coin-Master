@@ -110,20 +110,53 @@ export async function runEosAutoPost(
       let totalCoins = 0;
       let hasStats = false;
 
+      // ── Query player rows first — used both for YPA/YPC and to derive team sacks/INTs ─
+      const playerRows = await db
+        .select()
+        .from(playerSeasonStatsTable)
+        .where(and(
+          eq(playerSeasonStatsTable.seasonId, seasonId),
+          eq(playerSeasonStatsTable.discordId, user.discordId),
+        ))
+        .orderBy(desc(playerSeasonStatsTable.passYds));
+
+      // Compute team totals from player rows (used as fallback when MCA doesn't export them)
+      const computedSacks = playerRows.reduce((sum, p) => sum + (p.sacks ?? 0), 0);
+      const computedInts  = playerRows.reduce((sum, p) => sum + (p.defInts ?? 0), 0);
+
       if (teamStats) {
         hasStats = true;
 
-        // Map the teamSeasonStatsTable columns to the field names used by STAT_CATEGORIES.jsonFields
-        // Some stats (sacks, INTs, PPG) are not stored in this table — they won't match.
+        // Determine PPG — use MCA-imported value if non-zero, otherwise compute from total pts / games
+        const games = (teamStats.wins ?? 0) + (teamStats.losses ?? 0);
+        const computedPpg = games > 0 ? (teamStats.offTDs ?? 0) / games : 0;
+        const resolvedPpg = (teamStats.offPtsPerGame ?? 0) > 0
+          ? (teamStats.offPtsPerGame ?? 0)
+          : computedPpg;
+
+        // Map columns → STAT_CATEGORIES.jsonFields aliases.
+        // sacks/INTs: prefer MCA-imported value from DB; fall back to summing all player rows.
+        const resolvedSacks = (teamStats.teamSacks ?? 0) > 0 ? (teamStats.teamSacks ?? 0) : computedSacks;
+        const resolvedInts  = (teamStats.teamInts  ?? 0) > 0 ? (teamStats.teamInts  ?? 0) : computedInts;
+
         const statsObj: Record<string, number> = {
-          offPassYds:   teamStats.offPassYds,
-          offRushYds:   teamStats.offRushYds,
+          offPassYds:    teamStats.offPassYds,
+          offRushYds:    teamStats.offRushYds,
           offRedZonePct: teamStats.offRedZonePct,
-          defPassYds:   teamStats.defPassYds,
-          defRushYds:   teamStats.defRushYds,
+          offPtsPerGame: resolvedPpg,
+          ptsPerGame:    resolvedPpg,
+          pointsPerGame: resolvedPpg,
+          defPassYds:    teamStats.defPassYds,
+          defRushYds:    teamStats.defRushYds,
           defPtsAllowed: teamStats.defTDs,   // defTDs stores season points allowed
           defFumblesRec: teamStats.defFumblesRec,
           defRedZonePct: teamStats.defRedZonePct,
+          defSacks:      resolvedSacks,
+          totalSacks:    resolvedSacks,
+          sacks:         resolvedSacks,
+          defInts:       resolvedInts,
+          totalInts:     resolvedInts,
+          interceptions: resolvedInts,
         };
 
         for (const cat of STAT_CATEGORIES) {
@@ -136,7 +169,7 @@ export async function runEosAutoPost(
             const v = statsObj[field];
             if (v != null && !isNaN(v)) { statValue = v; break; }
           }
-          if (statValue == null) continue;  // stat not available in DB (PPG, sacks, INTs)
+          if (statValue == null) continue;
 
           const tiers = tiersByCategory.get(cat.key) ?? [];
           if (tiers.length === 0) continue; // tiers not seeded yet
@@ -151,18 +184,6 @@ export async function runEosAutoPost(
           }
         }
       }
-
-      // ── QB YPA and RB YPC (player-level — computed from playerSeasonStatsTable) ─
-      // Pull all stat rows for this user's discordId, find the best qualifying player
-      // for each role.  "Qualifying" means they met the admin-set minimum attempt count.
-      const playerRows = await db
-        .select()
-        .from(playerSeasonStatsTable)
-        .where(and(
-          eq(playerSeasonStatsTable.seasonId, seasonId),
-          eq(playerSeasonStatsTable.discordId, user.discordId),
-        ))
-        .orderBy(desc(playerSeasonStatsTable.passYds));  // ordering helps readability
 
       // ── QB YPA ────────────────────────────────────────────────────────────────
       const qbYpaTiers = tiersByCategory.get("qb_ypa") ?? [];
@@ -252,21 +273,12 @@ export async function runEosAutoPost(
       // ── Build commissioner embed ───────────────────────────────────────────────
       let descBody: string;
       if (!hasStats) {
-        descBody = "*No team stats found in the database for this season.*\n" +
-          "QB YPA and RB YPC are auto-checked from player stats (if imported).\n" +
-          "Sacks, INTs, and PPG must be entered manually via **Edit Amount**.";
+        descBody = "*No team stats or player stats found in the database for this season.*\n" +
+          "Use **Edit Amount** to manually set the payout if applicable.";
       } else if (displayLines.length === 0) {
         descBody = "*Stats were found but no tiers could be evaluated (tiers may not be seeded yet).*";
       } else {
-        const missingStats = [
-          "PPG (points per game)",
-          "Sacks",
-          "Interceptions",
-        ];
-        descBody =
-          displayLines.join("\n") +
-          `\n\n*⚠️ The following stats are **not auto-loaded** from MCA and must be manually adjusted via Edit Amount if applicable:*\n` +
-          missingStats.map(s => `• ${s}`).join("\n");
+        descBody = displayLines.join("\n");
       }
 
       const commEmbed = new EmbedBuilder()

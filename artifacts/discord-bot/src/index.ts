@@ -72,6 +72,7 @@ import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
 import * as adminSyncMilestones from "./commands/admin-syncmilestones.js";
 import * as adminSetPayouts from "./commands/admin-setpayouts.js";
 import * as adminResendArticle from "./commands/admin-resendarticle.js";
+import * as adminResendPayouts from "./commands/admin-resend-payouts.js";
 import * as adminLinkTeam from "./commands/admin-linkteam.js";
 import * as adminFullSync from "./commands/admin-fullsync.js";
 import * as adminServer from "./commands/adminserver.js";
@@ -189,6 +190,7 @@ if (!isProduction && !devBotEnabled) {
     adminSyncMilestones,
     adminSetPayouts,
     adminResendArticle,
+    adminResendPayouts,
     adminLinkTeam,
     adminFullSync,
     adminServer,
