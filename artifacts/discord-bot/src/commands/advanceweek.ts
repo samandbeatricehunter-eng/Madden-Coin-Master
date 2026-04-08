@@ -6,7 +6,6 @@ import { db } from "@workspace/db";
 import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
-import { deleteGotwMessages } from "../lib/gotw-helpers.js";
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
 import { sendArticleChunked } from "../lib/send-article.js";
@@ -163,8 +162,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       console.error("[advanceweek] GOTW bonus error:", err);
     }
 
-    // Delete GOTW announcement + poll from Discord
-    await deleteGotwMessages(interaction.client, season.id, oldWeekIndex);
+    // GOTW channel is fully cleared by /weeklymatchups instead
   }
 
   const oldLabel = weekLabel(season.currentWeek ?? "1");

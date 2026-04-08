@@ -18,6 +18,14 @@ import {
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
 import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-cocomm-actions.js";
 import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
+import {
+  handleCcpPos, handleCcpArch, handleCcpDev, handleCcpPkg,
+  handleCcpAttrSel, handleCcpAttrAdjust,
+  handleCcpSubmitAttrs, handleCcpConfirm, handleCcpCancel,
+  handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
+  handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
+} from "../lib/custom-player-interactions.js";
+import { handleViewArchetypeSelect } from "../commands/viewcustomarchetypes.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
@@ -94,6 +102,17 @@ export async function execute(interaction: Interaction) {
 // ── Button handler ─────────────────────────────────────────────────────────────
 async function handleButton(interaction: ButtonInteraction) {
   const [action, secondPart, userId, purchaseType] = interaction.customId.split(":");
+
+  // ── Custom player builder ─────────────────────────────────────────────────────
+  if (action === "ccp_attr_plus1")    { await handleCcpAttrAdjust(interaction, secondPart ?? "", 1);  return; }
+  if (action === "ccp_attr_minus1")   { await handleCcpAttrAdjust(interaction, secondPart ?? "", -1); return; }
+  if (action === "ccp_attr_plus5")    { await handleCcpAttrAdjust(interaction, secondPart ?? "", 5);  return; }
+  if (action === "ccp_attr_minus5")   { await handleCcpAttrAdjust(interaction, secondPart ?? "", -5); return; }
+  if (action === "ccp_submit_attrs")  { await handleCcpSubmitAttrs(interaction, secondPart ?? "");    return; }
+  if (action === "ccp_confirm")       { await handleCcpConfirm(interaction, secondPart ?? "");        return; }
+  if (action === "ccp_cancel")        { await handleCcpCancel(interaction, secondPart ?? "");         return; }
+  if (action === "ccp_applied")       { await handleCcpApplied(interaction, secondPart ?? "");        return; }
+  if (action === "ccp_refund")        { await handleCcpRefund(interaction, secondPart ?? "");         return; }
 
   // ── Co-Commissioner action approval ────────────────────────────────────────
   if (action === "cocomm-approve" || action === "cocomm-deny") {
@@ -1561,6 +1580,20 @@ async function handleButton(interaction: ButtonInteraction) {
 async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   const parts     = interaction.customId.split(":");
   const action    = parts[0]!;
+  const sessionId = parts[1] ?? "";
+
+  // ── Archetype viewer ──────────────────────────────────────────────────────────
+  if (action === "vca_pos") { await handleViewArchetypeSelect(interaction); return; }
+
+  // ── Custom player builder ─────────────────────────────────────────────────────
+  if (action === "ccp_pos")      { await handleCcpPos(interaction, sessionId);     return; }
+  if (action === "ccp_arch")     { await handleCcpArch(interaction, sessionId);    return; }
+  if (action === "ccp_dev")      { await handleCcpDev(interaction, sessionId);     return; }
+  if (action === "ccp_pkg")      { await handleCcpPkg(interaction, sessionId);     return; }
+  if (action === "ccp_attr_sel") { await handleCcpAttrSel(interaction, sessionId); return; }
+  if (action === "ccp_hand")     { await handleCcpHand(interaction, sessionId);    return; }
+  if (action === "ccp_height")   { await handleCcpHeight(interaction, sessionId);  return; }
+  if (action === "ccp_weight")   { await handleCcpWeight(interaction, sessionId);  return; }
 
   // ── GOTY: commissioner selected the 2 winners ─────────────────────────────────
   if (action === "goty_winners") {
@@ -1670,6 +1703,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const parts  = interaction.customId.split(":");
   const action = parts[0]!;
   const idStr  = parts[1];
+
+  // ── Custom player builder ─────────────────────────────────────────────────────
+  if (action === "ccp_modal")        { await handleCcpModal(interaction, idStr ?? "");       return; }
+  if (action === "ccp_refund_modal") { await handleCcpRefundModal(interaction, idStr ?? ""); return; }
 
   // ── Interview denial ─────────────────────────────────────────────────────────
   if (action === "interview_modal") {

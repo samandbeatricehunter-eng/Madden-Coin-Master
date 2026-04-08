@@ -689,3 +689,58 @@ export const pendingChannelPayoutsTable = pgTable("pending_channel_payouts", {
   resolvedBy:         text("resolved_by"),
   createdAt:          timestamp("created_at").notNull().defaultNow(),
 });
+
+
+// ── Custom Archetypes ─────────────────────────────────────────────────────────
+export const customArchetypesTable = pgTable("custom_archetypes", {
+  id:         serial("id").primaryKey(),
+  position:   text("position").notNull(),          // "QB", "RB", etc.
+  name:       text("name").notNull(),              // archetype name
+  attributes: json("attributes").notNull().$type<Record<string, number>>(),
+  isActive:   boolean("is_active").notNull().default(true),
+  createdAt:  timestamp("created_at").notNull().defaultNow(),
+  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ── Custom Player Settings (Bronze/Silver/Gold points & costs) ────────────────
+export const customPlayerSettingsTable = pgTable("custom_player_settings", {
+  id:           serial("id").primaryKey(),
+  bronzePoints: integer("bronze_points").notNull().default(35),
+  silverPoints: integer("silver_points").notNull().default(70),
+  goldPoints:   integer("gold_points").notNull().default(100),
+  bronzeCost:   integer("bronze_cost").notNull().default(0),
+  silverCost:   integer("silver_cost").notNull().default(0),
+  goldCost:     integer("gold_cost").notNull().default(0),
+  kpPoints:     integer("kp_points").notNull().default(50),
+  kpCost:       integer("kp_cost").notNull().default(0),
+  updatedAt:    timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ── Custom Players (submitted builds) ─────────────────────────────────────────
+export const customPlayersTable = pgTable("custom_players", {
+  id:                   serial("id").primaryKey(),
+  discordId:            text("discord_id").notNull(),
+  seasonId:             integer("season_id"),
+  position:             text("position").notNull(),
+  archetypeName:        text("archetype_name").notNull(),
+  devTrait:             text("dev_trait").notNull().default("normal"),  // normal|star|superstar
+  packageTier:          text("package_tier").notNull(),                 // bronze|silver|gold|kp
+  creationPoints:       integer("creation_points").notNull().default(0),
+  firstName:            text("first_name").notNull(),
+  lastName:             text("last_name").notNull(),
+  jerseyNumber:         integer("jersey_number").notNull(),
+  college:              text("college").notNull(),
+  dominantHand:         text("dominant_hand").notNull().default("right"),
+  heightFt:             integer("height_ft").notNull(),
+  heightIn:             integer("height_in").notNull(),
+  weightLbs:            integer("weight_lbs").notNull(),
+  attributes:           json("attributes").notNull().$type<Record<string, number>>(),
+  totalCost:            integer("total_cost").notNull().default(0),
+  status:               text("status").notNull().default("pending"),   // pending|applied|refunded
+  commissionerMessageId: text("commissioner_message_id"),
+  commissionerChannelId: text("commissioner_channel_id"),
+  appliedAt:            timestamp("applied_at"),
+  refundedAt:           timestamp("refunded_at"),
+  refundReason:         text("refund_reason"),
+  createdAt:            timestamp("created_at").notNull().defaultNow(),
+});

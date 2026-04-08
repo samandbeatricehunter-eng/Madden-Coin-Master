@@ -82,6 +82,10 @@ import * as viewroster from "./commands/viewroster.js";
 import * as viewplayerdetails from "./commands/viewplayerdetails.js";
 import * as viewfreeagents from "./commands/viewfreeagents.js";
 import * as h2hrecord from "./commands/h2hrecord.js";
+import * as viewCustomArchetypes from "./commands/viewcustomarchetypes.js";
+import * as purchaseCustomPlayer from "./commands/purchasecustomplayer.js";
+import * as adminCustomArchetypes from "./commands/admin-customarchetypes.js";
+import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import { startPollChecker } from "./lib/poll-checker.js";
 
 // Events
@@ -193,6 +197,10 @@ if (!isProduction && !devBotEnabled) {
     viewplayerdetails,
     viewfreeagents,
     h2hrecord,
+    viewCustomArchetypes,
+    purchaseCustomPlayer,
+    adminCustomArchetypes,
+    adminCustomPlayerSettings,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },

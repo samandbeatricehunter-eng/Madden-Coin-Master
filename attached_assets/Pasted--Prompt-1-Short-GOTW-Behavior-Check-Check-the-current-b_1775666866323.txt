@@ -1,0 +1,282 @@
+### **Prompt 1 (Short – GOTW Behavior Check)**
+
+Check the current bot logic for how the GOTW channel is handled.
+
+Specifically:
+
+* Determine whether the GOTW channel is being cleared when `/advanceweek` is run or when `/weeklymatchups` is run
+* The intended behavior is:
+
+  * The GOTW channel should **ONLY** be cleared and refreshed when `/weeklymatchups` is executed
+  * It should NOT be cleared during `/advanceweek`
+
+Also confirm:
+
+* GOTW guess payouts (for correct guesses from the previous week) are processed when `/weeklymatchups` runs, not during `/advanceweek`
+
+If this is not how it currently works, identify where the incorrect trigger is happening.
+
+---
+
+---
+
+### **Prompt 2 (Full Feature Expansion – Replit Ready)**
+
+Extend the existing Discord bot by adding a fully interactive custom archetype viewing and custom player purchasing system. The bot already exists—this is an expansion of functionality, not a rebuild.
+
+All user-facing interactions must be ephemeral.
+
+---
+
+### **NEW COMMAND: `/viewcustomarchetypes`**
+
+* Add a dropdown menu with the following positions:
+
+  * QB, RB, FB, WR, TE, OL, DL, LB, CB, FS, SS, K, P
+* After selection:
+
+  * Display all archetypes for that position
+* Archetypes will be uploaded later and should be loaded dynamically (do not hardcode)
+* Format:
+
+  * Archetype name (bold)
+  * Full attribute list in the same format used in the archetype templates
+* If content exceeds Discord limits:
+
+  * Use pagination OR multiple ephemeral messages
+
+---
+
+### **NEW COMMAND: `/purchasecustomplayer`**
+
+Create a guided, multi-step, interactive flow.
+
+---
+
+### STEP 1: Position Selection
+
+* Dropdown:
+  QB, RB, FB, WR, TE, OL, DL, LB, CB, FS, SS, K, P
+
+---
+
+### STEP 2: Archetype Selection
+
+* Populate dropdown dynamically based on position
+* Archetypes will be provided later
+
+---
+
+### STEP 3: Development Trait Selection
+
+Options:
+
+* Normal (default)
+* Star (+75 coins)
+* Superstar (+150 coins)
+
+---
+
+### STEP 4: Creation Package Selection
+
+**Standard Positions:**
+
+* Bronze, Silver, Gold
+
+Default points:
+
+* Bronze = 35
+* Silver = 70
+* Gold = 100
+
+These must be adjustable via admin command.
+
+---
+
+**Kicker / Punter Behavior:**
+
+* Skip package selection entirely
+* Automatically assign:
+
+  * Bronze tier
+  * 50 creation points
+* No user override
+
+---
+
+### STEP 5: Balance Validation
+
+* Calculate total cost before attribute editing
+* If insufficient funds:
+
+  * Stop immediately
+  * Notify user ephemerally
+
+---
+
+### STEP 6: Attribute Allocation UI
+
+Display all archetype attributes with:
+
+* Current value
+* * / - controls
+* Cost per attribute
+
+Rules:
+
+* Cannot go below base value
+* Cannot exceed 99
+
+---
+
+### POINT SYSTEM
+
+* 0–85 → 1 point
+* 86–90 → 3 points
+* 91–94 → 6 points
+* 95–99 → 10 points
+
+Requirements:
+
+* Live updating remaining points counter
+* Live cost display per attribute
+* Prevent overspending at all times
+
+---
+
+### STEP 7: ATTRIBUTE SUBMISSION
+
+* “Submit Attributes” button
+* Locks in values
+* Moves to player details stage
+
+---
+
+### STEP 8: PLAYER DETAILS INPUT
+
+Prompt user for:
+
+* First Name
+* Last Name
+* Number
+* College
+* Dominant Hand (Left / Right dropdown)
+
+---
+
+### HEIGHT & WEIGHT SYSTEM
+
+Use dropdowns with valid ranges only.
+
+Max values:
+
+* QB → 6'4", 250
+* HB → 6'2", 250
+* FB → 6'0", 250
+* WR → 6'3", 235
+* TE → 6'6", 255
+* OL (T) → 6'6", 350
+* OL (G/C) → 6'4", 325
+* FS/SS/CB → 6'2", 230
+* LB → 6'3", 260
+* DL → 6'5", 340
+* K → 6'4", 240
+* P → 6'5", 245
+
+Minimum values (realistic historical floors):
+
+* QB → 5'10", 190
+* HB → 5'8", 180
+* FB → 5'9", 210
+* WR → 5'9", 170
+* TE → 6'2", 230
+* OL (T) → 6'3", 280
+* OL (G/C) → 6'1", 270
+* DB → 5'9", 180
+* LB → 5'11", 215
+* DL → 6'1", 270
+* K → 5'8", 170
+* P → 5'10", 180
+
+---
+
+### FINAL SUBMISSION
+
+* “Submit Player” button
+* On submission:
+
+  * Deduct coins immediately
+  * Save full build
+  * Send ephemeral confirmation
+
+---
+
+### COMMISSIONER LOG INTEGRATION
+
+When submitted, send a message to the commissioner log channel.
+
+Top section must include:
+
+* First + Last Name
+* Position
+* Jersey Number
+* Height
+* Weight
+* College
+* Dominant Hand
+* Development Trait
+* Creation Package (or “Bronze (K/P Default)”)
+
+Below:
+
+* Archetype name
+* Full attribute list (same format/order as template)
+
+---
+
+### COMMISSIONER BUTTONS
+
+**Applied in Game**
+
+* Sends DM to user:
+
+  * Confirms player (name + position) added to draft class
+  * Reminds them to favorite the player in-game
+
+**Refund**
+
+* Prompts admin for reason
+* Refunds coins
+* Sends DM to user with reason
+
+---
+
+### ADMIN CONTROLS
+
+Add commands to:
+
+* Adjust Bronze / Silver / Gold creation points
+* Update archetypes dynamically (they will be uploaded later)
+
+---
+
+### REQUIREMENTS
+
+* All interactions must be ephemeral
+* UI must update live (no message spam)
+* Prevent invalid inputs and overspending
+* Maintain strict attribute formatting consistency
+* Ensure scalability for future archetypes and positions
+
+---
+
+### GOAL
+
+Add a fully interactive player builder system into the existing bot that:
+
+* Lets users browse archetypes
+* Build custom players step-by-step
+* Applies a live point system
+* Collects player identity info
+* Sends structured approval requests to commissioners
+* Supports approval/refund workflows with notifications
