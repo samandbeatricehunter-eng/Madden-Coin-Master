@@ -8,6 +8,7 @@ import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
+import { runEosAutoPost } from "../lib/eos-auto-post.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
 
@@ -395,6 +396,29 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         await runWildcardAutomation(interaction.client, season.id, season.seasonNumber);
       } catch (err) {
         console.error("[advanceweek] Wildcard automation error:", err);
+      }
+    })();
+  }
+
+  // ── EOS payout auto-post — fires whenever advancing to Wildcard ───────────────
+  if (newWeek === "wildcard") {
+    (async () => {
+      try {
+        const result = await runEosAutoPost(interaction.client, season.id);
+        const lines = [
+          `📋 **End-of-Season Payout Summaries Posted** to the commissioner log.`,
+          `• **${result.posted}** user payout${result.posted !== 1 ? "s" : ""} queued for approval`,
+        ];
+        if (result.skipped > 0)  lines.push(`• **${result.skipped}** already had records for this season (skipped)`);
+        if (result.errors > 0)   lines.push(`• ⚠️ **${result.errors}** failed — check bot console`);
+        lines.push("Use the **Edit Amount** buttons in the commissioner log to adjust sacks, INTs, PPG, and individual bonuses before approving.");
+        await interaction.followUp({ content: lines.join("\n"), ephemeral: true });
+      } catch (err) {
+        console.error("[advanceweek] EOS auto-post error:", err);
+        await interaction.followUp({
+          content: `⚠️ EOS auto-post failed: ${err}`,
+          ephemeral: true,
+        }).catch(() => {});
       }
     })();
   }
