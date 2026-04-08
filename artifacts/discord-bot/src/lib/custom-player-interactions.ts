@@ -28,6 +28,7 @@ import {
   buildCommissionerEmbed, buildCommissionerRows,
   olSubPositionSelectRow, positionSelectRow,
   KP_POSITIONS, DEV_TRAIT_COST, DEV_TRAIT_LABEL,
+  buildArchetypeNavRows, formatArchetypeEmbed,
 } from "./custom-player-helpers.js";
 import { addBalance, logTransaction, getOrCreateUser } from "./db-helpers.js";
 
@@ -58,7 +59,7 @@ export async function handleCcpPreConfirm(interaction: ButtonInteraction, sessio
   });
 }
 
-// ── Step 1: Position selected ─────────────────────────────────────────────────
+// ── Step 1: Position selected — show paged archetype browser ─────────────────
 export async function handleCcpPos(interaction: StringSelectMenuInteraction, sessionId: string) {
   purgeExpiredSessions();
   const session = getSession(sessionId);
@@ -70,49 +71,98 @@ export async function handleCcpPos(interaction: StringSelectMenuInteraction, ses
 
   await interaction.deferUpdate();
 
-  const archRow = await archetypeSelectRow(position, sessionId);
-  if (!archRow) {
+  // Load all active archetypes for this position and store in session for navigation
+  const archs = await db.select()
+    .from(customArchetypesTable)
+    .where(eq(customArchetypesTable.position, position));
+  const active = archs.filter(a => a.isActive);
+
+  if (active.length === 0) {
     await interaction.editReply({
       content: `❌ No archetypes available for **${position}** yet. Check back soon!`,
       components: [],
+      embeds: [],
     });
     return;
   }
 
+  session.archetypeList       = active.map(a => ({
+    id:         a.id,
+    name:       a.name,
+    attributes: a.attributes as Record<string, number>,
+  }));
+  session.archetypePreviewIdx = 0;
+
+  const first = session.archetypeList[0]!;
   await interaction.editReply({
     content:
       `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
-      `Position: **${position}**\n\nSelect your archetype:`,
-    components: [archRow],
-    embeds: [],
+      `Position: **${position}**\n\n` +
+      `Browse archetypes using the buttons below. Each embed shows the base attribute values for that archetype. When you find the one you want, press **Choose This Archetype** to lock it in.`,
+    embeds:     [formatArchetypeEmbed(position, first.name, first.attributes)],
+    components: buildArchetypeNavRows(sessionId, 0, active.length),
   });
 }
 
-// ── Step 2: Archetype selected ─────────────────────────────────────────────────
-export async function handleCcpArch(interaction: StringSelectMenuInteraction, sessionId: string) {
+// ── Step 2: Archetype navigation — Prev ───────────────────────────────────────
+export async function handleCcpArchPrev(interaction: ButtonInteraction, sessionId: string) {
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
-
-  const archetypeId = parseInt(interaction.values[0]!, 10);
   await interaction.deferUpdate();
 
-  const [arch] = await db.select()
-    .from(customArchetypesTable)
-    .where(eq(customArchetypesTable.id, archetypeId))
-    .limit(1);
+  if (session.archetypePreviewIdx <= 0) return;
+  session.archetypePreviewIdx--;
 
+  const arch = session.archetypeList[session.archetypePreviewIdx]!;
+  await interaction.editReply({
+    content:
+      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
+      `Position: **${session.position}**\n\n` +
+      `Browse archetypes using the buttons below. Each embed shows the base attribute values for that archetype. When you find the one you want, press **Choose This Archetype** to lock it in.`,
+    embeds:     [formatArchetypeEmbed(session.position!, arch.name, arch.attributes)],
+    components: buildArchetypeNavRows(sessionId, session.archetypePreviewIdx, session.archetypeList.length),
+  });
+}
+
+// ── Step 2: Archetype navigation — Next ───────────────────────────────────────
+export async function handleCcpArchNext(interaction: ButtonInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+  await interaction.deferUpdate();
+
+  if (session.archetypePreviewIdx >= session.archetypeList.length - 1) return;
+  session.archetypePreviewIdx++;
+
+  const arch = session.archetypeList[session.archetypePreviewIdx]!;
+  await interaction.editReply({
+    content:
+      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
+      `Position: **${session.position}**\n\n` +
+      `Browse archetypes using the buttons below. Each embed shows the base attribute values for that archetype. When you find the one you want, press **Choose This Archetype** to lock it in.`,
+    embeds:     [formatArchetypeEmbed(session.position!, arch.name, arch.attributes)],
+    components: buildArchetypeNavRows(sessionId, session.archetypePreviewIdx, session.archetypeList.length),
+  });
+}
+
+// ── Step 2: Archetype selected — commit and advance ───────────────────────────
+export async function handleCcpArchPick(interaction: ButtonInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+  await interaction.deferUpdate();
+
+  const arch = session.archetypeList[session.archetypePreviewIdx];
   if (!arch) {
-    await interaction.editReply({ content: "❌ Archetype not found.", components: [] });
+    await interaction.editReply({ content: "❌ No archetype selected — go back and try again.", components: [], embeds: [] });
     return;
   }
 
   session.archetypeId    = arch.id;
   session.archetypeName  = arch.name;
-  session.attributes     = { ...(arch.attributes as Record<string, number>) };
-  session.attributeBases = { ...(arch.attributes as Record<string, number>) };
-  session.attributeOrder = Object.keys(arch.attributes as Record<string, number>);
+  session.attributes     = { ...arch.attributes };
+  session.attributeBases = { ...arch.attributes };
+  session.attributeOrder = Object.keys(arch.attributes);
 
-  // OL players must pick a specific position (LT/LG/C/RG/RT) before continuing
+  // OL players must pick a specific sub-position (LT/LG/C/RG/RT) before continuing
   if (session.position === "OL") {
     session.step = 2;
     await interaction.editReply({
@@ -133,6 +183,43 @@ export async function handleCcpArch(interaction: StringSelectMenuInteraction, se
       `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
     components: [devTraitSelectRow(sessionId)],
     embeds: [],
+  });
+}
+
+// ── Legacy: old ccp_arch select-menu handler (kept for any in-flight sessions) ─
+export async function handleCcpArch(interaction: StringSelectMenuInteraction, sessionId: string) {
+  // Old sessions used a dropdown — redirect to pick logic using the selected ID
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+
+  const archetypeId = parseInt(interaction.values[0]!, 10);
+  await interaction.deferUpdate();
+
+  const [arch] = await db.select()
+    .from(customArchetypesTable)
+    .where(eq(customArchetypesTable.id, archetypeId))
+    .limit(1);
+
+  if (!arch) { await interaction.editReply({ content: "❌ Archetype not found.", components: [] }); return; }
+
+  session.archetypeId    = arch.id;
+  session.archetypeName  = arch.name;
+  session.attributes     = { ...(arch.attributes as Record<string, number>) };
+  session.attributeBases = { ...(arch.attributes as Record<string, number>) };
+  session.attributeOrder = Object.keys(arch.attributes as Record<string, number>);
+
+  if (session.position === "OL") {
+    session.step = 2;
+    await interaction.editReply({
+      content: `**🏈 Custom Player Builder — Step 2 of 8**\n\nPosition: **OL** | Archetype: **${arch.name}**\n\nSelect your specific OL position:`,
+      components: [olSubPositionSelectRow(sessionId)], embeds: [],
+    });
+    return;
+  }
+  session.step = 3;
+  await interaction.editReply({
+    content: `**🏈 Custom Player Builder — Step 3 of 8**\n\nPosition: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
+    components: [devTraitSelectRow(sessionId)], embeds: [],
   });
 }
 

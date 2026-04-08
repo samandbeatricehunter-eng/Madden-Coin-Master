@@ -343,6 +343,38 @@ export function buildCommissionerRows(playerId: number) {
   );
 }
 
+// ── Archetype paged-browser UI ────────────────────────────────────────────────
+// Shows one archetype at a time with Prev/Next navigation and a Pick button.
+
+export function buildArchetypeNavRows(
+  sessionId: string,
+  currentIdx: number,
+  total: number,
+): ActionRowBuilder<ButtonBuilder>[] {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ccp_arch_prev:${sessionId}`)
+      .setLabel("◀  Prev")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentIdx <= 0),
+    new ButtonBuilder()
+      .setCustomId("ccp_arch_page_indicator")
+      .setLabel(`${currentIdx + 1} / ${total}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(`ccp_arch_next:${sessionId}`)
+      .setLabel("Next  ▶")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentIdx >= total - 1),
+    new ButtonBuilder()
+      .setCustomId(`ccp_arch_pick:${sessionId}`)
+      .setLabel("✅  Choose This Archetype")
+      .setStyle(ButtonStyle.Success),
+  );
+  return [row];
+}
+
 // ── Format archetype for display ──────────────────────────────────────────────
 export function formatArchetypeEmbed(
   position: string,

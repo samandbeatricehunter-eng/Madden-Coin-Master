@@ -40,6 +40,10 @@ export interface CustomPlayerSession {
   heightIn:      number | null;
   weightLbs:     number | null;
 
+  // Archetype browse state (set during step 2, before pick)
+  archetypeList:       Array<{ id: number; name: string; attributes: Record<string, number> }>;
+  archetypePreviewIdx: number;  // which index is currently shown
+
   // Housekeeping
   expiresAt: number;    // Date.now() + TTL
   step: number;         // current step (1–8) for display
@@ -65,8 +69,10 @@ export function createSession(userId: string, guildId: string): string {
     attributes:    {},
     attributeBases: {},
     attributeOrder: [],
-    selectedAttr:  null,
-    attrsLocked:   false,
+    selectedAttr:       null,
+    attrsLocked:        false,
+    archetypeList:      [],
+    archetypePreviewIdx: 0,
     firstName:     null,
     lastName:      null,
     jerseyNumber:  null,

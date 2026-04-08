@@ -21,7 +21,8 @@ import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-
 import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
 import {
   handleCcpPreConfirm,
-  handleCcpPos, handleCcpArch, handleCcpOlPos, handleCcpDev, handleCcpPkg,
+  handleCcpPos, handleCcpArch, handleCcpArchPrev, handleCcpArchNext, handleCcpArchPick,
+  handleCcpOlPos, handleCcpDev, handleCcpPkg,
   handleCcpAttrSel, handleCcpAttrAdjust,
   handleCcpSubmitAttrs, handleCcpConfirm, handleCcpCancel,
   handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
@@ -1693,9 +1694,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   }
 
   // ── Custom player builder ─────────────────────────────────────────────────────
-  if (action === "ccp_pos")      { await handleCcpPos(interaction, sessionId);     return; }
-  if (action === "ccp_arch")     { await handleCcpArch(interaction, sessionId);    return; }
-  if (action === "ccp_ol_pos")   { await handleCcpOlPos(interaction, sessionId);   return; }
+  if (action === "ccp_pos")       { await handleCcpPos(interaction, sessionId);      return; }
+  if (action === "ccp_arch")      { await handleCcpArch(interaction, sessionId);     return; }
+  if (action === "ccp_arch_prev") { await handleCcpArchPrev(interaction, sessionId); return; }
+  if (action === "ccp_arch_next") { await handleCcpArchNext(interaction, sessionId); return; }
+  if (action === "ccp_arch_pick") { await handleCcpArchPick(interaction, sessionId); return; }
+  if (action === "ccp_ol_pos")    { await handleCcpOlPos(interaction, sessionId);    return; }
   if (action === "ccp_dev")      { await handleCcpDev(interaction, sessionId);     return; }
   if (action === "ccp_pkg")      { await handleCcpPkg(interaction, sessionId);     return; }
   if (action === "ccp_attr_sel") { await handleCcpAttrSel(interaction, sessionId); return; }
