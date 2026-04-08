@@ -16,6 +16,8 @@ import {
   pendingChannelPayoutsTable,
 } from "@workspace/db";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
+import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-cocomm-actions.js";
+import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
@@ -92,6 +94,68 @@ export async function execute(interaction: Interaction) {
 // ── Button handler ─────────────────────────────────────────────────────────────
 async function handleButton(interaction: ButtonInteraction) {
   const [action, secondPart, userId, purchaseType] = interaction.customId.split(":");
+
+  // ── Co-Commissioner action approval ────────────────────────────────────────
+  if (action === "cocomm-approve" || action === "cocomm-deny") {
+    await interaction.deferUpdate();
+    // Only full Commissioners (not Co-Commissioners) can approve/deny
+    const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    const isFullCommissioner = member?.roles.cache.some(r => r.name === "Commissioner") ?? false;
+    if (!isFullCommissioner) {
+      await interaction.followUp({ content: "❌ Only Commissioners can approve or deny Co-Commissioner actions.", ephemeral: true });
+      return;
+    }
+
+    purgeExpiredCoCommActions();
+    const actionId = secondPart ?? "";
+    const pending  = pendingCoCommActions.get(actionId);
+
+    if (!pending) {
+      const expiredEmbed = new EmbedBuilder()
+        .setColor(Colors.Grey)
+        .setTitle("⏰ Action Expired or Already Handled")
+        .setDescription("This Co-Commissioner action is no longer pending.")
+        .setTimestamp();
+      await interaction.editReply({ embeds: [expiredEmbed], components: [] }).catch(() => {});
+      return;
+    }
+
+    if (action === "cocomm-deny") {
+      pendingCoCommActions.delete(actionId);
+      const deniedEmbed = new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("❌ Co-Commissioner Action Denied")
+        .addFields(
+          { name: "Requested By", value: `<@${pending.issuerId}>`, inline: true },
+          { name: "Denied By",    value: `<@${interaction.user.id}>`, inline: true },
+          { name: "Action",       value: pending.summaryText },
+        )
+        .setTimestamp();
+      await interaction.editReply({ embeds: [deniedEmbed], components: [] }).catch(() => {});
+      return;
+    }
+
+    // Approve — execute the action
+    pendingCoCommActions.delete(actionId);
+    const ctx: AdminActionContext = {
+      client:  interaction.client,
+      guild:   interaction.guild,
+      actorId: pending.issuerId,
+    };
+    const result = await executeAdminAction(pending.action, ctx);
+    const approvedEmbed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Co-Commissioner Action Approved & Executed")
+      .addFields(
+        { name: "Requested By", value: `<@${pending.issuerId}>`, inline: true },
+        { name: "Approved By",  value: `<@${interaction.user.id}>`, inline: true },
+        { name: "Action",       value: pending.summaryText },
+        { name: "Result",       value: result },
+      )
+      .setTimestamp();
+    await interaction.editReply({ embeds: [approvedEmbed], components: [] }).catch(() => {});
+    return;
+  }
 
   // ── Purchase: approve ────────────────────────────────────────────────────────
   if (action === "approve_purchase") {

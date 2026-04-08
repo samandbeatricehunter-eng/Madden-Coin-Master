@@ -115,12 +115,20 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
       saveMcaPayload(`mca/week-${weekType}-${weekNum}-${statType}.json`, req.body);
       res.status(200).json({ status: "received" });
       const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum).catch(err => ({
-        ok: false, message: String(err),
+        ok: false, message: String(err), violations: [] as string[],
       }));
       if (result.ok) {
         console.log(`[mca/week${weekNum}/${statType}] ${result.message}`);
       } else {
         console.error(`[mca/week${weekNum}/${statType}] Error: ${result.message}`);
+      }
+      if (COMMISSIONER_CHANNEL_ID && result.violations && result.violations.length > 0) {
+        sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+          title: `🚨 Stat Padding Review — ${weekLabel(weekType, weekNum)} (${statType})`,
+          description: result.violations.slice(0, 20).join("\n"),
+          color: 0xed4245,
+          footer: { text: "Flagged by auto-review on weekly import · Requires manual review" },
+        }).catch(() => {});
       }
     },
   );
@@ -151,7 +159,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[],
+    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as string[],
     weekNum, seasonId: 0, catchupMode: false,
   }));
   console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
@@ -182,6 +190,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
         color: 0x5865f2,
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
       }).catch(() => {});
+      if (result.violations.length > 0) {
+        await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+          title: `🚨 Violations Flagged — ${roundLabel}`,
+          description: result.violations.slice(0, 20).join("\n"),
+          color: 0xed4245,
+          footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -222,6 +238,16 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       fields,
       footer: { text: `Season ${result.seasonId} · Madden Companion App` },
     }).catch(() => {});
+
+    // ── Violation alerts (separate embed so they stand out) ───────────────
+    if (result.violations.length > 0) {
+      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+        title: `🚨 Violations Flagged — ${roundLabel}`,
+        description: result.violations.slice(0, 20).join("\n"),
+        color: 0xed4245,
+        footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
+      }).catch(() => {});
+    }
   }
 
   // Only post results to the general channel in normal (non-catchup) mode
@@ -302,7 +328,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[],
+    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as string[],
     weekNum, seasonId: 0, catchupMode: false,
   }));
 
@@ -331,6 +357,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
         color: 0x5865f2,
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
       }).catch(() => {});
+      if (result.violations.length > 0) {
+        await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+          title: `🚨 Violations Flagged — ${scoresRoundLabel}`,
+          description: result.violations.slice(0, 20).join("\n"),
+          color: 0xed4245,
+          footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -369,6 +403,15 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       fields,
       footer: { text: `Season ${result.seasonId} · Madden Companion App` },
     }).catch(() => {});
+
+    if (result.violations.length > 0) {
+      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+        title: `🚨 Violations Flagged — ${scoresRoundLabel}`,
+        description: result.violations.slice(0, 20).join("\n"),
+        color: 0xed4245,
+        footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
+      }).catch(() => {});
+    }
   }
 
   if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0 && !result.catchupMode) {

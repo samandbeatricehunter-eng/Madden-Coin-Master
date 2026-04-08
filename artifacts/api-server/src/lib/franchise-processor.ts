@@ -17,6 +17,11 @@ import {
   playerStatWeekProcessedTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
+import {
+  detectH2HBlowout,
+  detectCpuScoreAnomaly,
+  detectPlayerStatViolations,
+} from "./stat-padding-detector.js";
 
 // ── Coin payouts (mirrors discord-bot/franchise-update.ts) ────────────────────
 const H2H_WIN_PAYOUT  = 50;
@@ -163,6 +168,7 @@ export interface ProcessResult {
   ok: boolean;
   message: string;
   details?: Record<string, any>;
+  violations?: string[];
 }
 
 // ── /leagueteams → populate franchiseMcaTeamsTable ───────────────────────────
@@ -569,6 +575,8 @@ export async function processPlayerWeekStats(
     const ops: Promise<any>[] = [];
     let upserted = 0;
     let loggedSample = false;
+    const statViolations: string[] = [];
+    const wkLabel = weekType === "reg" ? `Week ${weekNum}` : `Playoff ${weekNum}`;
 
     for (const p of players) {
       // ── Debug: log first player's raw keys so we can verify MCA field names ──
@@ -620,6 +628,11 @@ export async function processPlayerWeekStats(
           passYds: sql`${playerSeasonStatsTable.passYds} + ${passYds}`,
           passTDs: sql`${playerSeasonStatsTable.passTDs} + ${passTDs}`,
         };
+        const pViolations = detectPlayerStatViolations(
+          `${firstName} ${lastName}`.trim(), position, teamName,
+          { passYds: Number(passYds), passTDs: Number(passTDs) }, wkLabel,
+        );
+        statViolations.push(...pViolations);
       } else if (statType === "rushing") {
         const rushYds = getN(p, "rushYds", "rushingYards", "rushyds");
         const rushTDs = getN(p, "rushTDs", "rushingTds",   "rushtds");
@@ -628,6 +641,11 @@ export async function processPlayerWeekStats(
           rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
           rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
         };
+        const rViolations = detectPlayerStatViolations(
+          `${firstName} ${lastName}`.trim(), position, teamName,
+          { rushYds: Number(rushYds) }, wkLabel,
+        );
+        statViolations.push(...rViolations);
       } else if (statType === "receiving") {
         const recYds = getN(p, "recYds", "receivingYards", "recyds");
         const recTDs = getN(p, "recTDs", "receivingTds",   "rectds");
@@ -636,6 +654,11 @@ export async function processPlayerWeekStats(
           recYds: sql`${playerSeasonStatsTable.recYds} + ${recYds}`,
           recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
         };
+        const recViolations = detectPlayerStatViolations(
+          `${firstName} ${lastName}`.trim(), position, teamName,
+          { recYds: Number(recYds) }, wkLabel,
+        );
+        statViolations.push(...recViolations);
       } else if (statType === "defense") {
         const sacks        = getN(p, "defSacks",        "sacks",         "sack");
         const defInts      = getN(p, "defInts",         "defInterceptions", "interceptions", "ints");
@@ -688,8 +711,8 @@ export async function processPlayerWeekStats(
       recordCount: upserted,
     });
 
-    console.log(`[mca/week${weekNum}/${statType}] Upserted ${upserted} player stat records, marked as processed`);
-    return { ok: true, message: `${statType} week ${weekNum}: upserted ${upserted} records`, details: { upserted } };
+    console.log(`[mca/week${weekNum}/${statType}] Upserted ${upserted} records, ${statViolations.length} violations`);
+    return { ok: true, message: `${statType} week ${weekNum}: upserted ${upserted} records`, details: { upserted }, violations: statViolations };
   } catch (err) {
     console.error(`[mca/${statType}] Error:`, err);
     return { ok: false, message: String(err) };
@@ -813,6 +836,7 @@ export interface WeekScoresResult {
   weekNum: number;
   seasonId: number;
   catchupMode: boolean;         // true when catchup mode is active (no payouts/notifications)
+  violations: string[];         // stat-padding / blowout flags for commissioner review
 }
 
 /**
@@ -876,7 +900,7 @@ export async function processWeekScores(
     ok: false, message: "", gamesProcessed: 0, gamesDuplicate: 0,
     gamesCpuVsCpu: 0, gamesUnregistered: 0, payoutLines: [], milestoneLines: [],
     resultLines: [], unregisteredLines: [],
-    weekNum, seasonId: 0, catchupMode: false,
+    weekNum, seasonId: 0, catchupMode: false, violations: [],
   };
 
   try {
@@ -905,11 +929,15 @@ export async function processWeekScores(
     let gamesDuplicate    = 0;
     let gamesCpuVsCpu     = 0;
     let gamesUnregistered = 0;
-    const payoutLines:     string[] = [];
-    const milestoneLines:  string[] = [];
-    const resultLines:     string[] = [];
+    const payoutLines:       string[] = [];
+    const milestoneLines:    string[] = [];
+    const resultLines:       string[] = [];
     const unregisteredLines: string[] = [];
+    const violations:        string[] = [];
     const seenKeys = new Set<string>();
+    const roundLabel = isPlayoff
+      ? (({ 1: "Wild Card", 2: "Divisional Round", 3: "Conference Championship", 4: "Super Bowl" } as Record<number, string>)[weekNum] ?? `Playoff Round ${weekNum}`)
+      : `Week ${weekNum}`;
 
     for (const g of games) {
       if (!g || typeof g !== "object") continue;
@@ -1031,16 +1059,20 @@ export async function processWeekScores(
           const loScore    = Math.min(homeScore, awayScore);
           const spread     = hiScore - loScore;
 
-          const roundLabel = isPlayoff
+          const gameRoundLabel = isPlayoff
             ? ` (Playoff Round ${weekNum})`
             : ` (Week ${weekNum})`;
 
+          // ── Blowout detection ──────────────────────────────────────────────
+          const blowoutFlag = detectH2HBlowout(winnerTeam, loserTeam, hiScore, loScore, roundLabel);
+          if (blowoutFlag) violations.push(blowoutFlag);
+
           await addBalance(winnerId, H2H_WIN_PAYOUT);
           await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
-            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} win vs ${loserTeam} (${hiScore}–${loScore})${roundLabel}`);
+            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} win vs ${loserTeam} (${hiScore}–${loScore})${gameRoundLabel}`);
           await addBalance(loserId, H2H_LOSS_PAYOUT);
           await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
-            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} loss vs ${winnerTeam} (${loScore}–${hiScore})${roundLabel}`);
+            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} loss vs ${winnerTeam} (${loScore}–${hiScore})${gameRoundLabel}`);
 
           const resultPrefix = isPlayoff ? "🏆🏈" : "🏆";
           payoutLines.push(`${resultPrefix} **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
@@ -1144,6 +1176,10 @@ export async function processWeekScores(
         const humanWon   = humanScore > cpuScore && !isTie;
         const spread     = humanScore - cpuScore;
 
+        // ── CPU score anomaly detection ────────────────────────────────────
+        const cpuFlag = detectCpuScoreAnomaly(humanData.fullName, cpuData.fullName, humanScore, cpuScore, roundLabel);
+        if (cpuFlag) violations.push(cpuFlag);
+
         if (humanWon) {
           await addBalance(humanData.discordId!, CPU_WIN_PAYOUT);
           await logTransaction(humanData.discordId!, CPU_WIN_PAYOUT, "addcoins",
@@ -1189,12 +1225,12 @@ export async function processWeekScores(
       gamesProcessed++;
     }
 
-    console.log(`[mca/week${weekNum}/schedules] Processed: ${gamesProcessed} games, ${gamesDuplicate} dupes, ${gamesCpuVsCpu} cpu-vs-cpu, ${gamesUnregistered} unregistered`);
+    console.log(`[mca/week${weekNum}/schedules] Processed: ${gamesProcessed} games, ${gamesDuplicate} dupes, ${gamesCpuVsCpu} cpu-vs-cpu, ${gamesUnregistered} unregistered, ${violations.length} violations`);
     return {
       ok: true,
       message: `Week ${weekNum}: ${gamesProcessed} game(s) processed${season.catchupMode ? " [CATCHUP MODE — no payouts]" : ""}`,
       gamesProcessed, gamesDuplicate, gamesCpuVsCpu, gamesUnregistered,
-      payoutLines, milestoneLines, resultLines, unregisteredLines,
+      payoutLines, milestoneLines, resultLines, unregisteredLines, violations,
       weekNum, seasonId: season.id, catchupMode: season.catchupMode,
     };
   } catch (err) {

@@ -1,4 +1,6 @@
 import { Events, Message, EmbedBuilder, Colors, ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel, GuildMember } from "discord.js";
+import { executeAdminAction, type AdminAction, type AdminActionContext } from "../lib/admin-actions.js";
+import { pendingCoCommActions, purgeExpiredCoCommActions, type PendingCoCommAction } from "../lib/pending-cocomm-actions.js";
 import OpenAI from "openai";
 import { db } from "@workspace/db";
 import {
@@ -675,6 +677,7 @@ function buildSystemPrompt(
   isCommissioner: boolean = false,
   channelContext: { id: string; name: string }[] = [],
   leagueContext: string = "",
+  isCoCommissioner: boolean = false,
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -855,14 +858,17 @@ LEAGUE RULES
 ${rulesText}${isCommissioner ? `
 
 ══════════════════════════════════════════
-COMMISSIONER DISPATCH MODE — ACTIVE
+${isCoCommissioner ? "CO-COMMISSIONER DISPATCH MODE — APPROVAL REQUIRED" : "COMMISSIONER DISPATCH MODE — ACTIVE"}
 ══════════════════════════════════════════
-This user is a Commissioner or Co-Commissioner. They have full authority to order you to take official league actions on their behalf.
+${isCoCommissioner
+  ? `This user is a Co-Commissioner. They may request league actions, but their directives REQUIRE approval from a full Commissioner before being executed. The bot will submit the action for approval automatically — do NOT execute it directly.`
+  : `This user is a Commissioner. They have full authority to order you to take official league actions on their behalf.`
+}
 
 When they give you an admin instruction, you MUST:
 1. Use [TYPE:ADMIN_DISPATCH] instead of the normal type tags
 2. Output exactly one [ACTION:{...}] JSON block on its own line BEFORE your response text
-3. Then write a short, authoritative confirmation message (as if announcing to the league what just happened)
+3. Then write a short confirmation message${isCoCommissioner ? " — let them know the action has been submitted for Commissioner approval" : " (as if announcing to the league what just happened)"}
 
 SUPPORTED ACTIONS — pick the most appropriate one:
 
@@ -885,13 +891,10 @@ RULES FOR ACTION JSON:
 CHANNEL CONTEXT (channels mentioned in this message or available in this server):
 ${channelContext.length > 0 ? channelContext.map(c => `  #${c.name} → ID: ${c.id}`).join("\n") : "  (none explicitly mentioned)"}
 
-COMMISSIONER TONE:
-When dispatching an action, speak with authority. You're the arm of the league. Short, firm, final. Don't hedge. Don't ask for confirmation. Just do it and report back.
-
-Example output for a warning:
-[TYPE:ADMIN_DISPATCH]
-[ACTION:{"type":"POST_WARNING","targetDiscordId":"123456789","channelId":null,"reason":"Excessive use of nano blitz","ruleRef":"Gameplay Rules, Rule 4","severity":"citation","fineAmount":50}]
-Citation issued. @PlayerName has been formally cited for nano blitzing and fined 50 coins. The league doesn't play.
+${isCoCommissioner
+  ? `CO-COMMISSIONER TONE: Helpful and clear, but acknowledge the action needs Commissioner sign-off. "Done — I've submitted that for Commissioner approval." Keep it brief and professional.`
+  : `COMMISSIONER TONE: Speak with authority. You're the arm of the league. Short, firm, final. Don't hedge. Don't ask for confirmation. Just do it and report back.`
+}
 
 If the commissioner is NOT giving an admin action order (just chatting), use the normal type tags as usual — do NOT use ADMIN_DISPATCH for casual conversation.` : ""}`;
 }
@@ -1144,157 +1147,36 @@ async function handleHighlightPost(message: Message): Promise<void> {
   }
 }
 
-// ── Commissioner role check ────────────────────────────────────────────────────
+// ── Commissioner role helpers ──────────────────────────────────────────────────
+
+function hasFullCommissionerRole(member: GuildMember | null): boolean {
+  if (!member) return false;
+  return member.roles.cache.some(r => r.name === "Commissioner");
+}
+
+function hasCoCommissionerRole(member: GuildMember | null): boolean {
+  if (!member) return false;
+  return member.roles.cache.some(r => r.name === "Co-Commissioner");
+}
 
 function hasCommissionerRole(member: GuildMember | null): boolean {
-  if (!member) return false;
-  return member.roles.cache.some(r =>
-    r.name === "Commissioner" || r.name === "Co-Commissioner",
-  );
+  return hasFullCommissionerRole(member) || hasCoCommissionerRole(member);
 }
 
-// ── Admin dispatch action types ────────────────────────────────────────────────
-
-type AdminAction =
-  | { type: "POST_WARNING";      targetDiscordId: string; channelId?: string | null; reason: string; ruleRef?: string | null; severity?: string | null; fineAmount?: number | null }
-  | { type: "FINE_USER";         targetDiscordId: string; amount: number; reason: string; channelId?: string | null }
-  | { type: "POST_ANNOUNCEMENT"; channelId?: string | null; text: string };
-
-async function resolveChannel(
-  message: Message,
-  channelId: string | null | undefined,
-): Promise<TextChannel | null> {
-  // 1. Use the explicitly provided channel ID
-  if (channelId) {
-    const ch = await message.client.channels.fetch(channelId).catch(() => null);
-    if (ch?.isTextBased()) return ch as TextChannel;
+function buildActionSummary(action: AdminAction): string {
+  if (action.type === "POST_WARNING") {
+    const target = action.targetDiscordId ? `<@${action.targetDiscordId}>` : "unknown";
+    const fine   = (action.fineAmount ?? 0) > 0 ? ` (+${action.fineAmount} coin fine)` : "";
+    return `${action.severity ?? "warning"} for ${target}: ${action.reason}${fine}`;
   }
-  // 2. Fall back to a channel named "general" or "general-chat" in this guild
-  const fallback = message.guild?.channels.cache.find(
-    c => c.isTextBased() && ["general", "general-chat", "general_chat"].includes(c.name.toLowerCase()),
-  );
-  return (fallback as TextChannel | undefined) ?? null;
-}
-
-async function executeAdminAction(
-  action: AdminAction,
-  issuer: Message,
-  confirmChannelId: string,
-): Promise<string> {
-  const confirmChannel = await issuer.client.channels.fetch(confirmChannelId).catch(() => null) as TextChannel | null;
-
-  try {
-    if (action.type === "POST_WARNING" || action.type === "FINE_USER") {
-      // Resolve target user info
-      const targetId = action.targetDiscordId;
-      const member   = await issuer.guild?.members.fetch(targetId).catch(() => null);
-      const [userRow] = await db.select({ team: usersTable.team, balance: usersTable.balance })
-        .from(usersTable).where(eq(usersTable.discordId, targetId)).limit(1);
-
-      const displayName = member?.displayName ?? `<@${targetId}>`;
-      const teamLabel   = userRow?.team ? ` (${userRow.team})` : "";
-
-      // ── POST_WARNING ────────────────────────────────────────────────────────
-      if (action.type === "POST_WARNING") {
-        const targetChannel = await resolveChannel(issuer, action.channelId ?? null);
-        if (!targetChannel) return "❌ Couldn't find a channel to post the warning in. Mention a channel explicitly next time.";
-
-        const severityLabel = (action.severity ?? "warning").toLowerCase();
-        const iscitation    = severityLabel === "citation";
-        const hasFine       = (action.fineAmount ?? 0) > 0;
-
-        const embed = new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle(iscitation ? "📋 Official League Citation" : "⚠️ Official League Warning")
-          .addFields(
-            { name: "Member",    value: `<@${targetId}>${teamLabel}`, inline: true },
-            { name: "Severity",  value: severityLabel.charAt(0).toUpperCase() + severityLabel.slice(1), inline: true },
-            { name: "Violation", value: action.reason },
-          );
-
-        if (action.ruleRef) {
-          embed.addFields({ name: "Rule Reference", value: action.ruleRef });
-        }
-        if (hasFine) {
-          embed.addFields({ name: "Fine Issued", value: `${action.fineAmount!.toLocaleString()} coins deducted` });
-        }
-
-        embed.setFooter({ text: "Issued by The R.E.C. League Commissioners" }).setTimestamp();
-
-        await targetChannel.send({ content: `<@${targetId}>`, embeds: [embed] });
-
-        // Apply fine if included
-        if (hasFine) {
-          const fine = action.fineAmount!;
-          await db.transaction(async (tx) => {
-            await tx.update(usersTable)
-              .set({ balance: sql`GREATEST(0, ${usersTable.balance} - ${fine})`, updatedAt: new Date() })
-              .where(eq(usersTable.discordId, targetId));
-            await tx.insert(coinTransactionsTable).values({
-              discordId:     targetId,
-              amount:        -fine,
-              type:          "removecoins",
-              description:   `Commissioner fine: ${action.reason}`,
-              relatedUserId: issuer.author.id,
-            });
-          });
-          return `✅ Warning posted in <#${targetChannel.id}> and ${fine} coins deducted from ${displayName}.`;
-        }
-
-        return `✅ Warning posted in <#${targetChannel.id}> and ${displayName} has been notified.`;
-      }
-
-      // ── FINE_USER ──────────────────────────────────────────────────────────
-      if (action.type === "FINE_USER") {
-        const fine = Math.abs(action.amount);
-        await db.transaction(async (tx) => {
-          await tx.update(usersTable)
-            .set({ balance: sql`GREATEST(0, ${usersTable.balance} - ${fine})`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, targetId));
-          await tx.insert(coinTransactionsTable).values({
-            discordId:     targetId,
-            amount:        -fine,
-            type:          "removecoins",
-            description:   `Commissioner fine: ${action.reason}`,
-            relatedUserId: issuer.author.id,
-          });
-        });
-
-        // Notify the fined user in the target channel if specified
-        const targetChannel = action.channelId
-          ? await resolveChannel(issuer, action.channelId) : null;
-
-        if (targetChannel) {
-          const embed = new EmbedBuilder()
-            .setColor(Colors.Orange)
-            .setTitle("💸 Commissioner Fine")
-            .addFields(
-              { name: "Member", value: `<@${targetId}>${teamLabel}`, inline: true },
-              { name: "Amount", value: `${fine.toLocaleString()} coins`,      inline: true },
-              { name: "Reason", value: action.reason },
-            )
-            .setFooter({ text: "Issued by The R.E.C. League Commissioners" })
-            .setTimestamp();
-          await targetChannel.send({ content: `<@${targetId}>`, embeds: [embed] });
-        }
-
-        return `✅ ${fine.toLocaleString()} coins deducted from ${displayName}${targetChannel ? ` and posted in <#${targetChannel.id}>` : ""}.`;
-      }
-    }
-
-    // ── POST_ANNOUNCEMENT ──────────────────────────────────────────────────────
-    if (action.type === "POST_ANNOUNCEMENT") {
-      const targetChannel = await resolveChannel(issuer, action.channelId ?? null);
-      if (!targetChannel) return "❌ Couldn't find a channel to post in. Mention a channel explicitly.";
-      await targetChannel.send(action.text);
-      return `✅ Announcement posted in <#${targetChannel.id}>.`;
-    }
-
-    return "❌ Unknown action type — nothing was done.";
-  } catch (err) {
-    console.error("executeAdminAction error:", err);
-    return "❌ Something went wrong executing that action. Check the bot logs.";
+  if (action.type === "FINE_USER") {
+    const target = action.targetDiscordId ? `<@${action.targetDiscordId}>` : "unknown";
+    return `Fine ${action.amount} coins from ${target}: ${action.reason}`;
   }
+  if (action.type === "POST_ANNOUNCEMENT") {
+    return `Announcement: ${(action.text ?? "").slice(0, 100)}${(action.text ?? "").length > 100 ? "…" : ""}`;
+  }
+  return "Unknown action";
 }
 
 // ── Event export ───────────────────────────────────────────────────────────────
@@ -1348,7 +1230,9 @@ export async function execute(message: Message): Promise<void> {
   }
 
   // ── Commissioner role check ─────────────────────────────────────────────────
-  const isCommissioner = hasCommissionerRole(message.member);
+  const isFullCommissioner = hasFullCommissionerRole(message.member);
+  const isCoComm           = hasCoCommissionerRole(message.member);
+  const isCommissioner     = isFullCommissioner || isCoComm;
 
   // ── Extract channel mentions from raw message ────────────────────────────────
   // Commissioners may say "post in #general" — resolve those channel IDs now
@@ -1386,10 +1270,12 @@ export async function execute(message: Message): Promise<void> {
   ]);
 
   // Build the system prompt with current escalation level for this user
-  const escalationLevel = isAdmin ? 0 : await getEscalationLevel(message.author.id).catch(() => 0);
+  const escalationLevel    = isAdmin ? 0 : await getEscalationLevel(message.author.id).catch(() => 0);
+  const promptIsCommissioner = isCommissioner || isAdmin;
   const systemPrompt = buildSystemPrompt(
     rulesText, adminIds, userStats, isAdmin, mentionedUsersData, escalationLevel,
-    isCommissioner || isAdmin, channelContext, leagueContext,
+    promptIsCommissioner, channelContext, leagueContext,
+    isCoComm && !isAdmin,
   );
 
   // Call the model
@@ -1422,9 +1308,65 @@ export async function execute(message: Message): Promise<void> {
       response = response.slice(actionMatch[0].length).trim();
       try {
         const action = JSON.parse(actionMatch[1]!) as AdminAction;
-        const result = await executeAdminAction(action, message, message.channelId);
-        // Send the action result as a separate ephemeral-style reply, then the AI's text
-        await message.reply(`${result}`).catch(() => {});
+
+        if (isCoComm && !isAdmin) {
+          // ── Co-Commissioner: queue for approval ──────────────────────────
+          purgeExpiredCoCommActions();
+          const actionId = `cca-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const issuerDisplayName = message.member?.displayName ?? message.author.username;
+          const pending: PendingCoCommAction = {
+            id: actionId,
+            action,
+            issuerId: message.author.id,
+            issuerDisplayName,
+            guildId: message.guild!.id,
+            originalChannelId: message.channelId,
+            summaryText: buildActionSummary(action),
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          };
+          pendingCoCommActions.set(actionId, pending);
+
+          const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+          if (commChannelId) {
+            try {
+              const commCh = await message.client.channels.fetch(commChannelId).catch(() => null) as TextChannel | null;
+              if (commCh) {
+                const approvalEmbed = new EmbedBuilder()
+                  .setColor(Colors.Yellow)
+                  .setTitle("🔔 Co-Commissioner Action — Awaiting Approval")
+                  .addFields(
+                    { name: "Requested By", value: `<@${message.author.id}> (Co-Commissioner)`, inline: true },
+                    { name: "Action",       value: action.type, inline: true },
+                    { name: "Details",      value: pending.summaryText },
+                  )
+                  .setFooter({ text: "Only Commissioners can approve or deny this action" })
+                  .setTimestamp();
+                const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                  new ButtonBuilder()
+                    .setCustomId(`cocomm-approve:${actionId}`)
+                    .setLabel("Approve")
+                    .setStyle(ButtonStyle.Success),
+                  new ButtonBuilder()
+                    .setCustomId(`cocomm-deny:${actionId}`)
+                    .setLabel("Deny")
+                    .setStyle(ButtonStyle.Danger),
+                );
+                await commCh.send({ embeds: [approvalEmbed], components: [row] });
+              }
+            } catch (err) {
+              console.error("Failed to post co-comm approval request:", err);
+            }
+          }
+        } else {
+          // ── Full Commissioner (or admin): execute immediately ────────────
+          const ctx: AdminActionContext = {
+            client:  message.client,
+            guild:   message.guild,
+            actorId: message.author.id,
+          };
+          const result = await executeAdminAction(action, ctx);
+          await message.reply(`${result}`).catch(() => {});
+        }
       } catch (parseErr) {
         console.error("Admin action JSON parse error:", parseErr, actionMatch[1]);
         await message.reply("⚠️ Couldn't parse the action payload — nothing was executed. Check the bot logs.").catch(() => {});
