@@ -73,7 +73,6 @@ import * as adminCustomArchetypes from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as adminResendPayouts from "./commands/admin-resend-payouts.js";
 import * as adminReverseTransaction from "./commands/admin-reverse-transaction.js";
-import * as playerStats from "./commands/playerstats.js";
 import * as viewPayoutTiers from "./commands/viewpayouttiers.js";
 import * as viewPlayerStats from "./commands/viewplayerstats.js";
 
@@ -125,7 +124,6 @@ const commands = [
   adminCustomPlayerSettings,
   adminResendPayouts,
   adminReverseTransaction,
-  playerStats,
   viewPayoutTiers,
   viewPlayerStats,
 ].map(c => c.data.toJSON());
