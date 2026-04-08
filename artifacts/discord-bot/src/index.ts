@@ -53,6 +53,7 @@ import * as seasonschedule from "./commands/seasonschedule.js";
 import * as nextopp from "./commands/nextopp.js";
 import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js";
 import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
+import * as adminStatTiers from "./commands/admin-stat-tiers.js";
 import * as customarticle from "./commands/customarticle.js";
 import * as endofseasonpayout from "./commands/endofseasonpayout.js";
 import * as myRoster from "./commands/my-roster.js";
@@ -173,6 +174,7 @@ if (!isProduction && !devBotEnabled) {
     nextopp,
     adminRollbackFranchise,
     adminSetStatTier,
+    adminStatTiers,
     customarticle,
     endofseasonpayout,
     myRoster,
