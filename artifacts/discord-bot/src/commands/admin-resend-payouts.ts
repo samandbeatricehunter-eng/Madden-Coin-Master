@@ -154,9 +154,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     try {
       const streamCh = await interaction.client.channels.fetch(STREAM_CHANNEL_ID).catch(() => null);
       if (!streamCh?.isTextBased()) {
-        lines.push("⚠️ Cannot reach stream channel — stream scan skipped.");
+        lines.push("⚠️ Cannot reach stream channel — check that the bot is in the guild and the channel ID is correct.");
       } else {
-        const fetched = await (streamCh as TextChannel).messages.fetch({ limit: SCAN_LIMIT });
+        let fetched;
+        try {
+          fetched = await (streamCh as TextChannel).messages.fetch({ limit: SCAN_LIMIT });
+        } catch (fetchErr: any) {
+          const code = fetchErr?.code ?? fetchErr?.status;
+          if (code === 50013 || code === 50001 || fetchErr?.message?.includes("Missing")) {
+            lines.push("⚠️ Stream channel scan skipped — bot is missing **Read Message History** permission in that channel. Grant it in Discord → Channel Settings → Permissions.");
+          } else {
+            lines.push(`⚠️ Stream channel scan skipped — could not fetch messages: ${fetchErr?.message ?? String(fetchErr)}`);
+          }
+          fetched = null;
+        }
+
+        if (fetched) {
         const qualifying = [...fetched.values()]
           .filter(m => !m.author.bot && TWITCH_URL_RE.test(m.content))
           .slice(0, QUALIFY_LIMIT);
@@ -268,6 +281,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         } else if (autoPaid === 0 && orphansSent === 0) {
           lines.push("📺 Stream channel: all recent Twitch posts already have ✅ reactions — nothing missed.");
         }
+        } // end if (fetched)
       }
     } catch (err: any) {
       console.error("[admin-resend-payouts] Stream scan error:", err);
@@ -279,10 +293,23 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     try {
       const hlCh = await interaction.client.channels.fetch(HIGHLIGHTS_CHANNEL_ID).catch(() => null);
       if (!hlCh?.isTextBased()) {
-        lines.push("⚠️ Cannot reach highlights channel — highlight scan skipped.");
+        lines.push("⚠️ Cannot reach highlights channel — check that the bot is in the guild and the channel ID is correct.");
       } else {
-        const fetched = await (hlCh as TextChannel).messages.fetch({ limit: SCAN_LIMIT });
-        const qualifying = [...fetched.values()]
+        let hlFetched;
+        try {
+          hlFetched = await (hlCh as TextChannel).messages.fetch({ limit: SCAN_LIMIT });
+        } catch (fetchErr: any) {
+          const code = fetchErr?.code ?? fetchErr?.status;
+          if (code === 50013 || code === 50001 || fetchErr?.message?.includes("Missing")) {
+            lines.push("⚠️ Highlight channel scan skipped — bot is missing **Read Message History** permission in that channel. Grant it in Discord → Channel Settings → Permissions.");
+          } else {
+            lines.push(`⚠️ Highlight channel scan skipped — could not fetch messages: ${fetchErr?.message ?? String(fetchErr)}`);
+          }
+          hlFetched = null;
+        }
+
+        if (hlFetched) {
+        const qualifying = [...hlFetched.values()]
           .filter(m => !m.author.bot && [...m.attachments.values()].some(a => a.contentType?.startsWith("video/")))
           .slice(0, QUALIFY_LIMIT);
 
@@ -372,6 +399,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         } else if (hlAutoPaid === 0 && orphansSent === 0) {
           lines.push("🎬 Highlight channel: all recent video posts already have ✅ reactions — nothing missed.");
         }
+        } // end if (hlFetched)
       }
     } catch (err: any) {
       console.error("[admin-resend-payouts] Highlight scan error:", err);
