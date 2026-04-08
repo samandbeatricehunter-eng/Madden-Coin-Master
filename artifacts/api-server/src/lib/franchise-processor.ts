@@ -347,6 +347,12 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
     const getDefTDs = (t: any): number =>
       getN(t, "ptsAgainst","pointsAgainst","defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defPts");
+    const getOffRedZonePct = (t: any): number =>
+      getN(t, "offRedZonePct","offensiveRedZonePct","redZonePct","offRZPct","offensiveRedzonePct","offRedzonePct","offenseRedZonePct");
+    const getDefRedZonePct = (t: any): number =>
+      getN(t, "defRedZonePct","defensiveRedZonePct","defRedZoneAllowedPct","defRZPct","defenseRedZonePct","defRedzonePct");
+    const getDefFumblesRec = (t: any): number =>
+      getN(t, "defFumblesRec","fumblesRecovered","fumRec","fumRecovered","totalFumRec","defensiveFumblesRec","recoveredFumbles","fumbleRecoveries");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -357,21 +363,25 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       const teamEntry = teamMap.get(teamId);
       if (!teamEntry) continue;
 
-      const offPassYds = getOffPassYds(t);
-      const offRushYds = getOffRushYds(t);
-      const offYds     = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
-
-      const offTDs     = getOffTDs(t);
-      const defPassYds = getDefPassYds(t);
-      const defRushYds = getDefRushYds(t);
-      const defTDs     = getDefTDs(t);
-      const wins       = getN(t, "wins","totalWins","seasonWins");
-      const losses     = getN(t, "losses","totalLosses","seasonLosses");
-      const updatedAt  = new Date();
+      const offPassYds    = getOffPassYds(t);
+      const offRushYds    = getOffRushYds(t);
+      const offYds        = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
+      const offTDs        = getOffTDs(t);
+      const defPassYds    = getDefPassYds(t);
+      const defRushYds    = getDefRushYds(t);
+      const defTDs        = getDefTDs(t);
+      const offRedZonePct = getOffRedZonePct(t);
+      const defRedZonePct = getDefRedZonePct(t);
+      const defFumblesRec = getDefFumblesRec(t);
+      const wins          = getN(t, "wins","totalWins","seasonWins");
+      const losses        = getN(t, "losses","totalLosses","seasonLosses");
+      const updatedAt     = new Date();
       const insertVals: typeof teamSeasonStatsTable.$inferInsert = {
         seasonId: season.id, teamId, discordId: teamEntry.discordId ?? null,
         teamName: teamEntry.fullName, offYds, offPassYds, offRushYds,
-        offTDs, defPassYds, defRushYds, defTDs, wins, losses, updatedAt,
+        offTDs, defPassYds, defRushYds, defTDs,
+        offRedZonePct, defRedZonePct, defFumblesRec,
+        wins, losses, updatedAt,
       };
       ops.push(
         db.insert(teamSeasonStatsTable)
@@ -381,6 +391,7 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
             set: {
               discordId: teamEntry.discordId ?? null, teamName: teamEntry.fullName,
               offYds, offPassYds, offRushYds, offTDs, defPassYds, defRushYds, defTDs,
+              offRedZonePct, defRedZonePct, defFumblesRec,
               wins, losses, updatedAt,
             },
           })
@@ -448,6 +459,12 @@ export async function processTeamWeekStats(
       getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
     const getDefTDs = (t: any): number =>
       getN(t, "ptsAgainst","pointsAgainst","defPtsAllowed","ptsAllowed","totalPtsAllowed","pointsAllowed","defPts");
+    const getOffRedZonePct = (t: any): number =>
+      getN(t, "offRedZonePct","offensiveRedZonePct","redZonePct","offRZPct","offensiveRedzonePct","offRedzonePct","offenseRedZonePct");
+    const getDefRedZonePct = (t: any): number =>
+      getN(t, "defRedZonePct","defensiveRedZonePct","defRedZoneAllowedPct","defRZPct","defenseRedZonePct","defRedzonePct");
+    const getDefFumblesRec = (t: any): number =>
+      getN(t, "defFumblesRec","fumblesRecovered","fumRec","fumRecovered","totalFumRec","defensiveFumblesRec","recoveredFumbles","fumbleRecoveries");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -458,15 +475,18 @@ export async function processTeamWeekStats(
       const teamEntry = teamMap.get(teamId);
       if (!teamEntry) continue;
 
-      const offPassYds = getOffPassYds(t);
-      const offRushYds = getOffRushYds(t);
-      const offYds     = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
-      const offTDs     = getOffTDs(t);
-      const defPassYds = getDefPassYds(t);
-      const defRushYds = getDefRushYds(t);
-      const defTDs     = getDefTDs(t);
-      const wins       = getN(t, "wins","totalWins","seasonWins");
-      const losses     = getN(t, "losses","totalLosses","seasonLosses");
+      const offPassYds    = getOffPassYds(t);
+      const offRushYds    = getOffRushYds(t);
+      const offYds        = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getOffYds(t);
+      const offTDs        = getOffTDs(t);
+      const defPassYds    = getDefPassYds(t);
+      const defRushYds    = getDefRushYds(t);
+      const defTDs        = getDefTDs(t);
+      const offRedZonePct = getOffRedZonePct(t);
+      const defRedZonePct = getDefRedZonePct(t);
+      const defFumblesRec = getDefFumblesRec(t);
+      const wins          = getN(t, "wins","totalWins","seasonWins");
+      const losses        = getN(t, "losses","totalLosses","seasonLosses");
 
       ops.push(
         db.insert(teamSeasonStatsTable)
@@ -475,7 +495,9 @@ export async function processTeamWeekStats(
             discordId: teamEntry.discordId ?? null,
             teamName: teamEntry.fullName,
             offYds, offPassYds, offRushYds, offTDs,
-            defPassYds, defRushYds, defTDs, wins, losses,
+            defPassYds, defRushYds, defTDs,
+            offRedZonePct, defRedZonePct, defFumblesRec,
+            wins, losses,
             updatedAt: new Date(),
           })
           .onConflictDoUpdate({
@@ -483,16 +505,20 @@ export async function processTeamWeekStats(
             set: {
               discordId:  teamEntry.discordId ?? null,
               teamName:   teamEntry.fullName,
-              // Accumulate stats week-over-week (MCA sends per-game totals)
-              offYds:     sql`${teamSeasonStatsTable.offYds}     + ${offYds}`,
-              offPassYds: sql`${teamSeasonStatsTable.offPassYds} + ${offPassYds}`,
-              offRushYds: sql`${teamSeasonStatsTable.offRushYds} + ${offRushYds}`,
-              offTDs:     sql`${teamSeasonStatsTable.offTDs}     + ${offTDs}`,
-              defPassYds: sql`${teamSeasonStatsTable.defPassYds} + ${defPassYds}`,
-              defRushYds: sql`${teamSeasonStatsTable.defRushYds} + ${defRushYds}`,
-              defTDs:     sql`${teamSeasonStatsTable.defTDs}     + ${defTDs}`,
-              wins:       sql`${teamSeasonStatsTable.wins}       + ${wins}`,
-              losses:     sql`${teamSeasonStatsTable.losses}     + ${losses}`,
+              // Counts: accumulate week-over-week (MCA sends per-game totals)
+              offYds:        sql`${teamSeasonStatsTable.offYds}        + ${offYds}`,
+              offPassYds:    sql`${teamSeasonStatsTable.offPassYds}    + ${offPassYds}`,
+              offRushYds:    sql`${teamSeasonStatsTable.offRushYds}    + ${offRushYds}`,
+              offTDs:        sql`${teamSeasonStatsTable.offTDs}        + ${offTDs}`,
+              defPassYds:    sql`${teamSeasonStatsTable.defPassYds}    + ${defPassYds}`,
+              defRushYds:    sql`${teamSeasonStatsTable.defRushYds}    + ${defRushYds}`,
+              defTDs:        sql`${teamSeasonStatsTable.defTDs}        + ${defTDs}`,
+              defFumblesRec: sql`${teamSeasonStatsTable.defFumblesRec} + ${defFumblesRec}`,
+              wins:          sql`${teamSeasonStatsTable.wins}          + ${wins}`,
+              losses:        sql`${teamSeasonStatsTable.losses}        + ${losses}`,
+              // Percentages: overwrite with latest export value (running avg, not additive)
+              ...(offRedZonePct > 0 ? { offRedZonePct } : {}),
+              ...(defRedZonePct > 0 ? { defRedZonePct } : {}),
               updatedAt:  new Date(),
             },
           })

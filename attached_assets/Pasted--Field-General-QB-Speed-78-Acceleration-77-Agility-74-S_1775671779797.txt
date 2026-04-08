@@ -1,0 +1,2230 @@
+**Field General QB**
+
+Speed: 78
+Acceleration: 77
+Agility: 74
+Strength: 66
+Awareness: 68
+Carrying: 54
+BC Vision: 60
+Break Tackle: 54
+Trucking: 30
+Stiff Arm: 29
+Change of Direction: 72
+Spin Move: 37
+Juke Move: 49
+Catching: 41
+Catch in Traffic: 27
+Spectacular Catch: 33
+Short Route Running: 25
+Medium Route Running: 18
+Deep Route Running: 23
+Release: 28
+Jumping: 70
+Throwing Power: 91
+Short Accuracy: 82
+Medium Accuracy: 79
+Deep Accuracy: 77
+Throw on the Run: 65
+Throw Under Pressure: 83
+Break Sack: 57
+Play Action: 86
+Pass Blocking: 27
+Pass Block Power: 21
+Pass Block Finesse: 23
+Run Blocking: 19
+Run Block Power: 20
+Run Block Finesse: 17
+Lead Block: 25
+Impact Blocking: 26
+Play Recognition: 46
+Tackling: 23
+Hit Power: 23
+Block Shedding: 30
+Finesse Moves: 27
+Power Moves: 27
+Pursuit: 46
+Man Coverage: 38
+Zone Coverage: 19
+Press: 30
+Kick/Punt Return: 18
+Kicking Power: 33
+Kicking Accuracy: 32
+Stamina: 90
+Toughness: 85
+Injury: 86
+Long Snap: 0
+
+**Scrambling QB**
+
+Speed: 93
+Acceleration: 93
+Agility: 89
+Strength: 69
+Awareness: 65
+Carrying: 50
+BC Vision: 87
+Break Tackle: 74
+Trucking: 52
+Stiff Arm: 68
+Change of Direction: 85
+Spin Move: 73
+Juke Move: 78
+Catching: 40
+Catch in Traffic: 21
+Spectacular Catch: 18
+Short Route Running: 19
+Medium Route Running: 19
+Deep Route Running: 23
+Release: 28
+Jumping: 87
+Throwing Power: 92
+Short Accuracy: 75
+Medium Accuracy: 71
+Deep Accuracy: 78
+Throw on the Run: 77
+Throw Under Pressure: 74
+Break Sack: 74
+Play Action: 79
+Pass Blocking: 23
+Pass Block Power: 32
+Pass Block Finesse: 32
+Run Blocking: 30
+Run Block Power: 33
+Run Block Finesse: 33
+Lead Block: 31
+Impact Blocking: 26
+Play Recognition: 26
+Tackling: 42
+Hit Power: 40
+Block Shedding: 37
+Finesse Moves: 38
+Power Moves: 38
+Pursuit: 28
+Man Coverage: 20
+Zone Coverage: 18
+Press: 19
+Kick/Punt Return: 33
+Kicking Power: 28
+Kicking Accuracy: 21
+Stamina: 90
+Toughness: 89
+Injury: 88
+Long Snap: 0
+
+**Balanced Improviser QB**
+
+Speed: 86
+Acceleration: 88
+Agility: 89
+Strength: 69
+Awareness: 65
+Carrying: 50
+BC Vision: 87
+Break Tackle: 74
+Trucking: 52
+Stiff Arm: 68
+Change of Direction: 80
+Spin Move: 73
+Juke Move: 78
+Catching: 40
+Catch in Traffic: 21
+Spectacular Catch: 18
+Short Route Running: 19
+Medium Route Running: 19
+Deep Route Running: 23
+Release: 28
+Jumping: 87
+Throwing Power: 91
+Short Accuracy: 83
+Medium Accuracy: 73
+Deep Accuracy: 75
+Throw on the Run: 84
+Throw Under Pressure: 80
+Break Sack: 74
+Play Action: 79
+Pass Blocking: 23
+Pass Block Power: 32
+Pass Block Finesse: 32
+Run Blocking: 30
+Run Block Power: 33
+Run Block Finesse: 33
+Lead Block: 31
+Impact Blocking: 26
+Play Recognition: 26
+Tackling: 42
+Hit Power: 40
+Block Shedding: 37
+Finesse Moves: 38
+Power Moves: 38
+Pursuit: 28
+Man Coverage: 20
+Zone Coverage: 18
+Press: 19
+Kick/Punt Return: 33
+Kicking Power: 28
+Kicking Accuracy: 21
+Stamina: 90
+Toughness: 89
+Injury: 88
+Long Snap: 0
+
+**Power Back Archetype**
+
+Speed: 86
+Acceleration: 90
+Agility: 78
+Strength: 82
+Awareness: 74
+Carrying: 90
+BC Vision: 77
+Break Tackle: 84
+Trucking: 85
+Stiff Arm: 82
+Change of Direction: 78
+Spin Move: 70
+Juke Move: 76
+Catching: 65
+Catch in Traffic: 49
+Spectacular Catch: 49
+Short Route Running: 57
+Medium Route Running: 52
+Deep Route Running: 40
+Release: 47
+Jumping: 86
+Throwing Power: 54
+Short Accuracy: 33
+Medium Accuracy: 29
+Deep Accuracy: 22
+Throw on the Run: 30
+Throw Under Pressure: 33
+Break Sack: 31
+Play Action: 26
+Pass Blocking: 48
+Pass Block Power: 38
+Pass Block Finesse: 36
+Run Blocking: 39
+Run Block Power: 32
+Run Block Finesse: 29
+Lead Block: 36
+Impact Blocking: 37
+Play Recognition: 46
+Tackling: 42
+Hit Power: 41
+Block Shedding: 42
+Finesse Moves: 31
+Power Moves: 29
+Pursuit: 49
+Man Coverage: 40
+Zone Coverage: 47
+Press: 44
+Kick/Punt Return: 82
+Kicking Power: 21
+Kicking Accuracy: 21
+Stamina: 94
+Toughness: 87
+Injury: 93
+Long Snap: 0
+
+**Elusive Back Archetype**
+
+Speed: 92
+Acceleration: 92
+Agility: 78
+Strength: 71
+Awareness: 74
+Carrying: 82
+BC Vision: 77
+Break Tackle: 82
+Trucking: 68
+Stiff Arm: 72
+Change of Direction: 88
+Spin Move: 82
+Juke Move: 87
+Catching: 65
+Catch in Traffic: 49
+Spectacular Catch: 49
+Short Route Running: 57
+Medium Route Running: 52
+Deep Route Running: 40
+Release: 47
+Jumping: 86
+Throwing Power: 54
+Short Accuracy: 33
+Medium Accuracy: 29
+Deep Accuracy: 22
+Throw on the Run: 30
+Throw Under Pressure: 33
+Break Sack: 31
+Play Action: 26
+Pass Blocking: 48
+Pass Block Power: 38
+Pass Block Finesse: 36
+Run Blocking: 39
+Run Block Power: 32
+Run Block Finesse: 29
+Lead Block: 36
+Impact Blocking: 37
+Play Recognition: 46
+Tackling: 42
+Hit Power: 41
+Block Shedding: 42
+Finesse Moves: 31
+Power Moves: 29
+Pursuit: 49
+Man Coverage: 40
+Zone Coverage: 47
+Press: 44
+Kick/Punt Return: 82
+Kicking Power: 21
+Kicking Accuracy: 21
+Stamina: 93
+Toughness: 87
+Injury: 93
+Long Snap: 0
+
+**All-Around Back Archetype**
+
+Speed: 89
+Acceleration: 91
+Agility: 78
+Strength: 72
+Awareness: 74
+Carrying: 85
+BC Vision: 77
+Break Tackle: 82
+Trucking: 77
+Stiff Arm: 77
+Change of Direction: 83
+Spin Move: 76
+Juke Move: 82
+Catching: 72
+Catch in Traffic: 65
+Spectacular Catch: 63
+Short Route Running: 71
+Medium Route Running: 62
+Deep Route Running: 64
+Release: 60
+Jumping: 86
+Throwing Power: 54
+Short Accuracy: 33
+Medium Accuracy: 29
+Deep Accuracy: 22
+Throw on the Run: 30
+Throw Under Pressure: 33
+Break Sack: 31
+Play Action: 26
+Pass Blocking: 54
+Pass Block Power: 44
+Pass Block Finesse: 42
+Run Blocking: 45
+Run Block Power: 38
+Run Block Finesse: 35
+Lead Block: 42
+Impact Blocking: 43
+Play Recognition: 46
+Tackling: 42
+Hit Power: 41
+Block Shedding: 42
+Finesse Moves: 31
+Power Moves: 29
+Pursuit: 49
+Man Coverage: 40
+Zone Coverage: 47
+Press: 44
+Kick/Punt Return: 82
+Kicking Power: 21
+Kicking Accuracy: 21
+Stamina: 96
+Toughness: 87
+Injury: 93
+Long Snap: 0
+
+**Blocking FB**
+
+Speed: 81
+Acceleration: 84
+Agility: 78
+Strength: 78
+Awareness: 70
+Carrying: 88
+BC Vision: 77
+Break Tackle: 71
+Trucking: 85
+Stiff Arm: 82
+Change of Direction: 71
+Spin Move: 60
+Juke Move: 54
+Catching: 58
+Catch in Traffic: 49
+Spectacular Catch: 49
+Short Route Running: 57
+Medium Route Running: 52
+Deep Route Running: 40
+Release: 47
+Jumping: 81
+Throwing Power: 54
+Short Accuracy: 33
+Medium Accuracy: 29
+Deep Accuracy: 22
+Throw on the Run: 30
+Throw Under Pressure: 33
+Break Sack: 31
+Play Action: 26
+Pass Blocking: 71
+Pass Block Power: 75
+Pass Block Finesse: 70
+Run Blocking: 78
+Run Block Power: 78
+Run Block Finesse: 76
+Lead Block: 80
+Impact Blocking: 86
+Play Recognition: 46
+Tackling: 42
+Hit Power: 41
+Block Shedding: 42
+Finesse Moves: 31
+Power Moves: 29
+Pursuit: 49
+Man Coverage: 40
+Zone Coverage: 47
+Press: 44
+Kick/Punt Return: 82
+Kicking Power: 21
+Kicking Accuracy: 21
+Stamina: 90
+Toughness: 87
+Injury: 93
+Long Snap: 0
+
+**Utility FB Archetype**
+
+Speed: 83
+Acceleration: 86
+Agility: 82
+Strength: 75
+Awareness: 72
+Carrying: 86
+BC Vision: 79
+Break Tackle: 73
+Trucking: 80
+Stiff Arm: 78
+Change of Direction: 78
+Spin Move: 68
+Juke Move: 66
+Catching: 75
+Catch in Traffic: 64
+Spectacular Catch: 64
+Short Route Running: 70
+Medium Route Running: 64
+Deep Route Running: 52
+Release: 62
+Jumping: 84
+Throwing Power: 54
+Short Accuracy: 33
+Medium Accuracy: 29
+Deep Accuracy: 22
+Throw on the Run: 30
+Throw Under Pressure: 33
+Break Sack: 31
+Play Action: 26
+Pass Blocking: 64
+Pass Block Power: 66
+Pass Block Finesse: 62
+Run Blocking: 70
+Run Block Power: 70
+Run Block Finesse: 68
+Lead Block: 74
+Impact Blocking: 80
+Play Recognition: 48
+Tackling: 44
+Hit Power: 43
+Block Shedding: 42
+Finesse Moves: 31
+Power Moves: 29
+Pursuit: 50
+Man Coverage: 40
+Zone Coverage: 47
+Press: 44
+Kick/Punt Return: 82
+Kicking Power: 21
+Kicking Accuracy: 21
+Stamina: 92
+Toughness: 87
+Injury: 93
+Long Snap: 0
+
+**Vertical Threat TE**
+
+Speed: 85
+Acceleration: 87
+Agility: 82
+Strength: 72
+Awareness: 68
+Carrying: 65
+BC Vision: 60
+Break Tackle: 68
+Trucking: 64
+Stiff Arm: 66
+Change of Direction: 80
+Spin Move: 62
+Juke Move: 68
+Catching: 82
+Catch in Traffic: 78
+Spectacular Catch: 80
+Short Route Running: 75
+Medium Route Running: 73
+Deep Route Running: 70
+Release: 76
+Jumping: 84
+Throwing Power: 45
+Short Accuracy: 25
+Medium Accuracy: 20
+Deep Accuracy: 18
+Throw on the Run: 20
+Throw Under Pressure: 22
+Break Sack: 28
+Play Action: 25
+Pass Blocking: 60
+Pass Block Power: 58
+Pass Block Finesse: 56
+Run Blocking: 62
+Run Block Power: 60
+Run Block Finesse: 58
+Lead Block: 64
+Impact Blocking: 68
+Play Recognition: 60
+Tackling: 40
+Hit Power: 42
+Block Shedding: 45
+Finesse Moves: 38
+Power Moves: 42
+Pursuit: 50
+Man Coverage: 35
+Zone Coverage: 38
+Press: 36
+Kick/Punt Return: 30
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 85
+Toughness: 84
+Injury: 88
+Long Snap: 0
+
+**Possession TE**
+
+Speed: 80
+Acceleration: 82
+Agility: 78
+Strength: 78
+Awareness: 72
+Carrying: 70
+BC Vision: 65
+Break Tackle: 72
+Trucking: 70
+Stiff Arm: 72
+Change of Direction: 76
+Spin Move: 60
+Juke Move: 64
+Catching: 84
+Catch in Traffic: 85
+Spectacular Catch: 83
+Short Route Running: 78
+Medium Route Running: 76
+Deep Route Running: 68
+Release: 74
+Jumping: 82
+Throwing Power: 45
+Short Accuracy: 25
+Medium Accuracy: 20
+Deep Accuracy: 18
+Throw on the Run: 20
+Throw Under Pressure: 22
+Break Sack: 28
+Play Action: 25
+Pass Blocking: 68
+Pass Block Power: 70
+Pass Block Finesse: 66
+Run Blocking: 72
+Run Block Power: 74
+Run Block Finesse: 70
+Lead Block: 70
+Impact Blocking: 75
+Play Recognition: 65
+Tackling: 42
+Hit Power: 44
+Block Shedding: 48
+Finesse Moves: 40
+Power Moves: 44
+Pursuit: 52
+Man Coverage: 36
+Zone Coverage: 40
+Press: 38
+Kick/Punt Return: 28
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 88
+Toughness: 86
+Injury: 90
+Long Snap: 0
+
+---
+
+## **Blocking TE**
+
+Speed: 76
+Acceleration: 78
+Agility: 74
+Strength: 84
+Awareness: 74
+Carrying: 72
+BC Vision: 65
+Break Tackle: 75
+Trucking: 78
+Stiff Arm: 76
+Change of Direction: 72
+Spin Move: 58
+Juke Move: 60
+Catching: 72
+Catch in Traffic: 74
+Spectacular Catch: 70
+Short Route Running: 68
+Medium Route Running: 65
+Deep Route Running: 58
+Release: 70
+Jumping: 80
+Throwing Power: 45
+Short Accuracy: 25
+Medium Accuracy: 20
+Deep Accuracy: 18
+Throw on the Run: 20
+Throw Under Pressure: 22
+Break Sack: 30
+Play Action: 25
+Pass Blocking: 78
+Pass Block Power: 82
+Pass Block Finesse: 76
+Run Blocking: 82
+Run Block Power: 86
+Run Block Finesse: 80
+Lead Block: 80
+Impact Blocking: 88
+Play Recognition: 68
+Tackling: 45
+Hit Power: 48
+Block Shedding: 52
+Finesse Moves: 42
+Power Moves: 48
+Pursuit: 55
+Man Coverage: 38
+Zone Coverage: 42
+Press: 40
+Kick/Punt Return: 25
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Deep Threat WR**
+
+Speed: 93
+Acceleration: 94
+Agility: 88
+Strength: 68
+Awareness: 66
+Carrying: 65
+BC Vision: 70
+Break Tackle: 68
+Trucking: 60
+Stiff Arm: 64
+Change of Direction: 86
+Spin Move: 70
+Juke Move: 78
+Catching: 78
+Catch in Traffic: 72
+Spectacular Catch: 76
+Short Route Running: 70
+Medium Route Running: 72
+Deep Route Running: 82
+Release: 78
+Jumping: 85
+Throwing Power: 45
+Short Accuracy: 25
+Medium Accuracy: 20
+Deep Accuracy: 18
+Throw on the Run: 20
+Throw Under Pressure: 22
+Break Sack: 30
+Play Action: 25
+Pass Blocking: 52
+Pass Block Power: 48
+Pass Block Finesse: 46
+Run Blocking: 55
+Run Block Power: 52
+Run Block Finesse: 50
+Lead Block: 54
+Impact Blocking: 58
+Play Recognition: 60
+Tackling: 38
+Hit Power: 40
+Block Shedding: 42
+Finesse Moves: 45
+Power Moves: 38
+Pursuit: 50
+Man Coverage: 35
+Zone Coverage: 38
+Press: 36
+Kick/Punt Return: 82
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 88
+Toughness: 82
+Injury: 88
+Long Snap: 0
+
+---
+
+**Route Runner WR**
+
+Speed: 88
+Acceleration: 90
+Agility: 90
+Strength: 66
+Awareness: 70
+Carrying: 68
+BC Vision: 74
+Break Tackle: 70
+Trucking: 58
+Stiff Arm: 62
+Change of Direction: 90
+Spin Move: 78
+Juke Move: 82
+Catching: 82
+Catch in Traffic: 78
+Spectacular Catch: 80
+Short Route Running: 82
+Medium Route Running: 80
+Deep Route Running: 76
+Release: 82
+Jumping: 82
+Throwing Power: 45
+Short Accuracy: 25
+Medium Accuracy: 20
+Deep Accuracy: 18
+Throw on the Run: 20
+Throw Under Pressure: 22
+Break Sack: 30
+Play Action: 25
+Pass Blocking: 50
+Pass Block Power: 46
+Pass Block Finesse: 44
+Run Blocking: 54
+Run Block Power: 50
+Run Block Finesse: 48
+Lead Block: 52
+Impact Blocking: 56
+Play Recognition: 64
+Tackling: 38
+Hit Power: 40
+Block Shedding: 42
+Finesse Moves: 46
+Power Moves: 38
+Pursuit: 50
+Man Coverage: 35
+Zone Coverage: 38
+Press: 36
+Kick/Punt Return: 78
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 84
+Injury: 90
+Long Snap: 0
+
+---
+
+## **Physical WR**
+
+Speed: 87
+Acceleration: 88
+Agility: 82
+Strength: 78
+Awareness: 70
+Carrying: 70
+BC Vision: 72
+Break Tackle: 74
+Trucking: 72
+Stiff Arm: 74
+Change of Direction: 80
+Spin Move: 68
+Juke Move: 72
+Catching: 80
+Catch in Traffic: 84
+Spectacular Catch: 86
+Short Route Running: 74
+Medium Route Running: 72
+Deep Route Running: 68
+Release: 85
+Jumping: 92
+Throwing Power: 45
+Short Accuracy: 25
+Medium Accuracy: 20
+Deep Accuracy: 18
+Throw on the Run: 20
+Throw Under Pressure: 22
+Break Sack: 30
+Play Action: 25
+Pass Blocking: 58
+Pass Block Power: 56
+Pass Block Finesse: 54
+Run Blocking: 62
+Run Block Power: 60
+Run Block Finesse: 58
+Lead Block: 60
+Impact Blocking: 66
+Play Recognition: 64
+Tackling: 40
+Hit Power: 44
+Block Shedding: 46
+Finesse Moves: 44
+Power Moves: 42
+Pursuit: 52
+Man Coverage: 36
+Zone Coverage: 40
+Press: 38
+Kick/Punt Return: 70
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Pass Protector OL**
+
+Speed: 66
+Acceleration: 64
+Agility: 68
+Strength: 82
+Awareness: 70
+Carrying: 40
+BC Vision: 35
+Break Tackle: 50
+Trucking: 55
+Stiff Arm: 45
+Change of Direction: 62
+Spin Move: 30
+Juke Move: 32
+Catching: 35
+Catch in Traffic: 30
+Spectacular Catch: 28
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 40
+Jumping: 70
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 78
+Pass Block Power: 82
+Pass Block Finesse: 80
+Run Blocking: 68
+Run Block Power: 70
+Run Block Finesse: 66
+Lead Block: 72
+Impact Blocking: 78
+Play Recognition: 72
+Tackling: 40
+Hit Power: 45
+Block Shedding: 50
+Finesse Moves: 38
+Power Moves: 45
+Pursuit: 45
+Man Coverage: 25
+Zone Coverage: 28
+Press: 30
+Kick/Punt Return: 10
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Power Run Blocker OL**
+
+Speed: 62
+Acceleration: 60
+Agility: 64
+Strength: 88
+Awareness: 72
+Carrying: 42
+BC Vision: 35
+Break Tackle: 55
+Trucking: 65
+Stiff Arm: 50
+Change of Direction: 58
+Spin Move: 28
+Juke Move: 30
+Catching: 35
+Catch in Traffic: 30
+Spectacular Catch: 28
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 42
+Jumping: 68
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 70
+Pass Block Power: 74
+Pass Block Finesse: 68
+Run Blocking: 82
+Run Block Power: 86
+Run Block Finesse: 78
+Lead Block: 80
+Impact Blocking: 88
+Play Recognition: 74
+Tackling: 42
+Hit Power: 48
+Block Shedding: 52
+Finesse Moves: 40
+Power Moves: 48
+Pursuit: 46
+Man Coverage: 25
+Zone Coverage: 28
+Press: 30
+Kick/Punt Return: 10
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 90
+Injury: 93
+Long Snap: 0
+
+**Agile (Zone) OL**
+
+Speed: 72
+Acceleration: 70
+Agility: 74
+Strength: 78
+Awareness: 70
+Carrying: 40
+BC Vision: 35
+Break Tackle: 50
+Trucking: 55
+Stiff Arm: 45
+Change of Direction: 70
+Spin Move: 32
+Juke Move: 34
+Catching: 36
+Catch in Traffic: 30
+Spectacular Catch: 28
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 44
+Jumping: 72
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 72
+Pass Block Power: 70
+Pass Block Finesse: 74
+Run Blocking: 76
+Run Block Power: 74
+Run Block Finesse: 80
+Lead Block: 78
+Impact Blocking: 80
+Play Recognition: 72
+Tackling: 40
+Hit Power: 45
+Block Shedding: 50
+Finesse Moves: 42
+Power Moves: 44
+Pursuit: 48
+Man Coverage: 25
+Zone Coverage: 28
+Press: 30
+Kick/Punt Return: 12
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Speed Rusher End**
+
+Speed: 86
+Acceleration: 88
+Agility: 82
+Strength: 76
+Awareness: 70
+Carrying: 55
+BC Vision: 45
+Break Tackle: 65
+Trucking: 60
+Stiff Arm: 58
+Change of Direction: 80
+Spin Move: 78
+Juke Move: 70
+Catching: 45
+Catch in Traffic: 40
+Spectacular Catch: 38
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 50
+Jumping: 82
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 32
+Run Block Power: 30
+Run Block Finesse: 28
+Lead Block: 30
+Impact Blocking: 55
+Play Recognition: 70
+Tackling: 78
+Hit Power: 80
+Block Shedding: 75
+Finesse Moves: 82
+Power Moves: 68
+Pursuit: 78
+Man Coverage: 40
+Zone Coverage: 45
+Press: 42
+Kick/Punt Return: 15
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 88
+Toughness: 86
+Injury: 90
+Long Snap: 0
+
+**Power Rusher End**
+
+Speed: 80
+Acceleration: 82
+Agility: 76
+Strength: 86
+Awareness: 72
+Carrying: 55
+BC Vision: 45
+Break Tackle: 68
+Trucking: 70
+Stiff Arm: 65
+Change of Direction: 74
+Spin Move: 65
+Juke Move: 60
+Catching: 45
+Catch in Traffic: 40
+Spectacular Catch: 38
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 50
+Jumping: 78
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 32
+Run Block Power: 30
+Run Block Finesse: 28
+Lead Block: 30
+Impact Blocking: 60
+Play Recognition: 72
+Tackling: 82
+Hit Power: 88
+Block Shedding: 80
+Finesse Moves: 65
+Power Moves: 84
+Pursuit: 78
+Man Coverage: 38
+Zone Coverage: 42
+Press: 40
+Kick/Punt Return: 12
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 90
+Injury: 92
+Long Snap: 0
+
+**Run Stopper End**
+
+Speed: 78
+Acceleration: 80
+Agility: 74
+Strength: 88
+Awareness: 74
+Carrying: 55
+BC Vision: 45
+Break Tackle: 70
+Trucking: 72
+Stiff Arm: 68
+Change of Direction: 72
+Spin Move: 60
+Juke Move: 55
+Catching: 45
+Catch in Traffic: 40
+Spectacular Catch: 38
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 50
+Jumping: 76
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 32
+Run Block Power: 30
+Run Block Finesse: 28
+Lead Block: 30
+Impact Blocking: 62
+Play Recognition: 75
+Tackling: 85
+Hit Power: 88
+Block Shedding: 85
+Finesse Moves: 60
+Power Moves: 80
+Pursuit: 80
+Man Coverage: 35
+Zone Coverage: 40
+Press: 38
+Kick/Punt Return: 10
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 92
+Injury: 93
+Long Snap: 0
+
+**Speed Rusher DT**
+
+Speed: 78
+Acceleration: 80
+Agility: 74
+Strength: 82
+Awareness: 70
+Carrying: 50
+BC Vision: 40
+Break Tackle: 60
+Trucking: 65
+Stiff Arm: 60
+Change of Direction: 72
+Spin Move: 75
+Juke Move: 65
+Catching: 40
+Catch in Traffic: 35
+Spectacular Catch: 32
+Short Route Running: 20
+Medium Route Running: 18
+Deep Route Running: 15
+Release: 45
+Jumping: 78
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 32
+Pass Block Finesse: 30
+Run Blocking: 32
+Run Block Power: 34
+Run Block Finesse: 32
+Lead Block: 30
+Impact Blocking: 60
+Play Recognition: 70
+Tackling: 80
+Hit Power: 82
+Block Shedding: 78
+Finesse Moves: 82
+Power Moves: 70
+Pursuit: 75
+Man Coverage: 30
+Zone Coverage: 35
+Press: 32
+Kick/Punt Return: 8
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 88
+Toughness: 86
+Injury: 90
+Long Snap: 0
+
+**Power Rusher DT**
+
+Speed: 72
+Acceleration: 74
+Agility: 68
+Strength: 90
+Awareness: 72
+Carrying: 50
+BC Vision: 40
+Break Tackle: 65
+Trucking: 70
+Stiff Arm: 65
+Change of Direction: 66
+Spin Move: 65
+Juke Move: 55
+Catching: 40
+Catch in Traffic: 35
+Spectacular Catch: 32
+Short Route Running: 20
+Medium Route Running: 18
+Deep Route Running: 15
+Release: 45
+Jumping: 74
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 32
+Pass Block Finesse: 30
+Run Blocking: 32
+Run Block Power: 34
+Run Block Finesse: 32
+Lead Block: 30
+Impact Blocking: 65
+Play Recognition: 72
+Tackling: 82
+Hit Power: 88
+Block Shedding: 82
+Finesse Moves: 68
+Power Moves: 86
+Pursuit: 72
+Man Coverage: 28
+Zone Coverage: 32
+Press: 30
+Kick/Punt Return: 8
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 90
+Injury: 92
+Long Snap: 0
+
+**Run Stopper DT**
+
+Speed: 68
+Acceleration: 70
+Agility: 64
+Strength: 92
+Awareness: 74
+Carrying: 50
+BC Vision: 40
+Break Tackle: 68
+Trucking: 72
+Stiff Arm: 68
+Change of Direction: 62
+Spin Move: 55
+Juke Move: 50
+Catching: 38
+Catch in Traffic: 34
+Spectacular Catch: 30
+Short Route Running: 20
+Medium Route Running: 18
+Deep Route Running: 15
+Release: 45
+Jumping: 72
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 32
+Pass Block Finesse: 30
+Run Blocking: 32
+Run Block Power: 34
+Run Block Finesse: 32
+Lead Block: 30
+Impact Blocking: 68
+Play Recognition: 76
+Tackling: 85
+Hit Power: 90
+Block Shedding: 86
+Finesse Moves: 60
+Power Moves: 82
+Pursuit: 70
+Man Coverage: 25
+Zone Coverage: 30
+Press: 28
+Kick/Punt Return: 6
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 92
+Injury: 93
+Long Snap: 0
+
+**Man Coverage CB**
+
+Speed: 91
+Acceleration: 92
+Agility: 90
+Strength: 65
+Awareness: 70
+Carrying: 60
+BC Vision: 65
+Break Tackle: 65
+Trucking: 55
+Stiff Arm: 58
+Change of Direction: 90
+Spin Move: 75
+Juke Move: 78
+Catching: 75
+Catch in Traffic: 68
+Spectacular Catch: 70
+Short Route Running: 50
+Medium Route Running: 45
+Deep Route Running: 40
+Release: 55
+Jumping: 88
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 25
+Pass Block Power: 20
+Pass Block Finesse: 18
+Run Blocking: 25
+Run Block Power: 20
+Run Block Finesse: 18
+Lead Block: 25
+Impact Blocking: 45
+Play Recognition: 72
+Tackling: 68
+Hit Power: 65
+Block Shedding: 55
+Finesse Moves: 50
+Power Moves: 45
+Pursuit: 75
+Man Coverage: 82
+Zone Coverage: 70
+Press: 80
+Kick/Punt Return: 80
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 88
+Toughness: 82
+Injury: 88
+Long Snap: 0
+
+**Zone Coverage CB**
+
+Speed: 89
+Acceleration: 90
+Agility: 88
+Strength: 64
+Awareness: 74
+Carrying: 60
+BC Vision: 65
+Break Tackle: 62
+Trucking: 52
+Stiff Arm: 55
+Change of Direction: 88
+Spin Move: 72
+Juke Move: 75
+Catching: 76
+Catch in Traffic: 70
+Spectacular Catch: 72
+Short Route Running: 50
+Medium Route Running: 45
+Deep Route Running: 40
+Release: 55
+Jumping: 86
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 25
+Pass Block Power: 20
+Pass Block Finesse: 18
+Run Blocking: 25
+Run Block Power: 20
+Run Block Finesse: 18
+Lead Block: 25
+Impact Blocking: 42
+Play Recognition: 78
+Tackling: 70
+Hit Power: 64
+Block Shedding: 55
+Finesse Moves: 50
+Power Moves: 45
+Pursuit: 78
+Man Coverage: 72
+Zone Coverage: 82
+Press: 72
+Kick/Punt Return: 78
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 84
+Injury: 90
+Long Snap: 0
+
+**Slot CB**
+
+Speed: 90
+Acceleration: 91
+Agility: 92
+Strength: 62
+Awareness: 72
+Carrying: 65
+BC Vision: 70
+Break Tackle: 66
+Trucking: 50
+Stiff Arm: 54
+Change of Direction: 92
+Spin Move: 78
+Juke Move: 80
+Catching: 78
+Catch in Traffic: 72
+Spectacular Catch: 74
+Short Route Running: 55
+Medium Route Running: 50
+Deep Route Running: 40
+Release: 55
+Jumping: 85
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 25
+Pass Block Power: 20
+Pass Block Finesse: 18
+Run Blocking: 25
+Run Block Power: 20
+Run Block Finesse: 18
+Lead Block: 25
+Impact Blocking: 40
+Play Recognition: 74
+Tackling: 72
+Hit Power: 62
+Block Shedding: 55
+Finesse Moves: 50
+Power Moves: 45
+Pursuit: 80
+Man Coverage: 80
+Zone Coverage: 78
+Press: 68
+Kick/Punt Return: 82
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 84
+Injury: 90
+Long Snap: 0
+
+**Zone Free Safety**
+
+Speed: 90
+Acceleration: 91
+Agility: 88
+Strength: 70
+Awareness: 74
+Carrying: 65
+BC Vision: 70
+Break Tackle: 68
+Trucking: 60
+Stiff Arm: 60
+Change of Direction: 88
+Spin Move: 72
+Juke Move: 74
+Catching: 78
+Catch in Traffic: 72
+Spectacular Catch: 75
+Short Route Running: 55
+Medium Route Running: 50
+Deep Route Running: 45
+Release: 55
+Jumping: 88
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 25
+Pass Block Finesse: 22
+Run Blocking: 30
+Run Block Power: 25
+Run Block Finesse: 22
+Lead Block: 28
+Impact Blocking: 60
+Play Recognition: 78
+Tackling: 75
+Hit Power: 78
+Block Shedding: 60
+Finesse Moves: 50
+Power Moves: 55
+Pursuit: 82
+Man Coverage: 72
+Zone Coverage: 82
+Press: 65
+Kick/Punt Return: 70
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 86
+Injury: 90
+Long Snap: 0
+
+**Hybrid Free Safety**
+
+Speed: 89
+Acceleration: 90
+Agility: 86
+Strength: 74
+Awareness: 74
+Carrying: 65
+BC Vision: 68
+Break Tackle: 70
+Trucking: 65
+Stiff Arm: 62
+Change of Direction: 86
+Spin Move: 70
+Juke Move: 72
+Catching: 76
+Catch in Traffic: 70
+Spectacular Catch: 72
+Short Route Running: 55
+Medium Route Running: 50
+Deep Route Running: 45
+Release: 55
+Jumping: 86
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 25
+Pass Block Finesse: 22
+Run Blocking: 30
+Run Block Power: 25
+Run Block Finesse: 22
+Lead Block: 28
+Impact Blocking: 68
+Play Recognition: 76
+Tackling: 80
+Hit Power: 84
+Block Shedding: 65
+Finesse Moves: 52
+Power Moves: 60
+Pursuit: 82
+Man Coverage: 76
+Zone Coverage: 78
+Press: 72
+Kick/Punt Return: 68
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Ball Hawk Free Safety**
+
+Speed: 91
+Acceleration: 92
+Agility: 90
+Strength: 68
+Awareness: 76
+Carrying: 70
+BC Vision: 72
+Break Tackle: 68
+Trucking: 58
+Stiff Arm: 58
+Change of Direction: 90
+Spin Move: 75
+Juke Move: 78
+Catching: 82
+Catch in Traffic: 76
+Spectacular Catch: 82
+Short Route Running: 60
+Medium Route Running: 55
+Deep Route Running: 50
+Release: 58
+Jumping: 92
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 25
+Pass Block Finesse: 22
+Run Blocking: 30
+Run Block Power: 25
+Run Block Finesse: 22
+Lead Block: 28
+Impact Blocking: 58
+Play Recognition: 78
+Tackling: 72
+Hit Power: 74
+Block Shedding: 58
+Finesse Moves: 50
+Power Moves: 52
+Pursuit: 80
+Man Coverage: 75
+Zone Coverage: 84
+Press: 68
+Kick/Punt Return: 75
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 84
+Injury: 90
+Long Snap: 0
+
+**Run Support Strong Safety**
+
+Speed: 88
+Acceleration: 89
+Agility: 84
+Strength: 80
+Awareness: 74
+Carrying: 65
+BC Vision: 68
+Break Tackle: 72
+Trucking: 70
+Stiff Arm: 66
+Change of Direction: 84
+Spin Move: 68
+Juke Move: 70
+Catching: 74
+Catch in Traffic: 68
+Spectacular Catch: 70
+Short Route Running: 50
+Medium Route Running: 45
+Deep Route Running: 40
+Release: 55
+Jumping: 86
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 25
+Pass Block Finesse: 22
+Run Blocking: 30
+Run Block Power: 25
+Run Block Finesse: 22
+Lead Block: 28
+Impact Blocking: 72
+Play Recognition: 76
+Tackling: 84
+Hit Power: 88
+Block Shedding: 72
+Finesse Moves: 55
+Power Moves: 65
+Pursuit: 82
+Man Coverage: 70
+Zone Coverage: 72
+Press: 72
+Kick/Punt Return: 65
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 90
+Injury: 92
+Long Snap: 0
+
+**Hybrid Strong Safety**
+
+Speed: 89
+Acceleration: 90
+Agility: 86
+Strength: 76
+Awareness: 74
+Carrying: 65
+BC Vision: 68
+Break Tackle: 70
+Trucking: 68
+Stiff Arm: 65
+Change of Direction: 86
+Spin Move: 70
+Juke Move: 72
+Catching: 76
+Catch in Traffic: 70
+Spectacular Catch: 72
+Short Route Running: 50
+Medium Route Running: 45
+Deep Route Running: 40
+Release: 55
+Jumping: 86
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 25
+Pass Block Finesse: 22
+Run Blocking: 30
+Run Block Power: 25
+Run Block Finesse: 22
+Lead Block: 28
+Impact Blocking: 68
+Play Recognition: 76
+Tackling: 80
+Hit Power: 84
+Block Shedding: 68
+Finesse Moves: 55
+Power Moves: 62
+Pursuit: 82
+Man Coverage: 74
+Zone Coverage: 74
+Press: 70
+Kick/Punt Return: 68
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Coverage Strong Safety**
+
+Speed: 90
+Acceleration: 91
+Agility: 88
+Strength: 72
+Awareness: 76
+Carrying: 65
+BC Vision: 70
+Break Tackle: 68
+Trucking: 62
+Stiff Arm: 60
+Change of Direction: 88
+Spin Move: 72
+Juke Move: 74
+Catching: 78
+Catch in Traffic: 72
+Spectacular Catch: 75
+Short Route Running: 55
+Medium Route Running: 50
+Deep Route Running: 45
+Release: 55
+Jumping: 88
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 40
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 25
+Pass Block Finesse: 22
+Run Blocking: 30
+Run Block Power: 25
+Run Block Finesse: 22
+Lead Block: 28
+Impact Blocking: 62
+Play Recognition: 78
+Tackling: 76
+Hit Power: 78
+Block Shedding: 62
+Finesse Moves: 50
+Power Moves: 55
+Pursuit: 82
+Man Coverage: 78
+Zone Coverage: 80
+Press: 72
+Kick/Punt Return: 70
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 90
+Toughness: 86
+Injury: 90
+Long Snap: 0
+
+**Field General LB**
+
+Speed: 80
+Acceleration: 82
+Agility: 78
+Strength: 78
+Awareness: 76
+Carrying: 60
+BC Vision: 55
+Break Tackle: 65
+Trucking: 60
+Stiff Arm: 55
+Change of Direction: 76
+Spin Move: 50
+Juke Move: 55
+Catching: 70
+Catch in Traffic: 62
+Spectacular Catch: 60
+Short Route Running: 45
+Medium Route Running: 40
+Deep Route Running: 35
+Release: 40
+Jumping: 80
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 35
+Pass Block Power: 30
+Pass Block Finesse: 28
+Run Blocking: 32
+Run Block Power: 30
+Run Block Finesse: 28
+Lead Block: 30
+Impact Blocking: 42
+Play Recognition: 80
+Tackling: 84
+Hit Power: 82
+Block Shedding: 78
+Finesse Moves: 60
+Power Moves: 70
+Pursuit: 82
+Man Coverage: 68
+Zone Coverage: 74
+Press: 60
+Kick/Punt Return: 35
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 90
+Injury: 92
+Long Snap: 0
+
+**Run Stopper LB**
+
+Speed: 78
+Acceleration: 80
+Agility: 76
+Strength: 84
+Awareness: 74
+Carrying: 60
+BC Vision: 55
+Break Tackle: 68
+Trucking: 70
+Stiff Arm: 62
+Change of Direction: 74
+Spin Move: 55
+Juke Move: 60
+Catching: 65
+Catch in Traffic: 58
+Spectacular Catch: 55
+Short Route Running: 45
+Medium Route Running: 40
+Deep Route Running: 35
+Release: 40
+Jumping: 78
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 35
+Pass Block Power: 30
+Pass Block Finesse: 28
+Run Blocking: 32
+Run Block Power: 30
+Run Block Finesse: 28
+Lead Block: 30
+Impact Blocking: 45
+Play Recognition: 76
+Tackling: 86
+Hit Power: 88
+Block Shedding: 84
+Finesse Moves: 58
+Power Moves: 78
+Pursuit: 84
+Man Coverage: 60
+Zone Coverage: 65
+Press: 58
+Kick/Punt Return: 30
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 92
+Injury: 93
+Long Snap: 0
+
+**Coverage LB**
+
+Speed: 84
+Acceleration: 86
+Agility: 82
+Strength: 76
+Awareness: 74
+Carrying: 62
+BC Vision: 60
+Break Tackle: 66
+Trucking: 62
+Stiff Arm: 58
+Change of Direction: 82
+Spin Move: 65
+Juke Move: 70
+Catching: 74
+Catch in Traffic: 68
+Spectacular Catch: 70
+Short Route Running: 50
+Medium Route Running: 45
+Deep Route Running: 40
+Release: 45
+Jumping: 82
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 35
+Pass Block Power: 30
+Pass Block Finesse: 28
+Run Blocking: 32
+Run Block Power: 30
+Run Block Finesse: 28
+Lead Block: 30
+Impact Blocking: 40
+Play Recognition: 76
+Tackling: 80
+Hit Power: 78
+Block Shedding: 74
+Finesse Moves: 62
+Power Moves: 68
+Pursuit: 82
+Man Coverage: 72
+Zone Coverage: 78
+Press: 62
+Kick/Punt Return: 40
+Kicking Power: 20
+Kicking Accuracy: 20
+Stamina: 92
+Toughness: 88
+Injury: 92
+Long Snap: 0
+
+**Power Kicker**
+
+Speed: 68
+Acceleration: 70
+Agility: 66
+Strength: 72
+Awareness: 70
+Carrying: 40
+BC Vision: 35
+Break Tackle: 45
+Trucking: 40
+Stiff Arm: 38
+Change of Direction: 64
+Spin Move: 30
+Juke Move: 32
+Catching: 45
+Catch in Traffic: 40
+Spectacular Catch: 42
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 35
+Jumping: 72
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 30
+Run Block Power: 28
+Run Block Finesse: 26
+Lead Block: 30
+Impact Blocking: 35
+Play Recognition: 68
+Tackling: 50
+Hit Power: 52
+Block Shedding: 45
+Finesse Moves: 30
+Power Moves: 30
+Pursuit: 55
+Man Coverage: 35
+Zone Coverage: 40
+Press: 35
+Kick/Punt Return: 20
+Kicking Power: 92
+Kicking Accuracy: 78
+Stamina: 85
+Toughness: 82
+Injury: 90
+Long Snap: 0
+
+**Accurate Kicker**
+
+Speed: 66
+Acceleration: 68
+Agility: 64
+Strength: 70
+Awareness: 72
+Carrying: 40
+BC Vision: 35
+Break Tackle: 45
+Trucking: 38
+Stiff Arm: 36
+Change of Direction: 62
+Spin Move: 28
+Juke Move: 30
+Catching: 45
+Catch in Traffic: 40
+Spectacular Catch: 42
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 35
+Jumping: 70
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 30
+Run Block Power: 28
+Run Block Finesse: 26
+Lead Block: 30
+Impact Blocking: 35
+Play Recognition: 70
+Tackling: 48
+Hit Power: 50
+Block Shedding: 45
+Finesse Moves: 30
+Power Moves: 30
+Pursuit: 52
+Man Coverage: 35
+Zone Coverage: 40
+Press: 35
+Kick/Punt Return: 20
+Kicking Power: 82
+Kicking Accuracy: 90
+Stamina: 85
+Toughness: 82
+Injury: 90
+Long Snap: 0
+
+**Power Punter**
+
+Speed: 70
+Acceleration: 72
+Agility: 68
+Strength: 74
+Awareness: 70
+Carrying: 42
+BC Vision: 36
+Break Tackle: 48
+Trucking: 42
+Stiff Arm: 40
+Change of Direction: 66
+Spin Move: 32
+Juke Move: 34
+Catching: 48
+Catch in Traffic: 42
+Spectacular Catch: 44
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 35
+Jumping: 74
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 30
+Run Block Power: 28
+Run Block Finesse: 26
+Lead Block: 30
+Impact Blocking: 38
+Play Recognition: 68
+Tackling: 52
+Hit Power: 54
+Block Shedding: 46
+Finesse Moves: 30
+Power Moves: 30
+Pursuit: 58
+Man Coverage: 35
+Zone Coverage: 40
+Press: 35
+Kick/Punt Return: 22
+Kicking Power: 94
+Kicking Accuracy: 78
+Stamina: 86
+Toughness: 84
+Injury: 90
+Long Snap: 0
+
+**Accurate Punter**
+
+Speed: 68
+Acceleration: 70
+Agility: 66
+Strength: 72
+Awareness: 72
+Carrying: 42
+BC Vision: 36
+Break Tackle: 48
+Trucking: 40
+Stiff Arm: 38
+Change of Direction: 64
+Spin Move: 30
+Juke Move: 32
+Catching: 48
+Catch in Traffic: 42
+Spectacular Catch: 44
+Short Route Running: 25
+Medium Route Running: 20
+Deep Route Running: 18
+Release: 35
+Jumping: 72
+Throwing Power: 40
+Short Accuracy: 20
+Medium Accuracy: 18
+Deep Accuracy: 15
+Throw on the Run: 18
+Throw Under Pressure: 20
+Break Sack: 35
+Play Action: 25
+Pass Blocking: 30
+Pass Block Power: 28
+Pass Block Finesse: 26
+Run Blocking: 30
+Run Block Power: 28
+Run Block Finesse: 26
+Lead Block: 30
+Impact Blocking: 38
+Play Recognition: 70
+Tackling: 50
+Hit Power: 52
+Block Shedding: 46
+Finesse Moves: 30
+Power Moves: 30
+Pursuit: 56
+Man Coverage: 35
+Zone Coverage: 40
+Press: 35
+Kick/Punt Return: 22
+Kicking Power: 86
+Kicking Accuracy: 90
+Stamina: 86
+Toughness: 84
+Injury: 90
+Long Snap: 0
+
+

@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json, uniqueIndex, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -413,6 +413,9 @@ export const teamSeasonStatsTable = pgTable("team_season_stats", {
   defPassYds: integer("def_pass_yds").notNull().default(0),
   defRushYds: integer("def_rush_yds").notNull().default(0),
   defTDs:     integer("def_tds").notNull().default(0),      // points allowed (ptsAgainst fallback)
+  offRedZonePct: real("off_redzone_pct").notNull().default(0),  // offensive red zone % (0–100)
+  defRedZonePct: real("def_redzone_pct").notNull().default(0),  // defensive red zone % allowed (0–100)
+  defFumblesRec: integer("def_fumbles_rec").notNull().default(0), // fumbles recovered on defense
   wins:       integer("wins").notNull().default(0),
   losses:     integer("losses").notNull().default(0),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),

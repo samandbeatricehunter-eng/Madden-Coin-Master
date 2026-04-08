@@ -39,7 +39,7 @@ export const STAT_CATEGORIES: StatCategory[] = [
     label:      "Offensive Red Zone %",
     unit:       "%",
     direction:  "higher",
-    jsonFields: ["offRedZonePct", "redZonePct", "offRZPct", "offensiveRedzonePct"],
+    jsonFields: ["offRedZonePct", "offensiveRedZonePct", "redZonePct", "offRZPct", "offensiveRedzonePct", "offRedzonePct", "offenseRedZonePct"],
   },
   // ── Defense ──────────────────────────────────────────────────────────────────
   {
@@ -82,14 +82,14 @@ export const STAT_CATEGORIES: StatCategory[] = [
     label:      "Recovered Fumbles",
     unit:       "fumbles",
     direction:  "higher",
-    jsonFields: ["defFumblesRec", "fumblesRecovered", "def_fumbles_rec", "recoveredFumbles"],
+    jsonFields: ["defFumblesRec", "fumblesRecovered", "fumRec", "fumRecovered", "totalFumRec", "defensiveFumblesRec", "def_fumbles_rec", "recoveredFumbles", "fumbleRecoveries"],
   },
   {
     key:        "def_redzone_pct",
     label:      "Defensive Red Zone % Allowed",
     unit:       "%",
     direction:  "lower",
-    jsonFields: ["defRedZonePct", "defRZPct", "defRedZoneAllowedPct", "def_redzone_pct"],
+    jsonFields: ["defRedZonePct", "defensiveRedZonePct", "defRedZoneAllowedPct", "defRZPct", "defenseRedZonePct", "defRedzonePct", "def_redzone_pct"],
   },
 ];
 

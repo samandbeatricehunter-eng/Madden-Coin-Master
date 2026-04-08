@@ -364,9 +364,6 @@ async function fetchEosPayoutContext(): Promise<string> {
     lines.push(`  Missed playoffs (user-controlled team): +${missAmt} coins`);
     lines.push(`  Per in-game award winner on the team: +${awardAmt} coins each`);
     lines.push("");
-    lines.push("STATS NOT IN DB (cannot be auto-computed — note them as unknown when estimating):");
-    lines.push("  off_redzone_pct, def_fumbles_rec, def_redzone_pct");
-    lines.push("");
     lines.push(`CURRENT TEAM EOS ESTIMATES — Season ${(season as any).seasonNumber ?? season.id}:`);
     lines.push("(user-owned teams only; based on stats available in the DB right now)");
 
@@ -379,11 +376,14 @@ async function fetchEosPayoutContext(): Promise<string> {
         off_pass_yds:     ts.offPassYds,
         off_rush_yds:     ts.offRushYds,
         off_pts_per_game: ppg,
+        off_redzone_pct:  ts.offRedZonePct,
         def_pass_yds:     ts.defPassYds,
         def_rush_yds:     ts.defRushYds,
         def_pts_allowed:  ts.defTDs,
         def_sacks:        agg.sacks,
         def_ints:         agg.defInts,
+        def_fumbles_rec:  ts.defFumblesRec,
+        def_redzone_pct:  ts.defRedZonePct,
       };
 
       let dbEstimate = 0;
@@ -400,8 +400,10 @@ async function fetchEosPayoutContext(): Promise<string> {
         }
       }
 
+      const rzOff = ts.offRedZonePct > 0 ? `${ts.offRedZonePct.toFixed(1)}%` : "n/a";
+      const rzDef = ts.defRedZonePct > 0 ? `${ts.defRedZonePct.toFixed(1)}%` : "n/a";
       lines.push(`  ${ts.teamName}:`);
-      lines.push(`    Pass Yds Off: ${ts.offPassYds.toLocaleString()} | Rush Yds Off: ${ts.offRushYds.toLocaleString()} | PPG: ${ppg.toFixed(1)} | Pass Def: ${ts.defPassYds.toLocaleString()} | Rush Def: ${ts.defRushYds.toLocaleString()} | Pts Allowed: ${ts.defTDs.toLocaleString()} | Team Sacks: ${agg.sacks} | Team INTs: ${agg.defInts}`);
+      lines.push(`    Off Pass: ${ts.offPassYds.toLocaleString()} | Off Rush: ${ts.offRushYds.toLocaleString()} | PPG: ${ppg.toFixed(1)} | Off RZ%: ${rzOff} | Def Pass: ${ts.defPassYds.toLocaleString()} | Def Rush: ${ts.defRushYds.toLocaleString()} | Pts Allowed: ${ts.defTDs.toLocaleString()} | Def RZ%: ${rzDef} | Sacks: ${agg.sacks} | INTs: ${agg.defInts} | Fum Rec: ${ts.defFumblesRec}`);
       if (qualifying.length > 0) {
         lines.push(`    Qualifying: ${qualifying.join(" | ")}`);
         lines.push(`    DB-based coin estimate: ${dbEstimate} coins (+ any individual bonuses above)`);
