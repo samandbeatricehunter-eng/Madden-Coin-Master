@@ -87,6 +87,7 @@ import * as purchaseCustomPlayer from "./commands/purchasecustomplayer.js";
 import * as adminCustomArchetypes from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as viewpayouttiers from "./commands/viewpayouttiers.js";
+import * as viewplayerstats from "./commands/viewplayerstats.js";
 import { startPollChecker } from "./lib/poll-checker.js";
 
 // Events
@@ -203,6 +204,7 @@ if (!isProduction && !devBotEnabled) {
     adminCustomArchetypes,
     adminCustomPlayerSettings,
     viewpayouttiers,
+    viewplayerstats,
     { data: addNewUserData, execute: executeAddNewUser, autocomplete: autocompleteAddNewUser },
     { data: deleteMemberData, execute: executeDeleteMember, autocomplete: autocompleteDeleteMember },
     { data: seasonPRData, execute: executeSeasonPR },

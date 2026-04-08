@@ -647,12 +647,16 @@ export async function processPlayerWeekStats(
       let accumSet:     Record<string, any> = {};
 
       if (statType === "passing") {
-        const passYds = getN(p, "passYds", "passingYards", "passyds");
-        const passTDs = getN(p, "passTDs", "passingTds",   "passtds");
-        insertFields = { passYds, passTDs };
+        const passYds  = getN(p, "passYds",  "passingYards",    "passyds");
+        const passTDs  = getN(p, "passTDs",  "passingTds",      "passtds");
+        const passAtt  = getN(p, "passAtt",  "passAttempts",    "passattempts",  "passatt",  "attempts");
+        const passComp = getN(p, "passComp", "passCompletions", "completions",   "passcomp", "completionAttempts");
+        insertFields = { passYds, passTDs, passAtt, passComp };
         accumSet     = {
-          passYds: sql`${playerSeasonStatsTable.passYds} + ${passYds}`,
-          passTDs: sql`${playerSeasonStatsTable.passTDs} + ${passTDs}`,
+          passYds:  sql`${playerSeasonStatsTable.passYds}  + ${passYds}`,
+          passTDs:  sql`${playerSeasonStatsTable.passTDs}  + ${passTDs}`,
+          passAtt:  sql`${playerSeasonStatsTable.passAtt}  + ${passAtt}`,
+          passComp: sql`${playerSeasonStatsTable.passComp} + ${passComp}`,
         };
         const pViolations = detectPlayerStatViolations(
           `${firstName} ${lastName}`.trim(), position, teamName,
@@ -660,12 +664,14 @@ export async function processPlayerWeekStats(
         );
         statViolations.push(...pViolations);
       } else if (statType === "rushing") {
-        const rushYds = getN(p, "rushYds", "rushingYards", "rushyds");
-        const rushTDs = getN(p, "rushTDs", "rushingTds",   "rushtds");
-        insertFields = { rushYds, rushTDs };
+        const rushYds = getN(p, "rushYds", "rushingYards",    "rushyds");
+        const rushTDs = getN(p, "rushTDs", "rushingTds",      "rushtds");
+        const rushAtt = getN(p, "rushAtt", "rushAttempts",    "rushattempts", "rushatt", "carries", "rushCarries");
+        insertFields = { rushYds, rushTDs, rushAtt };
         accumSet     = {
           rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
           rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
+          rushAtt: sql`${playerSeasonStatsTable.rushAtt} + ${rushAtt}`,
         };
         const rViolations = detectPlayerStatViolations(
           `${firstName} ${lastName}`.trim(), position, teamName,
@@ -675,10 +681,12 @@ export async function processPlayerWeekStats(
       } else if (statType === "receiving") {
         const recYds = getN(p, "recYds", "receivingYards", "recyds");
         const recTDs = getN(p, "recTDs", "receivingTds",   "rectds");
-        insertFields = { recYds, recTDs };
+        const recRec = getN(p, "recRec", "receptions",     "catches", "receptionsTotal", "recCatches");
+        insertFields = { recYds, recTDs, recRec };
         accumSet     = {
           recYds: sql`${playerSeasonStatsTable.recYds} + ${recYds}`,
           recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
+          recRec: sql`${playerSeasonStatsTable.recRec} + ${recRec}`,
         };
         const recViolations = detectPlayerStatViolations(
           `${firstName} ${lastName}`.trim(), position, teamName,

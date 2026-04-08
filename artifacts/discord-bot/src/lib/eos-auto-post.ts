@@ -6,10 +6,15 @@ import { db } from "@workspace/db";
 import {
   usersTable, teamSeasonStatsTable,
   seasonStatTierConfigsTable, pendingEosPayoutsTable,
+  playerSeasonStatsTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
+
+// Positions considered QB or RB for YPA / YPC calculations
+const QB_POSITIONS = new Set(["QB"]);
+const RB_POSITIONS = new Set(["HB", "RB", "FB"]);
 
 const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 
@@ -62,8 +67,11 @@ export async function runEosAutoPost(
     if (s.discordId) statsMap.set(s.discordId, s);
   }
 
-  // ── 4. Load individual bonus amounts ──────────────────────────────────────────
-  // (These are never auto-calculated from DB — commissioner manually edits if applicable.)
+  // ── 4. Load admin-configurable attempt minimums ───────────────────────────────
+  const [minQbAtt, minRbAtt] = await Promise.all([
+    getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_ATT),
+    getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_ATT),
+  ]);
 
   // ── 5. Get commissioner channel ───────────────────────────────────────────────
   let commChannel: TextChannel | null = null;
@@ -119,6 +127,9 @@ export async function runEosAutoPost(
         };
 
         for (const cat of STAT_CATEGORIES) {
+          // Skip player-level categories — handled separately below
+          if (cat.key === "qb_ypa" || cat.key === "rb_ypc") continue;
+
           // Try each alias to find the stat value
           let statValue: number | null = null;
           for (const field of cat.jsonFields) {
@@ -141,6 +152,91 @@ export async function runEosAutoPost(
         }
       }
 
+      // ── QB YPA and RB YPC (player-level — computed from playerSeasonStatsTable) ─
+      // Pull all stat rows for this user's discordId, find the best qualifying player
+      // for each role.  "Qualifying" means they met the admin-set minimum attempt count.
+      const playerRows = await db
+        .select()
+        .from(playerSeasonStatsTable)
+        .where(and(
+          eq(playerSeasonStatsTable.seasonId, seasonId),
+          eq(playerSeasonStatsTable.discordId, user.discordId),
+        ))
+        .orderBy(desc(playerSeasonStatsTable.passYds));  // ordering helps readability
+
+      // ── QB YPA ────────────────────────────────────────────────────────────────
+      const qbYpaTiers = tiersByCategory.get("qb_ypa") ?? [];
+      if (qbYpaTiers.length > 0) {
+        // Best QB: highest passYds among QBs with passAtt >= minQbAtt
+        const topQb = playerRows
+          .filter(p => QB_POSITIONS.has(p.position.toUpperCase()) && p.passAtt >= minQbAtt)
+          .sort((a, b) => b.passYds - a.passYds)[0] ?? null;
+
+        if (topQb) {
+          const ypa     = topQb.passYds / topQb.passAtt;          // float
+          const ypaScaled = Math.round(ypa * 10);                 // integer × 10 to match threshold
+          const result  = evaluateTier(qbYpaTiers, ypaScaled, "higher");
+          const ypaStr  = ypa.toFixed(1);
+          const playerLabel = `${topQb.firstName} ${topQb.lastName}`.trim() || "QB";
+          if (result) {
+            displayLines.push(
+              `• **QB YPA (${playerLabel})**: ${ypaStr} YPA (${topQb.passAtt} att, min ${minQbAtt}) → Tier ${result.tier} (+${result.payout.toLocaleString()} coins)`,
+            );
+            breakdown.push({ label: `QB YPA (${playerLabel})`, statValue: ypaScaled, unit: "YPA×10", tier: result.tier, coins: result.payout });
+            totalCoins += result.payout;
+          } else {
+            displayLines.push(
+              `• **QB YPA (${playerLabel})**: ${ypaStr} YPA (${topQb.passAtt} att, min ${minQbAtt}) → No qualifying tier`,
+            );
+          }
+          hasStats = true;
+        } else {
+          // User has no QB with enough attempts — note it for the commissioner
+          const anyQb = playerRows.find(p => QB_POSITIONS.has(p.position.toUpperCase()));
+          if (anyQb) {
+            displayLines.push(
+              `• **QB YPA**: ${anyQb.firstName} ${anyQb.lastName} has only ${anyQb.passAtt} pass attempts (minimum: ${minQbAtt}) — does not qualify`,
+            );
+          }
+        }
+      }
+
+      // ── RB YPC ────────────────────────────────────────────────────────────────
+      const rbYpcTiers = tiersByCategory.get("rb_ypc") ?? [];
+      if (rbYpcTiers.length > 0) {
+        // Best RB: highest rushYds among HB/RB/FB with rushAtt >= minRbAtt
+        const topRb = playerRows
+          .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt >= minRbAtt)
+          .sort((a, b) => b.rushYds - a.rushYds)[0] ?? null;
+
+        if (topRb) {
+          const ypc      = topRb.rushYds / topRb.rushAtt;
+          const ypcScaled = Math.round(ypc * 10);
+          const result   = evaluateTier(rbYpcTiers, ypcScaled, "higher");
+          const ypcStr   = ypc.toFixed(1);
+          const playerLabel = `${topRb.firstName} ${topRb.lastName}`.trim() || "RB";
+          if (result) {
+            displayLines.push(
+              `• **RB YPC (${playerLabel})**: ${ypcStr} YPC (${topRb.rushAtt} carries, min ${minRbAtt}) → Tier ${result.tier} (+${result.payout.toLocaleString()} coins)`,
+            );
+            breakdown.push({ label: `RB YPC (${playerLabel})`, statValue: ypcScaled, unit: "YPC×10", tier: result.tier, coins: result.payout });
+            totalCoins += result.payout;
+          } else {
+            displayLines.push(
+              `• **RB YPC (${playerLabel})**: ${ypcStr} YPC (${topRb.rushAtt} carries, min ${minRbAtt}) → No qualifying tier`,
+            );
+          }
+          hasStats = true;
+        } else {
+          const anyRb = playerRows.find(p => RB_POSITIONS.has(p.position.toUpperCase()));
+          if (anyRb) {
+            displayLines.push(
+              `• **RB YPC**: ${anyRb.firstName} ${anyRb.lastName} has only ${anyRb.rushAtt} carries (minimum: ${minRbAtt}) — does not qualify`,
+            );
+          }
+        }
+      }
+
       // ── Insert pending payout record ───────────────────────────────────────────
       const [pending] = await db.insert(pendingEosPayoutsTable).values({
         discordId:     user.discordId,
@@ -156,7 +252,9 @@ export async function runEosAutoPost(
       // ── Build commissioner embed ───────────────────────────────────────────────
       let descBody: string;
       if (!hasStats) {
-        descBody = "*No team stats found in the database for this season.*\nSacks, INTs, PPG, and individual bonuses must be entered manually via **Edit Amount**.";
+        descBody = "*No team stats found in the database for this season.*\n" +
+          "QB YPA and RB YPC are auto-checked from player stats (if imported).\n" +
+          "Sacks, INTs, and PPG must be entered manually via **Edit Amount**.";
       } else if (displayLines.length === 0) {
         descBody = "*Stats were found but no tiers could be evaluated (tiers may not be seeded yet).*";
       } else {

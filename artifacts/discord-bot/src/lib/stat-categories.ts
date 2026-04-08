@@ -91,6 +91,24 @@ export const STAT_CATEGORIES: StatCategory[] = [
     direction:  "lower",
     jsonFields: ["defRedZonePct", "defensiveRedZonePct", "defRedZoneAllowedPct", "defRZPct", "defenseRedZonePct", "defRedzonePct", "def_redzone_pct"],
   },
+  // ── Player-level stats (computed from playerSeasonStatsTable by EOS handler) ──
+  // Thresholds stored as integer × 10 (e.g. 75 = 7.5 YPA, 50 = 5.0 YPC).
+  // EOS auto-post computes these from the team's top QB / top RB and evaluates
+  // the scaled value against the stored threshold.
+  {
+    key:        "qb_ypa",
+    label:      "QB Yards Per Attempt",
+    unit:       "YPA",
+    direction:  "higher",
+    jsonFields: ["qbYpa", "ypa", "passYardsPerAttempt"],
+  },
+  {
+    key:        "rb_ypc",
+    label:      "RB Yards Per Carry",
+    unit:       "YPC",
+    direction:  "higher",
+    jsonFields: ["rbYpc", "ypc", "rushYardsPerCarry"],
+  },
 ];
 
 export const STAT_CATEGORY_MAP = new Map(STAT_CATEGORIES.map(c => [c.key, c]));
@@ -169,6 +187,19 @@ export const STAT_TIER_DEFAULTS: Record<string, { threshold: number; payout: num
     { threshold: 52, payout: 50 },
     { threshold: 46, payout: 75 },
     { threshold: 40, payout: 100 },
+  ],
+  // Thresholds are integer × 10 (e.g. 70 = 7.0 YPA, 45 = 4.5 YPC)
+  qb_ypa: [
+    { threshold: 70, payout: 25 },
+    { threshold: 75, payout: 50 },
+    { threshold: 80, payout: 75 },
+    { threshold: 85, payout: 100 },
+  ],
+  rb_ypc: [
+    { threshold: 45, payout: 25 },
+    { threshold: 50, payout: 50 },
+    { threshold: 55, payout: 75 },
+    { threshold: 60, payout: 100 },
   ],
 };
 

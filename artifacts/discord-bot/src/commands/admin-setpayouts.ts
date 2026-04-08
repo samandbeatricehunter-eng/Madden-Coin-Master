@@ -45,10 +45,13 @@ export const data = new SlashCommandBuilder()
         { name: "📊 Season PR bonus — #9–10 ranked players",             value: PAYOUT_KEYS.SEASON_PR_9_10  },
         { name: "🎮 GOTY award — coins per winner",                      value: PAYOUT_KEYS.GOTY_WINNER     },
         // ── Individual player bonuses ──────────────────────────────────────────
-        { name: "🏃 EOS bonus — RB 7.0+ YPC (100+ carries)",             value: PAYOUT_KEYS.EOS_RB_YPC_BONUS    },
-        { name: "🏈 EOS bonus — QB 8.5+ YPA (150+ attempts)",            value: PAYOUT_KEYS.EOS_QB_YPA_BONUS    },
+        { name: "🏃 EOS bonus — top RB qualifying YPC (coins)",           value: PAYOUT_KEYS.EOS_RB_YPC_BONUS    },
+        { name: "🏈 EOS bonus — top QB qualifying YPA (coins)",           value: PAYOUT_KEYS.EOS_QB_YPA_BONUS    },
         { name: "🛡️ EOS bonus — DB individual player 8+ INTs",           value: PAYOUT_KEYS.EOS_DB_INT_BONUS    },
         { name: "😔 EOS consolation — missed playoffs (user team)",       value: PAYOUT_KEYS.EOS_MISSED_PLAYOFFS },
+        // ── Stat minimum attempt thresholds ────────────────────────────────────
+        { name: "🏈 EOS QB YPA — minimum pass attempts to qualify",       value: PAYOUT_KEYS.EOS_QB_MIN_ATT      },
+        { name: "🏃 EOS RB YPC — minimum rush attempts to qualify",       value: PAYOUT_KEYS.EOS_RB_MIN_ATT      },
       ))
     .addIntegerOption(o => o
       .setName("amount")
@@ -93,6 +96,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return `**${current} 🪙** — ${description} ${tag}`;
     });
 
+    // ── Section 2c: Stat Minimums (attempt thresholds — not coin values) ────
+    const minKeys  = keys.filter(k => k.category === "Stat Minimums");
+    const minLines = minKeys.map(({ key, description, defaultValue }) => {
+      const current = config.get(key) ?? defaultValue;
+      const tag     = current === defaultValue ? "*(default)*" : "*(custom)*";
+      return `**${current} attempts** — ${description} ${tag}`;
+    });
+
     // ── Section 3: Store Prices (from season rules) ──────────────────────────
     const storeLines = [
       `**${rules.legendCost.toLocaleString()} 🪙** — Legend card${rules.legendCost !== COSTS.legend ? " *(custom)*" : " *(default)*"}`,
@@ -129,6 +140,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           value:  indivLines.join("\n"),
           inline: false,
         },
+        ...(minLines.length > 0 ? [{
+          name:   "📏 Stat Attempt Minimums *(must meet threshold to qualify for YPA/YPC bonus)*",
+          value:  minLines.join("\n"),
+          inline: false,
+        }] : []),
         {
           name:   "🏪 Store Prices *(edit via /admin-season)*",
           value:  storeLines.join("\n"),
@@ -154,15 +170,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await setPayoutValue(key, amount, interaction.user.id);
     const meta   = getAllPayoutKeys().find(k => k.key === key)!;
 
+    const isAttemptKey = meta.category === "Stat Minimums";
+    const fmt = (v: number) => isAttemptKey ? `**${v} attempts**` : `**${v} 🪙**`;
+
     await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setTitle("✅ Economy Value Updated")
         .setColor(Colors.Green)
         .addFields(
-          { name: "Setting",    value: meta.description,         inline: false },
-          { name: "New Amount", value: `**${amount} 🪙**`,        inline: true  },
-          { name: "Default",    value: `${meta.defaultValue} 🪙`, inline: true  },
-          { name: "Category",   value: meta.category,            inline: true  },
+          { name: "Setting",    value: meta.description,           inline: false },
+          { name: "New Value",  value: fmt(amount),                inline: true  },
+          { name: "Default",    value: fmt(meta.defaultValue),     inline: true  },
+          { name: "Category",   value: meta.category,              inline: true  },
         )
         .setFooter({ text: `Updated by ${interaction.user.username}` })
         .setTimestamp()],

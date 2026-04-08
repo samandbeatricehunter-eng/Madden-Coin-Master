@@ -16,11 +16,14 @@ export const PAYOUT_KEYS = {
   SEASON_PR_9_10:   "season_pr_9_10",
   GOTY_WINNER:      "goty_winner_coins",
   // ── End-of-season individual player bonuses ──────────────────────────────────
-  EOS_RB_YPC_BONUS:       "eos_rb_ypc_bonus",
-  EOS_QB_YPA_BONUS:       "eos_qb_ypa_bonus",
-  EOS_DB_INT_BONUS:       "eos_db_int_bonus",
+  EOS_RB_YPC_BONUS:    "eos_rb_ypc_bonus",
+  EOS_QB_YPA_BONUS:    "eos_qb_ypa_bonus",
+  EOS_DB_INT_BONUS:    "eos_db_int_bonus",
+  // ── EOS stat minimum attempt thresholds (not coin values — attempt counts) ───
+  EOS_QB_MIN_ATT:      "eos_qb_min_att",   // Min pass attempts to qualify for QB YPA bonus
+  EOS_RB_MIN_ATT:      "eos_rb_min_att",   // Min rush attempts to qualify for RB YPC bonus
   // ── End-of-season missed-playoffs consolation ─────────────────────────────────
-  EOS_MISSED_PLAYOFFS:    "eos_missed_playoffs",
+  EOS_MISSED_PLAYOFFS: "eos_missed_playoffs",
 } as const;
 
 export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
@@ -39,9 +42,12 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   season_pr_9_10:    { value: 50,  description: "Season PR bonus — #9–10 ranked players",                      category: "Season Bonuses"        },
   goty_winner_coins: { value: 100, description: "Coins awarded to each GOTY award winner",                     category: "Season Bonuses"        },
   // ── Individual player bonuses ─────────────────────────────────────────────────
-  eos_rb_ypc_bonus:    { value: 100, description: "EOS individual bonus — RB 7.0+ YPC (100+ carries)",         category: "Individual Bonuses"    },
-  eos_qb_ypa_bonus:    { value: 100, description: "EOS individual bonus — QB 8.5+ YPA (150+ attempts)",        category: "Individual Bonuses"    },
-  eos_db_int_bonus:    { value: 100, description: "EOS individual bonus — DB individual player 8+ INTs",       category: "Individual Bonuses"    },
+  eos_rb_ypc_bonus:    { value: 100, description: "EOS individual bonus — top RB qualifying YPC (coins)",       category: "Individual Bonuses"    },
+  eos_qb_ypa_bonus:    { value: 100, description: "EOS individual bonus — top QB qualifying YPA (coins)",       category: "Individual Bonuses"    },
+  eos_db_int_bonus:    { value: 100, description: "EOS individual bonus — DB individual player 8+ INTs",        category: "Individual Bonuses"    },
+  // ── EOS stat minimum attempt thresholds ──────────────────────────────────────
+  eos_qb_min_att:      { value: 300, description: "EOS QB YPA — minimum pass attempts to qualify",             category: "Stat Minimums"         },
+  eos_rb_min_att:      { value: 150, description: "EOS RB YPC — minimum rush attempts to qualify",             category: "Stat Minimums"         },
   // ── Missed-playoffs consolation ───────────────────────────────────────────────
   eos_missed_playoffs: { value: 400, description: "EOS consolation — user-controlled team that missed playoffs", category: "Individual Bonuses"  },
 };

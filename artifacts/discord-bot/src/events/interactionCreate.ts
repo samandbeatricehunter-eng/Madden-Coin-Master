@@ -27,6 +27,7 @@ import {
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
 } from "../lib/custom-player-interactions.js";
 import { handleViewArchetypeSelect } from "../commands/viewcustomarchetypes.js";
+import { handleTeamSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction,
@@ -1586,6 +1587,23 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
 
   // ── Archetype viewer ──────────────────────────────────────────────────────────
   if (action === "vca_pos") { await handleViewArchetypeSelect(interaction); return; }
+
+  // ── View player stats — team select ───────────────────────────────────────────
+  // customId format: viewps_team:<seasonId>:<conference>
+  if (action === "viewps_team") {
+    const seasonId = parseInt(parts[1] ?? "0", 10);
+    await handleTeamSelect(interaction, seasonId);
+    return;
+  }
+
+  // ── View player stats — player select ─────────────────────────────────────────
+  // customId format: viewps_player:<seasonId>:<teamId>
+  if (action === "viewps_player") {
+    const seasonId = parseInt(parts[1] ?? "0", 10);
+    const teamId   = parseInt(parts[2] ?? "0", 10);
+    await handlePlayerSelect(interaction, seasonId, teamId);
+    return;
+  }
 
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_pos")      { await handleCcpPos(interaction, sessionId);     return; }
