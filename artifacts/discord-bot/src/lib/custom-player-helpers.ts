@@ -38,6 +38,12 @@ export const HW_RANGES: Record<string, HWRange> = {
   WR:  { hMin: 69, hMax: 75, wMin: 170, wMax: 235 },
   TE:  { hMin: 74, hMax: 78, wMin: 230, wMax: 255 },
   OL:  { hMin: 73, hMax: 78, wMin: 270, wMax: 350 },
+  // OL sub-positions — T (LT/RT) are taller/heavier, G (LG/RG) middle, C slightly shorter/lighter
+  LT:  { hMin: 75, hMax: 79, wMin: 295, wMax: 350 },
+  RT:  { hMin: 75, hMax: 79, wMin: 295, wMax: 350 },
+  LG:  { hMin: 73, hMax: 78, wMin: 275, wMax: 340 },
+  RG:  { hMin: 73, hMax: 78, wMin: 275, wMax: 340 },
+  C:   { hMin: 73, hMax: 77, wMin: 270, wMax: 330 },
   DL:  { hMin: 73, hMax: 77, wMin: 270, wMax: 340 },
   LB:  { hMin: 71, hMax: 75, wMin: 215, wMax: 260 },
   CB:  { hMin: 69, hMax: 74, wMin: 180, wMax: 230 },
@@ -113,6 +119,21 @@ export function positionSelectRow(sessionId: string) {
       .addOptions(ALL_POSITIONS.map(p =>
         new StringSelectMenuOptionBuilder().setLabel(p).setValue(p),
       )),
+  );
+}
+
+export function olSubPositionSelectRow(sessionId: string) {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`ccp_ol_pos:${sessionId}`)
+      .setPlaceholder("Select OL position…")
+      .addOptions([
+        new StringSelectMenuOptionBuilder().setLabel("LT — Left Tackle").setValue("LT"),
+        new StringSelectMenuOptionBuilder().setLabel("LG — Left Guard").setValue("LG"),
+        new StringSelectMenuOptionBuilder().setLabel("C — Center").setValue("C"),
+        new StringSelectMenuOptionBuilder().setLabel("RG — Right Guard").setValue("RG"),
+        new StringSelectMenuOptionBuilder().setLabel("RT — Right Tackle").setValue("RT"),
+      ]),
   );
 }
 

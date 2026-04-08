@@ -26,6 +26,7 @@ import {
   buildAttrRows, attrAllocEmbed,
   heightOptions, weightOptions, inchesToDisplay,
   buildCommissionerEmbed, buildCommissionerRows,
+  olSubPositionSelectRow,
   KP_POSITIONS, DEV_TRAIT_COST, DEV_TRAIT_LABEL,
 } from "./custom-player-helpers.js";
 import { addBalance, logTransaction, getOrCreateUser } from "./db-helpers.js";
@@ -88,17 +89,51 @@ export async function handleCcpArch(interaction: StringSelectMenuInteraction, se
     return;
   }
 
-  session.archetypeId   = arch.id;
-  session.archetypeName = arch.name;
-  session.attributes    = { ...(arch.attributes as Record<string, number>) };
+  session.archetypeId    = arch.id;
+  session.archetypeName  = arch.name;
+  session.attributes     = { ...(arch.attributes as Record<string, number>) };
   session.attributeBases = { ...(arch.attributes as Record<string, number>) };
   session.attributeOrder = Object.keys(arch.attributes as Record<string, number>);
-  session.step = 3;
 
+  // OL players must pick a specific position (LT/LG/C/RG/RT) before continuing
+  if (session.position === "OL") {
+    session.step = 2;
+    await interaction.editReply({
+      content:
+        `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
+        `Position: **OL** | Archetype: **${arch.name}**\n\n` +
+        `Select your specific OL position:`,
+      components: [olSubPositionSelectRow(sessionId)],
+      embeds: [],
+    });
+    return;
+  }
+
+  session.step = 3;
   await interaction.editReply({
     content:
       `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
       `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
+    components: [devTraitSelectRow(sessionId)],
+    embeds: [],
+  });
+}
+
+// ── Step 2b (OL only): Specific OL position selected ──────────────────────────
+export async function handleCcpOlPos(interaction: StringSelectMenuInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+
+  const olPosition = interaction.values[0]! as "LT" | "LG" | "C" | "RG" | "RT";
+  session.position = olPosition;
+  session.step = 3;
+
+  await interaction.deferUpdate();
+
+  await interaction.editReply({
+    content:
+      `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
+      `Position: **${olPosition}** | Archetype: **${session.archetypeName}**\n\nSelect development trait:`,
     components: [devTraitSelectRow(sessionId)],
     embeds: [],
   });

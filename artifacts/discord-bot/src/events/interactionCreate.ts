@@ -19,7 +19,7 @@ import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
 import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-cocomm-actions.js";
 import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
 import {
-  handleCcpPos, handleCcpArch, handleCcpDev, handleCcpPkg,
+  handleCcpPos, handleCcpArch, handleCcpOlPos, handleCcpDev, handleCcpPkg,
   handleCcpAttrSel, handleCcpAttrAdjust,
   handleCcpSubmitAttrs, handleCcpConfirm, handleCcpCancel,
   handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
@@ -1588,6 +1588,7 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_pos")      { await handleCcpPos(interaction, sessionId);     return; }
   if (action === "ccp_arch")     { await handleCcpArch(interaction, sessionId);    return; }
+  if (action === "ccp_ol_pos")   { await handleCcpOlPos(interaction, sessionId);   return; }
   if (action === "ccp_dev")      { await handleCcpDev(interaction, sessionId);     return; }
   if (action === "ccp_pkg")      { await handleCcpPkg(interaction, sessionId);     return; }
   if (action === "ccp_attr_sel") { await handleCcpAttrSel(interaction, sessionId); return; }
