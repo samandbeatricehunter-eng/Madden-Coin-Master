@@ -29,7 +29,7 @@ import {
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
 } from "../lib/custom-player-interactions.js";
 import { handleViewArchetypeSelect, handleVcaNav } from "../commands/viewcustomarchetypes.js";
-import { handleTeamSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
+import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, logTransaction,
@@ -1691,6 +1691,15 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "viewps_team") {
     const seasonId = parseInt(parts[1] ?? "0", 10);
     await handleTeamSelect(interaction, seasonId);
+    return;
+  }
+
+  // ── View player stats — position select ───────────────────────────────────────
+  // customId format: viewps_pos:<seasonId>:<teamId>
+  if (action === "viewps_pos") {
+    const seasonId = parseInt(parts[1] ?? "0", 10);
+    const teamId   = parseInt(parts[2] ?? "0", 10);
+    await handlePositionSelect(interaction, seasonId, teamId);
     return;
   }
 

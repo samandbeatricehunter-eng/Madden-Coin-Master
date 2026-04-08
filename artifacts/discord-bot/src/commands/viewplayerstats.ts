@@ -8,25 +8,63 @@ import {
   franchiseMcaTeamsTable, franchiseRostersTable, playerSeasonStatsTable,
   seasonsTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
-// ── Conference membership (matched against franchiseMcaTeamsTable.nickName) ──
-const NFC_NICKS = new Set([
+// ── Real NFL conference membership (by full team name) ────────────────────────
+// Madden exports real team full names when teams aren't relocated, and custom
+// full names if they are. Un-recognised names fall to AFC by default so nothing
+// is silently lost — an admin can relocate "mystery" teams to the right group.
+const NFC_FULL_NAMES = new Set([
+  // NFC East
+  "Dallas Cowboys", "New York Giants", "Philadelphia Eagles", "Washington Commanders",
+  // NFC North
+  "Chicago Bears", "Detroit Lions", "Green Bay Packers", "Minnesota Vikings",
+  // NFC South
+  "Atlanta Falcons", "Carolina Panthers", "New Orleans Saints", "Tampa Bay Buccaneers",
+  // NFC West
+  "Arizona Cardinals", "Los Angeles Rams", "San Francisco 49ers", "Seattle Seahawks",
+]);
+
+// Also match by nickname as a fallback for standard teams
+const NFC_NICK_NAMES = new Set([
   "Giants", "Eagles", "Cowboys", "Commanders",
   "Bears", "Lions", "Packers", "Vikings",
   "Buccaneers", "Falcons", "Panthers", "Saints",
   "Cardinals", "Rams", "49ers", "Seahawks",
 ]);
 
+function isNfc(fullName: string, nickName: string): boolean {
+  return NFC_FULL_NAMES.has(fullName) || NFC_NICK_NAMES.has(nickName);
+}
+
 const DEV_LABEL: Record<number, string> = {
   0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
 };
 
+// Ordered position groups for a clean dropdown display
+const POSITION_ORDER = [
+  "QB", "HB", "FB",
+  "WR", "TE",
+  "LT", "LG", "C", "RG", "RT",
+  "LE", "RE", "DT",
+  "LOLB", "MLB", "ROLB",
+  "CB", "FS", "SS",
+  "K", "P",
+];
+
+function sortPositions(positions: string[]): string[] {
+  const known   = POSITION_ORDER.filter(p => positions.includes(p));
+  const unknown = positions.filter(p => !POSITION_ORDER.includes(p)).sort();
+  return [...known, ...unknown];
+}
+
+// ── Command entry ─────────────────────────────────────────────────────────────
+
 export const data = new SlashCommandBuilder()
   .setName("viewplayerstats")
-  .setDescription("Browse season stats and bio for any player — pick team then player from dropdowns");
+  .setDescription("Browse season stats and bio for any player — pick team → position → player");
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
@@ -49,37 +87,39 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const nfcTeams = allTeams.filter(t => NFC_NICKS.has(t.nickName));
-  const afcTeams = allTeams.filter(t => !NFC_NICKS.has(t.nickName));
+  const nfcTeams = allTeams.filter(t => isNfc(t.fullName, t.nickName));
+  const afcTeams = allTeams.filter(t => !isNfc(t.fullName, t.nickName));
 
   const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
 
   if (nfcTeams.length > 0) {
-    const nfcMenu = new StringSelectMenuBuilder()
-      .setCustomId(`viewps_team:${season.id}:nfc`)
-      .setPlaceholder("🏈 Select NFC Team…")
-      .addOptions(
-        nfcTeams.slice(0, 25).map(t =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(t.fullName)
-            .setValue(String(t.teamId)),
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`viewps_team:${season.id}:nfc`)
+        .setPlaceholder("🏈 Select NFC Team…")
+        .addOptions(
+          nfcTeams.slice(0, 25).map(t =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(t.fullName)
+              .setValue(String(t.teamId)),
+          ),
         ),
-      );
-    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(nfcMenu));
+    ));
   }
 
   if (afcTeams.length > 0) {
-    const afcMenu = new StringSelectMenuBuilder()
-      .setCustomId(`viewps_team:${season.id}:afc`)
-      .setPlaceholder("🏈 Select AFC Team…")
-      .addOptions(
-        afcTeams.slice(0, 25).map(t =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(t.fullName)
-            .setValue(String(t.teamId)),
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`viewps_team:${season.id}:afc`)
+        .setPlaceholder("🏈 Select AFC Team…")
+        .addOptions(
+          afcTeams.slice(0, 25).map(t =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(t.fullName)
+              .setValue(String(t.teamId)),
+          ),
         ),
-      );
-    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(afcMenu));
+    ));
   }
 
   if (rows.length === 0) {
@@ -93,7 +133,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   });
 }
 
-// ── Shared handler: team selected → show player select ────────────────────────
+// ── Step 2: Team selected → show position dropdown ────────────────────────────
+
 export async function handleTeamSelect(
   interaction: StringSelectMenuInteraction,
   seasonId: number,
@@ -105,6 +146,65 @@ export async function handleTeamSelect(
     await interaction.editReply({ content: "Invalid team selection.", components: [] });
     return;
   }
+
+  // Get distinct positions on this team's roster
+  const rows = await db
+    .selectDistinct({ position: franchiseRostersTable.position })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, seasonId),
+      eq(franchiseRostersTable.teamId,   teamId),
+    ));
+
+  if (rows.length === 0) {
+    await interaction.editReply({
+      content: "No roster data found for this team. MCA roster hasn't been imported yet.",
+      components: [],
+    });
+    return;
+  }
+
+  // Get team name for the heading
+  const [teamRow] = await db
+    .select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      eq(franchiseMcaTeamsTable.teamId,   teamId),
+    ))
+    .limit(1);
+  const teamName = teamRow?.fullName ?? "Team";
+
+  const positions = sortPositions(rows.map(r => r.position).filter(Boolean) as string[]);
+
+  const posMenu = new StringSelectMenuBuilder()
+    .setCustomId(`viewps_pos:${seasonId}:${teamId}`)
+    .setPlaceholder(`Select a position on the ${teamName}…`)
+    .addOptions(
+      positions.slice(0, 25).map(pos =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(pos)
+          .setValue(pos),
+      ),
+    );
+
+  await interaction.editReply({
+    content: `**${teamName}** — select a position:`,
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(posMenu)],
+    embeds: [],
+  });
+}
+
+// ── Step 3: Position selected → show player dropdown ─────────────────────────
+
+export async function handlePositionSelect(
+  interaction: StringSelectMenuInteraction,
+  seasonId: number,
+  teamId: number,
+) {
+  await interaction.deferUpdate();
+
+  const position = interaction.values[0]!;
 
   const players = await db
     .select({
@@ -120,13 +220,14 @@ export async function handleTeamSelect(
     .where(and(
       eq(franchiseRostersTable.seasonId, seasonId),
       eq(franchiseRostersTable.teamId,   teamId),
+      eq(franchiseRostersTable.position, position),
     ))
     .orderBy(desc(franchiseRostersTable.overall))
     .limit(25);
 
   if (players.length === 0) {
     await interaction.editReply({
-      content: "No roster data found for this team. MCA roster hasn't been imported yet.",
+      content: `No **${position}** players found on this roster.`,
       components: [],
     });
     return;
@@ -136,11 +237,11 @@ export async function handleTeamSelect(
 
   const playerMenu = new StringSelectMenuBuilder()
     .setCustomId(`viewps_player:${seasonId}:${teamId}`)
-    .setPlaceholder(`Select a ${teamName} player…`)
+    .setPlaceholder(`Select a ${teamName} ${position}…`)
     .addOptions(
       players.map(p => {
         const name  = `${p.firstName} ${p.lastName}`.trim() || "(Unknown)";
-        const label = `${p.position} · ${name}`.slice(0, 100);
+        const label = name.slice(0, 100);
         const desc  = `${p.overall} OVR · ${DEV_LABEL[p.devTrait] ?? "Normal"}`;
         return new StringSelectMenuOptionBuilder()
           .setLabel(label)
@@ -150,12 +251,14 @@ export async function handleTeamSelect(
     );
 
   await interaction.editReply({
-    content: `**${teamName}** — select a player to view their stats:`,
+    content: `**${teamName} — ${position}s** · Select a player to view their stats:`,
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(playerMenu)],
+    embeds: [],
   });
 }
 
-// ── Shared handler: player selected → show stats embed ───────────────────────
+// ── Step 4: Player selected → show stats embed ────────────────────────────────
+
 export async function handlePlayerSelect(
   interaction: StringSelectMenuInteraction,
   seasonId: number,
@@ -169,7 +272,6 @@ export async function handlePlayerSelect(
     return;
   }
 
-  // Pull roster bio and season stats in parallel
   const [rosterRows, statRows] = await Promise.all([
     db.select()
       .from(franchiseRostersTable)
@@ -198,17 +300,17 @@ export async function handlePlayerSelect(
 
   const fullName = `${roster.firstName} ${roster.lastName}`.trim() || "(Unknown)";
 
-  // ── Bio / contract block ──────────────────────────────────────────────────
+  // ── Bio block ─────────────────────────────────────────────────────────────
   const attrs = (roster.attributes ?? {}) as Record<string, unknown>;
-  const heightIn = attrs["heightInches"] != null ? Number(attrs["heightInches"]) :
-                   attrs["height"]       != null ? Number(attrs["height"])       : null;
+  const heightIn  = attrs["heightInches"] != null ? Number(attrs["heightInches"])
+                  : attrs["height"]       != null ? Number(attrs["height"]) : null;
   const weightLbs = attrs["weight"] != null ? Number(attrs["weight"]) : null;
 
   const bioLines: string[] = [];
-  if (roster.jerseyNum != null)          bioLines.push(`**#${roster.jerseyNum}** · ${roster.position}`);
-  else                                   bioLines.push(roster.position);
-  if (roster.overall)                    bioLines.push(`**${roster.overall} OVR** · ${DEV_LABEL[roster.devTrait] ?? "Normal"}`);
-  if (roster.age != null)                bioLines.push(`Age **${roster.age}**`);
+  if (roster.jerseyNum != null) bioLines.push(`**#${roster.jerseyNum}** · ${roster.position}`);
+  else                          bioLines.push(roster.position);
+  if (roster.overall)           bioLines.push(`**${roster.overall} OVR** · ${DEV_LABEL[roster.devTrait] ?? "Normal"}`);
+  if (roster.age != null)       bioLines.push(`Age **${roster.age}**`);
   if (heightIn != null) {
     const ft  = Math.floor(heightIn / 12);
     const ins = heightIn % 12;
@@ -217,61 +319,52 @@ export async function handlePlayerSelect(
     bioLines.push(`**${weightLbs} lbs**`);
   }
   if (roster.contractYearsLeft != null) {
-    bioLines.push(roster.contractYearsLeft === 1 ? "📋 **Contract Year**" : `Contract: **${roster.contractYearsLeft} yrs left**`);
+    bioLines.push(
+      roster.contractYearsLeft === 1
+        ? "📋 **Contract Year**"
+        : `Contract: **${roster.contractYearsLeft} yrs left**`,
+    );
   }
 
   // ── Season stats block ───────────────────────────────────────────────────
   const statLines: string[] = [];
   if (stats) {
-    // Passing
     if (stats.passYds > 0 || stats.passAtt > 0) {
       const compPct = stats.passAtt > 0
-        ? ` (${((stats.passComp / stats.passAtt) * 100).toFixed(1)}% comp)`
-        : "";
+        ? ` (${((stats.passComp / stats.passAtt) * 100).toFixed(1)}% comp)` : "";
       const ypa = stats.passAtt > 0
-        ? ` · ${(stats.passYds / stats.passAtt).toFixed(1)} YPA`
-        : "";
+        ? ` · ${(stats.passYds / stats.passAtt).toFixed(1)} YPA` : "";
       statLines.push(
         `🎯 **Passing:** ${stats.passYds.toLocaleString()} yds · ${stats.passTDs} TDs` +
         `\n   ${stats.passComp}/${stats.passAtt}${compPct}${ypa}`,
       );
     }
-    // Rushing
     if (stats.rushYds > 0 || stats.rushAtt > 0) {
       const ypc = stats.rushAtt > 0
-        ? ` · ${(stats.rushYds / stats.rushAtt).toFixed(1)} YPC`
-        : "";
+        ? ` · ${(stats.rushYds / stats.rushAtt).toFixed(1)} YPC` : "";
       statLines.push(
         `💨 **Rushing:** ${stats.rushYds.toLocaleString()} yds · ${stats.rushTDs} TDs` +
         `\n   ${stats.rushAtt} carries${ypc}`,
       );
     }
-    // Receiving
     if (stats.recYds > 0 || stats.recRec > 0) {
       const ypr = stats.recRec > 0
-        ? ` · ${(stats.recYds / stats.recRec).toFixed(1)} YPR`
-        : "";
+        ? ` · ${(stats.recYds / stats.recRec).toFixed(1)} YPR` : "";
       statLines.push(
         `🙌 **Receiving:** ${stats.recYds.toLocaleString()} yds · ${stats.recTDs} TDs` +
         `\n   ${stats.recRec} rec${ypr}`,
       );
     }
-    // Defense
-    if (stats.sacks > 0)        statLines.push(`💥 **Sacks:** ${stats.sacks}`);
-    if (stats.defInts > 0)      statLines.push(`🫳 **INTs:** ${stats.defInts}`);
+    if (stats.sacks > 0)   statLines.push(`💥 **Sacks:** ${stats.sacks}`);
+    if (stats.defInts > 0) statLines.push(`🫳 **INTs:** ${stats.defInts}`);
     const tackles = stats.totalTackles > 0
       ? `${stats.totalTackles} total`
       : stats.tackleSolo + stats.tackleAssist > 0
-        ? `${stats.tackleSolo} solo · ${stats.tackleAssist} ast`
-        : null;
-    if (tackles)                 statLines.push(`🦺 **Tackles:** ${tackles}`);
+        ? `${stats.tackleSolo} solo · ${stats.tackleAssist} ast` : null;
+    if (tackles) statLines.push(`🦺 **Tackles:** ${tackles}`);
   }
+  if (statLines.length === 0) statLines.push("*(no recorded stats this season)*");
 
-  if (statLines.length === 0) {
-    statLines.push("*(no recorded stats this season)*");
-  }
-
-  // ── Season number label ──────────────────────────────────────────────────
   const [seasonRow] = await db
     .select({ seasonNumber: seasonsTable.seasonNumber })
     .from(seasonsTable)
@@ -283,10 +376,8 @@ export async function handlePlayerSelect(
     .setColor(Colors.Blue)
     .setTitle(`${roster.jerseyNum != null ? `#${roster.jerseyNum} ` : ""}${fullName}`)
     .setDescription(`**${roster.teamName || "Free Agent"}**\n${bioLines.join(" · ")}`)
-    .addFields(
-      { name: `Season ${seasonLabel} Stats`, value: statLines.join("\n"), inline: false },
-    )
-    .setFooter({ text: "Stats from MCA franchise export · Use /playerstats to search by name" })
+    .addFields({ name: `Season ${seasonLabel} Stats`, value: statLines.join("\n"), inline: false })
+    .setFooter({ text: "Stats from MCA franchise export" })
     .setTimestamp();
 
   await interaction.editReply({ content: null, embeds: [embed], components: [] });

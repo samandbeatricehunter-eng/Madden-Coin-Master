@@ -63,7 +63,6 @@ import * as weeklyMatchups from "./commands/weekly-matchups.js";
 import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
 import * as adminSetMilestoneTier from "./commands/admin-setmilestonetier.js";
 import * as statLeaders from "./commands/statleaders.js";
-import * as playerStats from "./commands/playerstats.js";
 import * as tradeBlock from "./commands/tradeblock.js";
 import * as viewTradeBlock from "./commands/viewtradeblock.js";
 import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
@@ -183,7 +182,6 @@ if (!isProduction && !devBotEnabled) {
     adminCorrectPayout,
     adminSetMilestoneTier,
     statLeaders,
-    playerStats,
     tradeBlock,
     viewTradeBlock,
     postFullSeasonSchedule,
