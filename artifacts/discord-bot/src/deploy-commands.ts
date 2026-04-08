@@ -71,6 +71,11 @@ import * as purchaseCustomPlayer from "./commands/purchasecustomplayer.js";
 import * as viewCustomArchetypes from "./commands/viewcustomarchetypes.js";
 import * as adminCustomArchetypes from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
+import * as adminResendPayouts from "./commands/admin-resend-payouts.js";
+import * as adminReverseTransaction from "./commands/admin-reverse-transaction.js";
+import * as playerStats from "./commands/playerstats.js";
+import * as viewPayoutTiers from "./commands/viewpayouttiers.js";
+import * as viewPlayerStats from "./commands/viewplayerstats.js";
 
 const token = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
@@ -118,6 +123,11 @@ const commands = [
   viewCustomArchetypes,
   adminCustomArchetypes,
   adminCustomPlayerSettings,
+  adminResendPayouts,
+  adminReverseTransaction,
+  playerStats,
+  viewPayoutTiers,
+  viewPlayerStats,
 ].map(c => c.data.toJSON());
 
 commands.push(

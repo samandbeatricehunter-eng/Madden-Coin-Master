@@ -1212,9 +1212,13 @@ async function handleStreamPost(message: Message): Promise<void> {
     const season      = await getOrCreateActiveSeason();
     const currentWeek = (season as any).currentWeek ?? "1";
 
-    // Duplicate guard — one stream payout per user per week
+    // Duplicate guard — one stream payout per user per week.
+    // We allow a re-try if there's a pending record with no commMessageId,
+    // which means a previous attempt created the DB row but crashed before
+    // the commissioner message was ever sent. In that case, delete the orphan
+    // and continue so we post a fresh commissioner approval request.
     const [existing] = await db
-      .select({ id: pendingChannelPayoutsTable.id })
+      .select({ id: pendingChannelPayoutsTable.id, commMessageId: pendingChannelPayoutsTable.commMessageId })
       .from(pendingChannelPayoutsTable)
       .where(and(
         eq(pendingChannelPayoutsTable.type, "stream"),
@@ -1225,7 +1229,12 @@ async function handleStreamPost(message: Message): Promise<void> {
       ))
       .limit(1);
 
-    if (existing) return; // already submitted or approved this week
+    if (existing) {
+      if (existing.commMessageId) return; // commissioner message already sent (pending review or approved)
+      // Orphaned pending record — commMessage was never sent (e.g. bot crashed mid-handler).
+      // Delete it so we can re-try sending the commissioner approval message.
+      await db.delete(pendingChannelPayoutsTable).where(eq(pendingChannelPayoutsTable.id, existing.id));
+    }
 
     // Look up the streamer's team
     const [userRow] = await db
@@ -1361,7 +1370,8 @@ async function handleHighlightPost(message: Message): Promise<void> {
     const season      = await getOrCreateActiveSeason();
     const currentWeek = (season as any).currentWeek ?? "1";
 
-    // Count pending + approved payouts for this user this week
+    // Count payouts for this user this week where the commissioner message was actually sent.
+    // Orphaned pending records (no commMessageId) are excluded so a re-post can recover them.
     const [countRow] = await db
       .select({ total: count() })
       .from(pendingChannelPayoutsTable)
@@ -1371,10 +1381,21 @@ async function handleHighlightPost(message: Message): Promise<void> {
         eq(pendingChannelPayoutsTable.seasonId, season.id),
         eq(pendingChannelPayoutsTable.week, currentWeek),
         inArray(pendingChannelPayoutsTable.status, ["pending", "approved"]),
+        isNotNull(pendingChannelPayoutsTable.commMessageId),
       ));
 
     const usedSlots = Number(countRow?.total ?? 0);
     if (usedSlots >= HIGHLIGHT_MAX_PER_WEEK) return; // max reached — silently ignore
+
+    // Delete any orphaned pending records (no commMessageId) to make room for fresh attempts
+    await db.delete(pendingChannelPayoutsTable).where(and(
+      eq(pendingChannelPayoutsTable.type, "highlight"),
+      eq(pendingChannelPayoutsTable.discordId, message.author.id),
+      eq(pendingChannelPayoutsTable.seasonId, season.id),
+      eq(pendingChannelPayoutsTable.week, currentWeek),
+      eq(pendingChannelPayoutsTable.status, "pending"),
+      sql`${pendingChannelPayoutsTable.commMessageId} IS NULL`,
+    ));
 
     // Each video in this message is a separate payout request (up to the weekly cap)
     const [userRow] = await db
