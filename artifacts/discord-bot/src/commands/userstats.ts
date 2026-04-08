@@ -6,10 +6,11 @@ import {
   usersTable, userRecordsTable, coinTransactionsTable,
   inventoryTable, purchasesTable, interviewRequestsTable,
   seasonStatsTable, userSavingsTable,
-  customPlayersTable, customPlayerSettingsTable,
+  customPlayersTable,
 } from "@workspace/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, ne, inArray } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
+import { LIMITS } from "../lib/constants.js";
 import { weekLabel } from "./advanceweek.js";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
@@ -81,7 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   ]);
 
   // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs ─
-  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, cpSettings] = await Promise.all([
+  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers] = await Promise.all([
     db.select().from(inventoryTable)
       .where(and(eq(inventoryTable.discordId, target.id), eq(inventoryTable.seasonId, season.id))),
 
@@ -108,6 +109,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .orderBy(desc(interviewRequestsTable.createdAt))
       .limit(5),
 
+    // Current season custom players (in builder / pending draft)
     db.select({
       id:           customPlayersTable.id,
       firstName:    customPlayersTable.firstName,
@@ -124,7 +126,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ))
       .orderBy(desc(customPlayersTable.createdAt)),
 
-    db.select().from(customPlayerSettingsTable).limit(1),
+    // Permanent custom players rolled over from past seasons
+    db.select({
+      id:             inventoryTable.id,
+      playerName:     inventoryTable.playerName,
+      playerPosition: inventoryTable.playerPosition,
+      notes:          inventoryTable.notes,
+      itemType:       inventoryTable.itemType,
+    }).from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.discordId, target.id),
+        inArray(inventoryTable.itemType, ["custom_player_gold", "custom_player_silver", "custom_player_bronze"]),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      )),
   ]);
 
   const record      = recordRows[0];
@@ -138,8 +152,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const currentLegends   = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "current");
   const permanentLegends = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "permanent");
 
-  // Custom players from the dedicated table (richer data than inventory)
-  const cpLimit      = cpSettings?.[0]?.seasonLimit ?? 0;
+  // Custom players for this season (season inventory)
   const activeCustoms = (customPlayers ?? []).filter(cp => cp.status !== "refunded");
   const refundedCount = (customPlayers ?? []).filter(cp => cp.status === "refunded").length;
 
@@ -216,36 +229,46 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ? arr.map(l => `• **${l.legendName ?? l.playerName ?? "?"}** (${l.playerPosition ?? "?"})`).join("\n")
       : "*None*";
 
-  // Custom player display — rich data from customPlayersTable
+  // Custom player display helpers
   const statusIcon = (s: string) => s === "applied" ? "✅" : s === "refunded" ? "♻️" : "⏳";
-  const tierLabel  = (t: string) => t === "kp" ? "K/P" : t.charAt(0).toUpperCase() + t.slice(1);
-  const traitLabel = (t: string) => t === "superstar" ? "SS" : t === "star" ? "★" : "";
+  const traitLabel = (t: string) =>
+    t === "superstar" ? "Superstar" : t === "star" ? "Star" : "Normal";
 
-  const cpLimitStr = cpLimit > 0
-    ? `${activeCustoms.length} / ${cpLimit} used this season`
-    : `${activeCustoms.length} this season`;
+  // Combined season inventory slots: current legends + active custom players
+  const cap         = LIMITS.maxLegendsPlusCustomPlayers;
+  const combined    = currentLegends.length + activeCustoms.length;
+  const cpSlotStr   = `${combined} / ${cap} season inventory slots used`;
 
-  const customStr = activeCustoms.length > 0
-    ? activeCustoms.map(cp => {
-        const trait = traitLabel(cp.devTrait);
-        return (
-          `${statusIcon(cp.status)} **${cp.firstName} ${cp.lastName}** ` +
-          `(${cp.position} / ${cp.archetypeName})` +
-          (trait ? ` ${trait}` : "") +
-          ` — *${tierLabel(cp.packageTier)}*`
-        );
-      }).join("\n")
+  // Season inventory: custom players purchased this season (pre-draft)
+  const seasonCustomStr = activeCustoms.length > 0
+    ? activeCustoms.map(cp =>
+        `${statusIcon(cp.status)} **${cp.firstName} ${cp.lastName}**, ${cp.position}, ${traitLabel(cp.devTrait)}`
+      ).join("\n")
     : "*None this season*";
+
+  // Permanent custom players: rolled over from past seasons
+  const permCustomStr = (permCustomPlayers ?? []).length > 0
+    ? (permCustomPlayers ?? []).map(p => {
+        // Extract dev trait from notes: "Dev: superstar | Archetype: ... | Tier: ..."
+        const devMatch = p.notes?.match(/Dev:\s*(\w+)/i);
+        const trait    = devMatch ? traitLabel(devMatch[1]!.toLowerCase()) : "";
+        return `• **${p.playerName ?? "?"}**, ${p.playerPosition ?? "?"}, ${trait}`;
+      }).join("\n")
+    : "*None*";
 
   const inventoryEmbed = new EmbedBuilder()
     .setColor(Colors.Gold)
     .setTitle("🎒 Season Inventory & Purchases")
     .addFields(
-      { name: `⚡ Current Season Legends (${currentLegends.length})`,  value: fmtLegend(currentLegends)   },
-      { name: `🔒 Permanent Vault (${permanentLegends.length}/4)`,     value: fmtLegend(permanentLegends) },
+      { name: `⚡ Season Legends (${currentLegends.length})`,          value: fmtLegend(currentLegends)   },
+      { name: `🔒 Permanent Legend Vault (${permanentLegends.length}/4)`, value: fmtLegend(permanentLegends) },
       {
-        name:  `🏈 Custom Players (${cpLimitStr}${refundedCount > 0 ? `, ${refundedCount} refunded` : ""})`,
-        value: customStr,
+        name:  `🏈 Season Custom Players (${cpSlotStr}${refundedCount > 0 ? `, ${refundedCount} refunded` : ""})`,
+        value: seasonCustomStr,
+      },
+      {
+        name:  `🗃️ Permanent Custom Players (${(permCustomPlayers ?? []).length})`,
+        value: permCustomStr,
       },
       { name: "Core Attr Pts Used",     value: `${coreAttrUsed}`,    inline: true },
       { name: "Non-Core Attr Pts Used", value: `${nonCoreAttrUsed}`, inline: true },

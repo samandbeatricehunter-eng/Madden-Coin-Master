@@ -906,7 +906,7 @@ MCA IMPORT SYSTEM:
 CUSTOM PLAYER SYSTEM:
 - Members spend coins during the season to reserve a custom player slot (Bronze/Silver/Gold tier).
 - Each tier has configurable coin cost and a "creation points" budget used during the build process.
-- An optional season-wide limit (seasonLimit) caps how many custom players can be purchased total per season (0 = unlimited).
+- Each user can hold a maximum of **4 combined** legends and custom players in their season inventory at once (per-user limit, not server-wide).
 - The commissioner builds the actual MCA player before the draft and sets it to a low value so the buyer can draft them naturally.
 - The purchase flow: step 1 (confirm tier + archetype selection) → step 2 (position + archetype) → step 3 (custom name + appearance notes) → step 4 (final confirmation). Session stored in DB, picked up across bot restarts.
 - Archetypes are seeded in the database by position group. K/P skip archetype selection entirely and go straight to name.

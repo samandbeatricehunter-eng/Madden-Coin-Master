@@ -3,8 +3,8 @@ import {
   PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable, serverSettingsTable, customPlayersTable } from "@workspace/db";
+import { eq, and, sql, ne } from "drizzle-orm";
 import { logTransaction } from "../lib/db-helpers.js";
 import { ATTRIBUTES } from "../lib/constants.js";
 
@@ -72,7 +72,65 @@ async function rolloverLegends(seasonId: number): Promise<string> {
   return lines.join("\n");
 }
 
-const MAX_SEASONS = 5;
+// Move active custom players from customPlayersTable → inventoryTable as permanent items.
+// Only processes non-refunded players that haven't already been rolled over.
+async function rolloverCustomPlayers(seasonId: number): Promise<string> {
+  const active = await db.select()
+    .from(customPlayersTable)
+    .where(and(
+      eq(customPlayersTable.seasonId, seasonId),
+      ne(customPlayersTable.status, "refunded"),
+    ));
+
+  if (active.length === 0) return "";
+
+  // Map tier → purchaseTypeEnum value (kp falls back to bronze for inventory tracking)
+  const tierToItemType = (tier: string): "custom_player_gold" | "custom_player_silver" | "custom_player_bronze" => {
+    if (tier === "gold")   return "custom_player_gold";
+    if (tier === "silver") return "custom_player_silver";
+    return "custom_player_bronze";
+  };
+
+  let rolled = 0;
+  for (const cp of active) {
+    // Check if already in inventory (idempotent guard using commissionerMessageId as a proxy key)
+    const existing = await db.select({ id: inventoryTable.id })
+      .from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.discordId, cp.discordId),
+        eq(inventoryTable.seasonId, seasonId),
+        eq(inventoryTable.itemType, tierToItemType(cp.packageTier)),
+        sql`${inventoryTable.playerName} = ${`${cp.firstName} ${cp.lastName}`}`,
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      ))
+      .limit(1);
+
+    if (existing.length > 0) continue; // already rolled over
+
+    await db.insert(inventoryTable).values({
+      discordId:        cp.discordId,
+      seasonId,
+      purchaseId:       0, // no linked purchase row for new-style custom players
+      itemType:         tierToItemType(cp.packageTier),
+      playerName:       `${cp.firstName} ${cp.lastName}`,
+      playerPosition:   cp.position,
+      notes:            `Dev: ${cp.devTrait} | Archetype: ${cp.archetypeName} | Tier: ${cp.packageTier.toUpperCase()}`,
+      legendCategory:   "permanent",
+    });
+    rolled++;
+  }
+
+  if (rolled === 0) return "";
+  return `• **${rolled}** custom player${rolled !== 1 ? "s" : ""} moved to permanent inventories.`;
+}
+
+const DEFAULT_MAX_SEASONS = 10;
+
+async function getMaxSeasons(): Promise<number> {
+  const [row] = await db.select({ maxSeasons: serverSettingsTable.maxSeasons })
+    .from(serverSettingsTable).limit(1);
+  return row?.maxSeasons ?? DEFAULT_MAX_SEASONS;
+}
 
 export const data = new SlashCommandBuilder()
   .setName("season")
@@ -80,17 +138,28 @@ export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
     sub.setName("new")
-      .setDescription("Advance to the next season (max 5 total)")
+      .setDescription("Advance to the next season (subject to franchise season limit)")
   )
   .addSubcommand(sub =>
     sub.setName("set")
-      .setDescription("Jump directly to a specific season number (1–5)")
+      .setDescription("Jump directly to a specific season number (1–50)")
       .addIntegerOption(opt =>
         opt.setName("number")
-          .setDescription("Season number to activate (1–5)")
+          .setDescription("Season number to activate")
           .setRequired(true)
           .setMinValue(1)
-          .setMaxValue(MAX_SEASONS)
+          .setMaxValue(50)
+      )
+  )
+  .addSubcommand(sub =>
+    sub.setName("franchise-limit")
+      .setDescription("Set the maximum number of seasons allowed in this franchise (1–50)")
+      .addIntegerOption(opt =>
+        opt.setName("limit")
+          .setDescription("Max seasons (1–50)")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(50)
       )
   )
   .addSubcommand(sub =>
@@ -229,45 +298,80 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   if (sub === "new") {
-    const seasons = await db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1);
+    const [seasons, maxSeasons] = await Promise.all([
+      db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1),
+      getMaxSeasons(),
+    ]);
     const currentSeason = seasons[0];
     const currentNumber = currentSeason?.seasonNumber ?? 0;
-    const nextNumber = currentNumber + 1;
+    const nextNumber    = currentNumber + 1;
 
-    if (nextNumber > MAX_SEASONS) {
+    if (nextNumber > maxSeasons) {
       return interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Red)
             .setTitle("🏁 Franchise Complete")
             .setDescription(
-              `This franchise has reached its **${MAX_SEASONS}-season limit**.\n\n` +
-              `Season ${currentNumber} is the final season. To reset the franchise (return all legends, reset coins, restart Season 1), run \`/season franchise-reset confirm:True\`.`
+              `This franchise has reached its **${maxSeasons}-season limit**.\n\n` +
+              `Season ${currentNumber} is the final season.\n` +
+              `• To extend the franchise: \`/season franchise-limit limit:XX\`\n` +
+              `• To reset the franchise entirely: \`/season franchise-reset confirm:True\``
             ),
         ],
       });
     }
 
-    // Roll over current-season legends → permanent before closing the season
+    // ── Roll over current-season legends → permanent ───────────────────────
     const rolloverMsg = currentSeason
       ? await rolloverLegends(currentSeason.id)
       : "No previous season to roll over.";
 
+    // ── Roll over active custom players → permanent inventory ──────────────
+    const cpRolloverMsg = currentSeason
+      ? await rolloverCustomPlayers(currentSeason.id)
+      : "";
+
     await db.update(seasonsTable).set({ isActive: false });
     const [newSeason] = await db.insert(seasonsTable).values({ seasonNumber: nextNumber, isActive: true }).returning();
 
-    const isLast = nextNumber === MAX_SEASONS;
+    const isLast = nextNumber === maxSeasons;
+    const embed  = new EmbedBuilder()
+      .setColor(isLast ? Colors.Orange : Colors.Green)
+      .setTitle(isLast ? "🏁 Final Season Started!" : "🎉 New Season Started!")
+      .setDescription(
+        `**Season ${newSeason!.seasonNumber} of ${maxSeasons}** has begun!\n\n` +
+        `All player inventories and purchase limits have been reset.\nCoin balances are unchanged.` +
+        (isLast ? "\n\n⚠️ **This is the last season of the franchise.**" : "")
+      )
+      .addFields({ name: "🏅 Legend Vault Rollover", value: rolloverMsg });
+    if (cpRolloverMsg) embed.addFields({ name: "🏈 Custom Player Rollover", value: cpRolloverMsg });
+    embed.setTimestamp();
+    return interaction.editReply({ embeds: [embed] });
+  }
+
+  if (sub === "franchise-limit") {
+    const limit = interaction.options.getInteger("limit", true);
+    const [settings] = await db.select().from(serverSettingsTable).limit(1);
+    if (settings) {
+      await db.update(serverSettingsTable)
+        .set({ maxSeasons: limit, updatedAt: new Date() })
+        .where(eq(serverSettingsTable.id, settings.id));
+    } else {
+      await db.insert(serverSettingsTable).values({ maxSeasons: limit });
+    }
+    const [current] = await db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1);
+    const currentNum = current?.seasonNumber ?? 0;
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
-          .setColor(isLast ? Colors.Orange : Colors.Green)
-          .setTitle(isLast ? "🏁 Final Season Started!" : "🎉 New Season Started!")
-          .setDescription(
-            `**Season ${newSeason!.seasonNumber} of ${MAX_SEASONS}** has begun!\n\n` +
-            `All player inventories and purchase limits have been reset.\nCoin balances are unchanged.` +
-            (isLast ? "\n\n⚠️ **This is the last season of the franchise.**" : "")
+          .setColor(Colors.Green)
+          .setTitle("✅ Franchise Season Limit Updated")
+          .addFields(
+            { name: "Max Seasons",    value: `**${limit}**`,      inline: true },
+            { name: "Current Season", value: `**${currentNum}**`, inline: true },
+            { name: "Seasons Left",   value: `**${Math.max(0, limit - currentNum)}**`, inline: true },
           )
-          .addFields({ name: "🏅 Legend Vault Rollover", value: rolloverMsg })
           .setTimestamp(),
       ],
     });
@@ -356,7 +460,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             `• **All upgrade purchase counts** cleared\n` +
             `• **Game log** cleared\n` +
             `• **All-time records preserved** (H2H wins/losses, SB wins, milestones)\n` +
-            `• Season restarted at **Season 1 of ${MAX_SEASONS}**`
+            `• Season restarted at **Season 1**`
           )
           .setTimestamp(),
       ],
@@ -365,6 +469,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (sub === "set") {
     const targetNumber = interaction.options.getInteger("number", true);
+    const maxSeasons   = await getMaxSeasons();
 
     // Check if a season record already exists for this number
     const existing = await db.select().from(seasonsTable)
@@ -389,12 +494,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       activeSeason = created;
     }
 
-    const isLast = targetNumber === MAX_SEASONS;
+    const isLast = targetNumber >= maxSeasons;
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(isLast ? Colors.Orange : Colors.Blue)
-          .setTitle(`📅 Season Set to ${targetNumber} of ${MAX_SEASONS}`)
+          .setTitle(`📅 Season Set to ${targetNumber} of ${maxSeasons}`)
           .setDescription(
             `The active season is now **Season ${targetNumber}**.\n\n` +
             `⚠️ Note: This does **not** reset inventories or upgrade counts — use \`/season new\` if you want a full season rollover.` +

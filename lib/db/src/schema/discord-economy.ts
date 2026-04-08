@@ -625,6 +625,7 @@ export const serverSettingsTable = pgTable("server_settings", {
   wagerEnabled:            boolean("wager_enabled").notNull().default(true),
   tradeBlockEnabled:       boolean("trade_block_enabled").notNull().default(true),
   mcaImportEnabled:        boolean("mca_import_enabled").notNull().default(true),
+  maxSeasons:              integer("max_seasons").notNull().default(10),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -714,7 +715,6 @@ export const customPlayerSettingsTable = pgTable("custom_player_settings", {
   goldCost:     integer("gold_cost").notNull().default(0),
   kpPoints:     integer("kp_points").notNull().default(50),
   kpCost:       integer("kp_cost").notNull().default(0),
-  seasonLimit:  integer("season_limit").notNull().default(0),  // 0 = unlimited
   updatedAt:    timestamp("updated_at").notNull().defaultNow(),
 });
 

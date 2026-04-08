@@ -5,6 +5,7 @@ import {
 import { db } from "@workspace/db";
 import { customPlayerSettingsTable } from "@workspace/db";
 import { getSettings } from "../lib/custom-player-helpers.js";
+import { LIMITS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-customplayersettings")
@@ -12,7 +13,7 @@ export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub => sub
     .setName("view")
-    .setDescription("View current package settings and season limit"),
+    .setDescription("View current package settings"),
   )
   .addSubcommand(sub => sub
     .setName("set")
@@ -30,21 +31,9 @@ export const data = new SlashCommandBuilder()
     )
     .addIntegerOption(o => o.setName("points").setDescription("Creation points").setRequired(false).setMinValue(1).setMaxValue(500))
     .addIntegerOption(o => o.setName("cost").setDescription("Coin cost").setRequired(false).setMinValue(0).setMaxValue(9999)),
-  )
-  .addSubcommand(sub => sub
-    .setName("setlimit")
-    .setDescription("Set the maximum custom players allowed per season (0 = unlimited)")
-    .addIntegerOption(o => o
-      .setName("limit")
-      .setDescription("Max custom players per season (0 = unlimited)")
-      .setRequired(true)
-      .setMinValue(0)
-      .setMaxValue(99),
-    ),
   );
 
 function buildSettingsEmbed(s: Awaited<ReturnType<typeof getSettings>>, title: string): EmbedBuilder {
-  const limitStr = s.seasonLimit === 0 ? "Unlimited" : `${s.seasonLimit} per season`;
   return new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(title)
@@ -53,7 +42,7 @@ function buildSettingsEmbed(s: Awaited<ReturnType<typeof getSettings>>, title: s
       { name: "Silver",            value: `${s.silverPoints} pts — ${s.silverCost} coins`, inline: true },
       { name: "Gold",              value: `${s.goldPoints} pts — ${s.goldCost} coins`,     inline: true },
       { name: "K/P Default",       value: `${s.kpPoints} pts — ${s.kpCost} coins`,         inline: true },
-      { name: "Season Limit",      value: limitStr,                                         inline: true },
+      { name: "Per-User Season Cap", value: `${LIMITS.maxLegendsPlusCustomPlayers} combined (legends + custom players)`, inline: true },
     )
     .setTimestamp();
 }
@@ -65,17 +54,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "view") {
     const s = await getSettings();
     await interaction.editReply({ embeds: [buildSettingsEmbed(s, "⚙️ Custom Player Package Settings")] });
-    return;
-  }
-
-  if (sub === "setlimit") {
-    const limit = interaction.options.getInteger("limit", true);
-    await db.update(customPlayerSettingsTable).set({ seasonLimit: limit, updatedAt: new Date() });
-    const s = await getSettings();
-    await interaction.editReply({
-      content: `✅ Season limit set to **${limit === 0 ? "Unlimited" : `${limit} per season`}**.`,
-      embeds:  [buildSettingsEmbed(s, "✅ Custom Player Settings Updated")],
-    });
     return;
   }
 

@@ -16,7 +16,7 @@ export const LIMITS = {
   ageResetsPerSeason: 2,   // permanent default (season 3+)
   legendsAllTime: 4,
   maxLegendsInInventory: 4,
-  maxLegendsPlusCustomPlayers: 7,
+  maxLegendsPlusCustomPlayers: 4,
 } as const;
 
 // Core attributes: Speed, Acceleration, Change of Direction, Agility, Strength,

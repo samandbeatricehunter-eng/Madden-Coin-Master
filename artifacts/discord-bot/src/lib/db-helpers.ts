@@ -2,10 +2,10 @@ import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
   inventoryTable, legendsTable, coinTransactionsTable, rulesTable, rulesSectionsTable,
-  userRecordsTable, gameLogTable,
+  userRecordsTable, gameLogTable, customPlayersTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, ne } from "drizzle-orm";
 
 // ── Default rules (seeds the DB if a section has never been set) ───────────────
 export const SECTION_META: Record<string, { title: string; color: number }> = {
@@ -183,12 +183,24 @@ export async function addBalance(discordId: string, amount: number): Promise<voi
 }
 
 export async function getInventoryCount(discordId: string, seasonId: number) {
-  const items = await db.select().from(inventoryTable)
-    .where(and(eq(inventoryTable.discordId, discordId), eq(inventoryTable.seasonId, seasonId)));
+  // Legends come from inventoryTable; custom players from the new customPlayersTable
+  const [items, cpRows] = await Promise.all([
+    db.select().from(inventoryTable)
+      .where(and(eq(inventoryTable.discordId, discordId), eq(inventoryTable.seasonId, seasonId))),
+    db.select({ id: customPlayersTable.id })
+      .from(customPlayersTable)
+      .where(and(
+        eq(customPlayersTable.discordId, discordId),
+        eq(customPlayersTable.seasonId, seasonId),
+        ne(customPlayersTable.status, "refunded"),
+      )),
+  ]);
   const legends = items.filter(i => i.itemType === "legend").length;
-  const customs = items.filter(i =>
+  // Count legacy custom_player inventory items + new-style customPlayersTable entries
+  const legacyCustoms = items.filter(i =>
     i.itemType === "custom_player_gold" || i.itemType === "custom_player_silver" || i.itemType === "custom_player_bronze"
   ).length;
+  const customs = legacyCustoms + cpRows.length;
   return { legends, customs, total: items.length };
 }
 
