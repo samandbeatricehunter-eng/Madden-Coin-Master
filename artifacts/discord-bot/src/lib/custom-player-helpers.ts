@@ -381,12 +381,22 @@ export function formatArchetypeEmbed(
   name: string,
   attributes: Record<string, number>,
 ): EmbedBuilder {
-  const lines = Object.entries(attributes)
-    .map(([attr, val]) => `**${attr}**: ${val}`)
-    .join("   ");
-
-  return new EmbedBuilder()
+  const entries = Object.entries(attributes);
+  const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
-    .setTitle(`${position} — ${name}`)
-    .setDescription(lines || "No attributes defined.");
+    .setTitle(`${position} — ${name}`);
+
+  if (entries.length === 0) {
+    embed.setDescription("No attributes defined.");
+  } else {
+    embed.addFields(
+      entries.map(([attr, val]) => ({
+        name:   attr,
+        value:  String(val),
+        inline: true,
+      })),
+    );
+  }
+
+  return embed;
 }

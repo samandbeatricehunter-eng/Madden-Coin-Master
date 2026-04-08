@@ -28,7 +28,7 @@ import {
   handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
 } from "../lib/custom-player-interactions.js";
-import { handleViewArchetypeSelect } from "../commands/viewcustomarchetypes.js";
+import { handleViewArchetypeSelect, handleVcaNav } from "../commands/viewcustomarchetypes.js";
 import { handleTeamSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
@@ -106,7 +106,17 @@ export async function execute(interaction: Interaction) {
 
 // ── Button handler ─────────────────────────────────────────────────────────────
 async function handleButton(interaction: ButtonInteraction) {
-  const [action, secondPart, userId, purchaseType] = interaction.customId.split(":");
+  const parts = interaction.customId.split(":");
+  const [action, secondPart, userId, purchaseType] = parts;
+
+  // ── Archetype viewer nav ──────────────────────────────────────────────────────
+  // Button IDs: vca_prev:POSITION:IDX   vca_next:POSITION:IDX
+  if (action === "vca_prev" || action === "vca_next") {
+    const position = secondPart ?? "";
+    const idx      = parseInt(parts[2] ?? "0", 10);
+    await handleVcaNav(interaction, action === "vca_prev" ? "prev" : "next", position, idx);
+    return;
+  }
 
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_attr_plus1")    { await handleCcpAttrAdjust(interaction, secondPart ?? "", 1);  return; }
