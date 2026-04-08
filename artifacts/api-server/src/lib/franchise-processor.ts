@@ -21,6 +21,7 @@ import {
   detectH2HBlowout,
   detectCpuScoreAnomaly,
   detectPlayerStatViolations,
+  type ViolationRecord,
 } from "./stat-padding-detector.js";
 
 // ── Coin payouts (mirrors discord-bot/franchise-update.ts) ────────────────────
@@ -168,7 +169,7 @@ export interface ProcessResult {
   ok: boolean;
   message: string;
   details?: Record<string, any>;
-  violations?: string[];
+  violations?: ViolationRecord[];
 }
 
 // ── /leagueteams → populate franchiseMcaTeamsTable ───────────────────────────
@@ -880,7 +881,7 @@ export interface WeekScoresResult {
   weekNum: number;
   seasonId: number;
   catchupMode: boolean;         // true when catchup mode is active (no payouts/notifications)
-  violations: string[];         // stat-padding / blowout flags for commissioner review
+  violations: ViolationRecord[]; // stat-padding / blowout flags for commissioner review
 }
 
 /**
@@ -977,7 +978,7 @@ export async function processWeekScores(
     const milestoneLines:    string[] = [];
     const resultLines:       string[] = [];
     const unregisteredLines: string[] = [];
-    const violations:        string[] = [];
+    const violations:        ViolationRecord[] = [];
     const seenKeys = new Set<string>();
     const roundLabel = isPlayoff
       ? (({ 1: "Wild Card", 2: "Divisional Round", 3: "Conference Championship", 4: "Super Bowl" } as Record<number, string>)[weekNum] ?? `Playoff Round ${weekNum}`)
@@ -1108,7 +1109,7 @@ export async function processWeekScores(
             : ` (Week ${weekNum})`;
 
           // ── Blowout detection ──────────────────────────────────────────────
-          const blowoutFlag = detectH2HBlowout(winnerTeam, loserTeam, hiScore, loScore, roundLabel);
+          const blowoutFlag = detectH2HBlowout(winnerTeam, loserTeam, hiScore, loScore, roundLabel, winnerId);
           if (blowoutFlag) violations.push(blowoutFlag);
 
           await addBalance(winnerId, H2H_WIN_PAYOUT);
@@ -1221,7 +1222,7 @@ export async function processWeekScores(
         const spread     = humanScore - cpuScore;
 
         // ── CPU score anomaly detection ────────────────────────────────────
-        const cpuFlag = detectCpuScoreAnomaly(humanData.fullName, cpuData.fullName, humanScore, cpuScore, roundLabel);
+        const cpuFlag = detectCpuScoreAnomaly(humanData.fullName, cpuData.fullName, humanScore, cpuScore, roundLabel, humanData.discordId ?? undefined);
         if (cpuFlag) violations.push(cpuFlag);
 
         if (humanWon) {

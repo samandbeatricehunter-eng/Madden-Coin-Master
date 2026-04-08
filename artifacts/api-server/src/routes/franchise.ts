@@ -11,13 +11,85 @@ import {
   processFreeAgentRoster,
   processDraftPicks,
 } from "../lib/franchise-processor.js";
-import { sendDiscordEmbed } from "../lib/discord-notify.js";
+import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload } from "../lib/mcaStorage.js";
+import { db, statPaddingViolationsTable, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import type { ViolationRecord } from "../lib/stat-padding-detector.js";
 
 const router: IRouter = Router();
 
-const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
-const GENERAL_CHANNEL_ID      = process.env["DISCORD_GENERAL_CHANNEL_ID"]      ?? "1476321282868908052";
+const COMMISSIONER_CHANNEL_ID  = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+const GENERAL_CHANNEL_ID       = process.env["DISCORD_GENERAL_CHANNEL_ID"]      ?? "1476321282868908052";
+const VIOLATION_LOG_CHANNEL_ID = "1491529826060734524";
+
+// ── Per-violation commissioner posting (with Confirm/Deny buttons) ────────────
+async function postViolationMessages(
+  violations: ViolationRecord[],
+  week: string,
+  seasonId: number,
+  commChannelId: string,
+): Promise<void> {
+  for (const v of violations) {
+    // Resolve discordId by teamName if not already provided
+    let discordId = v.discordId ?? null;
+    if (!discordId && v.teamName) {
+      const [userRow] = await db
+        .select({ discordId: usersTable.discordId })
+        .from(usersTable)
+        .where(eq(usersTable.team, v.teamName))
+        .limit(1);
+      discordId = userRow?.discordId ?? null;
+    }
+
+    const typeLabel: Record<string, string> = {
+      h2h_blowout: "H2H Blowout",
+      cpu_score:   "CPU Score Anomaly",
+      player_stat: "Player Stat Padding",
+    };
+
+    // Save violation record to DB
+    const [inserted] = await db
+      .insert(statPaddingViolationsTable)
+      .values({
+        seasonId,
+        week,
+        type:        v.type,
+        discordId,
+        playerName:  v.playerName ?? null,
+        teamName:    v.teamName,
+        description: v.description,
+        status:      "pending",
+      })
+      .returning({ id: statPaddingViolationsTable.id });
+
+    if (!inserted) continue;
+    const violationId = inserted.id;
+
+    // Post individual embed to commissioner log with Confirm/Deny buttons
+    const embed = {
+      title:       `🚨 Violation Flagged — ${typeLabel[v.type] ?? v.type}`,
+      description: v.description + (discordId ? `\n\n**Owner:** <@${discordId}>` : ""),
+      color:       0xed4245,
+      footer:      { text: `Violation #${violationId} · ${week} · Requires commissioner review` },
+    };
+
+    const msgId = await sendDiscordEmbedWithButtons(
+      commChannelId,
+      embed,
+      `violation_confirm:${violationId}`,
+      `violation_deny:${violationId}`,
+    ).catch(() => null);
+
+    // Store the message ID so the bot can edit it on confirm/deny
+    if (msgId) {
+      await db
+        .update(statPaddingViolationsTable)
+        .set({ commMessageId: msgId })
+        .where(eq(statPaddingViolationsTable.id, violationId));
+    }
+  }
+}
 
 // ── Key validation middleware ─────────────────────────────────────────────────
 function validateKey(req: Request, res: Response, next: () => void) {
@@ -115,7 +187,7 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
       saveMcaPayload(`mca/week-${weekType}-${weekNum}-${statType}.json`, req.body);
       res.status(200).json({ status: "received" });
       const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum).catch(err => ({
-        ok: false, message: String(err), violations: [] as string[],
+        ok: false, message: String(err), violations: [] as ViolationRecord[],
       }));
       if (result.ok) {
         console.log(`[mca/week${weekNum}/${statType}] ${result.message}`);
@@ -123,12 +195,12 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
         console.error(`[mca/week${weekNum}/${statType}] Error: ${result.message}`);
       }
       if (COMMISSIONER_CHANNEL_ID && result.violations && result.violations.length > 0) {
-        sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-          title: `🚨 Stat Padding Review — ${weekLabel(weekType, weekNum)} (${statType})`,
-          description: result.violations.slice(0, 20).join("\n"),
-          color: 0xed4245,
-          footer: { text: "Flagged by auto-review on weekly import · Requires manual review" },
-        }).catch(() => {});
+        postViolationMessages(
+          result.violations,
+          weekLabel(weekType, weekNum),
+          (result as any).seasonId ?? 0,
+          COMMISSIONER_CHANNEL_ID,
+        ).catch(() => {});
       }
     },
   );
@@ -159,7 +231,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as string[],
+    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as ViolationRecord[],
     weekNum, seasonId: 0, catchupMode: false,
   }));
   console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
@@ -191,12 +263,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
       }).catch(() => {});
       if (result.violations.length > 0) {
-        await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-          title: `🚨 Violations Flagged — ${roundLabel}`,
-          description: result.violations.slice(0, 20).join("\n"),
-          color: 0xed4245,
-          footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
-        }).catch(() => {});
+        await postViolationMessages(result.violations, roundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
       }
       return;
     }
@@ -239,14 +306,9 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       footer: { text: `Season ${result.seasonId} · Madden Companion App` },
     }).catch(() => {});
 
-    // ── Violation alerts (separate embed so they stand out) ───────────────
+    // ── Violation alerts — individual messages with Confirm/Deny ─────────────
     if (result.violations.length > 0) {
-      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-        title: `🚨 Violations Flagged — ${roundLabel}`,
-        description: result.violations.slice(0, 20).join("\n"),
-        color: 0xed4245,
-        footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
-      }).catch(() => {});
+      await postViolationMessages(result.violations, roundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
     }
   }
 
@@ -328,7 +390,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as string[],
+    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as ViolationRecord[],
     weekNum, seasonId: 0, catchupMode: false,
   }));
 
@@ -358,12 +420,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
       }).catch(() => {});
       if (result.violations.length > 0) {
-        await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-          title: `🚨 Violations Flagged — ${scoresRoundLabel}`,
-          description: result.violations.slice(0, 20).join("\n"),
-          color: 0xed4245,
-          footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
-        }).catch(() => {});
+        await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
       }
       return;
     }
@@ -405,12 +462,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     }).catch(() => {});
 
     if (result.violations.length > 0) {
-      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
-        title: `🚨 Violations Flagged — ${scoresRoundLabel}`,
-        description: result.violations.slice(0, 20).join("\n"),
-        color: 0xed4245,
-        footer: { text: "Auto-flagged on weekly import · Requires manual commissioner review" },
-      }).catch(() => {});
+      await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
     }
   }
 

@@ -47,10 +47,19 @@ export function areDivisional(team1: string, team2: string): boolean {
   return !!(d1 && d2 && d1 === d2);
 }
 
+// ── Structured violation record ───────────────────────────────────────────────
+export interface ViolationRecord {
+  type: "h2h_blowout" | "cpu_score" | "player_stat";
+  description: string;
+  teamName: string;
+  playerName?: string;
+  discordId?: string;
+}
+
 /**
  * Check an H2H game's point spread for a blowout violation.
  * Non-divisional threshold: >35 pts. Divisional threshold: >42 pts.
- * Returns a violation string or null.
+ * Returns a ViolationRecord or null.
  */
 export function detectH2HBlowout(
   winnerTeam: string,
@@ -58,13 +67,19 @@ export function detectH2HBlowout(
   winnerScore: number,
   loserScore: number,
   weekLabel: string,
-): string | null {
+  winnerDiscordId?: string,
+): ViolationRecord | null {
   const spread     = winnerScore - loserScore;
   const divisional = areDivisional(winnerTeam, loserTeam);
   const threshold  = divisional ? 42 : 35;
   if (spread <= threshold) return null;
   const typeLabel = divisional ? "divisional" : "non-divisional";
-  return `⚠️ **H2H Blowout Flagged** — ${weekLabel}: **${winnerTeam}** ${winnerScore} — ${loserScore} **${loserTeam}** (+${spread} spread vs ${typeLabel} opponent; threshold: ${threshold})`;
+  return {
+    type: "h2h_blowout",
+    description: `⚠️ **H2H Blowout** — ${weekLabel}: **${winnerTeam}** ${winnerScore} — ${loserScore} **${loserTeam}** (+${spread} spread vs ${typeLabel} opponent; threshold: ${threshold})`,
+    teamName: winnerTeam,
+    discordId: winnerDiscordId,
+  };
 }
 
 /**
@@ -77,16 +92,22 @@ export function detectCpuScoreAnomaly(
   humanScore: number,
   cpuScore: number,
   weekLabel: string,
-): string | null {
+  humanDiscordId?: string,
+): ViolationRecord | null {
   if (humanScore >= 70 && cpuScore >= 70) {
-    return `🚨 **CPU Stat Padding Suspected** — ${weekLabel}: **${humanTeam}** ${humanScore} — ${cpuScore} **${cpuTeam}** (both teams 70+ points)`;
+    return {
+      type: "cpu_score",
+      description: `🚨 **CPU Stat Padding** — ${weekLabel}: **${humanTeam}** ${humanScore} — ${cpuScore} **${cpuTeam}** (both teams 70+ points)`,
+      teamName: humanTeam,
+      discordId: humanDiscordId,
+    };
   }
   return null;
 }
 
 /**
  * Check a single player's per-game stats for egregious individual numbers.
- * Returns an array of violation strings (may be empty).
+ * Returns an array of ViolationRecords (may be empty).
  */
 export function detectPlayerStatViolations(
   playerName: string,
@@ -99,22 +120,42 @@ export function detectPlayerStatViolations(
     recYds?:  number | null;
   },
   weekLabel: string,
-): string[] {
-  const flags: string[] = [];
+): ViolationRecord[] {
+  const flags: ViolationRecord[] = [];
   const name    = playerName.trim() || "Unknown Player";
   const teamTag = teamName ? ` (${teamName})` : "";
 
   if ((stats.passYds ?? 0) >= 700) {
-    flags.push(`🚨 **Stat Padding Flagged** — ${weekLabel}: **${name}**${teamTag} — ${stats.passYds} passing yards in a single game`);
+    flags.push({
+      type: "player_stat",
+      description: `🚨 **Stat Padding** — ${weekLabel}: **${name}**${teamTag} — ${stats.passYds} passing yards in a single game`,
+      teamName,
+      playerName: name,
+    });
   }
   if ((stats.passTDs ?? 0) >= 8) {
-    flags.push(`🚨 **Stat Padding Flagged** — ${weekLabel}: **${name}**${teamTag} — ${stats.passTDs} passing TDs in a single game`);
+    flags.push({
+      type: "player_stat",
+      description: `🚨 **Stat Padding** — ${weekLabel}: **${name}**${teamTag} — ${stats.passTDs} passing TDs in a single game`,
+      teamName,
+      playerName: name,
+    });
   }
   if ((stats.rushYds ?? 0) >= 500) {
-    flags.push(`🚨 **Stat Padding Flagged** — ${weekLabel}: **${name}**${teamTag} — ${stats.rushYds} rushing yards in a single game`);
+    flags.push({
+      type: "player_stat",
+      description: `🚨 **Stat Padding** — ${weekLabel}: **${name}**${teamTag} — ${stats.rushYds} rushing yards in a single game`,
+      teamName,
+      playerName: name,
+    });
   }
   if ((stats.recYds ?? 0) >= 500) {
-    flags.push(`🚨 **Stat Padding Flagged** — ${weekLabel}: **${name}**${teamTag} — ${stats.recYds} receiving yards in a single game`);
+    flags.push({
+      type: "player_stat",
+      description: `🚨 **Stat Padding** — ${weekLabel}: **${name}**${teamTag} — ${stats.recYds} receiving yards in a single game`,
+      teamName,
+      playerName: name,
+    });
   }
   return flags;
 }

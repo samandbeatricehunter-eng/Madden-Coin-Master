@@ -703,6 +703,23 @@ export const pendingChannelPayoutsTable = pgTable("pending_channel_payouts", {
 });
 
 
+// ── Stat Padding Violations (flagged by MCA, confirmed/denied by commissioner) ─
+export const statPaddingViolationsTable = pgTable("stat_padding_violations", {
+  id:              serial("id").primaryKey(),
+  seasonId:        integer("season_id").notNull(),
+  week:            text("week").notNull(),            // "Week 5", "Wild Card", etc.
+  type:            text("type").notNull(),            // "h2h_blowout" | "cpu_score" | "player_stat"
+  discordId:       text("discord_id"),               // team owner (nullable for unregistered teams)
+  playerName:      text("player_name"),              // in-game player name (player_stat only)
+  teamName:        text("team_name").notNull(),
+  description:     text("description").notNull(),    // full human-readable violation text
+  status:          text("status").notNull().default("pending"), // "pending" | "confirmed" | "denied"
+  commMessageId:   text("comm_message_id"),          // commissioner channel message ID (for button edits)
+  resolvedAt:      timestamp("resolved_at"),
+  resolvedBy:      text("resolved_by"),              // discordId of the commissioner who acted
+  createdAt:       timestamp("created_at").notNull().defaultNow(),
+});
+
 // ── Custom Archetypes ─────────────────────────────────────────────────────────
 export const customArchetypesTable = pgTable("custom_archetypes", {
   id:         serial("id").primaryKey(),
