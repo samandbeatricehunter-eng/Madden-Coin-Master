@@ -111,32 +111,6 @@ export const data = new SlashCommandBuilder()
           .setRequired(false)
           .setMinValue(1)
       )
-  )
-
-  // ── Custom Player ───────────────────────────────────────────────────────────
-  .addSubcommand(sub =>
-    sub.setName("customplayer")
-      .setDescription("Create a custom player — see /viewstore for current tier prices")
-      .addStringOption(opt =>
-        opt.setName("tier")
-          .setDescription("Player tier (see /viewstore for current prices)")
-          .setRequired(true)
-          .addChoices(
-            { name: "Gold", value: "custom_player_gold" },
-            { name: "Silver", value: "custom_player_silver" },
-            { name: "Bronze", value: "custom_player_bronze" },
-          )
-      )
-      .addStringOption(opt =>
-        opt.setName("player_name")
-          .setDescription("Player's name")
-          .setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("player_position")
-          .setDescription("Player's position (e.g. QB, WR, DL, LB, DB)")
-          .setRequired(true)
-      )
   );
 
 // ── Autocomplete ──────────────────────────────────────────────────────────────
@@ -458,53 +432,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  // ── /purchase customplayer ──────────────────────────────────────────────────
-  if (sub === "customplayer") {
-    const tierValue = interaction.options.getString("tier", true) as "custom_player_gold" | "custom_player_silver" | "custom_player_bronze";
-    const playerName = interaction.options.getString("player_name", true);
-    const playerPosition = interaction.options.getString("player_position", true);
-    const tier = tierValue.replace("custom_player_", "") as "gold" | "silver" | "bronze";
-    const cost = tier === "gold" ? rules.customGoldCost : tier === "silver" ? rules.customSilverCost : rules.customBronzeCost;
-
-    if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
-
-    const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
-    const invCount = await getInventoryCount(interaction.user.id, season.id);
-    if (invCount.legends + invCount.customs >= LIMITS.maxLegendsPlusCustomPlayers) {
-      return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}).`)] });
-    }
-
-    await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Custom player (${tierLabel}) — ${playerName} (${playerPosition})`);
-
-    const [purchase] = await db.insert(purchasesTable).values({
-      discordId: interaction.user.id,
-      seasonId: season.id,
-      purchaseType: tierValue,
-      status: "pending",
-      cost,
-      playerName,
-      playerPosition,
-      customPlayerTier: tier,
-    }).returning();
-
-    await db.insert(inventoryTable).values({
-      discordId: interaction.user.id,
-      seasonId: season.id,
-      purchaseId: purchase!.id,
-      itemType: tierValue,
-      playerName,
-      playerPosition,
-      customPlayerTier: tier,
-    });
-
-    const tierName = tier.charAt(0).toUpperCase() + tier.slice(1);
-    await sendCommissionerNotification(interaction, tierValue, purchase!.id, { playerName, playerPosition, tier: tierName });
-
-    return interaction.editReply({
-      embeds: [pendingEmbed("Custom Player Submitted!", `**${tierName}** custom player **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n**Cost:** ${cost} coins deducted.`)],
-    });
-  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
