@@ -201,9 +201,30 @@ async function handleButton(interaction: ButtonInteraction) {
       await db.update(legendsTable).set({ isAvailable: false }).where(eq(legendsTable.id, purchase.legendId));
     }
 
+    const purchaseTypeLabel: Record<string, string> = {
+      legend: "Legend Player",
+      attribute: "Attribute Upgrade",
+      dev_up: "Dev Upgrade",
+      age_reset: "Age Reset",
+      custom_player_bronze: "Custom Player (Bronze)",
+      custom_player_silver: "Custom Player (Silver)",
+      custom_player_gold: "Custom Player (Gold)",
+    };
+    const itemLabel = purchaseTypeLabel[purchaseType ?? ""] ?? (purchaseType ?? "Store Purchase");
+    const itemName = purchase.playerName ?? purchase.attributeName ?? "(unnamed)";
+    const purchaseDescLines = [
+      `**User:** <@${userId}>`,
+      `**Item:** ${itemLabel} — ${itemName}${purchase.playerPosition ? ` (${purchase.playerPosition})` : ""}`,
+      `**Cost:** ${purchase.cost.toLocaleString()} coins`,
+      purchase.notes ? `**Notes:** ${purchase.notes}` : null,
+      `\n✅ Applied in-game by ${interaction.user.toString()}`,
+    ].filter(Boolean).join("\n");
+
     const approvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green).setTitle("✅ Applied In-Game")
-      .setDescription(`Purchase **#${purchaseId}** applied.\nApproved by: ${interaction.user.toString()}`)
+      .setColor(Colors.Green)
+      .setTitle("✅ Applied In-Game")
+      .setDescription(purchaseDescLines)
+      .setFooter({ text: `Purchase #${purchaseId} • Season ${purchase.seasonId}` })
       .setTimestamp();
     await interaction.editReply({
       embeds: [approvedEmbed],
@@ -402,9 +423,18 @@ async function handleButton(interaction: ButtonInteraction) {
       await u.send(`🎙️ Your post-game interview was approved! **+${INTERVIEW_PAYOUT} coins** added to your balance.`).catch(() => {});
     } catch (_) {}
 
+    const [ivUserRow] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, interview.discordId)).limit(1);
+
     const approvedEmbed = new EmbedBuilder()
       .setColor(Colors.Green).setTitle("✅ Interview Approved")
-      .setDescription(`**+${INTERVIEW_PAYOUT} coins** awarded to <@${interview.discordId}>.\nApproved by: ${interaction.user.toString()}`)
+      .setDescription(
+        `**Player:** <@${interview.discordId}>${ivUserRow?.team ? ` (${ivUserRow.team})` : ""}\n` +
+        (interview.week ? `**Week:** ${interview.week}\n` : "") +
+        `**Coins Awarded:** +${INTERVIEW_PAYOUT} coins\n\n` +
+        `✅ Approved by ${interaction.user.toString()}`
+      )
+      .setFooter({ text: `Interview #${interviewId}` })
       .setTimestamp();
     await interaction.editReply({
       embeds: [approvedEmbed],
@@ -761,14 +791,39 @@ async function handleButton(interaction: ButtonInteraction) {
       } catch (_) {}
     }
 
+    // Look up streamer's team and try to recover the stream URL from the original message
+    const [streamerUserRow] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
+    const streamerTeam = streamerUserRow?.team ?? null;
+
+    let streamUrl = "(see original message)";
+    try {
+      const origCh = await interaction.client.channels.fetch(payout.channelId).catch(() => null);
+      if (origCh?.isTextBased()) {
+        const origMsg = await (origCh as TextChannel).messages.fetch(payout.messageId).catch(() => null);
+        const match = origMsg?.content.match(/https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i);
+        if (match) streamUrl = match[0];
+      }
+    } catch (_) {}
+
+    const isH2H = !!payout.opponentDiscordId;
+    const streamDescLines = [
+      `**Streamer:** <@${payout.discordId}>${streamerTeam ? ` (${streamerTeam})` : ""}`,
+      `**Opponent:** ${isH2H ? `${payout.opponentTeam ?? ""} — <@${payout.opponentDiscordId}>` : "CPU (no payout)"}`,
+      `**Stream:** ${streamUrl}`,
+      `**Week:** ${payout.week}`,
+      "",
+      `**Coins Awarded:**`,
+      `+${payout.amount} coins → <@${payout.discordId}>`,
+      isH2H ? `+${payout.opponentAmount} coins → <@${payout.opponentDiscordId}> (H2H opponent)` : null,
+      "",
+      `✅ Approved by ${interaction.user.toString()}`,
+    ].filter((l): l is string => l !== null).join("\n");
+
     const approvedEmbed = new EmbedBuilder()
       .setColor(Colors.Green).setTitle("✅ Stream Payout Approved")
-      .setDescription(
-        `**+${payout.amount} coins** → <@${payout.discordId}>\n` +
-        (payout.opponentDiscordId ? `**+${payout.opponentAmount} coins** → <@${payout.opponentDiscordId}> (opponent)\n` : "") +
-        `Approved by: ${interaction.user.toString()}`
-      )
-      .setFooter({ text: `Payout #${payoutId}` })
+      .setDescription(streamDescLines)
+      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
       .setTimestamp();
 
     await interaction.editReply({
@@ -805,10 +860,18 @@ async function handleButton(interaction: ButtonInteraction) {
       .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
       .where(eq(pendingChannelPayoutsTable.id, payoutId));
 
+    const [deniedStreamerRow] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
+
     const deniedEmbed = new EmbedBuilder()
       .setColor(Colors.Red).setTitle("❌ Stream Payout Denied")
-      .setDescription(`Denied by: ${interaction.user.toString()}`)
-      .setFooter({ text: `Payout #${payoutId}` })
+      .setDescription(
+        `**Streamer:** <@${payout.discordId}>${deniedStreamerRow?.team ? ` (${deniedStreamerRow.team})` : ""}\n` +
+        `**Opponent:** ${payout.opponentDiscordId ? `${payout.opponentTeam ?? ""} — <@${payout.opponentDiscordId}>` : "CPU"}\n` +
+        `**Week:** ${payout.week}\n\n` +
+        `❌ Denied by ${interaction.user.toString()}`
+      )
+      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
       .setTimestamp();
 
     await interaction.editReply({
@@ -864,13 +927,18 @@ async function handleButton(interaction: ButtonInteraction) {
       await u.send(`🎬 Your highlight video payout for Week ${payout.week} was approved! **+${payout.amount} coins** added.`).catch(() => {});
     } catch (_) {}
 
+    const [hlPosterRow] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
+
     const approvedEmbed = new EmbedBuilder()
       .setColor(Colors.Green).setTitle("✅ Highlight Payout Approved")
       .setDescription(
-        `**+${payout.amount} coins** → <@${payout.discordId}>\n` +
-        `Approved by: ${interaction.user.toString()}`
+        `**Poster:** <@${payout.discordId}>${hlPosterRow?.team ? ` (${hlPosterRow.team})` : ""}\n` +
+        `**Week:** ${payout.week}\n\n` +
+        `**Coins Awarded:**\n+${payout.amount} coins → <@${payout.discordId}>\n\n` +
+        `✅ Approved by ${interaction.user.toString()}`
       )
-      .setFooter({ text: `Payout #${payoutId}` })
+      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
       .setTimestamp();
 
     await interaction.editReply({
@@ -907,10 +975,17 @@ async function handleButton(interaction: ButtonInteraction) {
       .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
       .where(eq(pendingChannelPayoutsTable.id, payoutId));
 
+    const [hlDeniedPosterRow] = await db.select({ team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
+
     const deniedEmbed = new EmbedBuilder()
       .setColor(Colors.Red).setTitle("❌ Highlight Payout Denied")
-      .setDescription(`Denied by: ${interaction.user.toString()}`)
-      .setFooter({ text: `Payout #${payoutId}` })
+      .setDescription(
+        `**Poster:** <@${payout.discordId}>${hlDeniedPosterRow?.team ? ` (${hlDeniedPosterRow.team})` : ""}\n` +
+        `**Week:** ${payout.week}\n\n` +
+        `❌ Denied by ${interaction.user.toString()}`
+      )
+      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
       .setTimestamp();
 
     await interaction.editReply({
@@ -1499,13 +1574,23 @@ async function handleButton(interaction: ButtonInteraction) {
       .set({ status: "approved", approvedBy: interaction.user.id, approvedAt: new Date() })
       .where(eq(pendingEosPayoutsTable.id, payoutId));
 
+    type BreakdownItem = { label: string; statValue: number; unit: string; tier: number; coins: number };
+    const breakdown = (payout.statBreakdown ?? []) as BreakdownItem[];
+    const breakdownLines = breakdown.length > 0
+      ? breakdown.map(b => `• **${b.label}**: Tier ${b.tier} (+${b.coins.toLocaleString()} coins)`).join("\n")
+      : "*No stat breakdown recorded.*";
+
     const eosApprovedEmbed = new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ EOS Payout Approved")
       .setDescription(
-        `**${payout.totalCoins.toLocaleString()} coins** awarded to <@${discordId}>${payout.teamName ? ` (${payout.teamName})` : ""}.\n` +
-        `Approved by: ${interaction.user.toString()}`,
+        `**Team:** <@${discordId}>${payout.teamName ? ` (${payout.teamName})` : ""}\n` +
+        `**Season:** ${payout.seasonId}\n\n` +
+        `**Stat Breakdown:**\n${breakdownLines}\n\n` +
+        `**Total Awarded:** ${payout.totalCoins.toLocaleString()} coins\n\n` +
+        `✅ Approved by ${interaction.user.toString()}`,
       )
+      .setFooter({ text: `EOS Payout #${payoutId} • Season ${payout.seasonId}` })
       .setTimestamp();
     await interaction.editReply({
       embeds:     [eosApprovedEmbed],
