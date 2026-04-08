@@ -269,9 +269,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           lines.push("📺 Stream channel: all recent Twitch posts already have ✅ reactions — nothing missed.");
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[admin-resend-payouts] Stream scan error:", err);
-      lines.push("❌ Error scanning stream channel.");
+      lines.push(`❌ Error scanning stream channel: ${err?.message ?? String(err)}`);
     }
   }
 
@@ -373,9 +373,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           lines.push("🎬 Highlight channel: all recent video posts already have ✅ reactions — nothing missed.");
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[admin-resend-payouts] Highlight scan error:", err);
-      lines.push("❌ Error scanning highlight channel.");
+      lines.push(`❌ Error scanning highlight channel: ${err?.message ?? String(err)}`);
     }
   }
 
