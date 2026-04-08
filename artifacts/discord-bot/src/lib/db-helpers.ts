@@ -195,10 +195,12 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
         ne(customPlayersTable.status, "refunded"),
       )),
   ]);
-  const legends = items.filter(i => i.itemType === "legend").length;
+  // Only count legends that are "current" (purchased this season, not yet rolled to permanent vault)
+  const legends = items.filter(i => i.itemType === "legend" && i.legendCategory === "current").length;
   // Count legacy custom_player inventory items + new-style customPlayersTable entries
   const legacyCustoms = items.filter(i =>
-    i.itemType === "custom_player_gold" || i.itemType === "custom_player_silver" || i.itemType === "custom_player_bronze"
+    (i.itemType === "custom_player_gold" || i.itemType === "custom_player_silver" || i.itemType === "custom_player_bronze")
+    && i.legendCategory === "current"
   ).length;
   const customs = legacyCustoms + cpRows.length;
   return { legends, customs, total: items.length };
