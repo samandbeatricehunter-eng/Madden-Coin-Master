@@ -63,6 +63,24 @@ async function recordInteraction(userId: string, msgType: string): Promise<void>
   }
 }
 
+// ── Chitchat limit tracker ────────────────────────────────────────────────────
+// After CHITCHAT_LIMIT non-league (SMALLTALK) messages, the bot mutes that
+// user's off-topic replies for CHITCHAT_MUTE_MS.  The mute counter resets once
+// the mute window expires so users can chat again after cooling off.
+// Admins are always exempt.
+interface ChitchatRecord { count: number; muteUntil: number }
+const chitchatMap = new Map<string, ChitchatRecord>();
+const CHITCHAT_LIMIT   = 5;
+const CHITCHAT_MUTE_MS = 12 * 60 * 60 * 1000; // 12 hours
+const CHITCHAT_WARNING =
+  "You're jabbering about all this but I've got work to do. " +
+  "Come back when you need something pertaining to the league. " +
+  "Otherwise, I'm muting all this chit-chat between us for 12 hours. FWM.";
+
+function getChitchatRecord(userId: string): ChitchatRecord {
+  return chitchatMap.get(userId) ?? { count: 0, muteUntil: 0 };
+}
+
 // ── Per-user conversation history (in-memory, survives per process run) ───────
 // Keeps up to HISTORY_MAX_MESSAGES recent turns (user + assistant alternating)
 // so the AI carries context forward. Entries expire after HISTORY_TTL_MS of
@@ -1572,6 +1590,33 @@ export async function execute(message: Message): Promise<void> {
   const typeMatch  = raw.match(/^\[TYPE:(HELP|SMALLTALK|ROAST|APOLOGY)\]\n?/i);
   const msgType    = isDispatch ? "ADMIN_DISPATCH" : (typeMatch?.[1] ?? "UNKNOWN").toUpperCase();
   let   response   = raw.replace(/^\[TYPE:[A-Z_]+\]\n?/i, "").trim();
+
+  // ── Chitchat gate — limit non-league conversation ─────────────────────────────
+  // Admins are always exempt; all other users get CHITCHAT_LIMIT SMALLTALK
+  // exchanges per reset window before being muted for 12 hours.
+  if (msgType === "SMALLTALK" && !isAdmin) {
+    const now = Date.now();
+    let rec = getChitchatRecord(message.author.id);
+
+    // Mute expired → reset so they get a fresh allowance
+    if (rec.muteUntil > 0 && rec.muteUntil <= now) {
+      rec = { count: 0, muteUntil: 0 };
+      chitchatMap.set(message.author.id, rec);
+    }
+
+    // Currently muted → silently ignore; league messages still go through
+    if (rec.muteUntil > now) return;
+
+    // Just exhausted their allowance → warn and start the 12-hour mute
+    if (rec.count >= CHITCHAT_LIMIT) {
+      chitchatMap.set(message.author.id, { count: rec.count, muteUntil: now + CHITCHAT_MUTE_MS });
+      await message.reply(CHITCHAT_WARNING).catch(() => {});
+      return;
+    }
+
+    // Still within allowance → let the reply through and increment
+    chitchatMap.set(message.author.id, { count: rec.count + 1, muteUntil: 0 });
+  }
 
   // ── Parse and execute admin action (commissioner dispatch) ───────────────────
   if (isDispatch) {
