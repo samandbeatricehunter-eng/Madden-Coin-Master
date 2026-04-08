@@ -474,6 +474,7 @@ export const gotwHistoryTable = pgTable("gotw_history", {
   combinedScore: integer("combined_score").notNull().default(0), // stored as floor(score)
   announcementMessageId: text("announcement_message_id"),        // Discord message ID of @everyone post
   pollMessageId:         text("poll_message_id"),                // Discord message ID of the poll
+  payoutIssuedAt: timestamp("payout_issued_at"),                 // set once GOTW voter payouts have been issued
   createdAt:   timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex),

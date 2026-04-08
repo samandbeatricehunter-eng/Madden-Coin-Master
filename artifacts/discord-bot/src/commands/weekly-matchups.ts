@@ -8,10 +8,14 @@ import {
   franchiseScheduleTable, usersTable, seasonsTable,
 } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
-import { scoreH2HMatchups } from "../lib/gotw-helpers.js";
+import {
+  scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
+} from "../lib/gotw-helpers.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2; // 1=upcoming, 2=CPU-completed, 3=H2H-completed
+
+const PLAYOFF_WEEKS = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 
 export const data = new SlashCommandBuilder()
   .setName("weeklymatchups")
@@ -41,7 +45,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const weekIndex = currentWeekNum - 1;
+  const weekIndex   = currentWeekNum - 1;
+  const isPlayoff   = PLAYOFF_WEEKS.has(currentWeekStr.toLowerCase());
+
+  // ── Clear GOTW channel + auto-payout previous week's voters ───────────────
+  // These run in parallel — clear is cosmetic, payout is the important part.
+  const [payoutSummary] = await Promise.all([
+    // Auto-pay voters from the previous week's GOTW (weekIndex - 1)
+    weekIndex > 0
+      ? autoPayoutGotwVoters(
+          interaction.client,
+          interaction.guild,
+          season.id,
+          weekIndex - 1,
+          currentWeekNum - 1,
+          isPlayoff,
+        ).catch(err => {
+          console.error("[weeklymatchups] GOTW auto-payout error:", err);
+          return `❌ GOTW auto-payout failed: ${err}`;
+        })
+      : Promise.resolve(""),
+    // Wipe the GOTW channel (all messages)
+    purgeGotwChannel(interaction.client).catch(err =>
+      console.error("[weeklymatchups] GOTW channel purge error:", err),
+    ),
+  ]);
 
   // ── Schedule for this week ─────────────────────────────────────────────────
   const games = await db.select()
@@ -82,7 +110,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const homeMention = mention(g.homeTeamName);
 
     if (g.status >= MIN_COMPLETED_STATUS && g.homeScore != null && g.awayScore != null) {
-      const hs = g.homeScore;
+      const hs  = g.homeScore;
       const as_ = g.awayScore;
       if (hs === as_) {
         lines.push(`🤝 ${awayMention} **${as_}** — **${hs}** ${homeMention} *(Tie)*`);
@@ -110,6 +138,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setFooter({ text: footerParts.join(" · ") || "No games" })
     .setTimestamp();
 
+  // ── Clear matchups channel ─────────────────────────────────────────────────
   const targetChannel = interaction.client.channels.cache.get(MATCHUPS_CHANNEL_ID)
     ?? await interaction.client.channels.fetch(MATCHUPS_CHANNEL_ID).catch(() => null);
 
@@ -118,49 +147,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Clear previous week's posts ────────────────────────────────────────────
   try {
-    const tc = targetChannel as TextChannel;
-    let cleared = 0;
-
-    // Fetch up to 100 messages; repeat until the channel is empty
-    while (true) {
-      const fetched = await tc.messages.fetch({ limit: 100 });
-      if (fetched.size === 0) break;
-
-      const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000; // 14 days in ms
-      const recent = fetched.filter(m => m.createdTimestamp > cutoff);
-      const old    = fetched.filter(m => m.createdTimestamp <= cutoff);
-
-      // Bulk-delete messages newer than 14 days (Discord requirement)
-      if (recent.size >= 2) {
-        await tc.bulkDelete(recent);
-        cleared += recent.size;
-      } else if (recent.size === 1) {
-        await recent.first()!.delete();
-        cleared += 1;
-      }
-
-      // Delete older messages individually (rate-limit friendly)
-      for (const msg of old.values()) {
-        await msg.delete().catch(() => {});
-        cleared++;
-        await new Promise(r => setTimeout(r, 500)); // 0.5s between old deletes
-      }
-
-      // If we fetched fewer than 100 there are no more messages
-      if (fetched.size < 100) break;
-    }
-
+    const cleared = await purgeChannel(targetChannel as TextChannel);
     if (cleared > 0) {
       console.log(`[weeklymatchups] Cleared ${cleared} old message(s) from matchups channel`);
     }
   } catch (err) {
-    console.error("[weeklymatchups] Failed to clear channel:", err);
-    // Non-fatal — continue and post anyway
+    console.error("[weeklymatchups] Failed to clear matchups channel:", err);
   }
 
   await (targetChannel as TextChannel).send({ embeds: [embed] });
+
+  // ── Build admin reply (include payout summary + GOTW prompt) ───────────────
+  let replyContent =
+    `✅ Week ${currentWeekNum} matchups posted to <#${MATCHUPS_CHANNEL_ID}>.\n` +
+    `GOTW channel cleared.`;
+
+  if (payoutSummary) {
+    replyContent += `\n\n**Previous Week GOTW Payout:**\n${payoutSummary}`;
+  }
 
   // ── Compute GOTW scored matchups ───────────────────────────────────────────
   let scored;
@@ -172,7 +177,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (!scored || scored.length === 0) {
     await interaction.editReply({
-      content: `✅ Week ${currentWeekNum} matchups posted to <#${MATCHUPS_CHANNEL_ID}>.\n*No H2H matchups found for GOTW selection.*`,
+      content: replyContent + `\n\n*No H2H matchups found for GOTW selection.*`,
     });
     return;
   }
@@ -194,7 +199,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply({
     content:
-      `✅ Week ${currentWeekNum} matchups posted to <#${MATCHUPS_CHANNEL_ID}>.\n\n` +
+      replyContent + `\n\n` +
       `**🏆 Recommended GOTW**${cooldownNote}\n` +
       `<@${top.awayDiscordId}> **${top.awayTeamName}** vs <@${top.homeDiscordId}> **${top.homeTeamName}**\n\n` +
       `Confirm this pick or choose a different game below:`,
