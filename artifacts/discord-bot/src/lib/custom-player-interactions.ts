@@ -28,7 +28,7 @@ import {
   buildCommissionerEmbed, buildCommissionerRows,
   olSubPositionSelectRow, positionSelectRow,
   KP_POSITIONS, DEV_TRAIT_COST, DEV_TRAIT_LABEL,
-  buildArchetypeNavRows, formatArchetypeEmbed,
+  buildArchetypeNavRows, buildAttrPageNavRow, attrPageCount, formatArchetypeEmbed,
 } from "./custom-player-helpers.js";
 import { addBalance, logTransaction, getOrCreateUser } from "./db-helpers.js";
 
@@ -59,6 +59,28 @@ export async function handleCcpPreConfirm(interaction: ButtonInteraction, sessio
   });
 }
 
+// ── Shared: build the archetype browser message for the current session state ──
+function archBrowserReply(session: CustomPlayerSession, sessionId: string) {
+  const arch        = session.archetypeList[session.archetypePreviewIdx]!;
+  const attrPage    = session.archetypeAttrPage;
+  const totalAttrs  = attrPageCount(arch.attributes);
+
+  const components: ActionRowBuilder<ButtonBuilder>[] = [];
+  if (totalAttrs > 1) {
+    components.push(buildAttrPageNavRow(sessionId, attrPage, totalAttrs));
+  }
+  components.push(...buildArchetypeNavRows(sessionId, session.archetypePreviewIdx, session.archetypeList.length));
+
+  return {
+    content:
+      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
+      `Position: **${session.position}**\n\n` +
+      `Use **Prev/Next Attrs** to page through all base attributes. Use **Prev/Next** to switch archetypes. Press **Choose This Archetype** when ready.`,
+    embeds:     [formatArchetypeEmbed(session.position!, arch.name, arch.attributes, attrPage)],
+    components,
+  };
+}
+
 // ── Step 1: Position selected — show paged archetype browser ─────────────────
 export async function handleCcpPos(interaction: StringSelectMenuInteraction, sessionId: string) {
   purgeExpiredSessions();
@@ -71,7 +93,6 @@ export async function handleCcpPos(interaction: StringSelectMenuInteraction, ses
 
   await interaction.deferUpdate();
 
-  // Load all active archetypes for this position and store in session for navigation
   const archs = await db.select()
     .from(customArchetypesTable)
     .where(eq(customArchetypesTable.position, position));
@@ -80,28 +101,18 @@ export async function handleCcpPos(interaction: StringSelectMenuInteraction, ses
   if (active.length === 0) {
     await interaction.editReply({
       content: `❌ No archetypes available for **${position}** yet. Check back soon!`,
-      components: [],
-      embeds: [],
+      components: [], embeds: [],
     });
     return;
   }
 
-  session.archetypeList       = active.map(a => ({
-    id:         a.id,
-    name:       a.name,
-    attributes: a.attributes as Record<string, number>,
+  session.archetypeList        = active.map(a => ({
+    id: a.id, name: a.name, attributes: a.attributes as Record<string, number>,
   }));
-  session.archetypePreviewIdx = 0;
+  session.archetypePreviewIdx  = 0;
+  session.archetypeAttrPage    = 0;
 
-  const first = session.archetypeList[0]!;
-  await interaction.editReply({
-    content:
-      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
-      `Position: **${position}**\n\n` +
-      `Browse archetypes using the buttons below. Each embed shows the base attribute values for that archetype. When you find the one you want, press **Choose This Archetype** to lock it in.`,
-    embeds:     [formatArchetypeEmbed(position, first.name, first.attributes)],
-    components: buildArchetypeNavRows(sessionId, 0, active.length),
-  });
+  await interaction.editReply(archBrowserReply(session, sessionId));
 }
 
 // ── Step 2: Archetype navigation — Prev ───────────────────────────────────────
@@ -109,19 +120,10 @@ export async function handleCcpArchPrev(interaction: ButtonInteraction, sessionI
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
   await interaction.deferUpdate();
-
   if (session.archetypePreviewIdx <= 0) return;
   session.archetypePreviewIdx--;
-
-  const arch = session.archetypeList[session.archetypePreviewIdx]!;
-  await interaction.editReply({
-    content:
-      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
-      `Position: **${session.position}**\n\n` +
-      `Browse archetypes using the buttons below. Each embed shows the base attribute values for that archetype. When you find the one you want, press **Choose This Archetype** to lock it in.`,
-    embeds:     [formatArchetypeEmbed(session.position!, arch.name, arch.attributes)],
-    components: buildArchetypeNavRows(sessionId, session.archetypePreviewIdx, session.archetypeList.length),
-  });
+  session.archetypeAttrPage = 0;
+  await interaction.editReply(archBrowserReply(session, sessionId));
 }
 
 // ── Step 2: Archetype navigation — Next ───────────────────────────────────────
@@ -129,19 +131,32 @@ export async function handleCcpArchNext(interaction: ButtonInteraction, sessionI
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
   await interaction.deferUpdate();
-
   if (session.archetypePreviewIdx >= session.archetypeList.length - 1) return;
   session.archetypePreviewIdx++;
+  session.archetypeAttrPage = 0;
+  await interaction.editReply(archBrowserReply(session, sessionId));
+}
 
-  const arch = session.archetypeList[session.archetypePreviewIdx]!;
-  await interaction.editReply({
-    content:
-      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
-      `Position: **${session.position}**\n\n` +
-      `Browse archetypes using the buttons below. Each embed shows the base attribute values for that archetype. When you find the one you want, press **Choose This Archetype** to lock it in.`,
-    embeds:     [formatArchetypeEmbed(session.position!, arch.name, arch.attributes)],
-    components: buildArchetypeNavRows(sessionId, session.archetypePreviewIdx, session.archetypeList.length),
-  });
+// ── Step 2: Attribute page — Prev ─────────────────────────────────────────────
+export async function handleCcpAttrPagePrev(interaction: ButtonInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+  await interaction.deferUpdate();
+  if (session.archetypeAttrPage <= 0) return;
+  session.archetypeAttrPage--;
+  await interaction.editReply(archBrowserReply(session, sessionId));
+}
+
+// ── Step 2: Attribute page — Next ─────────────────────────────────────────────
+export async function handleCcpAttrPageNext(interaction: ButtonInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+  await interaction.deferUpdate();
+  const arch = session.archetypeList[session.archetypePreviewIdx];
+  if (!arch) return;
+  if (session.archetypeAttrPage >= attrPageCount(arch.attributes) - 1) return;
+  session.archetypeAttrPage++;
+  await interaction.editReply(archBrowserReply(session, sessionId));
 }
 
 // ── Step 2: Archetype selected — commit and advance ───────────────────────────

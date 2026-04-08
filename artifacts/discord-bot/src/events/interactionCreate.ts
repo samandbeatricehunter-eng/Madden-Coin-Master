@@ -22,13 +22,14 @@ import { executeAdminAction, type AdminActionContext } from "../lib/admin-action
 import {
   handleCcpPreConfirm,
   handleCcpPos, handleCcpArch, handleCcpArchPrev, handleCcpArchNext, handleCcpArchPick,
+  handleCcpAttrPagePrev, handleCcpAttrPageNext,
   handleCcpOlPos, handleCcpDev, handleCcpPkg,
   handleCcpAttrSel, handleCcpAttrAdjust,
   handleCcpSubmitAttrs, handleCcpConfirm, handleCcpCancel,
   handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
 } from "../lib/custom-player-interactions.js";
-import { handleViewArchetypeSelect, handleVcaNav } from "../commands/viewcustomarchetypes.js";
+import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/viewcustomarchetypes.js";
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
@@ -109,7 +110,7 @@ async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
 
-  // ── Archetype viewer nav ──────────────────────────────────────────────────────
+  // ── Archetype viewer — archetype nav ─────────────────────────────────────────
   // Button IDs: vca_prev:POSITION:IDX   vca_next:POSITION:IDX
   if (action === "vca_prev" || action === "vca_next") {
     const position = secondPart ?? "";
@@ -117,6 +118,21 @@ async function handleButton(interaction: ButtonInteraction) {
     await handleVcaNav(interaction, action === "vca_prev" ? "prev" : "next", position, idx);
     return;
   }
+
+  // ── Archetype viewer — attribute page nav ─────────────────────────────────────
+  // Button IDs: vca_apage_prev:POSITION:ARCHIDX:ATTRPAGE  vca_apage_next:...
+  if (action === "vca_apage_prev" || action === "vca_apage_next") {
+    const position    = secondPart ?? "";
+    const archIdx     = parseInt(parts[2] ?? "0", 10);
+    const attrPage    = parseInt(parts[3] ?? "0", 10);
+    await handleVcaAttrPageNav(interaction, action === "vca_apage_prev" ? "prev" : "next", position, archIdx, attrPage);
+    return;
+  }
+
+  // ── Purchase flow — attribute page nav ────────────────────────────────────────
+  // Button IDs: ccp_apage_prev:sessionId   ccp_apage_next:sessionId
+  if (action === "ccp_apage_prev") { await handleCcpAttrPagePrev(interaction, secondPart ?? ""); return; }
+  if (action === "ccp_apage_next") { await handleCcpAttrPageNext(interaction, secondPart ?? ""); return; }
 
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_attr_plus1")    { await handleCcpAttrAdjust(interaction, secondPart ?? "", 1);  return; }

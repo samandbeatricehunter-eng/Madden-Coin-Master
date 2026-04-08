@@ -343,9 +343,67 @@ export function buildCommissionerRows(playerId: number) {
   );
 }
 
-// ── Archetype paged-browser UI ────────────────────────────────────────────────
-// Shows one archetype at a time with Prev/Next navigation and a Pick button.
+// ── Archetype attribute paging ────────────────────────────────────────────────
+export const ATTRS_PER_PAGE = 18; // 6 rows of 3 inline fields
 
+export function attrPageCount(attributes: Record<string, number>): number {
+  return Math.max(1, Math.ceil(Object.keys(attributes).length / ATTRS_PER_PAGE));
+}
+
+// Attribute page nav for the session-based purchase flow
+// Button IDs: ccp_apage_prev:sessionId / ccp_apage_next:sessionId
+export function buildAttrPageNavRow(
+  sessionId: string,
+  attrPage: number,
+  totalAttrPages: number,
+): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ccp_apage_prev:${sessionId}`)
+      .setLabel("◀  Prev Attrs")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(attrPage <= 0),
+    new ButtonBuilder()
+      .setCustomId("ccp_apage_indicator")
+      .setLabel(`Attrs: ${attrPage + 1} / ${totalAttrPages}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(`ccp_apage_next:${sessionId}`)
+      .setLabel("Next Attrs  ▶")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(attrPage >= totalAttrPages - 1),
+  );
+}
+
+// Attribute page nav for the stateless vca viewer (state encoded in button IDs)
+// Button IDs: vca_apage_prev:position:archIdx:attrPage / vca_apage_next:...
+export function buildVcaAttrPageNavRow(
+  position: string,
+  archIdx: number,
+  attrPage: number,
+  totalAttrPages: number,
+): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`vca_apage_prev:${position}:${archIdx}:${attrPage}`)
+      .setLabel("◀  Prev Attrs")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(attrPage <= 0),
+    new ButtonBuilder()
+      .setCustomId("vca_apage_indicator")
+      .setLabel(`Attrs: ${attrPage + 1} / ${totalAttrPages}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(`vca_apage_next:${position}:${archIdx}:${attrPage}`)
+      .setLabel("Next Attrs  ▶")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(attrPage >= totalAttrPages - 1),
+  );
+}
+
+// ── Archetype browser nav (switch between archetypes) ─────────────────────────
 export function buildArchetypeNavRows(
   sessionId: string,
   currentIdx: number,
@@ -376,31 +434,29 @@ export function buildArchetypeNavRows(
 }
 
 // ── Format archetype for display ──────────────────────────────────────────────
-// Discord allows a maximum of 25 fields per embed.
-// Archetypes store all 54 Madden attributes, so we sort by value descending
-// and show the top 25 — these are always the most position-relevant stats
-// since irrelevant attributes (e.g. a CB's kicking power) are set very low.
-const MAX_EMBED_FIELDS = 25;
-
+// Shows ATTRS_PER_PAGE attributes at a time in original Madden order.
+// Pass attrPage to control which slice is shown (0-indexed).
 export function formatArchetypeEmbed(
   position: string,
   name: string,
   attributes: Record<string, number>,
+  attrPage = 0,
 ): EmbedBuilder {
-  const entries = Object.entries(attributes)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_EMBED_FIELDS);
+  const allEntries  = Object.entries(attributes);
+  const totalPages  = Math.max(1, Math.ceil(allEntries.length / ATTRS_PER_PAGE));
+  const safePage    = Math.max(0, Math.min(attrPage, totalPages - 1));
+  const pageEntries = allEntries.slice(safePage * ATTRS_PER_PAGE, (safePage + 1) * ATTRS_PER_PAGE);
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
     .setTitle(`${position} — ${name}`)
-    .setFooter({ text: `Showing top ${Math.min(MAX_EMBED_FIELDS, entries.length)} attributes by value` });
+    .setFooter({ text: `Attributes — Page ${safePage + 1} of ${totalPages}` });
 
-  if (entries.length === 0) {
+  if (pageEntries.length === 0) {
     embed.setDescription("No attributes defined.");
   } else {
     embed.addFields(
-      entries.map(([attr, val]) => ({
+      pageEntries.map(([attr, val]) => ({
         name:   attr,
         value:  String(val),
         inline: true,
