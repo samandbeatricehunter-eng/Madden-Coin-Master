@@ -26,7 +26,7 @@ import {
   buildAttrRows, attrAllocEmbed,
   heightOptions, weightOptions, inchesToDisplay,
   buildCommissionerEmbed, buildCommissionerRows,
-  olSubPositionSelectRow,
+  olSubPositionSelectRow, positionSelectRow,
   KP_POSITIONS, DEV_TRAIT_COST, DEV_TRAIT_LABEL,
 } from "./custom-player-helpers.js";
 import { addBalance, logTransaction, getOrCreateUser } from "./db-helpers.js";
@@ -38,6 +38,23 @@ async function sessionExpired(interaction: ButtonInteraction | StringSelectMenuI
   await interaction.reply({
     content: "⏰ Your session expired (30-min limit). Run `/purchasecustomplayer` to start over.",
     ephemeral: true,
+  });
+}
+
+// ── Pre-step: User confirmed draft-pick warning → show position select ────────
+export async function handleCcpPreConfirm(interaction: ButtonInteraction, sessionId: string) {
+  purgeExpiredSessions();
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+
+  await interaction.deferUpdate();
+
+  await interaction.editReply({
+    content:
+      "**🏈 Custom Player Builder — Step 1 of 8**\n\n" +
+      "Select your player's position to get started:",
+    embeds:     [],
+    components: [positionSelectRow(sessionId)],
   });
 }
 
@@ -625,8 +642,10 @@ export async function handleCcpApplied(interaction: ButtonInteraction, playerIdS
     const discordUser = await interaction.client.users.fetch(row.discordId);
     await discordUser.send(
       `✅ **Your custom player has been added to the draft class!**\n\n` +
-      `**${row.firstName} ${row.lastName}** (${row.position}) has been applied in-game.\n` +
-      `Don't forget to **favorite the player** in-game so they appear in your draft queue!`,
+      `**${row.firstName} ${row.lastName}** (${row.position}) has been applied in-game.\n\n` +
+      `📋 **Reminder:** You will need to use a **draft pick** to select this player in the upcoming draft. ` +
+      `Make sure you have a pick available when your round comes up.\n\n` +
+      `⭐ Don't forget to **favorite the player** in-game so they appear at the top of your draft queue!`,
     ).catch(() => {});
   } catch (_) {}
 }

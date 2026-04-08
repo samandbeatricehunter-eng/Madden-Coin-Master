@@ -1,8 +1,11 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors } from "discord.js";
+import {
+  SlashCommandBuilder, ChatInputCommandInteraction,
+  EmbedBuilder, Colors,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+} from "discord.js";
 import { db } from "@workspace/db";
 import { customPlayerSettingsTable } from "@workspace/db";
 import { createSession } from "../lib/custom-player-session.js";
-import { positionSelectRow } from "../lib/custom-player-helpers.js";
 import { getOrCreateActiveSeason, getInventoryCount } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
 
@@ -46,17 +49,45 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Start builder flow ─────────────────────────────────────────────────────
+  // ── Show upfront draft-pick warning before starting the builder ───────────
   const sessionId = createSession(discordId, interaction.guild?.id ?? "");
 
-  const slotsLeft  = cap - combined;
-  const remainNote = `\n\n*You have **${combined}** of **${cap}** season inventory slots used (legends + custom players combined). **${slotsLeft}** slot${slotsLeft !== 1 ? "s" : ""} remaining.*`;
+  const slotsLeft = cap - combined;
 
-  await interaction.editReply({
-    content:
-      "**🏈 Custom Player Builder — Step 1 of 8**\n\n" +
-      "Select your player's position to get started:" +
-      remainNote,
-    components: [positionSelectRow(sessionId)],
-  });
+  const warningEmbed = new EmbedBuilder()
+    .setColor(Colors.Yellow)
+    .setTitle("⚠️ Before You Start — Draft Pick Required")
+    .setDescription(
+      "Purchasing a custom player **does not automatically place them on your roster**.\n\n" +
+      "You must use **a draft pick** to select your custom player during the annual draft. " +
+      "If you do not have a draft pick available, you will not be able to add this player to your team.",
+    )
+    .addFields(
+      {
+        name: "What happens after you purchase?",
+        value:
+          "1. You build your player's position, archetype, attributes, and appearance.\n" +
+          "2. A commissioner adds them to the MCA draft class.\n" +
+          "3. You use a draft pick to select them in the draft.\n" +
+          "4. They join your roster once drafted.",
+      },
+      {
+        name: "Season inventory slots",
+        value: `You have **${combined}** of **${cap}** slots used. **${slotsLeft}** slot${slotsLeft !== 1 ? "s" : ""} remaining.`,
+      },
+    )
+    .setFooter({ text: "Make sure you have a draft pick saved before proceeding." });
+
+  const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ccp_preconfirm:${sessionId}`)
+      .setLabel("✅ I understand, start building")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`ccp_cancel:${sessionId}`)
+      .setLabel("❌ Cancel")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.editReply({ embeds: [warningEmbed], components: [confirmRow] });
 }

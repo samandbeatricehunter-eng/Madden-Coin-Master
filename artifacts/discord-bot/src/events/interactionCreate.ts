@@ -19,6 +19,7 @@ import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
 import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-cocomm-actions.js";
 import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
 import {
+  handleCcpPreConfirm,
   handleCcpPos, handleCcpArch, handleCcpOlPos, handleCcpDev, handleCcpPkg,
   handleCcpAttrSel, handleCcpAttrAdjust,
   handleCcpSubmitAttrs, handleCcpConfirm, handleCcpCancel,
@@ -109,6 +110,7 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ccp_attr_plus5")    { await handleCcpAttrAdjust(interaction, secondPart ?? "", 5);  return; }
   if (action === "ccp_attr_minus5")   { await handleCcpAttrAdjust(interaction, secondPart ?? "", -5); return; }
   if (action === "ccp_submit_attrs")  { await handleCcpSubmitAttrs(interaction, secondPart ?? "");    return; }
+  if (action === "ccp_preconfirm")    { await handleCcpPreConfirm(interaction, secondPart ?? "");    return; }
   if (action === "ccp_confirm")       { await handleCcpConfirm(interaction, secondPart ?? "");        return; }
   if (action === "ccp_cancel")        { await handleCcpCancel(interaction, secondPart ?? "");         return; }
   if (action === "ccp_applied")       { await handleCcpApplied(interaction, secondPart ?? "");        return; }
