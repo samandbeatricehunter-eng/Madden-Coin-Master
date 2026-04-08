@@ -86,7 +86,7 @@ export async function getSettings() {
     .returning();
   return inserted ?? {
     id: 1, bronzePoints: 35, silverPoints: 70, goldPoints: 100,
-    bronzeCost: 0, silverCost: 0, goldCost: 0, kpPoints: 50, kpCost: 0,
+    bronzeCost: 0, silverCost: 0, goldCost: 0, kpPoints: 50, kpCost: 150,
     updatedAt: new Date(),
   };
 }

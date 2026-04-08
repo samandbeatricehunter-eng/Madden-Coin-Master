@@ -741,7 +741,7 @@ export const customPlayerSettingsTable = pgTable("custom_player_settings", {
   silverCost:   integer("silver_cost").notNull().default(0),
   goldCost:     integer("gold_cost").notNull().default(0),
   kpPoints:     integer("kp_points").notNull().default(50),
-  kpCost:       integer("kp_cost").notNull().default(0),
+  kpCost:       integer("kp_cost").notNull().default(150),
   updatedAt:    timestamp("updated_at").notNull().defaultNow(),
 });
 
