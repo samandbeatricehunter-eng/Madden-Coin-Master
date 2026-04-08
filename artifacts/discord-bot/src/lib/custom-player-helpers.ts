@@ -376,15 +376,25 @@ export function buildArchetypeNavRows(
 }
 
 // ── Format archetype for display ──────────────────────────────────────────────
+// Discord allows a maximum of 25 fields per embed.
+// Archetypes store all 54 Madden attributes, so we sort by value descending
+// and show the top 25 — these are always the most position-relevant stats
+// since irrelevant attributes (e.g. a CB's kicking power) are set very low.
+const MAX_EMBED_FIELDS = 25;
+
 export function formatArchetypeEmbed(
   position: string,
   name: string,
   attributes: Record<string, number>,
 ): EmbedBuilder {
-  const entries = Object.entries(attributes);
+  const entries = Object.entries(attributes)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MAX_EMBED_FIELDS);
+
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
-    .setTitle(`${position} — ${name}`);
+    .setTitle(`${position} — ${name}`)
+    .setFooter({ text: `Showing top ${Math.min(MAX_EMBED_FIELDS, entries.length)} attributes by value` });
 
   if (entries.length === 0) {
     embed.setDescription("No attributes defined.");
