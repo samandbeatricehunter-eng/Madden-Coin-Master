@@ -6,9 +6,9 @@ import { db } from "@workspace/db";
 import {
   usersTable, teamSeasonStatsTable,
   seasonStatTierConfigsTable, pendingEosPayoutsTable,
-  playerSeasonStatsTable,
+  playerSeasonStatsTable, franchiseScheduleTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNotNull } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 
@@ -65,6 +65,40 @@ export async function runEosAutoPost(
   const statsMap = new Map<string, typeof allTeamStats[0]>();
   for (const s of allTeamStats) {
     if (s.discordId) statsMap.set(s.discordId, s);
+  }
+
+  // ── 3b. Pre-compute schedule-based score fallbacks ────────────────────────────
+  // Used when MCA didn't export offPtsPerGame / defTDs (points allowed).
+  const teamIdToDiscordId = new Map<number, string>();
+  for (const s of allTeamStats) {
+    if (s.discordId) teamIdToDiscordId.set(s.teamId, s.discordId);
+  }
+
+  const scheduleRows = await db.select({
+    homeTeamId: franchiseScheduleTable.homeTeamId,
+    awayTeamId: franchiseScheduleTable.awayTeamId,
+    homeScore:  franchiseScheduleTable.homeScore,
+    awayScore:  franchiseScheduleTable.awayScore,
+  }).from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId, seasonId),
+      isNotNull(franchiseScheduleTable.homeScore),
+      isNotNull(franchiseScheduleTable.awayScore),
+    ));
+
+  const schedScoreMap = new Map<string, { ptsFor: number; ptsAllowed: number; games: number }>();
+  for (const g of scheduleRows) {
+    if (g.homeScore == null || g.awayScore == null) continue;
+    const homeDid = teamIdToDiscordId.get(g.homeTeamId);
+    const awayDid = teamIdToDiscordId.get(g.awayTeamId);
+    if (homeDid) {
+      const cur = schedScoreMap.get(homeDid) ?? { ptsFor: 0, ptsAllowed: 0, games: 0 };
+      schedScoreMap.set(homeDid, { ptsFor: cur.ptsFor + g.homeScore, ptsAllowed: cur.ptsAllowed + g.awayScore, games: cur.games + 1 });
+    }
+    if (awayDid) {
+      const cur = schedScoreMap.get(awayDid) ?? { ptsFor: 0, ptsAllowed: 0, games: 0 };
+      schedScoreMap.set(awayDid, { ptsFor: cur.ptsFor + g.awayScore, ptsAllowed: cur.ptsAllowed + g.homeScore, games: cur.games + 1 });
+    }
   }
 
   // ── 4. Load admin-configurable attempt minimums and bonus thresholds ──────────
@@ -133,15 +167,30 @@ export async function runEosAutoPost(
       if (teamStats) {
         hasStats = true;
 
-        // Determine PPG — use MCA-imported value if non-zero, otherwise compute from total pts / games
+        const schedStats = schedScoreMap.get(user.discordId);
+
+        // PPG — tier 1: MCA offPtsPerGame; tier 2: offTDs (ptsFor) / games; tier 3: schedule scores / 17 (ceil)
         const games = (teamStats.wins ?? 0) + (teamStats.losses ?? 0);
-        const computedPpg = games > 0 ? (teamStats.offTDs ?? 0) / games : 0;
+        const schedPpg = schedStats && schedStats.games > 0 ? Math.ceil(schedStats.ptsFor / 17) : 0;
+        const computedPpg = (teamStats.offTDs ?? 0) > 0 && games > 0
+          ? (teamStats.offTDs ?? 0) / games
+          : schedPpg;
         const resolvedPpg = (teamStats.offPtsPerGame ?? 0) > 0
           ? (teamStats.offPtsPerGame ?? 0)
           : computedPpg;
 
-        // Map columns → STAT_CATEGORIES.jsonFields aliases.
-        // sacks/INTs: prefer MCA-imported value from DB; fall back to summing all player rows.
+        // Points Allowed — tier 1: MCA defTDs (ptsAgainst); tier 2: sum of opponent scores from schedule
+        const resolvedPtsAllowed = (teamStats.defTDs ?? 0) > 0
+          ? (teamStats.defTDs ?? 0)
+          : (schedStats?.ptsAllowed ?? 0);
+
+        // Fumble Recoveries — tier 1: MCA team total; tier 2: sum individual player fumble recoveries
+        const computedFumblesRec = playerRows.reduce((sum, p) => sum + (p.defFumblesRec ?? 0), 0);
+        const resolvedFumblesRec = (teamStats.defFumblesRec ?? 0) > 0
+          ? (teamStats.defFumblesRec ?? 0)
+          : computedFumblesRec;
+
+        // Sacks / INTs — prefer MCA team total; fall back to summing player rows
         const resolvedSacks = (teamStats.teamSacks ?? 0) > 0 ? (teamStats.teamSacks ?? 0) : computedSacks;
         const resolvedInts  = (teamStats.teamInts  ?? 0) > 0 ? (teamStats.teamInts  ?? 0) : computedInts;
 
@@ -154,8 +203,8 @@ export async function runEosAutoPost(
           pointsPerGame: resolvedPpg,
           defPassYds:    teamStats.defPassYds,
           defRushYds:    teamStats.defRushYds,
-          defPtsAllowed: teamStats.defTDs,   // defTDs stores season points allowed
-          defFumblesRec: teamStats.defFumblesRec,
+          defPtsAllowed: resolvedPtsAllowed,
+          defFumblesRec: resolvedFumblesRec,
           defRedZonePct: teamStats.defRedZonePct,
           defSacks:      resolvedSacks,
           totalSacks:    resolvedSacks,

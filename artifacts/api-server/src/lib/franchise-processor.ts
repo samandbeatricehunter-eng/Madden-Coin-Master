@@ -705,18 +705,20 @@ export async function processPlayerWeekStats(
         );
         statViolations.push(...recViolations);
       } else if (statType === "defense") {
-        const sacks        = getN(p, "defSacks",        "sacks",         "sack");
-        const defInts      = getN(p, "defInts",         "defInterceptions", "interceptions", "ints");
-        const totalTackles = getN(p, "defTotalTackles", "totalTackles",  "tackleTotal", "tackles");
-        const tackleSolo   = getN(p, "defTackleSolo",   "tackleSolo",    "soloTackles");
-        const tackleAssist = getN(p, "defTackleAssist", "tackleAssist",  "assistTackles");
-        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist };
+        const sacks         = getN(p, "defSacks",        "sacks",              "sack");
+        const defInts       = getN(p, "defInts",         "defInterceptions",   "interceptions", "ints");
+        const totalTackles  = getN(p, "defTotalTackles", "totalTackles",       "tackleTotal", "tackles");
+        const tackleSolo    = getN(p, "defTackleSolo",   "tackleSolo",         "soloTackles");
+        const tackleAssist  = getN(p, "defTackleAssist", "tackleAssist",       "assistTackles");
+        const defFumblesRec = getN(p, "defFumblesRec",   "fumblesRecovered",   "fumRec", "fumbleRecoveries", "fumbleRec", "fumbRec");
+        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist, defFumblesRec };
         accumSet     = {
-          sacks:        sql`${playerSeasonStatsTable.sacks}        + ${sacks}`,
-          defInts:      sql`${playerSeasonStatsTable.defInts}      + ${defInts}`,
-          totalTackles: sql`${playerSeasonStatsTable.totalTackles} + ${totalTackles}`,
-          tackleSolo:   sql`${playerSeasonStatsTable.tackleSolo}   + ${tackleSolo}`,
-          tackleAssist: sql`${playerSeasonStatsTable.tackleAssist} + ${tackleAssist}`,
+          sacks:         sql`${playerSeasonStatsTable.sacks}         + ${sacks}`,
+          defInts:       sql`${playerSeasonStatsTable.defInts}       + ${defInts}`,
+          totalTackles:  sql`${playerSeasonStatsTable.totalTackles}  + ${totalTackles}`,
+          tackleSolo:    sql`${playerSeasonStatsTable.tackleSolo}    + ${tackleSolo}`,
+          tackleAssist:  sql`${playerSeasonStatsTable.tackleAssist}  + ${tackleAssist}`,
+          defFumblesRec: sql`${playerSeasonStatsTable.defFumblesRec} + ${defFumblesRec}`,
         };
       }
 

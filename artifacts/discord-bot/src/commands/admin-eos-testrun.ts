@@ -24,8 +24,10 @@ import {
   teamSeasonStatsTable,
   seasonStatTierConfigsTable,
   playerSeasonStatsTable,
+  franchiseScheduleTable,
+  playerStatWeekProcessedTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNotNull } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { STAT_CATEGORIES, evaluateTier } from "../lib/stat-categories.js";
 import { getPayoutValue, getAllPayoutConfig, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -131,6 +133,48 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .where(eq(teamSeasonStatsTable.seasonId, seasonId));
   const statsMap = new Map(allTeamStats.filter(s => s.discordId).map(s => [s.discordId!, s]));
 
+  // ── 4b. Pre-compute schedule-based score fallbacks ────────────────────────────
+  const teamIdToDiscordId = new Map<number, string>();
+  for (const s of allTeamStats) {
+    if (s.discordId) teamIdToDiscordId.set(s.teamId, s.discordId);
+  }
+
+  const scheduleRows = await db.select({
+    homeTeamId: franchiseScheduleTable.homeTeamId,
+    awayTeamId: franchiseScheduleTable.awayTeamId,
+    homeScore:  franchiseScheduleTable.homeScore,
+    awayScore:  franchiseScheduleTable.awayScore,
+  }).from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId, seasonId),
+      isNotNull(franchiseScheduleTable.homeScore),
+      isNotNull(franchiseScheduleTable.awayScore),
+    ));
+
+  const schedScoreMap = new Map<string, { ptsFor: number; ptsAllowed: number; games: number }>();
+  for (const g of scheduleRows) {
+    if (g.homeScore == null || g.awayScore == null) continue;
+    const homeDid = teamIdToDiscordId.get(g.homeTeamId);
+    const awayDid = teamIdToDiscordId.get(g.awayTeamId);
+    if (homeDid) {
+      const cur = schedScoreMap.get(homeDid) ?? { ptsFor: 0, ptsAllowed: 0, games: 0 };
+      schedScoreMap.set(homeDid, { ptsFor: cur.ptsFor + g.homeScore, ptsAllowed: cur.ptsAllowed + g.awayScore, games: cur.games + 1 });
+    }
+    if (awayDid) {
+      const cur = schedScoreMap.get(awayDid) ?? { ptsFor: 0, ptsAllowed: 0, games: 0 };
+      schedScoreMap.set(awayDid, { ptsFor: cur.ptsFor + g.awayScore, ptsAllowed: cur.ptsAllowed + g.homeScore, games: cur.games + 1 });
+    }
+  }
+
+  // ── 4c. Check how many weeks of player stats have been imported ───────────────
+  const weekProcessedRows = await db.select({
+    statType: playerStatWeekProcessedTable.statType,
+  }).from(playerStatWeekProcessedTable)
+    .where(eq(playerStatWeekProcessedTable.seasonId, seasonId));
+
+  const passingWeeksImported = weekProcessedRows.filter(w => w.statType === "passing").length;
+  const rushingWeeksImported = weekProcessedRows.filter(w => w.statType === "rushing").length;
+
   // ── 5. Load payout configuration ─────────────────────────────────────────────
   const payoutConfig = await getAllPayoutConfig();
   const get = (key: typeof PAYOUT_KEYS[keyof typeof PAYOUT_KEYS]) =>
@@ -215,6 +259,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── 9. Build warning list ─────────────────────────────────────────────────────
   const warnings: string[] = [];
   warnings.push("⚠️ **GOTY Award Bonuses** — cannot be auto-detected. Apply manually with `/admin-addcoins`.");
+  if (passingWeeksImported < 17) {
+    warnings.push(
+      `⚠️ **QB/RB Stats May Be Incomplete** — only **${passingWeeksImported}/17** weeks of passing stats and **${rushingWeeksImported}/17** weeks of rushing stats have been imported via MCA. QB YPA attempt counts and RB YPC carry counts may reflect less than a full season. Import all 17 weeks through MCA to get accurate totals.`,
+    );
+  }
   if (!prDataAvailable) {
     warnings.push(`⚠️ **PR Bonuses** — no records data found (source: ${prSource}). PR bonuses cannot be calculated.`);
   } else if (prSource === "gcs") {
@@ -260,9 +309,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (teamStats) {
       hasStats = true;
-      const games       = (teamStats.wins ?? 0) + (teamStats.losses ?? 0);
-      const computedPpg = games > 0 ? (teamStats.offTDs ?? 0) / games : 0;
-      const resolvedPpg = (teamStats.offPtsPerGame ?? 0) > 0 ? (teamStats.offPtsPerGame ?? 0) : computedPpg;
+
+      const schedStats = schedScoreMap.get(user.discordId);
+
+      // PPG — tier 1: MCA offPtsPerGame; tier 2: offTDs (ptsFor) / games; tier 3: schedule scores / 17 (ceil)
+      const games = (teamStats.wins ?? 0) + (teamStats.losses ?? 0);
+      const schedPpg = schedStats && schedStats.games > 0 ? Math.ceil(schedStats.ptsFor / 17) : 0;
+      const computedPpg = (teamStats.offTDs ?? 0) > 0 && games > 0
+        ? (teamStats.offTDs ?? 0) / games
+        : schedPpg;
+      const resolvedPpg = (teamStats.offPtsPerGame ?? 0) > 0
+        ? (teamStats.offPtsPerGame ?? 0)
+        : computedPpg;
+
+      // Points Allowed — tier 1: MCA defTDs (ptsAgainst); tier 2: sum of opponent scores from schedule
+      const resolvedPtsAllowed = (teamStats.defTDs ?? 0) > 0
+        ? (teamStats.defTDs ?? 0)
+        : (schedStats?.ptsAllowed ?? 0);
+
+      // Fumble Recoveries — tier 1: MCA team total; tier 2: sum individual player fumble recoveries
+      const computedFumblesRec = playerRows.reduce((sum, p) => sum + (p.defFumblesRec ?? 0), 0);
+      const resolvedFumblesRec = (teamStats.defFumblesRec ?? 0) > 0
+        ? (teamStats.defFumblesRec ?? 0)
+        : computedFumblesRec;
+
       const resolvedSacks = (teamStats.teamSacks ?? 0) > 0 ? (teamStats.teamSacks ?? 0) : computedSacks;
       const resolvedInts  = (teamStats.teamInts  ?? 0) > 0 ? (teamStats.teamInts  ?? 0) : computedInts;
 
@@ -275,8 +345,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         pointsPerGame: resolvedPpg,
         defPassYds:    teamStats.defPassYds,
         defRushYds:    teamStats.defRushYds,
-        defPtsAllowed: teamStats.defTDs,
-        defFumblesRec: teamStats.defFumblesRec,
+        defPtsAllowed: resolvedPtsAllowed,
+        defFumblesRec: resolvedFumblesRec,
         defRedZonePct: teamStats.defRedZonePct,
         defSacks:      resolvedSacks,
         totalSacks:    resolvedSacks,

@@ -447,12 +447,13 @@ export const playerSeasonStatsTable = pgTable("player_season_stats", {
   recYds:       integer("rec_yds").notNull().default(0),
   recTDs:       integer("rec_tds").notNull().default(0),
   recRec:       integer("rec_rec").notNull().default(0),
-  sacks:        integer("sacks").notNull().default(0),
-  defInts:      integer("def_ints").notNull().default(0),
-  totalTackles: integer("total_tackles").notNull().default(0),
-  tackleSolo:   integer("tackle_solo").notNull().default(0),
-  tackleAssist: integer("tackle_assist").notNull().default(0),
-  updatedAt:    timestamp("updated_at").notNull().defaultNow(),
+  sacks:         integer("sacks").notNull().default(0),
+  defInts:       integer("def_ints").notNull().default(0),
+  totalTackles:  integer("total_tackles").notNull().default(0),
+  tackleSolo:    integer("tackle_solo").notNull().default(0),
+  tackleAssist:  integer("tackle_assist").notNull().default(0),
+  defFumblesRec: integer("def_fumbles_rec").notNull().default(0), // fumbles recovered by this player
+  updatedAt:     timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("player_season_stats_unique_idx").on(t.seasonId, t.playerId),
 }));
