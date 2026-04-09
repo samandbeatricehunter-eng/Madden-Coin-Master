@@ -35,15 +35,15 @@ export const data = new SlashCommandBuilder()
     sub.setName("legend")
       .setDescription("Buy a legend — see /view store for current price (max 4 all-time)")
       .addStringOption(opt =>
-        opt.setName("position")
-          .setDescription("Filter legends by position (optional)")
-          .setRequired(false)
-          .setAutocomplete(true)
-      )
-      .addStringOption(opt =>
         opt.setName("legend_name")
           .setDescription("Select a legend from the store")
           .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Filter legends by position (optional)")
+          .setRequired(false)
           .setAutocomplete(true)
       )
   )
@@ -52,11 +52,6 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub =>
     sub.setName("dev_upgrade")
       .setDescription("Dev upgrade a player (Normal→Impact, Impact→Star, or Star→Superstar) — see /view store for price")
-      .addUserOption(opt =>
-        opt.setName("user")
-          .setDescription("Team owner (defaults to yourself)")
-          .setRequired(false)
-      )
       .addStringOption(opt =>
         opt.setName("position")
           .setDescription("Player's position on the roster")
@@ -79,17 +74,17 @@ export const data = new SlashCommandBuilder()
             { name: "Superstar (from Star)",      value: "Superstar" },
           )
       )
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
   )
 
   // ── Age Reset ───────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("age_reset")
       .setDescription("Reset a player's age — see /view store for current price and cap")
-      .addUserOption(opt =>
-        opt.setName("user")
-          .setDescription("Team owner (defaults to yourself)")
-          .setRequired(false)
-      )
       .addStringOption(opt =>
         opt.setName("position")
           .setDescription("Player's position on the roster")
@@ -102,17 +97,17 @@ export const data = new SlashCommandBuilder()
           .setRequired(true)
           .setAutocomplete(true)
       )
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
   )
 
   // ── Attribute Upgrade (interactive) ─────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("attribute_upgrade")
       .setDescription("Upgrade a player attribute — interactive paginated flow with scaling costs")
-      .addUserOption(opt =>
-        opt.setName("user")
-          .setDescription("Team owner (defaults to yourself)")
-          .setRequired(false)
-      )
       .addStringOption(opt =>
         opt.setName("position")
           .setDescription("Player's position on the roster")
@@ -124,6 +119,11 @@ export const data = new SlashCommandBuilder()
           .setDescription("Player to upgrade attributes for (from autocomplete)")
           .setRequired(true)
           .setAutocomplete(true)
+      )
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
       )
   );
 
