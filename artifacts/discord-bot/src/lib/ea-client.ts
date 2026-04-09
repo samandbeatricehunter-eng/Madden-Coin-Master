@@ -271,7 +271,7 @@ export async function refreshTokenIfNeeded(token: TokenInfo): Promise<TokenInfo>
 }
 
 // ── Blaze session ─────────────────────────────────────────────────────────────
-async function createBlazeSession(token: TokenInfo): Promise<BlazeSession> {
+async function createBlazeSession(token: TokenInfo, attempt = 1): Promise<BlazeSession> {
   const res = await blazeHttp.post(
     "https://wal2.tools.gos.bio-iad.ea.com/wal/authentication/login",
     {
@@ -280,11 +280,43 @@ async function createBlazeSession(token: TokenInfo): Promise<BlazeSession> {
     },
     { headers: blazeHeaders(token.platform) },
   );
+
   const body = res.data as {
-    userLoginInfo: { sessionKey: string; personaDetails: { personaId: number } };
+    userLoginInfo?: {
+      sessionKey?:     string;
+      personaDetails?: { personaId?: number } | { personaId?: number }[];
+    };
+    error?: string;
+    code?:  string;
   };
+
+  // EA occasionally returns an error object or a response without userLoginInfo
+  if (!body.userLoginInfo) {
+    const errDetail = body.error ? `${body.error} (${body.code ?? "?"})` : JSON.stringify(body).slice(0, 200);
+    if (attempt < 3) {
+      // Retry up to 2 more times with a short backoff
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+      return createBlazeSession(token, attempt + 1);
+    }
+    throw new Error(`EA Blaze login returned no session after ${attempt} attempts: ${errDetail}`);
+  }
+
+  if (!body.userLoginInfo.sessionKey) {
+    throw new Error(`EA Blaze login: sessionKey missing. Response: ${JSON.stringify(body).slice(0, 200)}`);
+  }
+
+  // personaDetails is sometimes an array, sometimes a single object
+  const pd = body.userLoginInfo.personaDetails;
+  const personaId: number | undefined = Array.isArray(pd)
+    ? (pd[0] as any)?.personaId
+    : (pd as any)?.personaId;
+
+  if (!personaId) {
+    throw new Error(`EA Blaze login: personaDetails missing personaId. Response: ${JSON.stringify(body).slice(0, 200)}`);
+  }
+
   return {
-    blazeId:    body.userLoginInfo.personaDetails.personaId,
+    blazeId:    personaId,
     sessionKey: body.userLoginInfo.sessionKey,
     requestId:  1,
   };
