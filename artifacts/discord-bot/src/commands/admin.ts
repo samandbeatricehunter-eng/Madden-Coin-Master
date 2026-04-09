@@ -178,9 +178,10 @@ export const data = new SlashCommandBuilder()
     .setDescription("Update a custom player package's creation points and/or coin cost")
     .addStringOption(o => o.setName("package").setDescription("Package tier to update").setRequired(true)
       .addChoices(
-        { name: "Gold",   value: "gold"   },
-        { name: "Silver", value: "silver" },
-        { name: "Bronze", value: "bronze" },
+        { name: "Gold",       value: "gold"   },
+        { name: "Silver",     value: "silver" },
+        { name: "Bronze",     value: "bronze" },
+        { name: "K/P Default", value: "kp"   },
       )
     )
     .addIntegerOption(o => o.setName("points").setDescription("Creation points").setRequired(false).setMinValue(1).setMaxValue(500))
