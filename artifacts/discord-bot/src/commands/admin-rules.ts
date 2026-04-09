@@ -103,16 +103,19 @@ async function checkAdmin(interaction: ChatInputCommandInteraction | Autocomplet
 }
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
-  if (!(await checkAdmin(interaction))) {
-    return interaction.respond([]);
+  // setDefaultMemberPermissions(Administrator) already gates this command — skip
+  // the slow admin check here so autocomplete always responds within Discord's 3-second window.
+  try {
+    const focused = interaction.options.getFocused().toLowerCase();
+    const allSections = await getAllSections();
+    const choices = Object.entries(allSections)
+      .map(([key, meta]) => ({ name: meta.title.replace(/[\u{1F300}-\u{1FFFF}]/gu, "").trim() + ` [${key}]`, value: key }))
+      .filter(c => c.name.toLowerCase().includes(focused) || c.value.toLowerCase().includes(focused))
+      .slice(0, 25);
+    await interaction.respond(choices);
+  } catch {
+    await interaction.respond([]).catch(() => {});
   }
-  const focused = interaction.options.getFocused().toLowerCase();
-  const allSections = await getAllSections();
-  const choices = Object.entries(allSections)
-    .map(([key, meta]) => ({ name: meta.title.replace(/[\u{1F300}-\u{1FFFF}]/gu, "").trim() + ` [${key}]`, value: key }))
-    .filter(c => c.name.toLowerCase().includes(focused) || c.value.toLowerCase().includes(focused))
-    .slice(0, 25);
-  await interaction.respond(choices);
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {
