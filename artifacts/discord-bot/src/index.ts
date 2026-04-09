@@ -3,8 +3,9 @@ import { createServer } from "http";
 import { getOrCreateActiveSeason, normalizeDefensivePositions } from "./lib/db-helpers.js";
 
 // ── Unified admin + view commands ────────────────────────────────────────────
-import * as admin from "./commands/admin.js";
-import * as view  from "./commands/view.js";
+import * as admin         from "./commands/admin.js";
+import * as view          from "./commands/view.js";
+import * as adminEosTestrun from "./commands/admin-eos-testrun.js";
 
 // ── Split admin slash commands ────────────────────────────────────────────────
 import * as slashAdminSeason    from "./commands/slash-admin-season.js";
@@ -129,6 +130,9 @@ if (!isProduction && !devBotEnabled) {
     webhookurl,
     viewpayouttiers,
     interviewrequest,
+
+    // Admin tools
+    adminEosTestrun,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },

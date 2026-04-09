@@ -3,9 +3,10 @@ import {
   EmbedBuilder, Colors,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { franchiseMcaTeamsTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
+import { franchiseMcaTeamsTable, franchiseRostersTable, teamSeasonStatsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { lookupNflDivision } from "../lib/constants.js";
 import * as userStats          from "./userstats.js";
 import * as viewstore          from "./viewstore.js";
 import * as viewCustomArchetypes from "./viewcustomarchetypes.js";
@@ -52,6 +53,7 @@ export const data = new SlashCommandBuilder()
       .addChoices(
         { name: "📋 Teams to Watch — division leaders & playoff picture", value: "watch" },
         { name: "👤 User's Team — detailed season stats for one team",    value: "user"  },
+        { name: "🌐 All 32 Teams — full league stats by conference",      value: "all"   },
       )
     )
     .addUserOption(o => o.setName("user").setDescription("(User Team mode) Look up by Discord user").setRequired(false))
@@ -134,6 +136,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (sub === "team_stats") {
     const mode = interaction.options.getString("mode", true);
+    if (mode === "all") return handleAllTeamsView(interaction);
     return handleTeamStatsView(interaction, mode);
   }
 
@@ -201,6 +204,167 @@ async function handleTeamStatsView(
     .addFields({ name: "Season", value: `Season ${season.seasonNumber}`, inline: true });
 
   await interaction.editReply({ embeds: [embed] });
+}
+
+// ── All Teams Stats handler ────────────────────────────────────────────────────
+async function handleAllTeamsView(interaction: ChatInputCommandInteraction): Promise<void> {
+  const wantsPublic = interaction.options.getBoolean("public") ?? false;
+  const isAdmin     = interaction.memberPermissions?.has(0x8n) ?? false;
+  const ephemeral   = !(wantsPublic && isAdmin);
+
+  await interaction.deferReply({ ephemeral });
+
+  const season   = await getOrCreateActiveSeason();
+  const allStats = await db.select().from(teamSeasonStatsTable)
+    .where(eq(teamSeasonStatsTable.seasonId, season.id));
+
+  if (allStats.length === 0) {
+    await interaction.editReply({
+      content: "📭 No team stat data found for this season. Run a weekly MCA export first.",
+    });
+    return;
+  }
+
+  // Group teams by conference → division, looking up division from team name
+  type TeamRow = {
+    teamName:   string;
+    wins:       number;
+    losses:     number;
+    offPassYds: number;
+    offRushYds: number;
+    offTDs:     number;
+    offPtsPerGame: number;
+    defPassYds: number;
+    defRushYds: number;
+    defTDs:     number;
+    teamSacks:  number;
+    teamInts:   number;
+    discordId:  string | null;
+  };
+
+  const grouped: Record<string, Record<string, TeamRow[]>> = {
+    AFC: { East: [], North: [], South: [], West: [] },
+    NFC: { East: [], North: [], South: [], West: [] },
+    Unknown: { Other: [] },
+  };
+
+  for (const t of allStats) {
+    const nfl = lookupNflDivision(t.teamName);
+    const conf = nfl?.conference ?? "Unknown";
+    const div  = nfl?.division   ?? "Other";
+    if (!grouped[conf]) grouped[conf] = {};
+    if (!grouped[conf]![div]) grouped[conf]![div] = [];
+    grouped[conf]![div]!.push({
+      teamName:   t.teamName,
+      wins:       t.wins,
+      losses:     t.losses,
+      offPassYds: t.offPassYds,
+      offRushYds: t.offRushYds,
+      offTDs:     t.offTDs,
+      offPtsPerGame: t.offPtsPerGame,
+      defPassYds: t.defPassYds,
+      defRushYds: t.defRushYds,
+      defTDs:     t.defTDs,
+      teamSacks:  t.teamSacks,
+      teamInts:   t.teamInts,
+      discordId:  t.discordId,
+    });
+  }
+
+  function fmtTeamLine(t: TeamRow): string {
+    const record  = `${t.wins}-${t.losses}`;
+    const offPass = (t.offPassYds / 1000).toFixed(1) + "k";
+    const offRush = (t.offRushYds / 1000).toFixed(1) + "k";
+    const defPass = (t.defPassYds / 1000).toFixed(1) + "k";
+    const defRush = (t.defRushYds / 1000).toFixed(1) + "k";
+    const ppg     = t.offPtsPerGame > 0
+      ? t.offPtsPerGame.toFixed(1)
+      : t.wins + t.losses > 0
+        ? (t.offTDs / (t.wins + t.losses)).toFixed(1)
+        : "—";
+    const pag     = t.wins + t.losses > 0
+      ? (t.defTDs / (t.wins + t.losses)).toFixed(1)
+      : "—";
+    const user = t.discordId ? ` 👤` : "";
+    return `**${t.teamName}**${user} (${record}) | Off: ${offPass} pass, ${offRush} rush, ${ppg} PPG | Def: ${defPass} pass, ${defRush} rush, ${pag} PAG | ${t.teamSacks} sacks, ${t.teamInts} INTs`;
+  }
+
+  const embeds: EmbedBuilder[] = [];
+  const DIVISIONS = ["East", "North", "South", "West"] as const;
+  const CONF_COLORS: Record<string, number> = { AFC: Colors.Blue, NFC: Colors.Red };
+
+  for (const conf of ["AFC", "NFC"] as const) {
+    const confData = grouped[conf] ?? {};
+    const fields: { name: string; value: string; inline: boolean }[] = [];
+
+    for (const div of DIVISIONS) {
+      const teams = (confData[div] ?? []).sort((a, b) => b.wins - a.wins || b.offPassYds - a.offPassYds);
+      if (teams.length === 0) continue;
+      const lines = teams.map(t => fmtTeamLine(t));
+      // Discord field value limit = 1024 chars — split if needed
+      let fieldVal = "";
+      const chunks: string[] = [];
+      for (const line of lines) {
+        if (fieldVal.length + line.length + 1 > 1020) {
+          chunks.push(fieldVal);
+          fieldVal = "";
+        }
+        fieldVal += (fieldVal ? "\n" : "") + line;
+      }
+      if (fieldVal) chunks.push(fieldVal);
+      for (let i = 0; i < chunks.length; i++) {
+        fields.push({
+          name:   i === 0 ? `${conf} ${div}` : `${conf} ${div} (cont.)`,
+          value:  chunks[i]!,
+          inline: false,
+        });
+      }
+    }
+
+    if (fields.length === 0) continue;
+
+    // Discord embeds have a 25-field limit — split into multiple embeds if needed
+    const fieldChunks: typeof fields[] = [];
+    for (let i = 0; i < fields.length; i += 25) fieldChunks.push(fields.slice(i, i + 25));
+
+    for (let ci = 0; ci < fieldChunks.length; ci++) {
+      const embed = new EmbedBuilder()
+        .setColor(CONF_COLORS[conf] ?? Colors.Blurple)
+        .setTitle(`🏈 ${conf} Team Stats — Season ${season.seasonNumber}${ci > 0 ? " (continued)" : ""}`)
+        .addFields(...fieldChunks[ci]!)
+        .setFooter({ text: "👤 = user-controlled team • Off/Def in thousands of yards • PPG = pts per game, PAG = pts allowed per game" });
+      embeds.push(embed);
+    }
+  }
+
+  // Unknown conference teams (shouldn't happen often)
+  const unknownTeams = (grouped["Unknown"]?.["Other"] ?? []);
+  if (unknownTeams.length > 0) {
+    embeds.push(
+      new EmbedBuilder()
+        .setColor(Colors.Grey)
+        .setTitle("🏈 Unrecognized Teams")
+        .setDescription(unknownTeams.map(t => fmtTeamLine(t)).join("\n")),
+    );
+  }
+
+  if (embeds.length === 0) {
+    await interaction.editReply({ content: "📭 No team stat data found for this season." });
+    return;
+  }
+
+  // Send up to 10 embeds per message
+  const [first, ...rest] = chunk(embeds, 10);
+  await interaction.editReply({ embeds: first });
+  for (const batch of rest) {
+    await interaction.followUp({ embeds: batch, ephemeral });
+  }
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 // ── Autocomplete router ────────────────────────────────────────────────────────
