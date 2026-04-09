@@ -67,10 +67,16 @@ export async function runEosAutoPost(
     if (s.discordId) statsMap.set(s.discordId, s);
   }
 
-  // ── 4. Load admin-configurable attempt minimums ───────────────────────────────
-  const [minQbAtt, minRbAtt] = await Promise.all([
+  // ── 4. Load admin-configurable attempt minimums and bonus thresholds ──────────
+  const [minQbAtt, minRbAtt, minQbYpa, minRbYpc, minDbInts, qbBonusAmt, rbBonusAmt, dbBonusAmt] = await Promise.all([
     getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_ATT),
     getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_ATT),
+    getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_YPA),
+    getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_YPC),
+    getPayoutValue(PAYOUT_KEYS.EOS_DB_MIN_INTS),
+    getPayoutValue(PAYOUT_KEYS.EOS_QB_YPA_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_RB_YPC_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
   ]);
 
   // ── 5. Get commissioner channel ───────────────────────────────────────────────
@@ -185,77 +191,75 @@ export async function runEosAutoPost(
         }
       }
 
-      // ── QB YPA ────────────────────────────────────────────────────────────────
-      const qbYpaTiers = tiersByCategory.get("qb_ypa") ?? [];
-      if (qbYpaTiers.length > 0) {
-        // Best QB: highest passYds among QBs with passAtt >= minQbAtt
-        const topQb = playerRows
-          .filter(p => QB_POSITIONS.has(p.position.toUpperCase()) && p.passAtt >= minQbAtt)
-          .sort((a, b) => b.passYds - a.passYds)[0] ?? null;
+      // ── QB YPA (flat bonus) ───────────────────────────────────────────────────
+      // QB must meet minQbAtt attempts AND average minQbYpa YPA (×10) to earn flat bonus.
+      const qualifyingQbs = playerRows
+        .filter(p => QB_POSITIONS.has(p.position.toUpperCase()) && p.passAtt >= minQbAtt)
+        .map(p => ({ ...p, ypaScaled: Math.round((p.passYds / p.passAtt) * 10) }))
+        .filter(p => p.ypaScaled >= minQbYpa);
 
-        if (topQb) {
-          const ypa     = topQb.passYds / topQb.passAtt;          // float
-          const ypaScaled = Math.round(ypa * 10);                 // integer × 10 to match threshold
-          const result  = evaluateTier(qbYpaTiers, ypaScaled, "higher");
-          const ypaStr  = ypa.toFixed(1);
-          const playerLabel = `${topQb.firstName} ${topQb.lastName}`.trim() || "QB";
-          if (result) {
-            displayLines.push(
-              `• **QB YPA (${playerLabel})**: ${ypaStr} YPA (${topQb.passAtt} att, min ${minQbAtt}) → Tier ${result.tier} (+${result.payout.toLocaleString()} coins)`,
-            );
-            breakdown.push({ label: `QB YPA (${playerLabel})`, statValue: ypaScaled, unit: "YPA×10", tier: result.tier, coins: result.payout });
-            totalCoins += result.payout;
-          } else {
-            displayLines.push(
-              `• **QB YPA (${playerLabel})**: ${ypaStr} YPA (${topQb.passAtt} att, min ${minQbAtt}) → No qualifying tier`,
-            );
-          }
-          hasStats = true;
-        } else {
-          // User has no QB with enough attempts — note it for the commissioner
-          const anyQb = playerRows.find(p => QB_POSITIONS.has(p.position.toUpperCase()));
-          if (anyQb) {
-            displayLines.push(
-              `• **QB YPA**: ${anyQb.firstName} ${anyQb.lastName} has only ${anyQb.passAtt} pass attempts (minimum: ${minQbAtt}) — does not qualify`,
-            );
-          }
+      if (qualifyingQbs.length > 0) {
+        // Award the bonus once per team (for the best qualifying QB)
+        const topQb = qualifyingQbs.sort((a, b) => b.ypaScaled - a.ypaScaled)[0];
+        const playerLabel = `${topQb.firstName} ${topQb.lastName}`.trim() || "QB";
+        const ypaStr = (topQb.passYds / topQb.passAtt).toFixed(1);
+        displayLines.push(
+          `• **QB YPA Bonus (${playerLabel})**: ${ypaStr} YPA (${topQb.passAtt} att, min ${minQbAtt} att + ${(minQbYpa / 10).toFixed(1)} YPA) → +${qbBonusAmt.toLocaleString()} coins`,
+        );
+        breakdown.push({ label: `QB YPA Bonus (${playerLabel})`, statValue: topQb.ypaScaled, unit: "YPA×10", tier: 1, coins: qbBonusAmt });
+        totalCoins += qbBonusAmt;
+        hasStats = true;
+      } else {
+        const anyQb = playerRows.find(p => QB_POSITIONS.has(p.position.toUpperCase()));
+        if (anyQb) {
+          const attNote = anyQb.passAtt < minQbAtt
+            ? `only ${anyQb.passAtt} attempts (min ${minQbAtt})`
+            : `${(anyQb.passYds / anyQb.passAtt).toFixed(1)} YPA (min ${(minQbYpa / 10).toFixed(1)})`;
+          displayLines.push(`• **QB YPA Bonus**: ${anyQb.firstName} ${anyQb.lastName} — ${attNote} — does not qualify`);
         }
       }
 
-      // ── RB YPC ────────────────────────────────────────────────────────────────
-      const rbYpcTiers = tiersByCategory.get("rb_ypc") ?? [];
-      if (rbYpcTiers.length > 0) {
-        // Best RB: highest rushYds among HB/RB/FB with rushAtt >= minRbAtt
-        const topRb = playerRows
-          .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt >= minRbAtt)
-          .sort((a, b) => b.rushYds - a.rushYds)[0] ?? null;
+      // ── RB YPC (flat bonus) ───────────────────────────────────────────────────
+      // RB must meet minRbAtt carries AND average minRbYpc YPC (×10) to earn flat bonus.
+      const qualifyingRbs = playerRows
+        .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt >= minRbAtt)
+        .map(p => ({ ...p, ypcScaled: Math.round((p.rushYds / p.rushAtt) * 10) }))
+        .filter(p => p.ypcScaled >= minRbYpc);
 
-        if (topRb) {
-          const ypc      = topRb.rushYds / topRb.rushAtt;
-          const ypcScaled = Math.round(ypc * 10);
-          const result   = evaluateTier(rbYpcTiers, ypcScaled, "higher");
-          const ypcStr   = ypc.toFixed(1);
-          const playerLabel = `${topRb.firstName} ${topRb.lastName}`.trim() || "RB";
-          if (result) {
-            displayLines.push(
-              `• **RB YPC (${playerLabel})**: ${ypcStr} YPC (${topRb.rushAtt} carries, min ${minRbAtt}) → Tier ${result.tier} (+${result.payout.toLocaleString()} coins)`,
-            );
-            breakdown.push({ label: `RB YPC (${playerLabel})`, statValue: ypcScaled, unit: "YPC×10", tier: result.tier, coins: result.payout });
-            totalCoins += result.payout;
-          } else {
-            displayLines.push(
-              `• **RB YPC (${playerLabel})**: ${ypcStr} YPC (${topRb.rushAtt} carries, min ${minRbAtt}) → No qualifying tier`,
-            );
-          }
-          hasStats = true;
-        } else {
-          const anyRb = playerRows.find(p => RB_POSITIONS.has(p.position.toUpperCase()));
-          if (anyRb) {
-            displayLines.push(
-              `• **RB YPC**: ${anyRb.firstName} ${anyRb.lastName} has only ${anyRb.rushAtt} carries (minimum: ${minRbAtt}) — does not qualify`,
-            );
-          }
+      if (qualifyingRbs.length > 0) {
+        // Award the bonus once per team (for the best qualifying RB)
+        const topRb = qualifyingRbs.sort((a, b) => b.ypcScaled - a.ypcScaled)[0];
+        const playerLabel = `${topRb.firstName} ${topRb.lastName}`.trim() || "RB";
+        const ypcStr = (topRb.rushYds / topRb.rushAtt).toFixed(1);
+        displayLines.push(
+          `• **RB YPC Bonus (${playerLabel})**: ${ypcStr} YPC (${topRb.rushAtt} carries, min ${minRbAtt} carries + ${(minRbYpc / 10).toFixed(1)} YPC) → +${rbBonusAmt.toLocaleString()} coins`,
+        );
+        breakdown.push({ label: `RB YPC Bonus (${playerLabel})`, statValue: topRb.ypcScaled, unit: "YPC×10", tier: 1, coins: rbBonusAmt });
+        totalCoins += rbBonusAmt;
+        hasStats = true;
+      } else {
+        const anyRb = playerRows.find(p => RB_POSITIONS.has(p.position.toUpperCase()));
+        if (anyRb) {
+          const carryNote = anyRb.rushAtt < minRbAtt
+            ? `only ${anyRb.rushAtt} carries (min ${minRbAtt})`
+            : `${(anyRb.rushYds / anyRb.rushAtt).toFixed(1)} YPC (min ${(minRbYpc / 10).toFixed(1)})`;
+          displayLines.push(`• **RB YPC Bonus**: ${anyRb.firstName} ${anyRb.lastName} — ${carryNote} — does not qualify`);
         }
+      }
+
+      // ── DB INT Bonus (flat bonus per qualifying player) ───────────────────────
+      // Any defensive player with minDbInts or more INTs earns the bonus per player.
+      const intPlayers = playerRows.filter(p => (p.defInts ?? 0) >= minDbInts);
+      if (intPlayers.length > 0) {
+        for (const p of intPlayers) {
+          const playerLabel = `${p.firstName} ${p.lastName}`.trim() || p.position;
+          displayLines.push(
+            `• **DB INT Bonus (${playerLabel})**: ${p.defInts} INTs (min ${minDbInts}) → +${dbBonusAmt.toLocaleString()} coins`,
+          );
+          breakdown.push({ label: `DB INT Bonus (${playerLabel})`, statValue: p.defInts ?? 0, unit: "INTs", tier: 1, coins: dbBonusAmt });
+          totalCoins += dbBonusAmt;
+        }
+        hasStats = true;
       }
 
       // ── Insert pending payout record ───────────────────────────────────────────

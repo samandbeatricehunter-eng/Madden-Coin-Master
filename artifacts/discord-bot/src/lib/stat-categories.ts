@@ -91,25 +91,9 @@ export const STAT_CATEGORIES: StatCategory[] = [
     direction:  "lower",
     jsonFields: ["defRedZonePct", "defensiveRedZonePct", "defRedZoneAllowedPct", "defRZPct", "defenseRedZonePct", "defRedzonePct", "def_redzone_pct"],
   },
-  // ── Player-level stats (computed from playerSeasonStatsTable by EOS handler) ──
-  // Thresholds stored as integer × 10 (e.g. 75 = 7.5 YPA, 50 = 5.0 YPC).
-  // EOS auto-post computes these from the team's top QB / top RB and evaluates
-  // the scaled value against the stored threshold.
-  {
-    key:        "qb_ypa",
-    label:      "QB Yards Per Attempt",
-    unit:       "YPA",
-    direction:  "higher",
-    jsonFields: ["qbYpa", "ypa", "passYardsPerAttempt"],
-  },
-  {
-    key:        "rb_ypc",
-    label:      "RB Yards Per Carry",
-    unit:       "YPC",
-    direction:  "higher",
-    jsonFields: ["rbYpc", "ypc", "rushYardsPerCarry"],
-  },
 ];
+// NOTE: QB YPA and RB YPC are flat individual bonuses (not tiered) handled
+// separately in the EOS auto-post via payout-config thresholds, not STAT_CATEGORIES.
 
 export const STAT_CATEGORY_MAP = new Map(STAT_CATEGORIES.map(c => [c.key, c]));
 

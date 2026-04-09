@@ -22,6 +22,10 @@ export const PAYOUT_KEYS = {
   // ── EOS stat minimum attempt thresholds (not coin values — attempt counts) ───
   EOS_QB_MIN_ATT:      "eos_qb_min_att",   // Min pass attempts to qualify for QB YPA bonus
   EOS_RB_MIN_ATT:      "eos_rb_min_att",   // Min rush attempts to qualify for RB YPC bonus
+  // ── EOS individual bonus qualifying thresholds ────────────────────────────────
+  EOS_QB_MIN_YPA:      "eos_qb_min_ypa",   // Min QB YPA×10 to earn bonus (e.g. 85 = 8.5 YPA)
+  EOS_RB_MIN_YPC:      "eos_rb_min_ypc",   // Min RB YPC×10 to earn bonus (e.g. 70 = 7.0 YPC)
+  EOS_DB_MIN_INTS:     "eos_db_min_ints",  // Min individual player INTs (any defensive position)
   // ── End-of-season missed-playoffs consolation ─────────────────────────────────
   EOS_MISSED_PLAYOFFS: "eos_missed_playoffs",
 } as const;
@@ -46,10 +50,14 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   eos_qb_ypa_bonus:    { value: 100, description: "EOS individual bonus — top QB qualifying YPA (coins)",       category: "Individual Bonuses"    },
   eos_db_int_bonus:    { value: 100, description: "EOS individual bonus — DB individual player 8+ INTs",        category: "Individual Bonuses"    },
   // ── EOS stat minimum attempt thresholds ──────────────────────────────────────
-  eos_qb_min_att:      { value: 300, description: "EOS QB YPA — minimum pass attempts to qualify",             category: "Stat Minimums"         },
-  eos_rb_min_att:      { value: 150, description: "EOS RB YPC — minimum rush attempts to qualify",             category: "Stat Minimums"         },
+  eos_qb_min_att:      { value: 300, description: "EOS QB YPA — minimum pass attempts to qualify",                    category: "Stat Minimums"    },
+  eos_rb_min_att:      { value: 150, description: "EOS RB YPC — minimum rush attempts/carries to qualify",            category: "Stat Minimums"    },
+  // ── EOS individual bonus qualifying thresholds (×10 for decimal stats) ────────
+  eos_qb_min_ypa:      { value: 85,  description: "EOS QB YPA — minimum YPA to qualify (×10, e.g. 85 = 8.5 YPA)",   category: "Stat Thresholds"  },
+  eos_rb_min_ypc:      { value: 70,  description: "EOS RB YPC — minimum YPC to qualify (×10, e.g. 70 = 7.0 YPC)",   category: "Stat Thresholds"  },
+  eos_db_min_ints:     { value: 8,   description: "EOS DB INT — minimum individual player INTs to earn bonus",        category: "Stat Thresholds"  },
   // ── Missed-playoffs consolation ───────────────────────────────────────────────
-  eos_missed_playoffs: { value: 400, description: "EOS consolation — user-controlled team that missed playoffs", category: "Individual Bonuses"  },
+  eos_missed_playoffs: { value: 400, description: "EOS consolation — user-controlled team that missed playoffs",       category: "Individual Bonuses" },
 };
 
 const cache = new Map<PayoutKey, number>();

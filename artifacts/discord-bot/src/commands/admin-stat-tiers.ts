@@ -30,11 +30,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     arr.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
   }
 
-  // Individual bonus amounts
-  const [rbBonus, qbBonus, dbBonus] = await Promise.all([
+  // Individual bonus amounts + configurable thresholds
+  const [rbBonus, qbBonus, dbBonus, minQbAtt, minRbAtt, minQbYpa, minRbYpc, minDbInts] = await Promise.all([
     getPayoutValue(PAYOUT_KEYS.EOS_RB_YPC_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_QB_YPA_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_ATT),
+    getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_ATT),
+    getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_YPA),
+    getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_YPC),
+    getPayoutValue(PAYOUT_KEYS.EOS_DB_MIN_INTS),
   ]);
 
   const offCats  = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
@@ -69,10 +74,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const defBlock2  = buildCategoryBlock(defCats2);
 
   const indivBlock = [
-    `**RB YPC Bonus** — 7.0+ YPC (100+ carries) → **${rbBonus}🪙**`,
-    `**QB YPA Bonus** — 8.5+ YPA (150+ attempts) → **${qbBonus}🪙**`,
-    `**DB INT Bonus** — individual player 8+ INTs → **${dbBonus}🪙**`,
-    `*(Change amounts via \`/admin-setpayouts set\`)*`,
+    `**QB YPA Bonus** — QB needs ${minQbAtt}+ attempts AND ${(minQbYpa / 10).toFixed(1)}+ YPA → **${qbBonus}🪙**`,
+    `**RB YPC Bonus** — RB needs ${minRbAtt}+ carries AND ${(minRbYpc / 10).toFixed(1)}+ YPC → **${rbBonus}🪙**`,
+    `**DB INT Bonus** — any defensive player with ${minDbInts}+ INTs → **${dbBonus}🪙 per qualifying player**`,
+    `*(Set coin amounts and thresholds via \`/admin set_payout_amounts\`)*`,
   ].join("\n");
 
   const configuredCount = STAT_CATEGORIES.filter(c =>

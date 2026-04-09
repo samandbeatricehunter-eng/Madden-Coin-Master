@@ -137,11 +137,14 @@ export const data = new SlashCommandBuilder()
         { name: "🏈 EOS bonus — top QB qualifying YPA (coins)",           value: PAYOUT_KEYS.EOS_QB_YPA_BONUS    },
         { name: "🛡️ EOS bonus — DB individual player 8+ INTs",           value: PAYOUT_KEYS.EOS_DB_INT_BONUS    },
         { name: "😔 EOS consolation — missed playoffs (user team)",       value: PAYOUT_KEYS.EOS_MISSED_PLAYOFFS },
-        { name: "🏈 EOS QB YPA — minimum pass attempts to qualify",       value: PAYOUT_KEYS.EOS_QB_MIN_ATT      },
-        { name: "🏃 EOS RB YPC — minimum rush attempts to qualify",       value: PAYOUT_KEYS.EOS_RB_MIN_ATT      },
+        { name: "🏈 EOS QB YPA — minimum pass attempts to qualify",                  value: PAYOUT_KEYS.EOS_QB_MIN_ATT   },
+        { name: "🏃 EOS RB YPC — minimum rush carries to qualify",                  value: PAYOUT_KEYS.EOS_RB_MIN_ATT   },
+        { name: "📐 EOS QB YPA threshold — min YPA×10 (e.g. 85 = 8.5 YPA)",        value: PAYOUT_KEYS.EOS_QB_MIN_YPA   },
+        { name: "📐 EOS RB YPC threshold — min YPC×10 (e.g. 70 = 7.0 YPC)",        value: PAYOUT_KEYS.EOS_RB_MIN_YPC   },
+        { name: "🛡️ EOS DB INT threshold — min individual player INTs to qualify",  value: PAYOUT_KEYS.EOS_DB_MIN_INTS  },
       )
     )
-    .addIntegerOption(o => o.setName("amount").setDescription("New coin amount (0 or more)").setRequired(true).setMinValue(0))
+    .addIntegerOption(o => o.setName("amount").setDescription("New value (coins, attempts, or threshold)").setRequired(true).setMinValue(0))
   )
 
   // ── milestone & EOS tier settings ─────────────────────────────────────────

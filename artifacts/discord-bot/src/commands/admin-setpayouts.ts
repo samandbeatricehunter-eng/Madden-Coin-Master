@@ -101,7 +101,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const minLines = minKeys.map(({ key, description, defaultValue }) => {
       const current = config.get(key) ?? defaultValue;
       const tag     = current === defaultValue ? "*(default)*" : "*(custom)*";
-      return `**${current} attempts** — ${description} ${tag}`;
+      return `**${current} attempts/carries** — ${description} ${tag}`;
+    });
+
+    // ── Section 2d: Stat Thresholds (qualifying thresholds for flat bonuses) ──
+    const threshKeys  = keys.filter(k => k.category === "Stat Thresholds");
+    const threshLines = threshKeys.map(({ key, description, defaultValue }) => {
+      const current = config.get(key) ?? defaultValue;
+      const tag     = current === defaultValue ? "*(default)*" : "*(custom)*";
+      // YPA and YPC are stored ×10 — display as decimal for readability
+      const isDecimal = key === "eos_qb_min_ypa" || key === "eos_rb_min_ypc";
+      const display   = isDecimal ? `${(current / 10).toFixed(1)}` : `${current}`;
+      const unit      = isDecimal ? "" : " INTs";
+      return `**${display}${unit}** — ${description} ${tag}`;
     });
 
     // ── Section 3: Store Prices (from season rules) ──────────────────────────
@@ -141,8 +153,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           inline: false,
         },
         ...(minLines.length > 0 ? [{
-          name:   "📏 Stat Attempt Minimums *(must meet threshold to qualify for YPA/YPC bonus)*",
+          name:   "📏 Attempt Minimums *(must hit this volume to be eligible)*",
           value:  minLines.join("\n"),
+          inline: false,
+        }] : []),
+        ...(threshLines.length > 0 ? [{
+          name:   "📐 Qualifying Thresholds *(must hit this stat rate to earn the bonus)*",
+          value:  threshLines.join("\n"),
           inline: false,
         }] : []),
         {
@@ -170,8 +187,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await setPayoutValue(key, amount, interaction.user.id);
     const meta   = getAllPayoutKeys().find(k => k.key === key)!;
 
-    const isAttemptKey = meta.category === "Stat Minimums";
-    const fmt = (v: number) => isAttemptKey ? `**${v} attempts**` : `**${v} 🪙**`;
+    const isAttemptKey  = meta.category === "Stat Minimums";
+    const isDecimalKey  = key === "eos_qb_min_ypa" || key === "eos_rb_min_ypc";
+    const isIntKey      = key === "eos_db_min_ints";
+    const fmt = (v: number) =>
+      isAttemptKey  ? `**${v} attempts/carries**` :
+      isDecimalKey  ? `**${(v / 10).toFixed(1)}** (stored as ${v}×10)` :
+      isIntKey      ? `**${v} INTs**` :
+      `**${v} 🪙**`;
 
     await interaction.editReply({
       embeds: [new EmbedBuilder()
