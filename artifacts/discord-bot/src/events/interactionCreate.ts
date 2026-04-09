@@ -1709,6 +1709,179 @@ async function handleButton(interaction: ButtonInteraction) {
     });
     return;
   }
+
+  // ── Violation: confirm ──────────────────────────────────────────────────────
+  if (action === "violation_confirm") {
+    const violationId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    if (!(await isAdminUser(interaction.user.id))) {
+      await interaction.followUp({ content: "❌ Only commissioners can confirm violations.", ephemeral: true });
+      return;
+    }
+
+    const [violation] = await db
+      .select()
+      .from(statPaddingViolationsTable)
+      .where(eq(statPaddingViolationsTable.id, violationId))
+      .limit(1);
+
+    if (!violation) {
+      await interaction.followUp({ content: `❌ Violation #${violationId} not found.`, ephemeral: true });
+      return;
+    }
+    if (violation.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ Violation #${violationId} is already **${violation.status}**.`, ephemeral: true });
+      return;
+    }
+
+    // Mark confirmed
+    await db
+      .update(statPaddingViolationsTable)
+      .set({ status: "confirmed", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(statPaddingViolationsTable.id, violationId));
+
+    // ── Post to the violation log channel ──────────────────────────────────────
+    const violationLogEmbed = new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle("🚨 Violation Confirmed")
+      .setDescription(
+        violation.description +
+        (violation.discordId ? `\n\n**Owner:** <@${violation.discordId}>` : "") +
+        `\n\n✅ Confirmed by ${interaction.user.toString()}`,
+      )
+      .setFooter({ text: `Violation #${violationId} · ${violation.week} · Season ${violation.seasonId}` })
+      .setTimestamp();
+
+    try {
+      const vlChannel = await interaction.client.channels.fetch(VIOLATION_LOG_CHANNEL_ID);
+      if (vlChannel?.isTextBased()) {
+        await (vlChannel as TextChannel).send({ embeds: [violationLogEmbed] });
+      }
+    } catch (err) {
+      console.error("[violation_confirm] Failed to post to violation log:", err);
+    }
+
+    // ── Edit the commissioner message to show confirmed state ──────────────────
+    const confirmedEmbed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Violation Confirmed")
+      .setDescription(
+        violation.description +
+        (violation.discordId ? `\n\n**Owner:** <@${violation.discordId}>` : "") +
+        `\n\n✅ Confirmed by ${interaction.user.toString()}\n📋 Posted to violation log`,
+      )
+      .setFooter({ text: `Violation #${violationId} · ${violation.week} · Season ${violation.seasonId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds: [confirmedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("violation_confirmed_done").setLabel("✅ Confirmed").setStyle(ButtonStyle.Success).setDisabled(true),
+      )],
+    });
+
+    // ── Check for repeat violations (2 confirmed = penalty notification) ───────
+    if (violation.discordId) {
+      const [{ value: confirmedCount }] = await db
+        .select({ value: count() })
+        .from(statPaddingViolationsTable)
+        .where(
+          and(
+            eq(statPaddingViolationsTable.discordId, violation.discordId),
+            eq(statPaddingViolationsTable.seasonId, violation.seasonId),
+            eq(statPaddingViolationsTable.status, "confirmed"),
+          ),
+        );
+
+      if (confirmedCount >= 2) {
+        const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
+          .where(eq(usersTable.discordId, violation.discordId)).limit(1);
+
+        const penaltyLines = [
+          `⚠️ **<@${violation.discordId}>${userRow?.team ? ` (${userRow.team})` : ""}** now has **${confirmedCount} confirmed violation(s)** this season.`,
+          ``,
+          `📋 **Action required:** Reduce the following player's OVR by **-15**:`,
+        ];
+        if (violation.playerName) {
+          penaltyLines.push(`> **${violation.playerName}** (${violation.teamName})`);
+        } else {
+          penaltyLines.push(`> Determine the player to penalize based on the violations above.`);
+        }
+        penaltyLines.push(
+          ``,
+          `Use \`/admin-reverse-transaction\` or the game settings to apply the OVR reduction.`,
+        );
+
+        const commChannel = await interaction.client.channels.fetch(
+          process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!,
+        ).catch(() => null);
+
+        if (commChannel?.isTextBased()) {
+          const penaltyEmbed = new EmbedBuilder()
+            .setColor(Colors.Orange)
+            .setTitle("⚠️ Repeat Violation — OVR Penalty Required")
+            .setDescription(penaltyLines.join("\n"))
+            .setFooter({ text: `Triggered by Violation #${violationId} · Season ${violation.seasonId}` })
+            .setTimestamp();
+          await (commChannel as TextChannel).send({ embeds: [penaltyEmbed] });
+        }
+      }
+    }
+
+    return;
+  }
+
+  // ── Violation: deny ─────────────────────────────────────────────────────────
+  if (action === "violation_deny") {
+    const violationId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    if (!(await isAdminUser(interaction.user.id))) {
+      await interaction.followUp({ content: "❌ Only commissioners can deny violations.", ephemeral: true });
+      return;
+    }
+
+    const [violation] = await db
+      .select()
+      .from(statPaddingViolationsTable)
+      .where(eq(statPaddingViolationsTable.id, violationId))
+      .limit(1);
+
+    if (!violation) {
+      await interaction.followUp({ content: `❌ Violation #${violationId} not found.`, ephemeral: true });
+      return;
+    }
+    if (violation.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ Violation #${violationId} is already **${violation.status}**.`, ephemeral: true });
+      return;
+    }
+
+    await db
+      .update(statPaddingViolationsTable)
+      .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
+      .where(eq(statPaddingViolationsTable.id, violationId));
+
+    const deniedEmbed = new EmbedBuilder()
+      .setColor(Colors.Grey)
+      .setTitle("❌ Violation Denied")
+      .setDescription(
+        violation.description +
+        (violation.discordId ? `\n\n**Owner:** <@${violation.discordId}>` : "") +
+        `\n\n❌ Denied by ${interaction.user.toString()} — no action taken`,
+      )
+      .setFooter({ text: `Violation #${violationId} · ${violation.week} · Season ${violation.seasonId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds: [deniedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("violation_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
+      )],
+    });
+
+    return;
+  }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────
@@ -2318,176 +2491,4 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     return;
   }
 
-  // ── Violation: confirm ──────────────────────────────────────────────────────
-  if (action === "violation_confirm") {
-    const violationId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    if (!(await isAdminUser(interaction.user.id))) {
-      await interaction.followUp({ content: "❌ Only commissioners can confirm violations.", ephemeral: true });
-      return;
-    }
-
-    const [violation] = await db
-      .select()
-      .from(statPaddingViolationsTable)
-      .where(eq(statPaddingViolationsTable.id, violationId))
-      .limit(1);
-
-    if (!violation) {
-      await interaction.followUp({ content: `❌ Violation #${violationId} not found.`, ephemeral: true });
-      return;
-    }
-    if (violation.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ Violation #${violationId} is already **${violation.status}**.`, ephemeral: true });
-      return;
-    }
-
-    // Mark confirmed
-    await db
-      .update(statPaddingViolationsTable)
-      .set({ status: "confirmed", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(statPaddingViolationsTable.id, violationId));
-
-    // ── Post to the violation log channel ──────────────────────────────────────
-    const violationLogEmbed = new EmbedBuilder()
-      .setColor(Colors.Red)
-      .setTitle("🚨 Violation Confirmed")
-      .setDescription(
-        violation.description +
-        (violation.discordId ? `\n\n**Owner:** <@${violation.discordId}>` : "") +
-        `\n\n✅ Confirmed by ${interaction.user.toString()}`,
-      )
-      .setFooter({ text: `Violation #${violationId} · ${violation.week} · Season ${violation.seasonId}` })
-      .setTimestamp();
-
-    try {
-      const vlChannel = await interaction.client.channels.fetch(VIOLATION_LOG_CHANNEL_ID);
-      if (vlChannel?.isTextBased()) {
-        await vlChannel.send({ embeds: [violationLogEmbed] });
-      }
-    } catch (err) {
-      console.error("[violation_confirm] Failed to post to violation log:", err);
-    }
-
-    // ── Edit the commissioner message to show confirmed state ──────────────────
-    const confirmedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle("✅ Violation Confirmed")
-      .setDescription(
-        violation.description +
-        (violation.discordId ? `\n\n**Owner:** <@${violation.discordId}>` : "") +
-        `\n\n✅ Confirmed by ${interaction.user.toString()}\n📋 Posted to violation log`,
-      )
-      .setFooter({ text: `Violation #${violationId} · ${violation.week} · Season ${violation.seasonId}` })
-      .setTimestamp();
-
-    await interaction.editReply({
-      embeds: [confirmedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("violation_confirmed_done").setLabel("✅ Confirmed").setStyle(ButtonStyle.Success).setDisabled(true),
-      )],
-    });
-
-    // ── Check for repeat violations (2 confirmed = penalty notification) ───────
-    if (violation.discordId) {
-      const [{ value: confirmedCount }] = await db
-        .select({ value: count() })
-        .from(statPaddingViolationsTable)
-        .where(
-          and(
-            eq(statPaddingViolationsTable.discordId, violation.discordId),
-            eq(statPaddingViolationsTable.seasonId, violation.seasonId),
-            eq(statPaddingViolationsTable.status, "confirmed"),
-          ),
-        );
-
-      if (confirmedCount >= 2) {
-        const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
-          .where(eq(usersTable.discordId, violation.discordId)).limit(1);
-
-        const penaltyLines = [
-          `⚠️ **<@${violation.discordId}>${userRow?.team ? ` (${userRow.team})` : ""}** now has **${confirmedCount} confirmed violation(s)** this season.`,
-          ``,
-          `📋 **Action required:** Reduce the following player's OVR by **-15**:`,
-        ];
-        if (violation.playerName) {
-          penaltyLines.push(`> **${violation.playerName}** (${violation.teamName})`);
-        } else {
-          penaltyLines.push(`> Determine the player to penalize based on the violations above.`);
-        }
-        penaltyLines.push(
-          ``,
-          `Use \`/admin-reverse-transaction\` or the game settings to apply the OVR reduction.`,
-        );
-
-        const commChannel = await interaction.client.channels.fetch(
-          process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!,
-        ).catch(() => null);
-
-        if (commChannel?.isTextBased()) {
-          const penaltyEmbed = new EmbedBuilder()
-            .setColor(Colors.Orange)
-            .setTitle("⚠️ Repeat Violation — OVR Penalty Required")
-            .setDescription(penaltyLines.join("\n"))
-            .setFooter({ text: `Triggered by Violation #${violationId} · Season ${violation.seasonId}` })
-            .setTimestamp();
-          await (commChannel as TextChannel).send({ embeds: [penaltyEmbed] });
-        }
-      }
-    }
-
-    return;
-  }
-
-  // ── Violation: deny ─────────────────────────────────────────────────────────
-  if (action === "violation_deny") {
-    const violationId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    if (!(await isAdminUser(interaction.user.id))) {
-      await interaction.followUp({ content: "❌ Only commissioners can deny violations.", ephemeral: true });
-      return;
-    }
-
-    const [violation] = await db
-      .select()
-      .from(statPaddingViolationsTable)
-      .where(eq(statPaddingViolationsTable.id, violationId))
-      .limit(1);
-
-    if (!violation) {
-      await interaction.followUp({ content: `❌ Violation #${violationId} not found.`, ephemeral: true });
-      return;
-    }
-    if (violation.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ Violation #${violationId} is already **${violation.status}**.`, ephemeral: true });
-      return;
-    }
-
-    await db
-      .update(statPaddingViolationsTable)
-      .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(statPaddingViolationsTable.id, violationId));
-
-    const deniedEmbed = new EmbedBuilder()
-      .setColor(Colors.Grey)
-      .setTitle("❌ Violation Denied")
-      .setDescription(
-        violation.description +
-        (violation.discordId ? `\n\n**Owner:** <@${violation.discordId}>` : "") +
-        `\n\n❌ Denied by ${interaction.user.toString()} — no action taken`,
-      )
-      .setFooter({ text: `Violation #${violationId} · ${violation.week} · Season ${violation.seasonId}` })
-      .setTimestamp();
-
-    await interaction.editReply({
-      embeds: [deniedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("violation_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
-      )],
-    });
-
-    return;
-  }
 }
