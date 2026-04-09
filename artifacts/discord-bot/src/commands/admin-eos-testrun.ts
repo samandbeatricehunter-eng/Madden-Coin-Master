@@ -499,9 +499,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     embeds.push(summaryEmbed);
   }
 
-  // ── 12. Send in batches of 10 ─────────────────────────────────────────────────
-  const BATCH = 10;
-  const [firstBatch, ...restBatches] = chunk(embeds, BATCH);
+  // ── 12. Send in batches — max 10 embeds and 6000 total chars per message ───────
+  const batches = batchEmbeds(embeds);
+  const [firstBatch, ...restBatches] = batches;
 
   await interaction.editReply({ embeds: firstBatch });
 
@@ -510,8 +510,39 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 }
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+/** Approximate the character count Discord uses for a single embed. */
+function embedCharCount(e: EmbedBuilder): number {
+  const d = e.toJSON();
+  let n = 0;
+  if (d.title)            n += d.title.length;
+  if (d.description)      n += d.description.length;
+  if (d.footer?.text)     n += d.footer.text.length;
+  if (d.author?.name)     n += d.author.name.length;
+  for (const f of d.fields ?? []) n += f.name.length + f.value.length;
+  return n;
+}
+
+/**
+ * Split embeds into message batches, each with at most 10 embeds
+ * and at most 6000 total characters.
+ */
+function batchEmbeds(embeds: EmbedBuilder[]): EmbedBuilder[][] {
+  const MAX_EMBEDS = 10;
+  const MAX_CHARS  = 5900; // slight safety margin below 6000
+  const out: EmbedBuilder[][] = [];
+  let current: EmbedBuilder[] = [];
+  let currentChars = 0;
+
+  for (const e of embeds) {
+    const size = embedCharCount(e);
+    if (current.length > 0 && (current.length >= MAX_EMBEDS || currentChars + size > MAX_CHARS)) {
+      out.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(e);
+    currentChars += size;
+  }
+  if (current.length > 0) out.push(current);
   return out;
 }
