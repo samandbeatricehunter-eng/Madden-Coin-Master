@@ -191,12 +191,29 @@ export async function handleCcpArchPick(interaction: ButtonInteraction, sessionI
     return;
   }
 
+  // K/P: auto-assign kp package, go straight to dev trait
+  if (KP_POSITIONS.has(session.position!)) {
+    const settings = await getSettings();
+    session.packageTier   = "kp";
+    session.packagePoints = packagePoints("kp", settings);
+    session.step = 3;
+    await interaction.editReply({
+      content:
+        `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
+        `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
+      components: [devTraitSelectRow(sessionId)],
+      embeds: [],
+    });
+    return;
+  }
+
   session.step = 3;
+  const settings = await getSettings();
   await interaction.editReply({
     content:
       `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
-      `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
-    components: [devTraitSelectRow(sessionId)],
+      `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect your creation package:`,
+    components: [packageSelectRow(sessionId, settings)],
     embeds: [],
   });
 }
@@ -231,10 +248,22 @@ export async function handleCcpArch(interaction: StringSelectMenuInteraction, se
     });
     return;
   }
+  if (KP_POSITIONS.has(session.position!)) {
+    const kpSettings = await getSettings();
+    session.packageTier   = "kp";
+    session.packagePoints = packagePoints("kp", kpSettings);
+    session.step = 3;
+    await interaction.editReply({
+      content: `**🏈 Custom Player Builder — Step 3 of 8**\n\nPosition: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
+      components: [devTraitSelectRow(sessionId)], embeds: [],
+    });
+    return;
+  }
   session.step = 3;
+  const legacySettings = await getSettings();
   await interaction.editReply({
-    content: `**🏈 Custom Player Builder — Step 3 of 8**\n\nPosition: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
-    components: [devTraitSelectRow(sessionId)], embeds: [],
+    content: `**🏈 Custom Player Builder — Step 3 of 8**\n\nPosition: **${session.position}** | Archetype: **${arch.name}**\n\nSelect your creation package:`,
+    components: [packageSelectRow(sessionId, legacySettings)], embeds: [],
   });
 }
 
@@ -249,64 +278,54 @@ export async function handleCcpOlPos(interaction: StringSelectMenuInteraction, s
 
   await interaction.deferUpdate();
 
-  await interaction.editReply({
-    content:
-      `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
-      `Position: **${olPosition}** | Archetype: **${session.archetypeName}**\n\nSelect development trait:`,
-    components: [devTraitSelectRow(sessionId)],
-    embeds: [],
-  });
-}
-
-// ── Step 3: Dev trait selected ─────────────────────────────────────────────────
-export async function handleCcpDev(interaction: StringSelectMenuInteraction, sessionId: string) {
-  const session = getSession(sessionId);
-  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
-
-  session.devTrait = interaction.values[0]! as any;
-  session.step = 4;
-
-  await interaction.deferUpdate();
-
-  // K/P: skip package selection, auto-assign bronze/kp
-  if (KP_POSITIONS.has(session.position!)) {
-    const settings = await getSettings();
-    session.packageTier   = "kp";
-    session.packagePoints = packagePoints("kp", settings);
-    const pkgCost         = packageCost("kp", settings);
-    const devCost         = DEV_TRAIT_COST[session.devTrait!] ?? 0;
-    session.totalCost     = pkgCost + devCost;
-    session.step = 5;
-
-    await showBalanceCheck(interaction, session, sessionId, settings);
-    return;
-  }
-
+  // OL sub-positions are never K/P — always show package first
   const settings = await getSettings();
   await interaction.editReply({
     content:
-      `**🏈 Custom Player Builder — Step 4 of 8**\n\n` +
-      `Position: **${session.position}** | Archetype: **${session.archetypeName}**\n` +
-      `Dev Trait: **${DEV_TRAIT_LABEL[session.devTrait!]}**\n\nSelect creation package:`,
+      `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
+      `Position: **${olPosition}** | Archetype: **${session.archetypeName}**\n\nSelect your creation package:`,
     components: [packageSelectRow(sessionId, settings)],
     embeds: [],
   });
 }
 
-// ── Step 4: Package selected ───────────────────────────────────────────────────
+// ── Step 3: Package selected ───────────────────────────────────────────────────
 export async function handleCcpPkg(interaction: StringSelectMenuInteraction, sessionId: string) {
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
 
   session.packageTier = interaction.values[0]! as any;
-  session.step = 5;
+  session.step = 4;
 
   await interaction.deferUpdate();
   const settings = await getSettings();
   session.packagePoints = packagePoints(session.packageTier!, settings);
-  const pkgCost         = packageCost(session.packageTier!, settings);
-  const devCost         = DEV_TRAIT_COST[session.devTrait!] ?? 0;
-  session.totalCost     = pkgCost + devCost;
+
+  await interaction.editReply({
+    content:
+      `**🏈 Custom Player Builder — Step 4 of 8**\n\n` +
+      `Position: **${session.position}** | Archetype: **${session.archetypeName}**\n` +
+      `Package: **${packageLabel(session.packageTier!)}** (${session.packagePoints} pts)\n\nSelect development trait:`,
+    components: [devTraitSelectRow(sessionId)],
+    embeds: [],
+  });
+}
+
+// ── Step 4: Dev trait selected → balance check ────────────────────────────────
+export async function handleCcpDev(interaction: StringSelectMenuInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+
+  session.devTrait = interaction.values[0]! as any;
+  session.step = 5;
+
+  await interaction.deferUpdate();
+
+  // Package tier already set (kp auto-assigned for K/P, chosen for others)
+  const settings = await getSettings();
+  const pkgCost  = packageCost(session.packageTier!, settings);
+  const devCost  = DEV_TRAIT_COST[session.devTrait!] ?? 0;
+  session.totalCost = pkgCost + devCost;
 
   await showBalanceCheck(interaction, session, sessionId, settings);
 }
@@ -583,11 +602,18 @@ export async function handleCcpWeight(interaction: StringSelectMenuInteraction, 
   session.weightLbs = parseInt(interaction.values[0]!, 10);
   await interaction.deferUpdate();
 
-  const heightStr  = `${session.heightFt}'${session.heightIn}"`;
-  const devLabel   = DEV_TRAIT_LABEL[session.devTrait!] ?? "Normal";
-  const attrLines  = session.attributeOrder
-    .map(a => `**${a}**: ${session.attributes[a]}`)
-    .join("   ");
+  const heightStr = `${session.heightFt}'${session.heightIn}"`;
+  const devLabel  = DEV_TRAIT_LABEL[session.devTrait!] ?? "Normal";
+
+  // Only show attributes that were upgraded above base (keeps the field under 1024 chars)
+  const upgradedLines = session.attributeOrder
+    .filter(a => (session.attributes[a] ?? 0) > (session.attributeBases[a] ?? 0))
+    .map(a => {
+      const val  = session.attributes[a]!;
+      const base = session.attributeBases[a]!;
+      return `**${a}**: ${base} → **${val}**`;
+    });
+  const attrFieldValue = upgradedLines.length > 0 ? upgradedLines.join("  ·  ") : "No upgrades applied — base archetype stats";
 
   const summaryEmbed = new EmbedBuilder()
     .setColor(Colors.Gold)
@@ -600,11 +626,12 @@ export async function handleCcpWeight(interaction: StringSelectMenuInteraction, 
       { name: "Weight",        value: `${session.weightLbs} lbs`, inline: true },
       { name: "College",       value: session.college!,     inline: true },
       { name: "Dominant Hand", value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
-      { name: "Dev Trait",     value: devLabel,             inline: true },
       { name: "Package",       value: `${packageLabel(session.packageTier!)} (${session.packagePoints} pts)`, inline: true },
+      { name: "Dev Trait",     value: devLabel,             inline: true },
       { name: "Archetype",     value: session.archetypeName!, inline: true },
       { name: "Total Cost",    value: `**${session.totalCost} coins**`, inline: true },
-      { name: "Attributes",    value: attrLines || "—" },
+      { name: "\u200b",        value: "\u200b",             inline: true },
+      { name: "Attribute Upgrades", value: attrFieldValue.slice(0, 1020) },
     )
     .setFooter({ text: "Review carefully — once submitted, coins are deducted immediately." });
 

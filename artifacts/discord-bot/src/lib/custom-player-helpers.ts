@@ -328,9 +328,11 @@ export function buildAttrRows(session: CustomPlayerSession, sessionId: string) {
 export function buildCommissionerEmbed(playerId: number, session: CustomPlayerSession): EmbedBuilder {
   const heightStr  = `${session.heightFt}'${session.heightIn}"`;
   const devLabel   = { normal: "Normal", star: "Star", superstar: "Superstar" }[session.devTrait!] ?? "Normal";
+  // Show all attrs as "Attr: val" pairs — truncate at 1020 chars to stay within Discord's embed field limit
   const attrLines  = session.attributeOrder
-    .map(a => `**${a}**: ${session.attributes[a]}`)
-    .join("  ");
+    .map(a => `${a}: ${session.attributes[a]}`)
+    .join("  |  ");
+  const attrDisplay = attrLines.length > 1020 ? attrLines.slice(0, 1020) + "…" : attrLines;
 
   return new EmbedBuilder()
     .setColor(Colors.Orange)
@@ -348,7 +350,7 @@ export function buildCommissionerEmbed(playerId: number, session: CustomPlayerSe
       { name: "Archetype",        value: session.archetypeName!, inline: true },
       { name: "Total Cost",       value: `${session.totalCost} coins`, inline: true },
       { name: "Submitted By",     value: `<@${session.userId}>`, inline: true },
-      { name: "Attributes",       value: attrLines || "—" },
+      { name: "Attributes",       value: attrDisplay || "—" },
     )
     .setTimestamp()
     .setFooter({ text: `Player ID: ${playerId}` });
