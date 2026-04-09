@@ -327,33 +327,60 @@ export function buildAttrRows(session: CustomPlayerSession, sessionId: string) {
 // ── Commissioner embed + rows ─────────────────────────────────────────────────
 export function buildCommissionerEmbed(playerId: number, session: CustomPlayerSession): EmbedBuilder {
   const heightStr  = `${session.heightFt}'${session.heightIn}"`;
-  const devLabel   = { normal: "Normal", star: "Star", superstar: "Superstar" }[session.devTrait!] ?? "Normal";
-  // Show all attrs as "Attr: val" pairs — truncate at 1020 chars to stay within Discord's embed field limit
-  const attrLines  = session.attributeOrder
-    .map(a => `${a}: ${session.attributes[a]}`)
-    .join("  |  ");
-  const attrDisplay = attrLines.length > 1020 ? attrLines.slice(0, 1020) + "…" : attrLines;
+  const devLabel = { normal: "Normal", star: "Star", superstar: "Superstar" }[session.devTrait!] ?? "Normal";
 
   return new EmbedBuilder()
     .setColor(Colors.Orange)
     .setTitle("🏈 Custom Player Submitted")
     .addFields(
-      { name: "Name",             value: `${session.firstName} ${session.lastName}`, inline: true },
-      { name: "Position",         value: session.position!,   inline: true },
-      { name: "Jersey #",         value: String(session.jerseyNumber ?? "?"), inline: true },
-      { name: "Height",           value: heightStr,           inline: true },
-      { name: "Weight",           value: `${session.weightLbs} lbs`, inline: true },
-      { name: "College",          value: session.college!,    inline: true },
-      { name: "Dominant Hand",    value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
-      { name: "Dev Trait",        value: devLabel,            inline: true },
-      { name: "Package",          value: packageLabel(session.packageTier!), inline: true },
-      { name: "Archetype",        value: session.archetypeName!, inline: true },
-      { name: "Total Cost",       value: `${session.totalCost} coins`, inline: true },
-      { name: "Submitted By",     value: `<@${session.userId}>`, inline: true },
-      { name: "Attributes",       value: attrDisplay || "—" },
+      { name: "Name",          value: `${session.firstName} ${session.lastName}`, inline: true },
+      { name: "Position",      value: session.position!,   inline: true },
+      { name: "Jersey #",      value: String(session.jerseyNumber ?? "?"), inline: true },
+      { name: "Height",        value: heightStr,           inline: true },
+      { name: "Weight",        value: `${session.weightLbs} lbs`, inline: true },
+      { name: "College",       value: session.college!,    inline: true },
+      { name: "Dominant Hand", value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
+      { name: "Dev Trait",     value: devLabel,            inline: true },
+      { name: "Package",       value: packageLabel(session.packageTier!), inline: true },
+      { name: "Archetype",     value: session.archetypeName!, inline: true },
+      { name: "Total Cost",    value: `${session.totalCost} coins`, inline: true },
+      { name: "Submitted By",  value: `<@${session.userId}>`, inline: true },
     )
     .setTimestamp()
     .setFooter({ text: `Player ID: ${playerId}` });
+}
+
+// ── Attribute embeds for commissioner (all attrs, chunked into pages of 25) ────
+// Returns 1–3 EmbedBuilders with all attributes as inline fields (3-column grid).
+// Upgraded attributes (above base) are marked with ▲ and show the diff.
+export function buildAttrEmbeds(session: CustomPlayerSession): EmbedBuilder[] {
+  const FIELDS_PER_EMBED = 25; // Discord's embed field limit
+  const allFields = session.attributeOrder.map(attr => {
+    const val  = session.attributes[attr] ?? 0;
+    const base = session.attributeBases[attr] ?? val;
+    const diff = val - base;
+    const name  = diff > 0 ? `${attr} ▲` : attr;
+    const value = diff > 0 ? `**${val}** (+${diff})` : String(val);
+    return { name, value, inline: true as const };
+  });
+
+  const totalAttrs  = allFields.length;
+  const totalEmbeds = Math.ceil(totalAttrs / FIELDS_PER_EMBED);
+  const embeds: EmbedBuilder[] = [];
+
+  for (let i = 0; i < totalEmbeds; i++) {
+    const chunk = allFields.slice(i * FIELDS_PER_EMBED, (i + 1) * FIELDS_PER_EMBED);
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle(totalEmbeds === 1 ? "📊 Attributes" : `📊 Attributes (${i + 1}/${totalEmbeds})`)
+      .addFields(chunk);
+    if (i === totalEmbeds - 1) {
+      embed.setFooter({ text: `▲ = raised above archetype base  ·  ${totalAttrs} total attributes` });
+    }
+    embeds.push(embed);
+  }
+
+  return embeds;
 }
 
 export function buildCommissionerRows(playerId: number) {

@@ -25,7 +25,7 @@ import {
   archetypeSelectRow, devTraitSelectRow, packageSelectRow,
   buildAttrRows, attrAllocEmbed, attrSelectPageCount,
   heightOptions, weightOptions, inchesToDisplay,
-  buildCommissionerEmbed, buildCommissionerRows,
+  buildCommissionerEmbed, buildCommissionerRows, buildAttrEmbeds,
   olSubPositionSelectRow, positionSelectRow,
   KP_POSITIONS, DEV_TRAIT_COST, DEV_TRAIT_LABEL,
   buildArchetypeNavRows, buildAttrPageNavRow, attrPageCount, formatArchetypeEmbed,
@@ -717,10 +717,11 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
   try {
     const ch = await interaction.client.channels.fetch(COMMISSIONER_CHANNEL_ID).catch(() => null);
     if (ch?.isTextBased()) {
-      const tc = ch as TextChannel;
+      const tc        = ch as TextChannel;
       const commEmbed = buildCommissionerEmbed(playerId, session);
+      const attrEmbeds = buildAttrEmbeds(session);
       const commRow   = buildCommissionerRows(playerId);
-      const commMsg   = await tc.send({ embeds: [commEmbed], components: [commRow] });
+      const commMsg   = await tc.send({ embeds: [commEmbed, ...attrEmbeds], components: [commRow] });
       commMsgId = commMsg.id;
       commChanId = tc.id;
     }
