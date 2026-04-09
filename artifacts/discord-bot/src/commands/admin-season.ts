@@ -350,7 +350,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return interaction.editReply({ embeds: [embed] });
   }
 
-  if (sub === "franchise-limit") {
+  if (sub === "franchise_limit") {
     const limit = interaction.options.getInteger("limit", true);
     const [settings] = await db.select().from(serverSettingsTable).limit(1);
     if (settings) {
@@ -377,7 +377,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (sub === "franchise-reset") {
+  if (sub === "franchise_reset") {
     const confirmed = interaction.options.getBoolean("confirm", true);
     if (!confirmed) {
       return interaction.editReply({
@@ -687,7 +687,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (sub === "core-attrs") {
+  if (sub === "core_attrs") {
     const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
     const season = seasons[0];
     if (!season) {
@@ -750,7 +750,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
   const sub = interaction.options.getSubcommand(false);
-  if (sub !== "core-attrs") return;
+  if (sub !== "core_attrs") return;
 
   const focused = interaction.options.getFocused().toLowerCase();
   const choices = ATTRIBUTES

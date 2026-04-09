@@ -4,7 +4,10 @@ import {
   AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTable } from "@workspace/db";
+import {
+  legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTable,
+  franchiseRostersTable,
+} from "@workspace/db";
 import { eq, and, sql, asc } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
@@ -14,15 +17,29 @@ import {
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
 import { getServerSettings } from "../lib/server-settings.js";
+import * as purchaseCustomPlayer from "./purchasecustomplayer.js";
+import { startAttributeUp } from "./attribute-up-interactions.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
   .setDescription("Purchase an item from the store")
 
+  // ── Custom Player ────────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("custom_player")
+      .setDescription("Build and buy a custom player — see /view store for package prices and current availability")
+  )
+
   // ── Legend ──────────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("legend")
-      .setDescription("Buy a legend — see /viewstore for current price (max 4 all-time)")
+      .setDescription("Buy a legend — see /view store for current price (max 4 all-time)")
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Filter legends by position (optional)")
+          .setRequired(false)
+          .setAutocomplete(true)
+      )
       .addStringOption(opt =>
         opt.setName("legend_name")
           .setDescription("Select a legend from the store")
@@ -31,124 +48,215 @@ export const data = new SlashCommandBuilder()
       )
   )
 
-  // ── Attribute ───────────────────────────────────────────────────────────────
+  // ── Dev Upgrade ─────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
-    sub.setName("attribute")
-      .setDescription("Upgrade an attribute — see /viewstore for current prices and caps")
+    sub.setName("dev_up")
+      .setDescription("Dev upgrade a player (Normal→Impact, Impact→Star, or Star→Superstar) — see /view store for price")
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
       .addStringOption(opt =>
-        opt.setName("attribute_name")
-          .setDescription("Which attribute to upgrade?")
+        opt.setName("position")
+          .setDescription("Player's position on the roster")
           .setRequired(true)
           .setAutocomplete(true)
       )
       .addStringOption(opt =>
-        opt.setName("player_name")
-          .setDescription("Name of the player receiving the upgrade")
+        opt.setName("player")
+          .setDescription("Player to upgrade (from autocomplete — excludes Superstar and X-Factor)")
           .setRequired(true)
+          .setAutocomplete(true)
       )
-      .addStringOption(opt =>
-        opt.setName("player_position")
-          .setDescription("Player's position")
-          .setRequired(true)
-          .addChoices(...NFL_POSITIONS.map(p => ({ name: p, value: p })))
-      )
-      .addIntegerOption(opt =>
-        opt.setName("quantity")
-          .setDescription("How many attribute points to purchase (default: 1)")
-          .setRequired(false)
-          .setMinValue(1)
-      )
-  )
-
-  // ── Dev Upgrade ─────────────────────────────────────────────────────────────
-  .addSubcommand(sub =>
-    sub.setName("devup")
-      .setDescription("Dev upgrade a player (Star or Superstar only) — see /viewstore for current price and cap")
       .addStringOption(opt =>
         opt.setName("dev_type")
-          .setDescription("Star or Superstar?")
+          .setDescription("Target development tier")
           .setRequired(true)
           .addChoices(
-            { name: "Star", value: "Star" },
-            { name: "Superstar", value: "Superstar" },
+            { name: "Impact (from Normal)",      value: "Impact"    },
+            { name: "Star (from Impact)",         value: "Star"      },
+            { name: "Superstar (from Star)",      value: "Superstar" },
           )
-      )
-      .addStringOption(opt =>
-        opt.setName("player_name")
-          .setDescription("Player's name")
-          .setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("player_position")
-          .setDescription("Player's position (e.g. QB, WR, DL, LB, DB)")
-          .setRequired(true)
-      )
-      .addIntegerOption(opt =>
-        opt.setName("quantity")
-          .setDescription("How many dev upgrades to purchase (default: 1)")
-          .setRequired(false)
-          .setMinValue(1)
       )
   )
 
   // ── Age Reset ───────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
-    sub.setName("agereset")
-      .setDescription("Reset a player's age — see /viewstore for current price and cap")
-      .addStringOption(opt =>
-        opt.setName("player_name")
-          .setDescription("Player's name")
-          .setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("player_position")
-          .setDescription("Player's position (e.g. QB, WR, DL, LB, DB)")
-          .setRequired(true)
-      )
-      .addIntegerOption(opt =>
-        opt.setName("quantity")
-          .setDescription("How many age resets to purchase (default: 1)")
+    sub.setName("age_reset")
+      .setDescription("Reset a player's age — see /view store for current price and cap")
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
           .setRequired(false)
-          .setMinValue(1)
+      )
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Player's position on the roster")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player")
+          .setDescription("Player whose age to reset (from autocomplete)")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+  )
+
+  // ── Attribute Upgrade (interactive) ─────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("attribute_up")
+      .setDescription("Upgrade a player attribute — interactive paginated flow with scaling costs")
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Player's position on the roster")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player")
+          .setDescription("Player to upgrade attributes for (from autocomplete)")
+          .setRequired(true)
+          .setAutocomplete(true)
       )
   );
 
-// ── Autocomplete ──────────────────────────────────────────────────────────────
+// ── Autocomplete ───────────────────────────────────────────────────────────────
 export async function autocomplete(interaction: AutocompleteInteraction) {
-  const sub = interaction.options.getSubcommand();
-  const focused = interaction.options.getFocused().toLowerCase();
+  try {
+    const sub     = interaction.options.getSubcommand();
+    const focused = interaction.options.getFocused(true);
 
-  if (sub === "legend") {
-    const available = await db.select().from(legendsTable)
-      .where(eq(legendsTable.isAvailable, true))
-      .orderBy(asc(legendsTable.position), asc(legendsTable.name));
-    const matches = available
-      .filter(l => l.name.toLowerCase().includes(focused))
-      .slice(0, 25)
-      .map(l => ({ name: `${l.name} — ${l.position} (${l.cost.toLocaleString()} coins)`, value: l.name }));
-    await interaction.respond(matches);
-    return;
+    if (sub === "legend") {
+      if (focused.name === "position") {
+        // Return unique positions from available legends
+        const available = await db.select({ position: legendsTable.position })
+          .from(legendsTable)
+          .where(eq(legendsTable.isAvailable, true));
+        const positions = [...new Set(available.map(l => l.position).filter(Boolean))].sort();
+        const q = focused.value.toLowerCase();
+        const choices = positions
+          .filter(p => p!.toLowerCase().startsWith(q))
+          .slice(0, 25)
+          .map(p => ({ name: p!, value: p! }));
+        await interaction.respond(choices);
+        return;
+      }
+      if (focused.name === "legend_name") {
+        const posFilter = interaction.options.getString("position");
+        const available = await db.select().from(legendsTable)
+          .where(eq(legendsTable.isAvailable, true))
+          .orderBy(asc(legendsTable.position), asc(legendsTable.name));
+        const q = focused.value.toLowerCase();
+        const matches = available
+          .filter(l => {
+            const matchesPos = !posFilter || l.position?.toLowerCase() === posFilter.toLowerCase();
+            const matchesName = l.name.toLowerCase().includes(q);
+            return matchesPos && matchesName;
+          })
+          .slice(0, 25)
+          .map(l => ({ name: `${l.name} — ${l.position} (${l.cost.toLocaleString()} coins)`, value: l.name }));
+        await interaction.respond(matches);
+        return;
+      }
+    }
+
+    if (sub === "dev_up" || sub === "age_reset" || sub === "attribute_up") {
+      // getUser is not available in autocomplete context; always use the invoking user for roster lookup
+      const targetUser = interaction.user;
+
+      if (focused.name === "position") {
+        // Autocomplete positions from this user's roster
+        const season = await getOrCreateActiveSeason();
+        const rows = await db
+          .select({ position: franchiseRostersTable.position })
+          .from(franchiseRostersTable)
+          .where(and(
+            eq(franchiseRostersTable.seasonId, season.id),
+            eq(franchiseRostersTable.discordId, targetUser.id),
+          ));
+        const positions = [...new Set(rows.map(r => r.position).filter(Boolean))].sort();
+        const q = focused.value.toLowerCase();
+        const choices = positions
+          .filter(p => p.toLowerCase().startsWith(q))
+          .slice(0, 25)
+          .map(p => ({ name: p, value: p }));
+        await interaction.respond(choices);
+        return;
+      }
+
+      if (focused.name === "player") {
+        const position = interaction.options.getString("position");
+        const season   = await getOrCreateActiveSeason();
+        let query = db
+          .select({
+            firstName: franchiseRostersTable.firstName,
+            lastName:  franchiseRostersTable.lastName,
+            devTrait:  franchiseRostersTable.devTrait,
+            overall:   franchiseRostersTable.overall,
+          })
+          .from(franchiseRostersTable)
+          .where(and(
+            eq(franchiseRostersTable.seasonId, season.id),
+            eq(franchiseRostersTable.discordId, targetUser.id),
+          ));
+
+        const rows = await query;
+        const q = focused.value.toLowerCase();
+
+        // For devUp: exclude Superstar (3) and X-Factor (4)
+        const eligible = rows.filter(r => {
+          if (sub === "dev_up" && r.devTrait >= 3) return false;
+          if (position && r.firstName) {
+            // position filter will be applied server-side since we can't WHERE on it easily
+          }
+          return true;
+        });
+
+        const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor" };
+        const choices = eligible
+          .filter(r => `${r.firstName} ${r.lastName}`.toLowerCase().includes(q))
+          .slice(0, 25)
+          .map(r => ({
+            name: `${r.firstName} ${r.lastName} (${r.overall} OVR • ${DEV_LABEL[r.devTrait] ?? "?"})`,
+            value: `${r.firstName} ${r.lastName}`,
+          }));
+
+        await interaction.respond(choices);
+        return;
+      }
+    }
+
+    await interaction.respond([]);
+  } catch (err) {
+    console.error("purchase autocomplete error:", err);
+    await interaction.respond([]).catch(() => {});
   }
-
-  if (sub === "attribute") {
-    const matches = ATTRIBUTES
-      .filter(a => a.toLowerCase().includes(focused))
-      .slice(0, 25)
-      .map(a => ({ name: a, value: a }));
-    await interaction.respond(matches);
-    return;
-  }
-
-  await interaction.respond([]);
 }
 
-// ── Execute ───────────────────────────────────────────────────────────────────
+// ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction) {
+  const sub = interaction.options.getSubcommand();
+
+  // ── /purchase customPlayer ──────────────────────────────────────────────────
+  if (sub === "custom_player") {
+    return purchaseCustomPlayer.execute(interaction);
+  }
+
+  // ── /purchase attributeUp (interactive flow) ───────────────────────────────
+  if (sub === "attribute_up") {
+    return startAttributeUp(interaction);
+  }
+
   await interaction.deferReply({ ephemeral: true });
 
-  const sub      = interaction.options.getSubcommand();
   const settings = await getServerSettings();
-
   if (!settings.coinEconomy) {
     await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
     return;
@@ -157,32 +265,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({ content: "❌ Legend purchases are currently disabled." });
     return;
   }
-  if (sub === "customplayer" && !settings.customSuperstarsEnabled) {
-    await interaction.editReply({ content: "❌ Custom superstar purchases are currently disabled." });
-    return;
-  }
-  if (sub === "attribute" && !settings.attributeUpgradesEnabled) {
-    await interaction.editReply({ content: "❌ Attribute upgrades are currently disabled." });
-    return;
-  }
-  if (sub === "devup" && !settings.devUpgradesEnabled) {
+  if (sub === "dev_up" && !settings.devUpgradesEnabled) {
     await interaction.editReply({ content: "❌ Development upgrades are currently disabled." });
     return;
   }
-  if (sub === "agereset" && !settings.ageResetsEnabled) {
+  if (sub === "age_reset" && !settings.ageResetsEnabled) {
     await interaction.editReply({ content: "❌ Age resets are currently disabled." });
     return;
   }
 
-  const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
-  const season = await getOrCreateActiveSeason();
-  const stats = await getSeasonStats(interaction.user.id, season.id);
-  const rules = await getSeasonRules(season);
-  const coreAttributes = getCoreAttributes(season);
-
-  // ── /purchase legend ────────────────────────────────────────────────────────
+  // ── /purchase legend ─────────────────────────────────────────────────────────
   if (sub === "legend") {
-    const cost = rules.legendCost;
+    const user   = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const season = await getOrCreateActiveSeason();
+    const rules  = await getSeasonRules(season);
+    const cost   = rules.legendCost;
+
     if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
     const legendName = interaction.options.getString("legend_name", true);
@@ -195,11 +293,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const legends = await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true));
-    const legend = legends.find(l => l.name.toLowerCase() === legendName.toLowerCase());
+    const legend  = legends.find(l => l.name.toLowerCase() === legendName.toLowerCase());
     if (!legend) {
       const names = legends.map(l => l.name).join(", ");
       return interaction.editReply({
-        embeds: [errorEmbed("Legend Not Found", `**"${legendName}"** is not available.\n\nAvailable: ${names || "None currently — check back soon!"}\n\nUse \`/viewstore\` to browse.`)],
+        embeds: [errorEmbed("Legend Not Found", `**"${legendName}"** is not available.\n\nAvailable: ${names || "None currently — check back soon!"}\n\nUse \`/view store\` to browse.`)],
       });
     }
 
@@ -237,110 +335,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  // ── /purchase attribute ─────────────────────────────────────────────────────
-  if (sub === "attribute") {
-    const attributeName = interaction.options.getString("attribute_name", true);
-    const playerName = interaction.options.getString("player_name", true);
-    const playerPosition = interaction.options.getString("player_position", true);
-    const quantity = interaction.options.getInteger("quantity") ?? 1;
+  // ── /purchase devUp ──────────────────────────────────────────────────────────
+  if (sub === "dev_up") {
+    const targetUser   = interaction.options.getUser("user") ?? interaction.user;
+    const playerInput  = interaction.options.getString("player", true);
+    const devUpType    = interaction.options.getString("dev_type", true);
+    const season       = await getOrCreateActiveSeason();
+    const stats        = await getSeasonStats(interaction.user.id, season.id);
+    const rules        = await getSeasonRules(season);
+    const user         = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const costPer      = rules.devUpsCost;
+    const totalCost    = costPer;
+    const remaining    = rules.devUpsCap - stats.devUpsPurchased;
 
-    if (!ATTRIBUTES.includes(attributeName as any)) {
-      return interaction.editReply({ embeds: [errorEmbed("Invalid Attribute", `**${attributeName}** is not a valid attribute. Use the autocomplete list when typing.`)] });
-    }
-
-    const isCore = coreAttributes.has(attributeName);
-    const costPer = isCore ? rules.coreAttrCost    : rules.nonCoreAttrCost;
-    const cap     = isCore ? rules.coreAttrCap     : rules.nonCoreAttrCap;
-    const used    = isCore ? stats.coreAttrPurchased : stats.nonCoreAttrPurchased;
-    const category = isCore ? "Core" : "Non-Core";
-    const remaining = cap - used;
-    const totalCost = costPer * quantity;
-
-    if (quantity > remaining) {
+    if (remaining <= 0) {
       return interaction.editReply({
-        embeds: [errorEmbed(
-          `Exceeds ${category} Attribute Cap`,
-          `You only have **${remaining} ${category.toLowerCase()} upgrade${remaining === 1 ? "" : "s"}** remaining this season (cap: ${cap}), but requested **${quantity}**.\n\n` +
-          (isCore
-            ? `Non-core upgrades available: **${Math.max(0, rules.nonCoreAttrCap - stats.nonCoreAttrPurchased)}** (${rules.nonCoreAttrCost} coins each).`
-            : `Core upgrades available: **${Math.max(0, rules.coreAttrCap - stats.coreAttrPurchased)}** (${rules.coreAttrCost} coins each).`)
-        )],
+        embeds: [errorEmbed("Dev Upgrade Limit Exceeded", `You have no dev upgrades remaining this season (cap: ${rules.devUpsCap}).`)],
       });
     }
 
     if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
 
-    await deductBalance(interaction.user.id, totalCost);
-    await logTransaction(interaction.user.id, -totalCost, "purchase", `Attribute upgrade (${category}) ×${quantity} — ${attributeName} for ${playerName} (${playerPosition})`);
-    await db.update(seasonStatsTable).set({
-      coreAttrPurchased: isCore
-        ? sql`${seasonStatsTable.coreAttrPurchased} + ${quantity}`
-        : seasonStatsTable.coreAttrPurchased,
-      nonCoreAttrPurchased: !isCore
-        ? sql`${seasonStatsTable.nonCoreAttrPurchased} + ${quantity}`
-        : seasonStatsTable.nonCoreAttrPurchased,
-    }).where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
-
-    const [purchase] = await db.insert(purchasesTable).values({
-      discordId: interaction.user.id,
-      seasonId: season.id,
-      purchaseType: "attribute",
-      status: "pending",
-      cost: totalCost,
-      attributeName,
-      playerName,
-      playerPosition,
-      notes: quantity > 1 ? `qty:${quantity}` : null,
-    }).returning();
-
-    await db.insert(inventoryTable).values({
-      discordId: interaction.user.id,
-      seasonId: season.id,
-      purchaseId: purchase!.id,
-      itemType: "attribute",
-      attributeName,
-      playerName,
-      playerPosition,
-      notes: quantity > 1 ? `qty:${quantity}` : null,
-    });
-
-    await sendCommissionerNotification(interaction, "attribute", purchase!.id, {
-      attributeName, playerName, playerPosition, category, quantity: String(quantity), costPer: String(costPer),
-    });
-
-    return interaction.editReply({
-      embeds: [pendingEmbed(
-        "Attribute Upgrade Submitted!",
-        `**${attributeName} ×${quantity}** for **${playerName}** (${playerPosition}) submitted!\n\n` +
-        `**Category:** ${category} (${costPer} coins/pt)\n` +
-        `**Total Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
-        `**${category} upgrades used this season:** ${used + quantity}/${cap}`
-      )],
-    });
-  }
-
-  // ── /purchase devup ─────────────────────────────────────────────────────────
-  if (sub === "devup") {
-    const playerName = interaction.options.getString("player_name", true);
-    const playerPosition = interaction.options.getString("player_position", true);
-    const devUpType = interaction.options.getString("dev_type", true);
-    const quantity = interaction.options.getInteger("quantity") ?? 1;
-    const costPer = rules.devUpsCost;
-    const totalCost = costPer * quantity;
-    const remaining = rules.devUpsCap - stats.devUpsPurchased;
-
-    if (quantity > remaining) {
-      return interaction.editReply({
-        embeds: [errorEmbed("Dev Upgrade Limit Exceeded", `You only have **${remaining} dev upgrade${remaining === 1 ? "" : "s"}** remaining this season (cap: ${rules.devUpsCap}), but requested **${quantity}**.`)],
-      });
-    }
-
-    if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
+    // Find the player on the roster (for their position)
+    const rosterRows = await db
+      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.discordId, targetUser.id),
+      ));
+    const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
+    const playerPosition = match?.position ?? interaction.options.getString("position", true);
 
     await deductBalance(interaction.user.id, totalCost);
-    await logTransaction(interaction.user.id, -totalCost, "purchase", `Dev upgrade (${devUpType}) ×${quantity} — ${playerName} (${playerPosition})`);
+    await logTransaction(interaction.user.id, -totalCost, "purchase", `Dev upgrade (${devUpType}) — ${playerInput} (${playerPosition})`);
     await db.update(seasonStatsTable)
-      .set({ devUpsPurchased: sql`${seasonStatsTable.devUpsPurchased} + ${quantity}` })
+      .set({ devUpsPurchased: sql`${seasonStatsTable.devUpsPurchased} + 1` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
     const [purchase] = await db.insert(purchasesTable).values({
@@ -349,9 +379,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       purchaseType: "dev_up",
       status: "pending",
       cost: totalCost,
-      playerName,
+      playerName: playerInput,
       playerPosition,
-      notes: `${devUpType}${quantity > 1 ? `;qty:${quantity}` : ""}`,
+      notes: `${devUpType}${targetUser.id !== interaction.user.id ? `;owner:<@${targetUser.id}>` : ""}`,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -359,44 +389,60 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       seasonId: season.id,
       purchaseId: purchase!.id,
       itemType: "dev_up",
-      playerName,
+      playerName: playerInput,
       playerPosition,
-      notes: `${devUpType}${quantity > 1 ? `;qty:${quantity}` : ""}`,
+      notes: `${devUpType}`,
     });
 
-    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, { playerName, playerPosition, devUpType, quantity: String(quantity), costPer: String(costPer) });
+    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, {
+      playerName: playerInput, playerPosition, devUpType, quantity: "1", costPer: String(costPer),
+      ownerNote: targetUser.id !== interaction.user.id ? `Owner: <@${targetUser.id}>` : undefined,
+    });
 
     return interaction.editReply({
       embeds: [pendingEmbed(
         "Dev Upgrade Submitted!",
-        `**${devUpType}** dev upgrade ×${quantity} for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
-        `**Total Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
-        `**Dev upgrades used:** ${stats.devUpsPurchased + quantity}/${rules.devUpsCap}`
+        `**${devUpType}** dev upgrade for **${playerInput}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
+        `**Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
+        `**Dev upgrades used:** ${stats.devUpsPurchased + 1}/${rules.devUpsCap}`
       )],
     });
   }
 
-  // ── /purchase agereset ──────────────────────────────────────────────────────
-  if (sub === "agereset") {
-    const playerName = interaction.options.getString("player_name", true);
-    const playerPosition = interaction.options.getString("player_position", true);
-    const quantity = interaction.options.getInteger("quantity") ?? 1;
-    const costPer = rules.ageResetCost;
-    const totalCost = costPer * quantity;
-    const remaining = rules.ageResetsCap - stats.ageResetsPurchased;
+  // ── /purchase ageReset ───────────────────────────────────────────────────────
+  if (sub === "age_reset") {
+    const targetUser   = interaction.options.getUser("user") ?? interaction.user;
+    const playerInput  = interaction.options.getString("player", true);
+    const season       = await getOrCreateActiveSeason();
+    const stats        = await getSeasonStats(interaction.user.id, season.id);
+    const rules        = await getSeasonRules(season);
+    const user         = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const costPer      = rules.ageResetCost;
+    const remaining    = rules.ageResetsCap - stats.ageResetsPurchased;
 
-    if (quantity > remaining) {
+    if (remaining <= 0) {
       return interaction.editReply({
-        embeds: [errorEmbed("Age Reset Limit Exceeded", `You only have **${remaining} age reset${remaining === 1 ? "" : "s"}** remaining this season (cap: ${rules.ageResetsCap}), but requested **${quantity}**.`)],
+        embeds: [errorEmbed("Age Reset Limit Exceeded", `You have no age resets remaining this season (cap: ${rules.ageResetsCap}).`)],
       });
     }
 
-    if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
+    if (user.balance < costPer) return insufficientFunds(interaction, costPer, user.balance);
 
-    await deductBalance(interaction.user.id, totalCost);
-    await logTransaction(interaction.user.id, -totalCost, "purchase", `Age reset ×${quantity} — ${playerName} (${playerPosition})`);
+    // Find position from roster
+    const rosterRows = await db
+      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.discordId, targetUser.id),
+      ));
+    const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
+    const playerPosition = match?.position ?? interaction.options.getString("position", true);
+
+    await deductBalance(interaction.user.id, costPer);
+    await logTransaction(interaction.user.id, -costPer, "purchase", `Age reset — ${playerInput} (${playerPosition})`);
     await db.update(seasonStatsTable)
-      .set({ ageResetsPurchased: sql`${seasonStatsTable.ageResetsPurchased} + ${quantity}` })
+      .set({ ageResetsPurchased: sql`${seasonStatsTable.ageResetsPurchased} + 1` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
     const [purchase] = await db.insert(purchasesTable).values({
@@ -404,10 +450,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       seasonId: season.id,
       purchaseType: "age_reset",
       status: "pending",
-      cost: totalCost,
-      playerName,
+      cost: costPer,
+      playerName: playerInput,
       playerPosition,
-      notes: quantity > 1 ? `qty:${quantity}` : null,
+      notes: targetUser.id !== interaction.user.id ? `owner:<@${targetUser.id}>` : null,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -415,26 +461,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       seasonId: season.id,
       purchaseId: purchase!.id,
       itemType: "age_reset",
-      playerName,
+      playerName: playerInput,
       playerPosition,
-      notes: quantity > 1 ? `qty:${quantity}` : null,
+      notes: targetUser.id !== interaction.user.id ? `owner:<@${targetUser.id}>` : null,
     });
 
-    await sendCommissionerNotification(interaction, "age_reset", purchase!.id, { playerName, playerPosition, quantity: String(quantity), costPer: String(costPer) });
+    await sendCommissionerNotification(interaction, "age_reset", purchase!.id, {
+      playerName: playerInput, playerPosition, quantity: "1", costPer: String(costPer),
+      ownerNote: targetUser.id !== interaction.user.id ? `Owner: <@${targetUser.id}>` : undefined,
+    });
 
     return interaction.editReply({
       embeds: [pendingEmbed(
         "Age Reset Submitted!",
-        `Age reset ×${quantity} for **${playerName}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
-        `**Total Cost:** ${totalCost.toLocaleString()} coins deducted.\n` +
-        `**Age resets used:** ${stats.ageResetsPurchased + quantity}/${rules.ageResetsCap}`
+        `Age reset for **${playerInput}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
+        `**Cost:** ${costPer.toLocaleString()} coins deducted.\n` +
+        `**Age resets used:** ${stats.ageResetsPurchased + 1}/${rules.ageResetsCap}`
       )],
     });
   }
-
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 function insufficientFunds(interaction: ChatInputCommandInteraction, cost: number, balance: number) {
   return interaction.editReply({
     embeds: [errorEmbed("Insufficient Funds", `You need **${cost.toLocaleString()} coins** but only have **${balance.toLocaleString()} coins**. You're short by **${(cost - balance).toLocaleString()} coins**.`)],
@@ -466,44 +514,31 @@ async function sendCommissionerNotification(
       "Once you've added this player to the draft pool, click the button below to notify the member.",
     ].join("\n");
     buttonLabel = "✅ Added to Draft Pool";
-  } else if (type === "attribute") {
-    const qty = parseInt(details["quantity"] ?? "1");
-    const costPer = details["costPer"];
-    title = "⚡ Attribute Upgrade Request";
-    description = [
-      `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-      `**Attribute:** ${details["attributeName"]} (${details["category"]})`,
-      `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-      `**Quantity:** ${qty} point${qty > 1 ? "s" : ""} × ${costPer} coins = **${qty * parseInt(costPer ?? "0")} coins**`,
-      `**Purchase ID:** #${purchaseId}`,
-      "",
-      "Click the button below once this has been applied in-game.",
-    ].join("\n");
   } else if (type === "dev_up") {
-    const qty = parseInt(details["quantity"] ?? "1");
     const costPer = details["costPer"];
     title = "📈 Dev Upgrade Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+      details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
       `**Upgrade Type:** ${details["devUpType"]}`,
-      `**Quantity:** ${qty} × ${costPer} coins = **${qty * parseInt(costPer ?? "0")} coins**`,
+      `**Cost:** ${costPer} coins`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   } else if (type === "age_reset") {
-    const qty = parseInt(details["quantity"] ?? "1");
     const costPer = details["costPer"];
     title = "🔄 Age Reset Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+      details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-      `**Quantity:** ${qty} reset${qty > 1 ? "s" : ""} × ${costPer} coins = **${qty * parseInt(costPer ?? "0")} coins**`,
+      `**Cost:** ${costPer} coins`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   } else if (type.startsWith("custom_player")) {
     title = `🎨 Custom Player Request — ${details["tier"]}`;
     description = [

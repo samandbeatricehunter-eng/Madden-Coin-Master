@@ -64,19 +64,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const sub    = interaction.options.getSubcommand();
-  const target = interaction.options.getUser("user", true);
+  const target = interaction.options.getUser("user", false);
   const season = await getOrCreateActiveSeason();
 
+  // "vault_add", "vault_view", and "vault_move" all require a target user
+  if (!target && sub !== "vault_remove") {
+    await interaction.editReply({ content: "❌ Please provide a **user** for this command." });
+    return;
+  }
+  // After the guard above, target is guaranteed non-null for all subs except vaultRemove
+  const t = target!;
+
   // ── ADD (retroactive) ───────────────────────────────────────────────────────
-  if (sub === "add") {
+  if (sub === "vault_add") {
     const legendName = interaction.options.getString("legend_name", true).trim();
     const position   = interaction.options.getString("position", true).trim().toUpperCase();
     const description = interaction.options.getString("description") ?? undefined;
 
     // Guard: user must exist in the system
-    const userRows = await db.select().from(usersTable).where(eq(usersTable.discordId, target.id)).limit(1);
+    const userRows = await db.select().from(usersTable).where(eq(usersTable.discordId, t.id)).limit(1);
     if (!userRows[0]) {
-      await interaction.editReply({ content: `❌ <@${target.id}> doesn't have an economy account yet. Add them first.` });
+      await interaction.editReply({ content: `❌ <@${t.id}> doesn't have an economy account yet. Add them first.` });
       return;
     }
 
@@ -84,14 +92,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const countRows = await db.select({ c: sql<string>`COUNT(*)` })
       .from(inventoryTable)
       .where(and(
-        eq(inventoryTable.discordId, target.id),
+        eq(inventoryTable.discordId, t.id),
         eq(inventoryTable.itemType, "legend"),
         sql`${inventoryTable.legendCategory} = 'permanent'`,
       ));
     const permanentCount = parseInt(countRows[0]?.c ?? "0", 10);
     if (permanentCount >= PERMANENT_CAP) {
       await interaction.editReply({
-        content: `❌ <@${target.id}> already has **${permanentCount}/${PERMANENT_CAP}** permanent legends. Remove one first.`,
+        content: `❌ <@${t.id}> already has **${permanentCount}/${PERMANENT_CAP}** permanent legends. Remove one first.`,
       });
       return;
     }
@@ -119,7 +127,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     // Add to permanent vault using season.id as the anchor season
     await db.insert(inventoryTable).values({
-      discordId:      target.id,
+      discordId:      t.id,
       seasonId:       season.id,
       purchaseId:     0,            // 0 = admin-granted, no purchase record
       itemType:       "legend",
@@ -132,13 +140,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // Increment all-time legend purchase count
     await db.update(usersTable)
       .set({ totalLegendPurchases: sql`${usersTable.totalLegendPurchases} + 1`, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, target.id));
+      .where(eq(usersTable.discordId, t.id));
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Gold)
       .setTitle("🏅 Legend Added to Permanent Vault")
       .addFields(
-        { name: "User",           value: `<@${target.id}>`, inline: true },
+        { name: "User",           value: `<@${t.id}>`, inline: true },
         { name: "Legend",         value: `**${legendName}** (${position})`, inline: true },
         { name: "Vault",          value: `${permanentCount + 1}/${PERMANENT_CAP}`, inline: true },
         { name: "Store Entry",    value: wasCreated ? `✅ Created (ID ${legendId})` : `Existing (ID ${legendId})` },
@@ -150,9 +158,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── VIEW ────────────────────────────────────────────────────────────────────
-  if (sub === "view") {
+  if (sub === "vault_view") {
     const items = await db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.discordId, target.id), eq(inventoryTable.itemType, "legend")))
+      .where(and(eq(inventoryTable.discordId, t.id), eq(inventoryTable.itemType, "legend")))
       .orderBy(inventoryTable.legendCategory, inventoryTable.addedAt);
 
     const current   = items.filter(i => i.legendCategory === "current");
@@ -165,7 +173,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Blurple)
-      .setTitle(`🏅 Legend Vault — ${target.username}`)
+      .setTitle(`🏅 Legend Vault — ${t.username}`)
       .addFields(
         { name: `⚡ Current Season (${current.length})`,           value: fmt(current)   },
         { name: `🔒 Permanent Vault (${permanent.length}/${PERMANENT_CAP})`, value: fmt(permanent) },
@@ -177,17 +185,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── MOVE ────────────────────────────────────────────────────────────────────
-  if (sub === "move") {
+  if (sub === "vault_move") {
     const itemId = interaction.options.getInteger("item_id", true);
     const to     = interaction.options.getString("to", true) as "current" | "permanent";
 
     const rows = await db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.id, itemId), eq(inventoryTable.discordId, target.id), eq(inventoryTable.itemType, "legend")))
+      .where(and(eq(inventoryTable.id, itemId), eq(inventoryTable.discordId, t.id), eq(inventoryTable.itemType, "legend")))
       .limit(1);
     const item = rows[0];
 
     if (!item) {
-      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found for <@${target.id}>.` });
+      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found for <@${t.id}>.` });
       return;
     }
 
@@ -201,14 +209,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const permanentCount = await db.select({ count: sql<number>`COUNT(*)` })
         .from(inventoryTable)
         .where(and(
-          eq(inventoryTable.discordId, target.id),
+          eq(inventoryTable.discordId, t.id),
           eq(inventoryTable.itemType, "legend"),
           sql`${inventoryTable.legendCategory} = 'permanent'`,
         ));
       const count = Number(permanentCount[0]?.count ?? 0);
       if (count >= PERMANENT_CAP) {
         await interaction.editReply({
-          content: `❌ <@${target.id}> already has **${count}/${PERMANENT_CAP}** permanent legends. Remove one first before moving another in.`,
+          content: `❌ <@${t.id}> already has **${count}/${PERMANENT_CAP}** permanent legends. Remove one first before moving another in.`,
         });
         return;
       }
@@ -222,7 +230,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setColor(Colors.Green)
       .setTitle("✅ Legend Moved")
       .setDescription(
-        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) moved to **${to === "permanent" ? "Permanent Vault 🔒" : "Current Season ⚡"}** for <@${target.id}>.`
+        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) moved to **${to === "permanent" ? "Permanent Vault 🔒" : "Current Season ⚡"}** for <@${t.id}>.`
       );
 
     await interaction.editReply({ embeds: [embed] });
@@ -230,18 +238,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── REMOVE ──────────────────────────────────────────────────────────────────
-  if (sub === "remove") {
+  if (sub === "vault_remove") {
     const itemId = interaction.options.getInteger("item_id", true);
 
     const rows = await db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.id, itemId), eq(inventoryTable.discordId, target.id), eq(inventoryTable.itemType, "legend")))
+      .where(and(eq(inventoryTable.id, itemId), eq(inventoryTable.itemType, "legend")))
       .limit(1);
     const item = rows[0];
 
     if (!item) {
-      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found for <@${target.id}>.` });
+      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found.` });
       return;
     }
+
+    const ownerId = item.discordId;
 
     // Return legend to store
     if (item.legendId) {
@@ -257,13 +267,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`,
         updatedAt: new Date(),
       })
-      .where(eq(usersTable.discordId, target.id));
+      .where(eq(usersTable.discordId, ownerId));
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Orange)
       .setTitle("🗑️ Legend Removed")
       .setDescription(
-        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) removed from <@${target.id}>'s inventory and returned to the store.`
+        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) removed from <@${ownerId}>'s inventory and returned to the store.`
       );
 
     await interaction.editReply({ embeds: [embed] });

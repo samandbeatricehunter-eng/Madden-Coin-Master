@@ -51,13 +51,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "view") {
+  if (sub === "settings_view") {
     const s = await getSettings();
     await interaction.editReply({ embeds: [buildSettingsEmbed(s, "⚙️ Custom Player Package Settings")] });
     return;
   }
 
-  // sub === "set"
+  // sub === "settings_set"
   const pkg    = interaction.options.getString("package", true) as "bronze"|"silver"|"gold"|"kp";
   const points = interaction.options.getInteger("points");
   const cost   = interaction.options.getInteger("cost");

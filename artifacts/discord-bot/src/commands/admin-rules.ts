@@ -127,7 +127,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── new-section ────────────────────────────────────────────────────────────
-  if (sub === "new-section") {
+  if (sub === "new_section") {
     const rawKey = interaction.options.getString("key", true).trim().toLowerCase().replace(/\s+/g, "_");
     const title  = interaction.options.getString("title", true).trim();
     const color  = interaction.options.getInteger("color") ?? 0x3498db;

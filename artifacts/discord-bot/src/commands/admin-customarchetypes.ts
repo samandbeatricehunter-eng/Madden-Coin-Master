@@ -197,7 +197,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Seed Defaults ─────────────────────────────────────────────────────────
-  if (sub === "seed-defaults") {
+  if (sub === "seed_defaults") {
     const overwrite = interaction.options.getBoolean("overwrite") ?? false;
 
     let created = 0;

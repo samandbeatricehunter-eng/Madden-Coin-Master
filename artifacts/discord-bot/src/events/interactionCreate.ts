@@ -30,6 +30,9 @@ import {
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
 } from "../lib/custom-player-interactions.js";
 import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/viewcustomarchetypes.js";
+import {
+  handleAupPageNav, handleAupSel, handleAupBack, handleAupConfirm, handleAupCancel,
+} from "../commands/attribute-up-interactions.js";
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
@@ -152,6 +155,13 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ccp_cancel")        { await handleCcpCancel(interaction, secondPart ?? "");         return; }
   if (action === "ccp_applied")       { await handleCcpApplied(interaction, secondPart ?? "");        return; }
   if (action === "ccp_refund")        { await handleCcpRefund(interaction, secondPart ?? "");         return; }
+
+  // ── Attribute-up interactive flow ──────────────────────────────────────────
+  if (action === "aup_prev")    { await handleAupPageNav(interaction, "prev"); return; }
+  if (action === "aup_next")    { await handleAupPageNav(interaction, "next"); return; }
+  if (action === "aup_back")    { await handleAupBack(interaction);            return; }
+  if (action === "aup_confirm") { await handleAupConfirm(interaction);         return; }
+  if (action === "aup_cancel")  { await handleAupCancel(interaction);          return; }
 
   // ── Co-Commissioner action approval ────────────────────────────────────────
   if (action === "cocomm-approve" || action === "cocomm-deny") {
@@ -1745,6 +1755,9 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "ccp_hand")     { await handleCcpHand(interaction, sessionId);    return; }
   if (action === "ccp_height")   { await handleCcpHeight(interaction, sessionId);  return; }
   if (action === "ccp_weight")   { await handleCcpWeight(interaction, sessionId);  return; }
+
+  // ── Attribute-up: user selected an attribute to upgrade ───────────────────
+  if (action === "aup_sel") { await handleAupSel(interaction); return; }
 
   // ── GOTY: commissioner selected the 2 winners ─────────────────────────────────
   if (action === "goty_winners") {

@@ -70,8 +70,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── Set NFC / AFC seeds ───────────────────────────────────────────────────
-  if (sub === "setnfcseeds" || sub === "setafcseeds") {
-    const conference = sub === "setnfcseeds" ? "NFC" : "AFC";
+  if (sub === "nfc_seeds" || sub === "afc_seeds") {
+    const conference = sub === "nfc_seeds" ? "NFC" : "AFC";
     const entries: { userId: string; username: string; seed: number }[] = [];
 
     for (let s = 1; s <= 7; s++) {
@@ -106,7 +106,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Division winner bonus ─────────────────────────────────────────────────
-  if (sub === "divisionbonus") {
+  if (sub === "division_bonus") {
     const winners: { user: any; username: string }[] = [];
 
     for (let i = 1; i <= 8; i++) {

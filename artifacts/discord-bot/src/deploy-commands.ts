@@ -1,136 +1,49 @@
 import { REST, Routes } from "discord.js";
-import * as help from "./commands/help.js";
-import * as balance from "./commands/balance.js";
-import * as sendcoins from "./commands/sendcoins.js";
-import * as viewstore from "./commands/viewstore.js";
-import * as purchase from "./commands/purchase.js";
-import * as inventory from "./commands/inventory.js";
-import * as availableupgrades from "./commands/availableupgrades.js";
-import * as adminLegend from "./commands/admin-legend.js";
-import * as adminSeason from "./commands/admin-season.js";
-import * as adminAddCoins from "./commands/admin-addcoins.js";
-import * as adminRemoveCoins from "./commands/admin-removecoins.js";
-import * as adminResetUpgrades from "./commands/admin-resetupgrades.js";
-import * as adminSetUser from "./commands/admin-setuser.js";
-import * as adminTransactions from "./commands/admin-transactions.js";
-import { addNewUserData, deleteMemberData } from "./commands/admin-team.js";
-import { seasonPRData, allTimePRData } from "./commands/records.js";
-import * as recentH2H from "./commands/recentH2H.js";
-import * as rules from "./commands/rules.js";
-import * as adminRules from "./commands/admin-rules.js";
-import * as adminSetAdmin from "./commands/admin-setadmin.js";
-import * as adminInventory from "./commands/admin-inventory.js";
-import * as interviewrequest from "./commands/interviewrequest.js";
-import * as advanceweek from "./commands/advanceweek.js";
-import * as adminPlayoffs from "./commands/admin-playoffs.js";
-import * as adminGotw from "./commands/admin-gotw.js";
-import * as adminPotw from "./commands/admin-potw.js";
-import * as adminListUserTeams from "./commands/admin-listuserteams.js";
-import * as adminUserStats from "./commands/admin-userstats.js";
-import * as adminLegendVault from "./commands/admin-legendvault.js";
-import * as userStats from "./commands/userstats.js";
-import * as wager from "./commands/wager.js";
-import * as teamlist from "./commands/teamlist.js";
-import * as openteams from "./commands/openteams.js";
-import * as adminClearteam from "./commands/admin-clearteam.js";
-import * as adminResetWeek from "./commands/admin-resetweek.js";
-
+import * as admin         from "./commands/admin.js";
+import * as view          from "./commands/view.js";
+import * as help          from "./commands/help.js";
+import * as balance       from "./commands/balance.js";
+import * as sendcoins     from "./commands/sendcoins.js";
+import * as purchase      from "./commands/purchase.js";
+import * as inventory     from "./commands/inventory.js";
+import * as recentH2H     from "./commands/recentH2H.js";
+import * as rules         from "./commands/rules.js";
+import * as wager         from "./commands/wager.js";
+import * as teamlist      from "./commands/teamlist.js";
+import * as openteams     from "./commands/openteams.js";
 import * as seasonschedule from "./commands/seasonschedule.js";
-import * as nextopp from "./commands/nextopp.js";
-import * as adminRollbackFranchise from "./commands/admin-rollback-franchise.js";
-import * as adminSetStatTier from "./commands/admin-set-stat-tiers.js";
-import * as adminStatTiers from "./commands/admin-stat-tiers.js";
-import * as customarticle from "./commands/customarticle.js";
-import * as endofseasonpayout from "./commands/endofseasonpayout.js";
-import * as myRoster from "./commands/my-roster.js";
+import * as nextopp       from "./commands/nextopp.js";
+import * as myRoster      from "./commands/my-roster.js";
+import * as savings       from "./commands/savings.js";
 import * as weeklyMatchups from "./commands/weekly-matchups.js";
-import * as adminCorrectPayout from "./commands/admin-correctpayout.js";
-import * as statLeaders from "./commands/statleaders.js";
-import * as tradeBlock from "./commands/tradeblock.js";
-import * as viewTradeBlock from "./commands/viewtradeblock.js";
-import * as savings from "./commands/savings.js";
-import * as adminSetMilestoneTier from "./commands/admin-setmilestonetier.js";
-import * as adminServer from "./commands/adminserver.js";
-import * as adminManualScore from "./commands/admin-manualscore.js";
-import * as postFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
-import * as webhookurl from "./commands/webhookurl.js";
-import * as adminCatchup from "./commands/admin-catchup.js";
-import * as adminFixPlayerNames from "./commands/admin-fixplayernames.js";
-import * as adminSyncMilestones from "./commands/admin-syncmilestones.js";
-import * as adminSetPayouts from "./commands/admin-setpayouts.js";
-import * as adminResendArticle from "./commands/admin-resendarticle.js";
-import * as adminLinkTeam from "./commands/admin-linkteam.js";
-import * as adminFullSync from "./commands/admin-fullsync.js";
-import * as setweek from "./commands/setweek.js";
-import * as standings from "./commands/standings.js";
-import * as viewroster from "./commands/viewroster.js";
-import * as viewplayerdetails from "./commands/viewplayerdetails.js";
-import * as viewfreeagents from "./commands/viewfreeagents.js";
-import * as h2hrecord from "./commands/h2hrecord.js";
-import * as purchaseCustomPlayer from "./commands/purchasecustomplayer.js";
-import * as viewCustomArchetypes from "./commands/viewcustomarchetypes.js";
-import * as adminCustomArchetypes from "./commands/admin-customarchetypes.js";
-import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
-import * as adminResendPayouts from "./commands/admin-resend-payouts.js";
-import * as adminReverseTransaction from "./commands/admin-reverse-transaction.js";
+import * as standings     from "./commands/standings.js";
+import * as tradeBlock    from "./commands/tradeblock.js";
+import * as h2hrecord     from "./commands/h2hrecord.js";
+import * as customarticle from "./commands/customarticle.js";
+import * as webhookurl    from "./commands/webhookurl.js";
 import * as viewPayoutTiers from "./commands/viewpayouttiers.js";
-import * as viewPlayerStats from "./commands/viewplayerstats.js";
+import * as interviewrequest from "./commands/interviewrequest.js";
+import { seasonPRData, allTimePRData } from "./commands/records.js";
 
-const token = process.env["DISCORD_TOKEN"]!;
+const token    = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
-const guildId = process.env["DISCORD_GUILD_ID"]!;
+const guildId  = process.env["DISCORD_GUILD_ID"]!;
 
 if (!token || !clientId || !guildId) {
   throw new Error("DISCORD_TOKEN, DISCORD_CLIENT_ID, and DISCORD_GUILD_ID must be set");
 }
 
 const commands = [
-  help, balance, sendcoins, viewstore, purchase, inventory, availableupgrades,
-  adminLegend, adminSeason, adminAddCoins, adminRemoveCoins, adminResetUpgrades,
-  adminSetUser, adminTransactions, recentH2H, rules,
-  adminRules, adminSetAdmin, adminInventory, interviewrequest, advanceweek,
-  adminPlayoffs, adminGotw, adminPotw, adminListUserTeams, adminUserStats, adminLegendVault, userStats, wager,
-  teamlist, openteams, adminClearteam, adminResetWeek,
-  seasonschedule, nextopp,
-  adminRollbackFranchise, adminSetStatTier, adminStatTiers, customarticle, endofseasonpayout,
-  myRoster,
-  savings,
-  weeklyMatchups,
-  adminCorrectPayout,
-  adminSetMilestoneTier,
-  statLeaders,
-  tradeBlock,
-  viewTradeBlock,
-  adminServer,
-  adminManualScore,
-  postFullSeasonSchedule,
-  webhookurl,
-  adminCatchup,
-  adminFixPlayerNames,
-  adminSyncMilestones,
-  adminSetPayouts,
-  adminResendArticle,
-  adminLinkTeam,
-  adminFullSync,
-  setweek,
-  standings,
-  viewroster,
-  viewplayerdetails,
-  viewfreeagents,
-  h2hrecord,
-  purchaseCustomPlayer,
-  viewCustomArchetypes,
-  adminCustomArchetypes,
-  adminCustomPlayerSettings,
-  adminResendPayouts,
-  adminReverseTransaction,
-  viewPayoutTiers,
-  viewPlayerStats,
+  admin,
+  view,
+  help, balance, sendcoins, purchase, inventory,
+  recentH2H, rules, wager, teamlist, openteams,
+  seasonschedule, nextopp, myRoster, savings, weeklyMatchups,
+  standings, tradeBlock, h2hrecord, customarticle, webhookurl,
+  viewPayoutTiers, interviewrequest,
 ].map(c => c.data.toJSON());
 
 commands.push(
-  addNewUserData.toJSON(),
-  deleteMemberData.toJSON(),
   seasonPRData.toJSON(),
   allTimePRData.toJSON(),
 );

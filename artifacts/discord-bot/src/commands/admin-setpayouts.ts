@@ -66,7 +66,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── VIEW ───────────────────────────────────────────────────────────────────
-  if (sub === "view") {
+  if (sub === "payouts_view") {
     const config = await getAllPayoutConfig();
     const keys   = getAllPayoutKeys();
     const season = await getOrCreateActiveSeason();
@@ -164,7 +164,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── SET ────────────────────────────────────────────────────────────────────
-  if (sub === "set") {
+  if (sub === "payouts_set") {
     const key    = interaction.options.getString("reward", true) as PayoutKey;
     const amount = interaction.options.getInteger("amount", true);
     await setPayoutValue(key, amount, interaction.user.id);
