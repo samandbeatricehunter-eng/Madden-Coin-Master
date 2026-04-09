@@ -564,10 +564,21 @@ export async function processTeamWeekStats(
 export type WeekStatType = "passing" | "rushing" | "receiving" | "defense";
 
 const STAT_LIST_KEYS: Record<WeekStatType, string[]> = {
-  passing:   ["playerPassingStatInfoList",   "playerPassStatInfoList"],
-  rushing:   ["playerRushingStatInfoList",   "playerRushStatInfoList"],
-  receiving: ["playerReceivingStatInfoList", "playerRecStatInfoList"],
-  defense:   ["playerDefensiveStatInfoList", "playerDefenseStatInfoList", "playerDefStatInfoList"],
+  passing:   ["playerPassingStatInfoList",   "playerPassStatInfoList",   "playerPassingStatsInfoList",   "passingStats"],
+  rushing:   ["playerRushingStatInfoList",   "playerRushStatInfoList",   "playerRushingStatsInfoList",   "rushingStats"],
+  receiving: ["playerReceivingStatInfoList", "playerRecStatInfoList",    "playerReceivingStatsInfoList",  "receivingStats"],
+  defense:   [
+    "playerDefensiveStatInfoList",   // most common MCA key
+    "playerDefenseStatInfoList",     // alternate spelling
+    "playerDefStatInfoList",         // short form
+    "playerDefensiveStatsInfoList",  // plural variant
+    "playerDefenceStatInfoList",     // British spelling
+    "playerDefenseStatsInfoList",    // plural alternate
+    "playerDefenciveStatInfoList",   // typo variant seen in some proxies
+    "defensiveStatInfoList",         // no-player prefix
+    "defenseStatInfoList",           // no-player prefix alt
+    "defStatInfoList",               // short no-prefix
+  ],
 };
 
 export async function processPlayerWeekStats(
@@ -582,7 +593,10 @@ export async function processPlayerWeekStats(
     const players = extractList(body, ...listKeys);
 
     if (!players.length) {
-      return { ok: true, message: `No ${statType} records in payload` };
+      // Log the actual top-level keys so we can diagnose key-name mismatches
+      const topKeys = body && typeof body === "object" ? Object.keys(body as object).join(", ") : String(body);
+      console.warn(`[mca/week${weekNum}/${statType}] No records found. Tried keys: [${listKeys.join(", ")}]. Payload top-level keys: ${topKeys || "(empty)"}`);
+      return { ok: true, message: `No ${statType} records in payload — tried keys: ${listKeys.join(", ")}` };
     }
 
     // ── Dedup check: skip if this week/stat combo has already been processed ──

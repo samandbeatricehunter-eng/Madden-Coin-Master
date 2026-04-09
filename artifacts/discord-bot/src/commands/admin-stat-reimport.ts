@@ -90,6 +90,11 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     return `${bar} **${type.charAt(0).toUpperCase() + type.slice(1)}**: ${wks}/17 weeks`;
   });
 
+  const defenseCount = weekMap["defense"] ?? 0;
+  const defenseTip = defenseCount === 0
+    ? "\n\n⚠️ **Defense is 0/17** — this means the defense endpoint was never hit OR the payload used an unrecognized JSON key. Check the API server logs for lines starting with `[mca/week#/defense]` after your next import to see the exact key MCA is sending."
+    : "";
+
   const embed = new EmbedBuilder()
     .setTitle("📊 Stat Reimport Status")
     .setColor(safeModeActive ? Colors.Orange : Colors.Green)
@@ -102,7 +107,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
       },
       {
         name: `Season ${season.seasonNumber} — Weeks Imported`,
-        value: lines.join("\n"),
+        value: lines.join("\n") + defenseTip,
       },
       {
         name: "DB Counts",
