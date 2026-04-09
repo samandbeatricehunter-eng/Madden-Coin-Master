@@ -205,6 +205,7 @@ export async function runEosAutoPost(
           defRushYds:    teamStats.defRushYds,
           defPtsAllowed: resolvedPtsAllowed,
           defFumblesRec: resolvedFumblesRec,
+          turnoverDiff:  teamStats.turnoverDiff,
           defRedZonePct: teamStats.defRedZonePct,
           defSacks:      resolvedSacks,
           totalSacks:    resolvedSacks,

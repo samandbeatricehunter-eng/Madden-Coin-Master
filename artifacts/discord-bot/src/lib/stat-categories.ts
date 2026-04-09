@@ -91,6 +91,14 @@ export const STAT_CATEGORIES: StatCategory[] = [
     direction:  "lower",
     jsonFields: ["defRedZonePct", "defensiveRedZonePct", "defRedZoneAllowedPct", "defRZPct", "defenseRedZonePct", "defRedzonePct", "def_redzone_pct"],
   },
+  // ── Turnover margin ──────────────────────────────────────────────────────────
+  {
+    key:        "turnover_diff",
+    label:      "Turnover Differential",
+    unit:       "+/-",
+    direction:  "higher",
+    jsonFields: ["turnoverDiff", "turnOverDiff", "turnoverDifferential", "turnoverMargin", "turnover_diff", "toMargin", "toDiff"],
+  },
 ];
 // NOTE: QB YPA and RB YPC are flat individual bonuses (not tiered) handled
 // separately in the EOS auto-post via payout-config thresholds, not STAT_CATEGORIES.
@@ -171,6 +179,12 @@ export const STAT_TIER_DEFAULTS: Record<string, { threshold: number; payout: num
     { threshold: 52, payout: 50 },
     { threshold: 46, payout: 75 },
     { threshold: 40, payout: 100 },
+  ],
+  turnover_diff: [
+    { threshold: 3,  payout: 25  },
+    { threshold: 6,  payout: 50  },
+    { threshold: 9,  payout: 75  },
+    { threshold: 12, payout: 100 },
   ],
   // Thresholds are integer × 10 (e.g. 70 = 7.0 YPA, 45 = 4.5 YPC)
   qb_ypa: [

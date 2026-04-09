@@ -419,6 +419,7 @@ export const teamSeasonStatsTable = pgTable("team_season_stats", {
   offRedZonePct: real("off_redzone_pct").notNull().default(0),  // offensive red zone % (0–100)
   defRedZonePct: real("def_redzone_pct").notNull().default(0),  // defensive red zone % allowed (0–100)
   defFumblesRec: integer("def_fumbles_rec").notNull().default(0), // fumbles recovered on defense
+  turnoverDiff:  integer("turnover_diff").notNull().default(0),   // season turnover differential (+/-)
   wins:       integer("wins").notNull().default(0),
   losses:     integer("losses").notNull().default(0),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),

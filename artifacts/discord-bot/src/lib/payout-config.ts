@@ -28,6 +28,8 @@ export const PAYOUT_KEYS = {
   EOS_DB_MIN_INTS:     "eos_db_min_ints",  // Min individual player INTs (any defensive position)
   // ── End-of-season missed-playoffs consolation ─────────────────────────────────
   EOS_MISSED_PLAYOFFS: "eos_missed_playoffs",
+  // ── Stat reimport safe mode (1 = active, 0 = disabled) ───────────────────────
+  STAT_SAFE_MODE: "stat.safe_mode",
 } as const;
 
 export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
@@ -58,6 +60,8 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   eos_db_min_ints:     { value: 8,   description: "EOS DB INT — minimum individual player INTs to earn bonus",        category: "Stat Thresholds"  },
   // ── Missed-playoffs consolation ───────────────────────────────────────────────
   eos_missed_playoffs: { value: 400, description: "EOS consolation — user-controlled team that missed playoffs",       category: "Individual Bonuses" },
+  // ── Stat reimport safe mode ────────────────────────────────────────────────────
+  "stat.safe_mode":    { value: 0,   description: "Stat reimport safe mode (1 = active — EOS payouts blocked)",       category: "System"            },
 };
 
 const cache = new Map<PayoutKey, number>();

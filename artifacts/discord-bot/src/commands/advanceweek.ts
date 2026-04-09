@@ -9,6 +9,7 @@ import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
 import { runEosAutoPost } from "../lib/eos-auto-post.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
 
@@ -404,6 +405,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (newWeek === "wildcard") {
     (async () => {
       try {
+        // Block EOS if stat reimport safe mode is active
+        const safeModeActive = (await getPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE)) > 0;
+        if (safeModeActive) {
+          await interaction.followUp({
+            content: "⚠️ **EOS payouts are blocked** — stat reimport safe mode is currently active. Disable it with `/admin-stat-reimport disable` before advancing to Wildcard week to run EOS payouts.",
+            ephemeral: true,
+          }).catch(() => {});
+          return;
+        }
         const result = await runEosAutoPost(interaction.client, season.id);
         const lines = [
           `📋 **End-of-Season Payout Summaries Posted** to the commissioner log.`,

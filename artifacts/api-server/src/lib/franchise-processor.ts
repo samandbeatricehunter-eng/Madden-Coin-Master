@@ -360,6 +360,8 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       getN(t, "defInterceptions","totalInts","ints","teamInts","defTotalInts","interceptionsFor","numInterceptions","defInts","interceptions");
     const getOffPpg = (t: any): number =>
       getN(t, "ptsPerGame","pointsPerGame","offPtsPerGame","ppg","avgPointsScored","avgPtsFor","pointsPerGameFor","offPpg");
+    const getTurnoverDiff = (t: any): number =>
+      getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -383,6 +385,7 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       const teamSacks     = getTeamSacks(t);
       const teamInts      = getTeamInts(t);
       const offPtsPerGame = getOffPpg(t);
+      const turnoverDiff  = getTurnoverDiff(t);
       const wins          = getN(t, "wins","totalWins","seasonWins");
       const losses        = getN(t, "losses","totalLosses","seasonLosses");
       const updatedAt     = new Date();
@@ -391,7 +394,7 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
         teamName: teamEntry.fullName, offYds, offPassYds, offRushYds,
         offTDs, offPtsPerGame, defPassYds, defRushYds, defTDs,
         teamSacks, teamInts, offRedZonePct, defRedZonePct, defFumblesRec,
-        wins, losses, updatedAt,
+        turnoverDiff, wins, losses, updatedAt,
       };
       ops.push(
         db.insert(teamSeasonStatsTable)
@@ -403,7 +406,7 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
               offYds, offPassYds, offRushYds, offTDs, offPtsPerGame,
               defPassYds, defRushYds, defTDs, teamSacks, teamInts,
               offRedZonePct, defRedZonePct, defFumblesRec,
-              wins, losses, updatedAt,
+              turnoverDiff, wins, losses, updatedAt,
             },
           })
       );
@@ -476,6 +479,8 @@ export async function processTeamWeekStats(
       getN(t, "defRedZonePct","defensiveRedZonePct","defRedZoneAllowedPct","defRZPct","defenseRedZonePct","defRedzonePct");
     const getDefFumblesRec = (t: any): number =>
       getN(t, "defFumblesRec","fumblesRecovered","fumRec","fumRecovered","totalFumRec","defensiveFumblesRec","recoveredFumbles","fumbleRecoveries");
+    const getTurnoverDiff = (t: any): number =>
+      getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet");
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -496,6 +501,7 @@ export async function processTeamWeekStats(
       const offRedZonePct = getOffRedZonePct(t);
       const defRedZonePct = getDefRedZonePct(t);
       const defFumblesRec = getDefFumblesRec(t);
+      const turnoverDiff  = getTurnoverDiff(t);
       const wins          = getN(t, "wins","totalWins","seasonWins");
       const losses        = getN(t, "losses","totalLosses","seasonLosses");
 
@@ -508,7 +514,7 @@ export async function processTeamWeekStats(
             offYds, offPassYds, offRushYds, offTDs,
             defPassYds, defRushYds, defTDs,
             offRedZonePct, defRedZonePct, defFumblesRec,
-            wins, losses,
+            turnoverDiff, wins, losses,
             updatedAt: new Date(),
           })
           .onConflictDoUpdate({
@@ -525,6 +531,8 @@ export async function processTeamWeekStats(
               defRushYds:    sql`${teamSeasonStatsTable.defRushYds}    + ${defRushYds}`,
               defTDs:        sql`${teamSeasonStatsTable.defTDs}        + ${defTDs}`,
               defFumblesRec: sql`${teamSeasonStatsTable.defFumblesRec} + ${defFumblesRec}`,
+              // Turnover diff accumulates each week's +/- (can be negative)
+              turnoverDiff:  sql`${teamSeasonStatsTable.turnoverDiff}  + ${turnoverDiff}`,
               wins:          sql`${teamSeasonStatsTable.wins}          + ${wins}`,
               losses:        sql`${teamSeasonStatsTable.losses}        + ${losses}`,
               // Percentages: overwrite with latest export value (running avg, not additive)
