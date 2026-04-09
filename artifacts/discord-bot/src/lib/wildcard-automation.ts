@@ -431,7 +431,7 @@ async function createGotyPoll(
   historicalChannel: TextChannel,
   seasonId: number,
 ): Promise<void> {
-  // Fetch messages from the GOTY candidate channel
+  // Fetch the GOTY candidate channel
   let gotyChannel: TextChannel | null = null;
   try {
     const ch = await client.channels.fetch(GOTY_CANDIDATE_CHANNEL_ID);
@@ -440,42 +440,57 @@ async function createGotyPoll(
 
   if (!gotyChannel) return;
 
-  const messages = await gotyChannel.messages.fetch({ limit: 100 });
-  const options = messages
-    .filter(m => !m.author.bot && m.content.trim().length > 0)
+  // Collect all non-bot entries before clearing
+  const fetched = await gotyChannel.messages.fetch({ limit: 100 });
+  const entryMessages = [...fetched.values()].filter(
+    m => !m.author.bot && m.content.trim().length > 0,
+  );
+  const options = entryMessages
     .map(m => m.content.trim().slice(0, 55))
-    .slice(0, 100); // reasonable cap
+    .slice(0, 100);
 
   if (options.length === 0) {
     await historicalChannel.send({ content: "*No GOTY candidates found in the candidate channel.*" });
     return;
   }
 
-  await historicalChannel.send({
+  // ── Clear the GOTY channel (bulk-delete recent; fall back to one-by-one for older) ──
+  const allMessages = [...fetched.values()];
+  try {
+    await gotyChannel.bulkDelete(allMessages, true); // true = filter messages > 14 days
+  } catch {
+    // bulkDelete unavailable — delete individually
+    for (const m of allMessages) {
+      await m.delete().catch(() => {});
+    }
+  }
+
+  // Post announcement embed in the GOTY channel, then the poll
+  await gotyChannel.send({
     embeds: [new EmbedBuilder()
       .setTitle("🎮 Game of the Year Award — Vote Now!")
       .setColor(Colors.DarkGold)
       .setDescription(
-        "Cast your vote below! Poll closes in **24 hours**.\n" +
+        "Cast your vote below! Poll closes in **12 hours**.\n" +
         "After voting ends, the commissioners will select the two official winners.\n\n" +
-        "**Winners receive: 100 🪙 + 1 free XF promotion!**"
+        "**Winners receive coins + 1 free XF promotion (must be used before next season)!**"
       )
       .setTimestamp()],
   });
 
   const pollMessages = await createPoll(
-    historicalChannel,
-    "Who earned the Game of the Year Award?",
+    gotyChannel,
+    "Who was the GOTY for this season?",
     options,
-    24,
+    12,
   );
 
-  // Store all poll message IDs
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  // Store all poll message IDs (channelId = GOTY channel so poll-checker can fetch results)
+  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
   for (const msg of pollMessages) {
     await db.insert(pendingPollsTable).values({
       messageId:           msg.id,
-      channelId:           historicalChannel.id,
+      channelId:           GOTY_CANDIDATE_CHANNEL_ID,
       pollType:            "goty",
       seasonId,
       expiresAt,

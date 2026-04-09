@@ -56,6 +56,7 @@ const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
 const GENERAL_CHANNEL_ID        = "1476321282868908052";
 const VIOLATION_LOG_CHANNEL_ID  = "1491529826060734524";
+const GOTY_CHANNEL_ID           = "1485394206863392848";
 
 export const name = "interactionCreate";
 
@@ -1787,8 +1788,10 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
         const u = await interaction.client.users.fetch(discordId);
         await u.send(
           `🎮 **You've been selected as a Game of the Year Award winner!**\n\n` +
-          `**+${gotyCoins} 🪙 coins** have been added to your balance!\n` +
-          `You also receive **1 free XF promotion** for any player — coordinate with the commissioner to apply it!`
+          `**+${gotyCoins} 🪙 coins** have been added to your balance!\n\n` +
+          `You also receive **1 free XF promotion** for any player on your roster. ` +
+          `This cannot be saved and must be used before the start of the next season. ` +
+          `Coordinate with the commissioner to apply it!`
         ).catch(() => {});
       } catch (_) {}
     }
@@ -1803,19 +1806,37 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
           .setDescription(
             `Congratulations to this season's **Game of the Year** award winners!\n\n` +
             winnerLines.join("\n") + "\n\n" +
-            `Each winner receives **+${gotyCoins} 🪙** and a **free XF promotion**!`
+            `Each winner receives **+${gotyCoins} 🪙** and a **free XF promotion** for any player on their roster.\n` +
+            `⚠️ The XF promotion cannot be saved — it must be used before the start of the next season.`
           )
           .setTimestamp();
         await (generalChannel as TextChannel).send({ content: "@everyone", embeds: [announceEmbed] });
       }
     } catch (err) { console.error("Failed to post GOTY announcement:", err); }
 
+    // Clear the GOTY channel to prepare it for next season
+    try {
+      const gotyChannel = await interaction.client.channels.fetch(GOTY_CHANNEL_ID).catch(() => null);
+      if (gotyChannel?.isTextBased()) {
+        const tc = gotyChannel as TextChannel;
+        const msgs = await tc.messages.fetch({ limit: 100 });
+        if (msgs.size > 0) {
+          await tc.bulkDelete(msgs, true).catch(async () => {
+            for (const m of msgs.values()) await m.delete().catch(() => {});
+          });
+        }
+      }
+    } catch (err) { console.error("Failed to clear GOTY channel:", err); }
+
     // Update the commissioner message to show done state
     const doneEmbed = new EmbedBuilder()
       .setTitle("✅ GOTY Winners Selected")
       .setColor(Colors.Green)
       .setDescription(winnerLines.join("\n"))
-      .addFields({ name: "Coins Awarded", value: `+${gotyCoins} 🪙 each`, inline: true })
+      .addFields(
+        { name: "Coins Awarded", value: `+${gotyCoins} 🪙 each`, inline: true },
+        { name: "GOTY Channel", value: "Cleared for next season ✅", inline: true },
+      )
       .setFooter({ text: `Selected by ${interaction.user.username}` })
       .setTimestamp();
     await interaction.editReply({ embeds: [doneEmbed], components: [] });
