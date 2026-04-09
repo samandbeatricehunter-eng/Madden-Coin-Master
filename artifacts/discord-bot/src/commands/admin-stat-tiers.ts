@@ -37,8 +37,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
   ]);
 
-  const offCats = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
-  const defCats = STAT_CATEGORIES.filter(c => c.key.startsWith("def_"));
+  const offCats  = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
+  const defCats  = STAT_CATEGORIES.filter(c => c.key.startsWith("def_"));
+  // Split defense into two fields to stay within Discord's 1024-char embed field limit
+  const defCats1 = defCats.slice(0, 3); // Yards & Points Allowed
+  const defCats2 = defCats.slice(3);    // Turnovers & Pressure
 
   function buildCategoryBlock(cats: typeof STAT_CATEGORIES): string {
     return cats.map(cat => {
@@ -61,8 +64,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }).join("\n\n");
   }
 
-  const offBlock  = buildCategoryBlock(offCats);
-  const defBlock  = buildCategoryBlock(defCats);
+  const offBlock   = buildCategoryBlock(offCats);
+  const defBlock1  = buildCategoryBlock(defCats1);
+  const defBlock2  = buildCategoryBlock(defCats2);
 
   const indivBlock = [
     `**RB YPC Bonus** — 7.0+ YPC (100+ carries) → **${rbBonus}🪙**`,
@@ -81,9 +85,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setTitle(`📊 End-of-Season Stat Tier Config — Season ${season.id}`)
     .setColor(allSeeded ? Colors.Green : Colors.Yellow)
     .addFields(
-      { name: "🏈 Offense",              value: offBlock,  inline: false },
-      { name: "🛡️ Defense",             value: defBlock,  inline: false },
-      { name: "💰 Individual Bonuses",   value: indivBlock, inline: false },
+      { name: "🏈 Offense",                        value: offBlock,   inline: false },
+      { name: "🛡️ Defense — Yards & Points",       value: defBlock1,  inline: false },
+      { name: "🛡️ Defense — Turnovers & Pressure", value: defBlock2,  inline: false },
+      { name: "💰 Individual Bonuses",              value: indivBlock, inline: false },
     )
     .setFooter({
       text: allSeeded

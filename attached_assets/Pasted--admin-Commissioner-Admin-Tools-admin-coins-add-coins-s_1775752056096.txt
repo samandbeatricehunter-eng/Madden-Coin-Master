@@ -1,0 +1,131 @@
+/admin — Commissioner & Admin Tools
+
+/admin coins
+
+add_coins should be /admin addCoins
+remove_coins should be /admin removeCoins
+reverse_transaction should be /admin reverseTransactionByID
+
+transactions can be removed because you can view a users last 10 transactions when viewing their userstats page
+
+/admin player
+
+set should be /admin setUserTeam
+view should be /admin viewAllUserTeams
+clear should be /admin clearUserTeam
+set_user should be /admin setUserStats [user's @nickname]
+grant should be /admin setAdminRole [user]
+revoke should be /admin revokeAdminRole [user]
+list should be /admin listAdministrators
+fix_names should be /admin resyncPlayerNames
+
+reset_upgrades should be a feature included in /admin setUserStats and is redundant if you include it. Age Resets, Dev Ups and attribute upgrade counts should be adjustable via clickable -1 +1 buttons. cannot go below zero or higher than the caps set for each upgrade by the admin
+add — can be removed because its redundant
+delete — can be removed because its redundant
+view_stats doesn't need to be an admin command anymore
+list_teams is redundant and should do the same as /admin viewAllUserTeams
+
+/admin_season
+
+new should be /admin_season advance
+set should be /admin_season set [number (1–50)]
+status should be /admin_season status
+
+franchise_limit should be /admin_franchise length [number of total seasons, up to 50]
+franchise_reset — should be /admin_franchise Reset
+
+override should be /admin_upgrade set_limits
+core_attrs should be /admin_upgrade set_core_attributes
+nfc_seeds should be /admin_playoffs set_nfc_seeds
+afc_seeds should be /admin_playoffs set_afc_seeds
+
+set_week should be /admin_season set_week
+advance_week should be /admin_season advance_week
+reset_week should be /admin_season reset_week
+end_of_season should be /admin_season eos_payouts but this command should be running automatically once the league advances from week 18 to the wildcard week
+resend_payouts should be /admin_fix resend_payouts
+post_schedule should be /admin_season post_full_schedule
+rollback — should be /admin_fix rollback [dropdown with 5 options - 2 hours, 4 hours, 8 hours, 12 hours, 24 hours and should roll back the appropriate amount of hours from the timestamp at time of command being ran]
+
+division_bonus should be a part of the automated end of season payouts function. division winners should be available through the MCA import at the end of week 18. If not, the bot can calculate division winners based off of record and playoff seeds provided. teams with the highest record in their separate divions (NFC/AFC North/East/South/West) are the winners of their divisions. 
+
+/admin rules
+
+new_section should be /admin_rules Add_Section
+list should be /admin_rules List_Section [Rule Number - optional] [Public - optional] [@nickname - up to 10 mentions - optional]
+set should be /admin_rules Edit [Section] [Rule Number] [Text]
+add should be /admin_rules Add [Section] [Text]
+remove should be /admin_rules Remove [Section] [Rule Number]
+reset should be /admin_rules Reset [Section/All Sections] should reset all rules in that section to their original defaults
+
+/admin store
+
+payouts_view — should be /admin viewPayoutSettings
+payouts_set — should be /admin setPayoutAmounts
+set_milestone_tier should be /admin setUserMilestoneTier
+set_stat_tier — should be /admin setEndOfSeasonPayoutSettings
+view_stat_tiers — should be /admin viewEndOfSeasonPayoutSettings
+settings_view — should be /admin viewCustomPlayerSettings
+settings_set — should be /admin setCustomPlayerSettings
+
+/admin archetypes - remove this
+
+list should be removed as an admin command. it is redundant considering the view customplayerarchetypes command exists
+seed_defaults — Seed all positions with default Madden-style archetypes - this command should be redundant. all archetypes should be hardcoded into the bot, and should not need to be seeded. 
+add should be /admin editArchetype [Position from dropdown] [Archetype Name from dropdown] and a menu will pop up allowing an admin to edit each attributes default value just like users can do in the creation menu when building a custom player, but with no cost associated here for an admin to adjust
+remove — can be removed, not a needed feature
+restore — can be removed, not a needed feature
+
+/admin legend
+
+add should be /admin_legend add
+list should be /admin_legend list_all
+edit should be /admin_legend edit
+vault_add should be /admin_legend add_to_user_vault [@nickname] [ItemInventoryID]
+vault_view should be removed because its redundant
+vault_move should be /admin_legend move_in_inventory
+vault_remove — should be /admin_legend remove_from_inventory
+
+/admin inventory
+
+view should be /admin_inventory view [@nickname]
+remove should be /admin_inventory remove [@nickname] [InventoryItemID]
+move should be /admin_inventory move [from @nicknames inventory] [to @nicknames inventory] [InventoryItemID]
+
+/admin tools
+
+full_sync should be /admin_fix full_Data_Sync
+sync_milestones — Sync win/loss counters and issue missing milestone bonuses - should be rolled into the full sync command instead of separate
+manual_score should be /admin_fix input_Game_Score
+correct_payout should be /admin_fix correct_Game_Payout
+resend_article should be /admin_fix regenerate_Weekly_Article
+gotw should be /admin payoutGOTW
+potw should be /admin payoutPOTW
+settings should be /admin serverBotSettings
+
+on — Enable catchup mode (clears stats, disables payouts during MCA imports)
+off — Disable catchup mode (MCA imports resume normal payouts and notifications)
+status — Check whether catchup mode is currently active
+get rid of catchup mode as a feature entirely
+
+/view — League Information
+
+user_stats should be /view userStats [@nickname]
+player_stats should be /view playerStats [Top 10/Team Name] [Player Position from dropdown] [Player Name from Dropdown]
+team_stats should be /view teamStats
+store should be /view store
+custom_player_archetypes should be /view customPlayerArchetypes [Position from dropdown] [Archetype Name from dropdown]
+roster should be /view roster [team name]
+free_agents should be removed as a command
+trade_block should be /view tradeBlock
+player_details should be /view playerDetails [Team Name] [Player Position from dropdown] [Player Name from Dropdown]
+available_upgrades should be removed. users can see all of this in the userstats command view
+custom_player should be /purchase customPlayer 
+legend should be /purchase legend
+dev_up should be /purchase devUpgrade
+age_reset should be /purchase ageReset
+attribute_up should be /purchase attributeUpgrade
+
+/rules should be /view rules [Section] [Number - optional] [Public - optional - default ephemeral] [@nickname(s) - up to 10 users, optional]
+
+/help — View all available bot commands
