@@ -89,3 +89,30 @@ export async function mcaFileExists(key: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Delete all stored MCA payload files whose name starts with `prefix`.
+ *  Defaults to "mca/week-" to wipe every week-stat JSON saved by the API server.
+ *  Never throws — returns counts so callers can surface results to the user. */
+export async function deleteMcaPayloads(
+  prefix = "mca/week-",
+): Promise<{ deleted: number; errors: number; error?: string }> {
+  try {
+    const bucket = makeBucket();
+    if (!bucket) return { deleted: 0, errors: 0, error: "DEFAULT_OBJECT_STORAGE_BUCKET_ID not configured" };
+    const [files] = await bucket.getFiles({ prefix });
+    let deleted = 0, errors = 0;
+    await Promise.all(
+      files.map(async (file) => {
+        try {
+          await file.delete();
+          deleted++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
+    return { deleted, errors };
+  } catch (err) {
+    return { deleted: 0, errors: 0, error: String(err) };
+  }
+}

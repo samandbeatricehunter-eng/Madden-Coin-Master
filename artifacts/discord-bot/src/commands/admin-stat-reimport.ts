@@ -10,6 +10,7 @@ import {
 import { eq, count } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getPayoutValue, setPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
+import { deleteMcaPayloads } from "../lib/gcs-reader.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin_stat_reimport")
@@ -171,8 +172,15 @@ async function handleEnable(interaction: ChatInputCommandInteraction): Promise<v
     })
     .where(eq(teamSeasonStatsTable.seasonId, season.id));
 
+  // Delete all stored MCA week-stat payloads from object storage so MCA re-imports write fresh files
+  const gcsResult = await deleteMcaPayloads("mca/week-");
+
   // Activate safe mode
   await setPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE, 1, interaction.user.id);
+
+  const gcsLine = gcsResult.error
+    ? `⚠️ GCS wipe failed: ${gcsResult.error}`
+    : `• **${gcsResult.deleted}** stored payload files deleted${gcsResult.errors > 0 ? ` (${gcsResult.errors} errors)` : ""}`;
 
   const embed = new EmbedBuilder()
     .setTitle("⚠️ Safe Mode Enabled — Stat Data Cleared")
@@ -183,13 +191,18 @@ async function handleEnable(interaction: ChatInputCommandInteraction): Promise<v
       `**EOS payouts are now blocked** until you run \`/admin_stat_reimport disable\`.`
     )
     .addFields(
-      { name: "Deleted", value: `• **${playerRows}** player stat rows\n• **${weekRows}** week-processed markers`, inline: true },
+      {
+        name: "Deleted from DB",
+        value: `• **${playerRows}** player stat rows\n• **${weekRows}** week-processed markers`,
+        inline: true,
+      },
       { name: "Reset", value: "• Team stat accumulators → 0", inline: true },
+      { name: "Object Storage", value: gcsLine },
     )
     .addFields({
       name: "Next Steps",
       value:
-        "1. Re-upload all MCA JSON files (or use the API import endpoint for each week)\n" +
+        "1. Re-upload all MCA JSON files (passing, rushing, receiving **and defense**)\n" +
         "2. Run `/admin_eos_testrun` to verify stat totals look correct\n" +
         "3. Run `/admin_stat_reimport disable` to re-enable EOS payouts\n" +
         "4. Advance to Wildcard week to trigger EOS payouts",
