@@ -166,6 +166,18 @@ async function buildLeagueContext(
     parts.push(...formatConferenceStandingsContext(records, `after Week ${completedWeekIndex + 1}`));
   }
 
+  // ── Build human team set early — used for both played and upcoming game labeling ──
+  // When payoutType is null (game not yet in processed_games), fall back to checking
+  // whether both teams are human-controlled to distinguish H2H from CPU games.
+  const humanTeamRows = await db
+    .select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      eq(franchiseMcaTeamsTable.isHuman, true),
+    ));
+  const humanTeamSet = new Set(humanTeamRows.map(r => r.fullName));
+
   // ── Last week's scores ────────────────────────────────────────────────────────
   // Join with franchise_processed_games so we can use payoutType ("h2h" | "cpu") to
   // distinguish true H2H from force-win games — status alone is unreliable in MCA 24/25.
@@ -196,7 +208,13 @@ async function buildLeagueContext(
       awayTeamName: g.awayTeamName,
       homeScore:    g.homeScore,
       awayScore:    g.awayScore,
-      isH2H:        g.payoutType === "h2h", // authoritative: only true for processed H2H games
+      // payoutType "h2h"/"cpu" is authoritative when present.
+      // Fall back to human team set when payoutType is null (game not yet processed).
+      isH2H: g.payoutType === "h2h" ||
+        (g.payoutType === null &&
+          humanTeamSet.size > 0 &&
+          humanTeamSet.has(g.homeTeamName) &&
+          humanTeamSet.has(g.awayTeamName)),
     }));
 
   if (playedGames.length === 0) {
@@ -225,17 +243,6 @@ async function buildLeagueContext(
   // ── Upcoming week's actual schedule — DB first, GCS fallback ─────────────
   const upcomingWeekIndex = completedWeekIndex + 1;
   const upcomingWeekNum   = upcomingWeekIndex + 1;
-
-  // Build a set of human team names for this season so we can label matchups accurately.
-  // Unplayed games all have status=0, so status alone can't distinguish H2H from CPU.
-  const humanTeamRows = await db
-    .select({ fullName: franchiseMcaTeamsTable.fullName })
-    .from(franchiseMcaTeamsTable)
-    .where(and(
-      eq(franchiseMcaTeamsTable.seasonId, seasonId),
-      eq(franchiseMcaTeamsTable.isHuman, true),
-    ));
-  const humanTeamSet = new Set(humanTeamRows.map(r => r.fullName));
 
   let upcomingGamesRaw = await db
     .select({
