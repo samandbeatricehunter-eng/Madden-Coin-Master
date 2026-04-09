@@ -232,9 +232,17 @@ export const data = new SlashCommandBuilder()
   // ── user management ─────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("user_delete")
-    .setDescription("Permanently delete a user and all their data from the database")
+    .setDescription("Permanently delete a user and their data (all categories on by default)")
     .addUserOption(o => o.setName("user").setDescription("The user to delete").setRequired(true))
     .addBooleanOption(o => o.setName("confirm").setDescription("Set to True to confirm permanent deletion").setRequired(false))
+    .addBooleanOption(o => o.setName("del_economy").setDescription("Delete savings, inventory, season limits, transactions & purchases (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_records").setDescription("Delete season records, H2H records & game log (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_wagers").setDescription("Delete wagers (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_trade_listings").setDescription("Delete trade block listings & ISO posts (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_payout_data").setDescription("Delete payout requests, channel payouts & pending EOS payouts (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_interviews").setDescription("Delete interview requests (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_franchise_data").setDescription("Delete franchise MCA mapping, team stats & player stats (default: true)").setRequired(false))
+    .addBooleanOption(o => o.setName("del_custom_players").setDescription("Delete custom player builds (default: true)").setRequired(false))
   );
 
 // ── Execute router ─────────────────────────────────────────────────────────────
