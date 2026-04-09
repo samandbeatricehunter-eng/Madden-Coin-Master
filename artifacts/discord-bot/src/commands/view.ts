@@ -1,23 +1,20 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction,
   EmbedBuilder, Colors,
-  ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { franchiseMcaTeamsTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
-import { requireMcaEnabled } from "../lib/server-settings.js";
 import * as userStats          from "./userstats.js";
 import * as viewstore          from "./viewstore.js";
 import * as viewCustomArchetypes from "./viewcustomarchetypes.js";
 import * as viewroster         from "./viewroster.js";
-import * as viewfreeagents     from "./viewfreeagents.js";
 import * as viewtradeblock     from "./viewtradeblock.js";
 import * as viewplayerdetails  from "./viewplayerdetails.js";
-import * as availableupgrades  from "./availableupgrades.js";
 import * as statLeaders        from "./statleaders.js";
 import * as viewplayerstats    from "./viewplayerstats.js";
+import * as rulesCmd           from "./rules.js";
 import { STAT_CATEGORY_CHOICES } from "../lib/stat-categories.js";
 
 export const data = new SlashCommandBuilder()
@@ -83,15 +80,6 @@ export const data = new SlashCommandBuilder()
     .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel?").setRequired(false))
   )
 
-  // ── freeAgents ────────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("free_agents")
-    .setDescription("Browse available free agents from the most recent roster import")
-    .addStringOption(o => o.setName("position").setDescription("Filter to a specific position").setRequired(false).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("min_ovr").setDescription("Only show players at or above this overall rating").setRequired(false).setMinValue(0).setMaxValue(99))
-    .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel?").setRequired(false))
-  )
-
   // ── tradeBlock ────────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("trade_block")
@@ -109,32 +97,38 @@ export const data = new SlashCommandBuilder()
     .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel?").setRequired(false))
   )
 
-  // ── availableUpgrades ─────────────────────────────────────────────────────
+  // ── rules ─────────────────────────────────────────────────────────────────
   .addSubcommand(s => s
-    .setName("available_upgrades")
-    .setDescription("See how many attribute points, dev upgrades, and age resets you have left this season")
-    .addUserOption(o => o.setName("user").setDescription("Check another member's remaining upgrades").setRequired(false))
+    .setName("rules")
+    .setDescription("Display a section of the league rules, or quote a specific rule")
+    .addStringOption(o => o.setName("section").setDescription("Which rules section?").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("rule_number").setDescription("Quote only this rule number from the section (optional)").setRequired(false).setMinValue(1))
+    .addStringOption(o => o.setName("mention").setDescription("Broadcast to @everyone or @here (overrides the user option)").setRequired(false)
+      .addChoices(
+        { name: "@everyone — ping the entire server", value: "everyone" },
+        { name: "@here — ping online members only",   value: "here"     },
+      )
+    )
+    .addUserOption(o => o.setName("user").setDescription("Tag a specific member to share this rule with them (makes it visible to everyone)").setRequired(false))
   );
 
 // ── Execute router ─────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction): Promise<unknown> {
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "user_stats")            return userStats.execute(interaction);
-  if (sub === "store")                return viewstore.execute(interaction);
+  if (sub === "user_stats")               return userStats.execute(interaction);
+  if (sub === "store")                    return viewstore.execute(interaction);
   if (sub === "custom_player_archetypes") return viewCustomArchetypes.execute(interaction);
-  if (sub === "roster")               return viewroster.execute(interaction);
-  if (sub === "free_agents")           return viewfreeagents.execute(interaction);
-  if (sub === "trade_block")           return viewtradeblock.execute(interaction);
-  if (sub === "player_details")        return viewplayerdetails.execute(interaction);
-  if (sub === "available_upgrades")    return availableupgrades.execute(interaction);
+  if (sub === "roster")                   return viewroster.execute(interaction);
+  if (sub === "trade_block")              return viewtradeblock.execute(interaction);
+  if (sub === "player_details")           return viewplayerdetails.execute(interaction);
+  if (sub === "rules")                    return rulesCmd.execute(interaction);
 
   if (sub === "player_stats") {
     const mode = interaction.options.getString("mode", true);
     if (mode === "top10") {
       return statLeaders.execute(interaction);
     }
-    // team mode: start the interactive player stats flow
     return viewplayerstats.execute(interaction);
   }
 
@@ -154,11 +148,9 @@ async function handleTeamStatsView(
   mode: string
 ): Promise<void> {
   if (mode === "watch") {
-    // Show the teams-to-watch section from statLeaders
     return statLeaders.execute(interaction);
   }
 
-  // mode === "user" — show a specific team's stats
   await interaction.deferReply({ ephemeral: true });
 
   const targetUser = interaction.options.getUser("user");
@@ -171,7 +163,6 @@ async function handleTeamStatsView(
 
   const season = await getOrCreateActiveSeason();
 
-  // Find roster entries for this team
   let teamRosterQuery: any;
   if (targetUser) {
     teamRosterQuery = await db
@@ -202,12 +193,11 @@ async function handleTeamStatsView(
     return;
   }
 
-  // Show basic team info — the full team stats view is in statleaders
   const firstEntry = teamRosterQuery[0];
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(`${firstEntry.teamName} — Team Overview`)
-    .setDescription(`Use \`/view playerStats\` to browse individual player stats for this team.`)
+    .setDescription(`Use \`/view player_stats\` to browse individual player stats for this team.`)
     .addFields({ name: "Season", value: `Season ${season.seasonNumber}`, inline: true });
 
   await interaction.editReply({ embeds: [embed] });
@@ -219,8 +209,8 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
     const sub = interaction.options.getSubcommand();
 
     if (sub === "roster")        return viewroster.autocomplete(interaction);
-    if (sub === "free_agents")    return viewfreeagents.autocomplete(interaction);
     if (sub === "player_details") return viewplayerdetails.autocomplete(interaction);
+    if (sub === "rules")          return rulesCmd.autocomplete(interaction);
 
     if (sub === "team_stats") {
       const focused = interaction.options.getFocused(true);

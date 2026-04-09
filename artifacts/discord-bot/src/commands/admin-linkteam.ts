@@ -43,7 +43,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── VIEW ──────────────────────────────────────────────────────────────────
-  if (sub === "view") {
+  if (sub === "view_all_user_teams") {
     const allUsers = await db.select({
       discordId:       usersTable.discordId,
       discordUsername: usersTable.discordUsername,

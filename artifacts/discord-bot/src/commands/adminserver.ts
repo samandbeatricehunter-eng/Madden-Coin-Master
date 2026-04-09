@@ -12,14 +12,14 @@ export const data = new SlashCommandBuilder()
   .setDescription("Server administration commands")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
-    sub.setName("settings")
+    sub.setName("server_bot_settings")
       .setDescription("Toggle server features on/off (coin economy, store items, wagers, trade block)")
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "settings") {
+  if (sub === "server_bot_settings") {
     const member        = interaction.guild?.members.cache.get(interaction.user.id)
       ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
     const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;

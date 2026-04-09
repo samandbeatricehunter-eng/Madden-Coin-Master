@@ -11,14 +11,14 @@ export const data = new SlashCommandBuilder()
   .setDescription("Manage bot-admin status for league members")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
-    sub.setName("grant")
+    sub.setName("set_admin_role")
       .setDescription("Grant bot-admin status to a user")
       .addUserOption(opt =>
         opt.setName("user").setDescription("The user to grant admin status").setRequired(true)
       )
   )
   .addSubcommand(sub =>
-    sub.setName("revoke")
+    sub.setName("revoke_admin_role")
       .setDescription("Revoke bot-admin status from a user")
       .addUserOption(opt =>
         opt.setName("user").setDescription("The user to revoke admin status from").setRequired(true)
@@ -45,7 +45,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── List ───────────────────────────────────────────────────────────────────
-  if (sub === "list") {
+  if (sub === "list_administrators") {
     const admins = await db.select({
       discordId:       usersTable.discordId,
       discordUsername: usersTable.discordUsername,
@@ -76,7 +76,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Grant / Revoke ────────────────────────────────────────────────────────
   const targetUser = interaction.options.getUser("user", true);
-  const grantAdmin = sub === "grant";
+  const grantAdmin = sub === "set_admin_role";
 
   if (targetUser.id === interaction.user.id && !grantAdmin) {
     await interaction.editReply({ content: "❌ You can't revoke your own admin status." });

@@ -86,7 +86,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── LIST ───────────────────────────────────────────────────────────────────
-  if (sub === "list") {
+  if (sub === "list_all") {
     // Fetch all legends ever added (never deleted from this table)
     const legends = await db.select().from(legendsTable)
       .orderBy(asc(legendsTable.name));

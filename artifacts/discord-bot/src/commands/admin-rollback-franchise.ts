@@ -50,14 +50,25 @@ const gameLogTable = pgTable("game_log", {
 });
 
 // ── Command ──────────────────────────────────────────────────────────────────
+const TIME_PERIOD_HOURS: Record<string, number> = {
+  "2h": 2, "4h": 4, "8h": 8, "12h": 12, "24h": 24,
+};
+
 export const data = new SlashCommandBuilder()
   .setName("admin-rollback-franchise")
-  .setDescription("Reverse all data written by a franchise import after a given timestamp")
+  .setDescription("Reverse all data written by franchise imports within a recent time window")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addStringOption(o => o
-    .setName("since")
-    .setDescription("ISO timestamp of when the bad import started (e.g. 2026-03-31T19:00:00)")
-    .setRequired(true))
+    .setName("time_period")
+    .setDescription("How far back to roll back from right now")
+    .setRequired(true)
+    .addChoices(
+      { name: "2 hours",  value: "2h"  },
+      { name: "4 hours",  value: "4h"  },
+      { name: "8 hours",  value: "8h"  },
+      { name: "12 hours", value: "12h" },
+      { name: "24 hours", value: "24h" },
+    ))
   .addBooleanOption(o => o
     .setName("dry_run")
     .setDescription("Preview without making changes — default: TRUE. Set false to actually apply.")
@@ -66,18 +77,12 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const sinceStr = interaction.options.getString("since", true);
-  const dryRun   = interaction.options.getBoolean("dry_run") ?? true;
+  const timePeriod = interaction.options.getString("time_period", true);
+  const dryRun     = interaction.options.getBoolean("dry_run") ?? true;
+  const hours      = TIME_PERIOD_HOURS[timePeriod] ?? 2;
+  const since      = new Date(Date.now() - hours * 3_600_000);
 
-  const since = new Date(sinceStr);
-  if (isNaN(since.getTime())) {
-    await interaction.editReply({
-      content: `❌ Invalid timestamp: \`${sinceStr}\`\nUse ISO format, e.g. \`2026-03-31T19:00:00\``,
-    });
-    return;
-  }
-
-  await interaction.editReply({ content: `🔍 Scanning for franchise data after ${since.toISOString()}...` });
+  await interaction.editReply({ content: `🔍 Scanning for franchise data after ${since.toISOString()} (${timePeriod} window)...` });
 
   // ── Step 1: Franchise coin transactions ────────────────────────────────────
   const franchiseTxns = await db.select()

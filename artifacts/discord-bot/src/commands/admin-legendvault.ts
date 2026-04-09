@@ -67,8 +67,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const target = interaction.options.getUser("user", false);
   const season = await getOrCreateActiveSeason();
 
-  // "vault_add", "vault_view", and "vault_move" all require a target user
-  if (!target && sub !== "vault_remove") {
+  // "add_to_user_vault", "vault_view", and "move_in_inventory" all require a target user
+  if (!target && sub !== "remove_from_inventory") {
     await interaction.editReply({ content: "❌ Please provide a **user** for this command." });
     return;
   }
@@ -76,7 +76,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const t = target!;
 
   // ── ADD (retroactive) ───────────────────────────────────────────────────────
-  if (sub === "vault_add") {
+  if (sub === "add_to_user_vault") {
     const legendName = interaction.options.getString("legend_name", true).trim();
     const position   = interaction.options.getString("position", true).trim().toUpperCase();
     const description = interaction.options.getString("description") ?? undefined;
@@ -185,7 +185,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── MOVE ────────────────────────────────────────────────────────────────────
-  if (sub === "vault_move") {
+  if (sub === "move_in_inventory") {
     const itemId = interaction.options.getInteger("item_id", true);
     const to     = interaction.options.getString("to", true) as "current" | "permanent";
 
@@ -238,7 +238,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── REMOVE ──────────────────────────────────────────────────────────────────
-  if (sub === "vault_remove") {
+  if (sub === "remove_from_inventory") {
     const itemId = interaction.options.getInteger("item_id", true);
 
     const rows = await db.select().from(inventoryTable)

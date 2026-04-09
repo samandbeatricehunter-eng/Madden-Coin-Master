@@ -137,7 +137,7 @@ export const data = new SlashCommandBuilder()
   .setDescription("Commissioner: Manage seasons")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
-    sub.setName("new")
+    sub.setName("advance")
       .setDescription("Advance to the next season (subject to franchise season limit)")
   )
   .addSubcommand(sub =>
@@ -188,7 +188,7 @@ export const data = new SlashCommandBuilder()
       )
   )
   .addSubcommand(sub =>
-    sub.setName("override")
+    sub.setName("set_limits")
       .setDescription("Set attribute rule overrides for the current season (omit = keep current value)")
       .addIntegerOption(opt =>
         opt.setName("core_attr_cost")
@@ -297,7 +297,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "new") {
+  if (sub === "advance") {
     const [seasons, maxSeasons] = await Promise.all([
       db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1),
       getMaxSeasons(),
@@ -350,7 +350,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return interaction.editReply({ embeds: [embed] });
   }
 
-  if (sub === "franchise_limit") {
+  if (sub === "length") {
     const limit = interaction.options.getInteger("limit", true);
     const [settings] = await db.select().from(serverSettingsTable).limit(1);
     if (settings) {
@@ -377,7 +377,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (sub === "franchise_reset") {
+  if (sub === "reset") {
     const confirmed = interaction.options.getBoolean("confirm", true);
     if (!confirmed) {
       return interaction.editReply({
@@ -576,7 +576,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (sub === "override") {
+  if (sub === "set_limits") {
     const clear = interaction.options.getBoolean("clear") ?? false;
 
     const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
@@ -687,7 +687,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (sub === "core_attrs") {
+  if (sub === "set_core_attributes") {
     const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
     const season = seasons[0];
     if (!season) {
@@ -750,7 +750,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
   const sub = interaction.options.getSubcommand(false);
-  if (sub !== "core_attrs") return;
+  if (sub !== "set_core_attributes") return;
 
   const focused = interaction.options.getFocused().toLowerCase();
   const choices = ATTRIBUTES

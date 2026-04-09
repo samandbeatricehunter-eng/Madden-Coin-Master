@@ -50,7 +50,7 @@ export const data = new SlashCommandBuilder()
 
   // ── Dev Upgrade ─────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
-    sub.setName("dev_up")
+    sub.setName("dev_upgrade")
       .setDescription("Dev upgrade a player (Normal→Impact, Impact→Star, or Star→Superstar) — see /view store for price")
       .addUserOption(opt =>
         opt.setName("user")
@@ -106,7 +106,7 @@ export const data = new SlashCommandBuilder()
 
   // ── Attribute Upgrade (interactive) ─────────────────────────────────────────
   .addSubcommand(sub =>
-    sub.setName("attribute_up")
+    sub.setName("attribute_upgrade")
       .setDescription("Upgrade a player attribute — interactive paginated flow with scaling costs")
       .addUserOption(opt =>
         opt.setName("user")
@@ -167,7 +167,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       }
     }
 
-    if (sub === "dev_up" || sub === "age_reset" || sub === "attribute_up") {
+    if (sub === "dev_upgrade" || sub === "age_reset" || sub === "attribute_upgrade") {
       // getUser is not available in autocomplete context; always use the invoking user for roster lookup
       const targetUser = interaction.user;
 
@@ -212,7 +212,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
         // For devUp: exclude Superstar (3) and X-Factor (4)
         const eligible = rows.filter(r => {
-          if (sub === "dev_up" && r.devTrait >= 3) return false;
+          if (sub === "dev_upgrade" && r.devTrait >= 3) return false;
           if (position && r.firstName) {
             // position filter will be applied server-side since we can't WHERE on it easily
           }
@@ -250,7 +250,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── /purchase attributeUp (interactive flow) ───────────────────────────────
-  if (sub === "attribute_up") {
+  if (sub === "attribute_upgrade") {
     return startAttributeUp(interaction);
   }
 
@@ -265,7 +265,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({ content: "❌ Legend purchases are currently disabled." });
     return;
   }
-  if (sub === "dev_up" && !settings.devUpgradesEnabled) {
+  if (sub === "dev_upgrade" && !settings.devUpgradesEnabled) {
     await interaction.editReply({ content: "❌ Development upgrades are currently disabled." });
     return;
   }
@@ -336,7 +336,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── /purchase devUp ──────────────────────────────────────────────────────────
-  if (sub === "dev_up") {
+  if (sub === "dev_upgrade") {
     const targetUser   = interaction.options.getUser("user") ?? interaction.user;
     const playerInput  = interaction.options.getString("player", true);
     const devUpType    = interaction.options.getString("dev_type", true);
@@ -394,7 +394,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       notes: `${devUpType}`,
     });
 
-    await sendCommissionerNotification(interaction, "dev_up", purchase!.id, {
+    await sendCommissionerNotification(interaction, "dev_upgrade", purchase!.id, {
       playerName: playerInput, playerPosition, devUpType, quantity: "1", costPer: String(costPer),
       ownerNote: targetUser.id !== interaction.user.id ? `Owner: <@${targetUser.id}>` : undefined,
     });
@@ -514,7 +514,7 @@ async function sendCommissionerNotification(
       "Once you've added this player to the draft pool, click the button below to notify the member.",
     ].join("\n");
     buttonLabel = "✅ Added to Draft Pool";
-  } else if (type === "dev_up") {
+  } else if (type === "dev_upgrade") {
     const costPer = details["costPer"];
     title = "📈 Dev Upgrade Request";
     description = [

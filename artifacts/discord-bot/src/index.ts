@@ -6,6 +6,16 @@ import { getOrCreateActiveSeason, normalizeDefensivePositions } from "./lib/db-h
 import * as admin from "./commands/admin.js";
 import * as view  from "./commands/view.js";
 
+// ── Split admin slash commands ────────────────────────────────────────────────
+import * as slashAdminSeason    from "./commands/slash-admin-season.js";
+import * as slashAdminFranchise from "./commands/slash-admin-franchise.js";
+import * as slashAdminUpgrade   from "./commands/slash-admin-upgrade.js";
+import * as slashAdminPlayoffs  from "./commands/slash-admin-playoffs.js";
+import * as slashAdminRules     from "./commands/slash-admin-rules.js";
+import * as slashAdminLegend    from "./commands/slash-admin-legend.js";
+import * as slashAdminInventory from "./commands/slash-admin-inventory.js";
+import * as slashAdminFix       from "./commands/slash-admin-fix.js";
+
 // ── User commands ─────────────────────────────────────────────────────────────
 import * as help             from "./commands/help.js";
 import * as balance          from "./commands/balance.js";
@@ -13,7 +23,6 @@ import * as sendcoins        from "./commands/sendcoins.js";
 import * as purchase         from "./commands/purchase.js";
 import * as inventory        from "./commands/inventory.js";
 import * as recentH2H        from "./commands/recentH2H.js";
-import * as rules            from "./commands/rules.js";
 import * as wager            from "./commands/wager.js";
 import * as teamlist         from "./commands/teamlist.js";
 import * as openteams        from "./commands/openteams.js";
@@ -88,6 +97,16 @@ if (!isProduction && !devBotEnabled) {
     admin,
     view,
 
+    // Split admin slash commands
+    slashAdminSeason,
+    slashAdminFranchise,
+    slashAdminUpgrade,
+    slashAdminPlayoffs,
+    slashAdminRules,
+    slashAdminLegend,
+    slashAdminInventory,
+    slashAdminFix,
+
     // User-facing commands
     help,
     balance,
@@ -95,7 +114,6 @@ if (!isProduction && !devBotEnabled) {
     purchase,
     inventory,
     recentH2H,
-    rules,
     wager,
     teamlist,
     openteams,

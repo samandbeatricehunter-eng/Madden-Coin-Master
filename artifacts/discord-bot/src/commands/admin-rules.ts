@@ -127,7 +127,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── new-section ────────────────────────────────────────────────────────────
-  if (sub === "new_section") {
+  if (sub === "add_section") {
     const rawKey = interaction.options.getString("key", true).trim().toLowerCase().replace(/\s+/g, "_");
     const title  = interaction.options.getString("title", true).trim();
     const color  = interaction.options.getInteger("color") ?? 0x3498db;
@@ -161,7 +161,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  if (sub === "list") {
+  if (sub === "list_section") {
     const rules = await getOrSeedRules(section);
     const text = rules.map((r, i) => `**${i + 1}.** ${r}`).join("\n") || "_No rules set._";
     const embed = new EmbedBuilder()
@@ -174,7 +174,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  if (sub === "set") {
+  if (sub === "edit") {
     const num  = interaction.options.getInteger("rule_number", true);
     const text = interaction.options.getString("text", true);
     const rules = await getOrSeedRules(section);

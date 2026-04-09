@@ -70,8 +70,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   // ── Set NFC / AFC seeds ───────────────────────────────────────────────────
-  if (sub === "nfc_seeds" || sub === "afc_seeds") {
-    const conference = sub === "nfc_seeds" ? "NFC" : "AFC";
+  if (sub === "set_nfc_seeds" || sub === "set_afc_seeds") {
+    const conference = sub === "set_nfc_seeds" ? "NFC" : "AFC";
     const entries: { userId: string; username: string; seed: number }[] = [];
 
     for (let s = 1; s <= 7; s++) {
