@@ -32,28 +32,24 @@ export const data = new SlashCommandBuilder()
   // ── playerStats ────────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("player_stats")
-    .setDescription("Browse player season stats by team or view top 10 stat leaders")
-    .addStringOption(o => o.setName("mode").setDescription("Browse by team or view top 10 leaderboard").setRequired(true)
+    .setDescription("Browse player season stats by team, or view stat leaders")
+    .addStringOption(o => o.setName("mode").setDescription("What to view").setRequired(true)
       .addChoices(
-        { name: "🏈 By Team — pick a player from any team's roster", value: "team" },
-        { name: "📊 Top 10 Stat Leaders — all categories",           value: "top10" },
-      )
-    )
-    .addStringOption(o => o.setName("category").setDescription("(Top 10 mode only) Stat category to highlight").setRequired(false)
-      .addChoices(
-        { name: "All Categories (top 3 each)",       value: "all"             },
-        { name: "🎯 Passing Yards",                  value: "passing_yards"   },
-        { name: "🏆 Passing TDs",                    value: "passing_tds"     },
-        { name: "💨 Rushing Yards",                  value: "rushing_yards"   },
-        { name: "🏆 Rushing TDs",                    value: "rushing_tds"     },
-        { name: "🙌 Receiving Yards",                value: "receiving_yards" },
-        { name: "🏆 Receiving TDs",                  value: "receiving_tds"   },
-        { name: "💥 Defensive Sacks",                value: "def_sacks"       },
-        { name: "🫳 Defensive INTs",                 value: "def_ints"        },
-        { name: "🦺 Defensive Tackles",              value: "def_tackles"     },
-        { name: "🏈 Total Offensive Yards (Team)",   value: "off_yds"         },
-        { name: "🛡️ Def. Yards Allowed (Team)",      value: "def_yds"         },
-        { name: "📈 Point Differential (Team)",      value: "point_diff"      },
+        { name: "🏈 Browse by Team — pick any team's roster",        value: "team"            },
+        { name: "📊 Top 3 Leaders — All Categories",                 value: "all"             },
+        { name: "🏟️ Teams to Watch",                                 value: "teams"           },
+        { name: "🎯 Top 10 — Passing Yards",                         value: "passing_yards"   },
+        { name: "🏆 Top 10 — Passing TDs",                           value: "passing_tds"     },
+        { name: "💨 Top 10 — Rushing Yards",                         value: "rushing_yards"   },
+        { name: "🏆 Top 10 — Rushing TDs",                           value: "rushing_tds"     },
+        { name: "🙌 Top 10 — Receiving Yards",                       value: "receiving_yards" },
+        { name: "🏆 Top 10 — Receiving TDs",                         value: "receiving_tds"   },
+        { name: "💥 Top 10 — Defensive Sacks",                       value: "def_sacks"       },
+        { name: "🫳 Top 10 — Defensive INTs",                        value: "def_ints"        },
+        { name: "🦺 Top 10 — Defensive Tackles",                     value: "def_tackles"     },
+        { name: "🏈 Top 10 — Total Offensive Yards (Team)",          value: "off_yds"         },
+        { name: "🛡️ Top 10 — Def. Yards Allowed (Team)",             value: "def_yds"         },
+        { name: "📈 Top 10 — Point Differential (Team)",             value: "point_diff"      },
       )
     )
     .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel (admin only)").setRequired(false))
@@ -142,10 +138,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (sub === "player_stats") {
     const mode = interaction.options.getString("mode", true);
-    if (mode === "top10") {
-      return statLeaders.execute(interaction);
+    if (mode === "team") {
+      return viewplayerstats.execute(interaction);
     }
-    return viewplayerstats.execute(interaction);
+    // All other mode values (all, teams, passing_yards, def_sacks, …) are
+    // stat-leader categories — pass directly to statLeaders which reads from
+    // the "mode" option via its updated getString fallback.
+    return statLeaders.execute(interaction);
   }
 
   if (sub === "team_stats") {

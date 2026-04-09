@@ -92,7 +92,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral });
   if (!await requireMcaEnabled(interaction)) return;
 
-  const category = interaction.options.getString("category") ?? "all";
+  // When called directly via /statleaders, the option is "category".
+  // When called via /view player_stats, the chosen value lives in "mode".
+  const category = interaction.options.getString("category")
+    ?? interaction.options.getString("mode")
+    ?? "all";
   const season   = await getOrCreateActiveSeason();
 
   // ── Load data ───────────────────────────────────────────────────────────────
