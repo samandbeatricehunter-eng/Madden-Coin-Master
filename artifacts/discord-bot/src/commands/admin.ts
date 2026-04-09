@@ -19,6 +19,7 @@ import * as adminCustomArchetypes    from "./admin-customarchetypes.js";
 import * as adminGotw                from "./admin-gotw.js";
 import * as adminPotw                from "./admin-potw.js";
 import * as adminServer              from "./adminserver.js";
+import * as adminDeleteUser         from "./admin-deleteuser.js";
 import { PAYOUT_KEYS }               from "../lib/payout-config.js";
 import { STAT_CATEGORY_CHOICES }     from "../lib/stat-categories.js";
 import { ALL_POSITIONS }             from "../lib/custom-player-helpers.js";
@@ -226,6 +227,14 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(s => s
     .setName("server_bot_settings")
     .setDescription("Toggle server features on/off (coin economy, store items, wagers, trade block)")
+  )
+
+  // ── user management ─────────────────────────────────────────────────────────
+  .addSubcommand(s => s
+    .setName("user_delete")
+    .setDescription("Permanently delete a user and all their data from the database")
+    .addUserOption(o => o.setName("user").setDescription("The user to delete").setRequired(true))
+    .addBooleanOption(o => o.setName("confirm").setDescription("Set to True to confirm permanent deletion").setRequired(false))
   );
 
 // ── Execute router ─────────────────────────────────────────────────────────────
@@ -258,6 +267,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "payout_gotw")              return adminGotw.execute(interaction);
   if (sub === "payout_potw")              return adminPotw.execute(interaction);
   if (sub === "server_bot_settings")      return adminServer.execute(interaction);
+  if (sub === "user_delete")              return adminDeleteUser.execute(interaction);
 
   await interaction.deferReply({ ephemeral: true });
   await interaction.editReply(`❌ Unknown subcommand: \`${sub}\``);
