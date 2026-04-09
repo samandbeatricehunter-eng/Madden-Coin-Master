@@ -30,7 +30,8 @@ import * as customarticle      from "./commands/customarticle.js";
 import * as webhookurl         from "./commands/webhookurl.js";
 import * as viewPayoutTiers    from "./commands/viewpayouttiers.js";
 import * as interviewrequest   from "./commands/interviewrequest.js";
-import * as adminEosTestrun   from "./commands/admin-eos-testrun.js";
+import * as adminEosTestrun    from "./commands/admin-eos-testrun.js";
+import * as adminStatReimport  from "./commands/admin-stat-reimport.js";
 import { seasonPRData, allTimePRData } from "./commands/records.js";
 
 const token    = process.env["DISCORD_TOKEN"]!;
@@ -63,6 +64,7 @@ const commands = [
   standings, tradeBlock, h2hrecord, customarticle, webhookurl,
   viewPayoutTiers, interviewrequest,
   adminEosTestrun,
+  adminStatReimport,
 ].map(c => c.data.toJSON());
 
 commands.push(
