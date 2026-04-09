@@ -186,67 +186,101 @@ export function packageSelectRow(sessionId: string, settings: Awaited<ReturnType
 }
 
 // ── Attribute allocation UI ────────────────────────────────────────────────────
-export function attrAllocEmbed(session: CustomPlayerSession): EmbedBuilder {
-  const used     = pointsUsed(session.attributes, session.attributeBases);
-  const remaining = session.packagePoints - used;
-  const sel      = session.selectedAttr;
+export const ATTR_SELECT_PER_PAGE = 25; // Discord select menu hard limit
 
-  const lines = session.attributeOrder.map(attr => {
-    const val  = session.attributes[attr] ?? 0;
-    const base = session.attributeBases[attr] ?? val;
-    const diff = val - base;
-    const indicator = attr === sel ? " ◄" : "";
-    const diffStr   = diff > 0 ? ` (+${diff})` : "";
-    return `**${attr}**: ${val}${diffStr}${indicator}`;
-  });
-
-  // Next cost for selected attr
-  let costNote = "";
-  if (sel) {
-    const cur  = session.attributes[sel] ?? 0;
-    if (cur < 99) costNote = `\nNext +1 on **${sel}**: costs **${pointCostForRaise(cur)}** pt${pointCostForRaise(cur) === 1 ? "" : "s"}`;
-  }
-
-  const embed = new EmbedBuilder()
-    .setColor(remaining < 0 ? Colors.Red : Colors.Blue)
-    .setTitle(`🏗️ Attribute Allocation — ${session.position} / ${session.archetypeName}`)
-    .setDescription(lines.join("   ") + costNote)
-    .addFields(
-      { name: "Points Remaining", value: `**${remaining}** / ${session.packagePoints}`, inline: true },
-      { name: "Package",          value: packageLabel(session.packageTier!), inline: true },
-      { name: "Dev Trait",        value: DEV_TRAIT_LABEL[session.devTrait!] ?? "Normal", inline: true },
-    )
-    .setFooter({ text: "Select an attribute then use +/− to adjust. Cannot go below base or above 99." });
-  return embed;
+export function attrSelectPageCount(session: CustomPlayerSession): number {
+  return Math.max(1, Math.ceil(session.attributeOrder.length / ATTR_SELECT_PER_PAGE));
 }
 
-export function attrAllocRows(session: CustomPlayerSession) {
-  const rows: ActionRowBuilder<any>[] = [];
-  const sessionId = Object.keys({}).length; // placeholder — caller passes sessionId
+export function attrAllocEmbed(session: CustomPlayerSession): EmbedBuilder {
+  const used      = pointsUsed(session.attributes, session.attributeBases);
+  const remaining = session.packagePoints - used;
+  const sel       = session.selectedAttr;
+  const page      = session.attrSelectPage ?? 0;
+  const totalPages = attrSelectPageCount(session);
 
-  // Row 1: attribute picker (up to 25 options)
-  const attrOptions = session.attributeOrder.slice(0, 25).map(attr => {
+  // Attributes visible on the current dropdown page
+  const pageAttrs = session.attributeOrder.slice(
+    page * ATTR_SELECT_PER_PAGE,
+    (page + 1) * ATTR_SELECT_PER_PAGE,
+  );
+
+  // Build description: one attribute per line, clearly spaced
+  const lines = pageAttrs.map(attr => {
     const val  = session.attributes[attr] ?? 0;
     const base = session.attributeBases[attr] ?? val;
     const diff = val - base;
-    return new StringSelectMenuOptionBuilder()
-      .setLabel(`${attr}: ${val}${diff > 0 ? ` (+${diff})` : ""}`)
-      .setValue(attr)
-      .setDefault(attr === session.selectedAttr);
+    const diffStr = diff > 0 ? ` **(+${diff})**` : "";
+    if (attr === sel) {
+      return `▶ **${attr}**: ${val}${diffStr}`;
+    }
+    return `**${attr}**: ${val}${diffStr}`;
   });
 
-  return attrOptions; // caller assembles rows with correct sessionId
+  // Footer: cost note for selected attr + page indicator
+  const footerParts: string[] = [];
+  if (sel) {
+    const cur = session.attributes[sel] ?? 0;
+    if (cur < 99) {
+      const cost = pointCostForRaise(cur);
+      footerParts.push(`Next +1 on ${sel}: costs ${cost} pt${cost === 1 ? "" : "s"}`);
+    } else {
+      footerParts.push(`${sel} is maxed at 99`);
+    }
+  }
+  if (totalPages > 1) footerParts.push(`Showing attrs ${page * ATTR_SELECT_PER_PAGE + 1}–${Math.min((page + 1) * ATTR_SELECT_PER_PAGE, session.attributeOrder.length)} of ${session.attributeOrder.length} (page ${page + 1}/${totalPages})`);
+  footerParts.push("Select an attribute then use − / + to adjust. Cannot go below base or above 99.");
+
+  return new EmbedBuilder()
+    .setColor(remaining < 0 ? Colors.Red : Colors.Blue)
+    .setTitle(`🏗️ Attribute Allocation — ${session.position} / ${session.archetypeName}`)
+    .setDescription(lines.join("\n"))
+    .addFields(
+      { name: "Points Remaining", value: `**${remaining}** / ${session.packagePoints}`, inline: true },
+      { name: "Package",          value: packageLabel(session.packageTier!),             inline: true },
+      { name: "Dev Trait",        value: DEV_TRAIT_LABEL[session.devTrait!] ?? "Normal", inline: true },
+    )
+    .setFooter({ text: footerParts.join("  ·  ") });
 }
 
 export function buildAttrRows(session: CustomPlayerSession, sessionId: string) {
   const used      = pointsUsed(session.attributes, session.attributeBases);
   const remaining = session.packagePoints - used;
   const sel       = session.selectedAttr;
+  const page      = session.attrSelectPage ?? 0;
+  const totalPages = attrSelectPageCount(session);
 
   const rows: ActionRowBuilder<any>[] = [];
 
-  // Row 1: attribute select
-  const attrOptions = session.attributeOrder.slice(0, 25).map(attr => {
+  // Row 1 (optional): attr page nav — only needed when there are more than 25 attrs
+  if (totalPages > 1) {
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ccp_asel_prev:${sessionId}`)
+          .setLabel("◀  Prev Attrs")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page <= 0),
+        new ButtonBuilder()
+          .setCustomId("ccp_asel_indicator")
+          .setLabel(`Page ${page + 1} / ${totalPages}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true),
+        new ButtonBuilder()
+          .setCustomId(`ccp_asel_next:${sessionId}`)
+          .setLabel("Next Attrs  ▶")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page >= totalPages - 1),
+      ),
+    );
+  }
+
+  // Row 2: attribute dropdown (current page, max 25)
+  const pageAttrs = session.attributeOrder.slice(
+    page * ATTR_SELECT_PER_PAGE,
+    (page + 1) * ATTR_SELECT_PER_PAGE,
+  );
+  const attrOptions = pageAttrs.map(attr => {
     const val  = session.attributes[attr] ?? 0;
     const base = session.attributeBases[attr] ?? val;
     const diff = val - base;
@@ -259,39 +293,29 @@ export function buildAttrRows(session: CustomPlayerSession, sessionId: string) {
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId(`ccp_attr_sel:${sessionId}`)
-        .setPlaceholder("Select attribute to edit…")
+        .setPlaceholder(sel ? `Selected: ${sel}` : "Select an attribute to adjust…")
         .addOptions(attrOptions),
     ),
   );
 
-  // Row 2: +/- buttons
+  // Row 3: −1 · +1 · Submit  (no ±5)
   const selVal  = sel ? (session.attributes[sel] ?? 0) : null;
   const selBase = sel ? (session.attributeBases[sel] ?? 0) : null;
   rows.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(`ccp_attr_minus5:${sessionId}`)
-        .setLabel("−5")
-        .setStyle(ButtonStyle.Danger)
-        .setDisabled(!sel || (selVal! - 5 < selBase!)),
-      new ButtonBuilder()
         .setCustomId(`ccp_attr_minus1:${sessionId}`)
         .setLabel("−1")
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Danger)
         .setDisabled(!sel || selVal! <= selBase!),
       new ButtonBuilder()
         .setCustomId(`ccp_attr_plus1:${sessionId}`)
         .setLabel("+1")
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Success)
         .setDisabled(!sel || selVal! >= 99 || remaining < pointCostForRaise(selVal ?? 0)),
       new ButtonBuilder()
-        .setCustomId(`ccp_attr_plus5:${sessionId}`)
-        .setLabel("+5")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(!sel || selVal! >= 95 || remaining < 1),
-      new ButtonBuilder()
         .setCustomId(`ccp_submit_attrs:${sessionId}`)
-        .setLabel("✅ Submit Attributes")
+        .setLabel("✅  Done — Next Step")
         .setStyle(ButtonStyle.Primary)
         .setDisabled(remaining < 0),
     ),

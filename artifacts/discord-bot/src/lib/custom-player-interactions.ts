@@ -23,7 +23,7 @@ import {
 import {
   getSettings, packagePoints, packageCost, packageLabel,
   archetypeSelectRow, devTraitSelectRow, packageSelectRow,
-  buildAttrRows, attrAllocEmbed,
+  buildAttrRows, attrAllocEmbed, attrSelectPageCount,
   heightOptions, weightOptions, inchesToDisplay,
   buildCommissionerEmbed, buildCommissionerRows,
   olSubPositionSelectRow, positionSelectRow,
@@ -340,6 +340,7 @@ async function showBalanceCheck(
 
   // Show attribute allocation
   session.step = 6;
+  session.attrSelectPage = 0;
   session.selectedAttr = session.attributeOrder[0] ?? null;
 
   const embed = attrAllocEmbed(session);
@@ -362,6 +363,32 @@ export async function handleCcpAttrSel(interaction: StringSelectMenuInteraction,
   session.selectedAttr = interaction.values[0]!;
   await interaction.deferUpdate();
 
+  const embed = attrAllocEmbed(session);
+  const rows  = buildAttrRows(session, sessionId);
+  await interaction.editReply({ embeds: [embed], components: rows });
+}
+
+// ── Step 6: Attribute selector page — Prev ────────────────────────────────────
+export async function handleCcpAttrSelPrev(interaction: ButtonInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+  await interaction.deferUpdate();
+  if ((session.attrSelectPage ?? 0) <= 0) return;
+  session.attrSelectPage--;
+  session.selectedAttr = null; // clear selection when page changes
+  const embed = attrAllocEmbed(session);
+  const rows  = buildAttrRows(session, sessionId);
+  await interaction.editReply({ embeds: [embed], components: rows });
+}
+
+// ── Step 6: Attribute selector page — Next ────────────────────────────────────
+export async function handleCcpAttrSelNext(interaction: ButtonInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+  await interaction.deferUpdate();
+  if ((session.attrSelectPage ?? 0) >= attrSelectPageCount(session) - 1) return;
+  session.attrSelectPage++;
+  session.selectedAttr = null; // clear selection when page changes
   const embed = attrAllocEmbed(session);
   const rows  = buildAttrRows(session, sessionId);
   await interaction.editReply({ embeds: [embed], components: rows });

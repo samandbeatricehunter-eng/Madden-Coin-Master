@@ -45,6 +45,9 @@ export interface CustomPlayerSession {
   archetypePreviewIdx: number;  // which archetype is currently shown
   archetypeAttrPage:   number;  // which attribute page is currently shown (0-indexed)
 
+  // Attribute allocation page (step 6) — tracks which 25-attr page of the dropdown is visible
+  attrSelectPage: number;
+
   // Housekeeping
   expiresAt: number;    // Date.now() + TTL
   step: number;         // current step (1–8) for display
@@ -75,6 +78,7 @@ export function createSession(userId: string, guildId: string): string {
     archetypeList:       [],
     archetypePreviewIdx: 0,
     archetypeAttrPage:   0,
+    attrSelectPage:      0,
     firstName:     null,
     lastName:      null,
     jerseyNumber:  null,
