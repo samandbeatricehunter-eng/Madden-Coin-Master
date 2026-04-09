@@ -8,6 +8,7 @@ import {
 } from "../lib/payout-config.js";
 import { getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
+import { getSettings as getCustomPlayerSettings, packageCost, packagePoints } from "../lib/custom-player-helpers.js";
 
 // ── Win milestone bonuses (hardcoded by design — balancing milestone tiers) ───
 const MILESTONES = [
@@ -69,8 +70,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "view_payout_settings") {
     const config = await getAllPayoutConfig();
     const keys   = getAllPayoutKeys();
-    const season = await getOrCreateActiveSeason();
-    const rules  = await getSeasonRules(season);
+    const season     = await getOrCreateActiveSeason();
+    const rules      = await getSeasonRules(season);
+    const cpSettings = await getCustomPlayerSettings();
 
     // ── Section 1: Game Payouts ──────────────────────────────────────────────
     const gameKeys    = keys.filter(k => k.category === "Game Payouts");
@@ -123,9 +125,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**${rules.nonCoreAttrCost} 🪙/pt** — Non-core attribute upgrade (cap: ${rules.nonCoreAttrCap}/season)${rules.nonCoreAttrCost !== COSTS.non_core_attribute ? " *(custom)*" : " *(default)*"}`,
       `**${rules.devUpsCost} 🪙** — Development upgrade (cap: ${rules.devUpsCap}/season)${rules.devUpsCost !== COSTS.dev_up ? " *(custom)*" : " *(default)*"}`,
       `**${rules.ageResetCost} 🪙** — Age reset (cap: ${rules.ageResetsCap}/season)${rules.ageResetCost !== COSTS.age_reset ? " *(custom)*" : " *(default)*"}`,
-      `**${rules.customGoldCost} 🪙** — Custom player (Gold)${rules.customGoldCost !== COSTS.custom_player_gold ? " *(custom)*" : " *(default)*"}`,
-      `**${rules.customSilverCost} 🪙** — Custom player (Silver)${rules.customSilverCost !== COSTS.custom_player_silver ? " *(custom)*" : " *(default)*"}`,
-      `**${rules.customBronzeCost} 🪙** — Custom player (Bronze)${rules.customBronzeCost !== COSTS.custom_player_bronze ? " *(custom)*" : " *(default)*"}`,
+      `**${packageCost("gold", cpSettings)} 🪙** — Custom player (Gold, ${packagePoints("gold", cpSettings)} creation pts) *(via /admin-customplayersettings)*`,
+      `**${packageCost("silver", cpSettings)} 🪙** — Custom player (Silver, ${packagePoints("silver", cpSettings)} creation pts) *(via /admin-customplayersettings)*`,
+      `**${packageCost("bronze", cpSettings)} 🪙** — Custom player (Bronze, ${packagePoints("bronze", cpSettings)} creation pts) *(via /admin-customplayersettings)*`,
+      `**${packageCost("kp", cpSettings)} 🪙** — Custom player (K/P, ${packagePoints("kp", cpSettings)} creation pts) *(via /admin-customplayersettings)*`,
     ];
 
     // ── Section 4: Win Milestone Bonuses (hardcoded) ─────────────────────────

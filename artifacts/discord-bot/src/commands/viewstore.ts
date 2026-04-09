@@ -5,6 +5,7 @@ import { eq, asc } from "drizzle-orm";
 import { LIMITS } from "../lib/constants.js";
 import { getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
+import { getSettings as getCustomPlayerSettings, packageCost, packagePoints } from "../lib/custom-player-helpers.js";
 
 // ── Attribute groups by position ───────────────────────────────────────────────
 const ATTR_GROUPS = {
@@ -100,8 +101,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const season = await getOrCreateActiveSeason();
-  const rules  = await getSeasonRules(season);
+  const season     = await getOrCreateActiveSeason();
+  const rules      = await getSeasonRules(season);
+  const cpSettings = await getCustomPlayerSettings();
 
   const availableLegends = settings.legendsEnabled
     ? await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true)).orderBy(asc(legendsTable.position), asc(legendsTable.name))
@@ -187,13 +189,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Custom Players ────────────────────────────────────────────────────────────
   if (settings.customSuperstarsEnabled) {
+    const cpLines: string[] = [
+      `• **Gold** — ${packageCost("gold", cpSettings)} coins (${packagePoints("gold", cpSettings)} creation pts)`,
+      `• **Silver** — ${packageCost("silver", cpSettings)} coins (${packagePoints("silver", cpSettings)} creation pts)`,
+      `• **Bronze** — ${packageCost("bronze", cpSettings)} coins (${packagePoints("bronze", cpSettings)} creation pts)`,
+      `• **K/P** — ${packageCost("kp", cpSettings)} coins (${packagePoints("kp", cpSettings)} creation pts)`,
+    ];
     embed.addFields({
       name: "🎨 Custom Players",
-      value: [
-        `• **Gold** — ${rules.customGoldCost} coins`,
-        `• **Silver** — ${rules.customSilverCost} coins`,
-        `• **Bronze** — ${rules.customBronzeCost} coins`,
-      ].join("\n"),
+      value: cpLines.join("\n"),
     });
   }
 
