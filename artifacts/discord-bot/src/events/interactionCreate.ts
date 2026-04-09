@@ -134,6 +134,11 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ccp_apage_prev") { await handleCcpAttrPagePrev(interaction, secondPart ?? ""); return; }
   if (action === "ccp_apage_next") { await handleCcpAttrPageNext(interaction, secondPart ?? ""); return; }
 
+  // ── Purchase flow — archetype browser nav ─────────────────────────────────────
+  if (action === "ccp_arch_prev") { await handleCcpArchPrev(interaction, secondPart ?? ""); return; }
+  if (action === "ccp_arch_next") { await handleCcpArchNext(interaction, secondPart ?? ""); return; }
+  if (action === "ccp_arch_pick") { await handleCcpArchPick(interaction, secondPart ?? ""); return; }
+
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_attr_plus1")    { await handleCcpAttrAdjust(interaction, secondPart ?? "", 1);  return; }
   if (action === "ccp_attr_minus1")   { await handleCcpAttrAdjust(interaction, secondPart ?? "", -1); return; }
@@ -1731,9 +1736,6 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_pos")       { await handleCcpPos(interaction, sessionId);      return; }
   if (action === "ccp_arch")      { await handleCcpArch(interaction, sessionId);     return; }
-  if (action === "ccp_arch_prev") { await handleCcpArchPrev(interaction, sessionId); return; }
-  if (action === "ccp_arch_next") { await handleCcpArchNext(interaction, sessionId); return; }
-  if (action === "ccp_arch_pick") { await handleCcpArchPick(interaction, sessionId); return; }
   if (action === "ccp_ol_pos")    { await handleCcpOlPos(interaction, sessionId);    return; }
   if (action === "ccp_dev")      { await handleCcpDev(interaction, sessionId);     return; }
   if (action === "ccp_pkg")      { await handleCcpPkg(interaction, sessionId);     return; }
