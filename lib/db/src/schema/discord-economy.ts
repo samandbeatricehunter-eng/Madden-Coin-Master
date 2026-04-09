@@ -778,3 +778,17 @@ export const customPlayersTable = pgTable("custom_players", {
   refundReason:         text("refund_reason"),
   createdAt:            timestamp("created_at").notNull().defaultNow(),
 });
+
+// ── EA API direct connection (replaces MCA manual imports) ─────────────────────
+export const eaConnectionsTable = pgTable("ea_connections", {
+  id:           serial("id").primaryKey(),
+  eaLeagueId:   integer("ea_league_id").notNull().unique(),
+  leagueName:   text("league_name").notNull().default(""),
+  blazeId:      text("blaze_id").notNull(),
+  accessToken:  text("access_token").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  expiry:       timestamp("expiry").notNull(),
+  platform:     text("platform").notNull().default("pc"),
+  connectedAt:  timestamp("connected_at").notNull().defaultNow(),
+  connectedBy:  text("connected_by").notNull(),
+});

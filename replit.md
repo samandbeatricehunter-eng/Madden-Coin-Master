@@ -99,6 +99,12 @@ All admin-facing commands now have Discord-level permission restrictions — the
 | `/admin-gotw` / `/admin-potw` | Set GOTW/POTW bonuses |
 | `/admin-playoffs` | Manage playoff seeding |
 | `/webhookurl` | Show the Madden Companion App export URL (static HTTPS URL to enter in the app before each export) |
+| `/admin_ea_connect start` | Begin EA Direct Connect setup — shows the EA login URL |
+| `/admin_ea_connect code` | Step 2 of EA connect — paste the redirect URL to complete auth and link the franchise |
+| `/admin_ea_connect status` | Show current EA connection status (league name, platform, token expiry) |
+| `/admin_ea_connect disconnect` | Remove the EA connection (reverts to MCA manual imports) |
+| `/admin_ea_export week` | Export stats for a specific regular/preseason week directly from EA |
+| `/admin_ea_export playoffs` | Export stats for a specific playoff round directly from EA |
 
 ### Purchase Rules
 
@@ -133,6 +139,29 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 - `franchise_game_participants` — Players who had a game processed this week (interview eligibility)
 - `season_stat_tier_configs` — End-of-season stat bonus tier config (11 categories × 4 tiers × season); direction (higher/lower) is encoded in the stat category definition in code, not the DB
 - `franchise_mca_teams` — Team map populated by the MCA `/leagueteams` webhook; gives teamId → fullName, nickName, userName, isHuman, discordId per season; queried by the scores processor
+- `ea_connections` — Stores EA API tokens and league info for direct Madden franchise data imports (replaces MCA when active); one row per league; token auto-refreshes on each export
+
+## EA Direct Connect (Direct Madden API Integration)
+
+Replaces manual MCA exports by fetching franchise data directly from EA's Madden 26 Blaze API.
+
+**Auth flow (one-time setup per season):**
+1. Commissioner runs `/admin_ea_connect start` → bot sends the EA login URL
+2. Commissioner logs in via browser, copies the redirect URL (`http://127.0.0.1/success?code=...`)
+3. Commissioner runs `/admin_ea_connect code redirect_url:<url>` → bot exchanges code, auto-detects platform + persona, fetches leagues, and stores connection
+4. If multiple leagues found → bot shows list and asks for `/admin_ea_connect connect league_id:<id>`
+
+**Export flow (weekly):**
+- `/admin_ea_export week number:<1-18>` — pulls passing, rushing, receiving, defense, team stats, and schedules for that week and POSTs them to the API server's existing MCA endpoints
+- `/admin_ea_export playoffs round:<round>` — same but for playoff rounds (weeks 19–23)
+- `schedules_only:true` option exports only scores (useful for score corrections)
+
+**Implementation:**
+- `artifacts/discord-bot/src/lib/ea-client.ts` — EA API client (OAuth, Blaze session, data fetch, DB ops)
+- `artifacts/discord-bot/src/commands/admin-ea-connect.ts` — auth setup command
+- `artifacts/discord-bot/src/commands/admin-ea-export.ts` — weekly export command
+- EA data is fetched and POSTed to the existing `/api/madden/:key/:platform/:leagueId/week/...` API routes (same format as MCA, so no changes to franchise-processor needed)
+- Tokens are auto-refreshed before each export if within 5 minutes of expiry
 
 ## End-of-Season Stat Bonus System
 

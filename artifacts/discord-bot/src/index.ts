@@ -7,6 +7,8 @@ import * as admin         from "./commands/admin.js";
 import * as view          from "./commands/view.js";
 import * as adminEosTestrun from "./commands/admin-eos-testrun.js";
 import * as adminStatReimport from "./commands/admin-stat-reimport.js";
+import * as adminEaConnect from "./commands/admin-ea-connect.js";
+import * as adminEaExport  from "./commands/admin-ea-export.js";
 
 // ── Split admin slash commands ────────────────────────────────────────────────
 import * as slashAdminSeason    from "./commands/slash-admin-season.js";
@@ -135,6 +137,8 @@ if (!isProduction && !devBotEnabled) {
     // Admin tools
     adminEosTestrun,
     adminStatReimport,
+    adminEaConnect,
+    adminEaExport,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },

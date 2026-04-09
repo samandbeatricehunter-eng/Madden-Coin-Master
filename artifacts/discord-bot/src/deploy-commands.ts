@@ -32,6 +32,8 @@ import * as viewPayoutTiers    from "./commands/viewpayouttiers.js";
 import * as interviewrequest   from "./commands/interviewrequest.js";
 import * as adminEosTestrun    from "./commands/admin-eos-testrun.js";
 import * as adminStatReimport  from "./commands/admin-stat-reimport.js";
+import * as adminEaConnect     from "./commands/admin-ea-connect.js";
+import * as adminEaExport      from "./commands/admin-ea-export.js";
 import { seasonPRData, allTimePRData } from "./commands/records.js";
 
 const token    = process.env["DISCORD_TOKEN"]!;
@@ -65,6 +67,8 @@ const commands = [
   viewPayoutTiers, interviewrequest,
   adminEosTestrun,
   adminStatReimport,
+  adminEaConnect,
+  adminEaExport,
 ].map(c => c.data.toJSON());
 
 commands.push(
