@@ -355,13 +355,17 @@ export async function handlePlayerSelect(
         `\n   ${stats.recRec} rec${ypr}`,
       );
     }
-    if (stats.sacks > 0)   statLines.push(`💥 **Sacks:** ${stats.sacks}`);
-    if (stats.defInts > 0) statLines.push(`🫳 **INTs:** ${stats.defInts}`);
     const tackles = stats.totalTackles > 0
-      ? `${stats.totalTackles} total`
+      ? `${stats.totalTackles} total (${stats.tackleSolo} solo · ${stats.tackleAssist} ast)`
       : stats.tackleSolo + stats.tackleAssist > 0
         ? `${stats.tackleSolo} solo · ${stats.tackleAssist} ast` : null;
-    if (tackles) statLines.push(`🦺 **Tackles:** ${tackles}`);
+    if (tackles)                    statLines.push(`🦺 **Tackles:** ${tackles}`);
+    if (stats.tacklesForLoss > 0)   statLines.push(`🔻 **TFL:** ${stats.tacklesForLoss}`);
+    if (stats.sacks > 0)            statLines.push(`💥 **Sacks:** ${stats.sacks}`);
+    if (stats.defInts > 0)          statLines.push(`🫳 **INTs:** ${stats.defInts}`);
+    if (stats.forcedFumbles > 0)    statLines.push(`🏈 **Forced Fum:** ${stats.forcedFumbles}`);
+    if (stats.defFumblesRec > 0)    statLines.push(`🤲 **Fum Rec:** ${stats.defFumblesRec}`);
+    if (stats.defTDs > 0)           statLines.push(`🏆 **Def TDs:** ${stats.defTDs}`);
   }
   if (statLines.length === 0) statLines.push("*(no recorded stats this season)*");
 

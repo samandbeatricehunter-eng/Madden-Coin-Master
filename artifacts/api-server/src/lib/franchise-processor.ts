@@ -727,20 +727,26 @@ export async function processPlayerWeekStats(
         );
         statViolations.push(...recViolations);
       } else if (statType === "defense") {
-        const sacks         = getN(p, "defSacks",        "sacks",              "sack");
-        const defInts       = getN(p, "defInts",         "defInterceptions",   "interceptions", "ints");
-        const totalTackles  = getN(p, "defTotalTackles", "totalTackles",       "tackleTotal", "tackles");
-        const tackleSolo    = getN(p, "defTackleSolo",   "tackleSolo",         "soloTackles");
-        const tackleAssist  = getN(p, "defTackleAssist", "tackleAssist",       "assistTackles");
-        const defFumblesRec = getN(p, "defFumblesRec",   "fumblesRecovered",   "fumRec", "fumbleRecoveries", "fumbleRec", "fumbRec");
-        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist, defFumblesRec };
+        const sacks          = getN(p, "defSacks",           "sacks",             "sack");
+        const defInts        = getN(p, "defInts",            "defInterceptions",  "interceptions", "ints");
+        const totalTackles   = getN(p, "defTotalTackles",    "totalTackles",      "tackleTotal", "tackles");
+        const tackleSolo     = getN(p, "defTackleSolo",      "tackleSolo",        "soloTackles");
+        const tackleAssist   = getN(p, "defTackleAssist",    "tackleAssist",      "assistTackles");
+        const defFumblesRec  = getN(p, "defFumblesRec",      "fumblesRecovered",  "fumRec", "fumbleRecoveries", "fumbleRec", "fumbRec");
+        const forcedFumbles  = getN(p, "defForcedFumbles",   "forcedFumbles",     "ffum", "fumForced", "defFF", "defForcedFum");
+        const tacklesForLoss = getN(p, "defTacklesForLoss",  "tacklesForLoss",    "tfl", "defTFL", "tackleForLoss", "defTackleForLoss");
+        const defTDs         = getN(p, "defTDs",             "defTouchdowns",     "defTD", "defensiveTDs", "defTdsTotal");
+        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist, defFumblesRec, forcedFumbles, tacklesForLoss, defTDs };
         accumSet     = {
-          sacks:         sql`${playerSeasonStatsTable.sacks}         + ${sacks}`,
-          defInts:       sql`${playerSeasonStatsTable.defInts}       + ${defInts}`,
-          totalTackles:  sql`${playerSeasonStatsTable.totalTackles}  + ${totalTackles}`,
-          tackleSolo:    sql`${playerSeasonStatsTable.tackleSolo}    + ${tackleSolo}`,
-          tackleAssist:  sql`${playerSeasonStatsTable.tackleAssist}  + ${tackleAssist}`,
-          defFumblesRec: sql`${playerSeasonStatsTable.defFumblesRec} + ${defFumblesRec}`,
+          sacks:          sql`${playerSeasonStatsTable.sacks}          + ${sacks}`,
+          defInts:        sql`${playerSeasonStatsTable.defInts}        + ${defInts}`,
+          totalTackles:   sql`${playerSeasonStatsTable.totalTackles}   + ${totalTackles}`,
+          tackleSolo:     sql`${playerSeasonStatsTable.tackleSolo}     + ${tackleSolo}`,
+          tackleAssist:   sql`${playerSeasonStatsTable.tackleAssist}   + ${tackleAssist}`,
+          defFumblesRec:  sql`${playerSeasonStatsTable.defFumblesRec}  + ${defFumblesRec}`,
+          forcedFumbles:  sql`${playerSeasonStatsTable.forcedFumbles}  + ${forcedFumbles}`,
+          tacklesForLoss: sql`${playerSeasonStatsTable.tacklesForLoss} + ${tacklesForLoss}`,
+          defTDs:         sql`${playerSeasonStatsTable.defTDs}         + ${defTDs}`,
         };
       }
 

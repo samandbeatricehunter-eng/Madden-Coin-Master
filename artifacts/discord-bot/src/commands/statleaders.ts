@@ -92,7 +92,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral });
   if (!await requireMcaEnabled(interaction)) return;
 
-  const category = interaction.options.getString("category", true);
+  const category = interaction.options.getString("category") ?? "all";
   const season   = await getOrCreateActiveSeason();
 
   // ── Load data ───────────────────────────────────────────────────────────────

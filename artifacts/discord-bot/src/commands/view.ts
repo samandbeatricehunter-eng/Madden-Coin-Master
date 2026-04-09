@@ -16,7 +16,7 @@ import * as viewplayerdetails  from "./viewplayerdetails.js";
 import * as statLeaders        from "./statleaders.js";
 import * as viewplayerstats    from "./viewplayerstats.js";
 import * as rulesCmd           from "./rules.js";
-import { STAT_CATEGORY_CHOICES } from "../lib/stat-categories.js";
+
 
 export const data = new SlashCommandBuilder()
   .setName("view")
@@ -40,7 +40,21 @@ export const data = new SlashCommandBuilder()
       )
     )
     .addStringOption(o => o.setName("category").setDescription("(Top 10 mode only) Stat category to highlight").setRequired(false)
-      .addChoices(...STAT_CATEGORY_CHOICES)
+      .addChoices(
+        { name: "All Categories (top 3 each)",       value: "all"             },
+        { name: "🎯 Passing Yards",                  value: "passing_yards"   },
+        { name: "🏆 Passing TDs",                    value: "passing_tds"     },
+        { name: "💨 Rushing Yards",                  value: "rushing_yards"   },
+        { name: "🏆 Rushing TDs",                    value: "rushing_tds"     },
+        { name: "🙌 Receiving Yards",                value: "receiving_yards" },
+        { name: "🏆 Receiving TDs",                  value: "receiving_tds"   },
+        { name: "💥 Defensive Sacks",                value: "def_sacks"       },
+        { name: "🫳 Defensive INTs",                 value: "def_ints"        },
+        { name: "🦺 Defensive Tackles",              value: "def_tackles"     },
+        { name: "🏈 Total Offensive Yards (Team)",   value: "off_yds"         },
+        { name: "🛡️ Def. Yards Allowed (Team)",      value: "def_yds"         },
+        { name: "📈 Point Differential (Team)",      value: "point_diff"      },
+      )
     )
     .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel (admin only)").setRequired(false))
   )
