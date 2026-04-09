@@ -1,0 +1,125 @@
+/admin — Commissioner & Admin Tools
+
+/admin coins
+
+add_coins should be /admin addCoins
+remove_coins should be /admin removeCoins
+transactions can be removed because you can view a users last 10 transactions when viewing their userstats page
+reverse_transaction should be /admin reverseTransactionByID
+
+/admin player
+
+set should be /admin setUserTeam
+view should be /admin viewAllUserTeams
+clear should be /admin clearUserTeam
+add — can be removed because its redundant
+delete — can be removed because its redundant
+set_user should be /admin setUserStats [user's @nickname]
+grant should be /admin setAdminRole [user]
+revoke should be /admin revokeAdminRole [user]
+list should be /admin listAdministrators
+fix_names should be /admin resyncPlayerNames
+view_stats doesn't need to be an admin command anymore
+list_teams is redundant and should do the same as /admin viewAllUserTeams
+reset_upgrades should be a feature included in /admin setUserStats. Age Resets, Dev Ups and attribute upgrade counts should be adjustable via clickable -1 +1 buttons. cannot go below zero or higher than the caps set for each upgrade by the admin
+
+/admin season
+
+new should be /admin seasonAdvance 
+set should be /admin seasonSet [number (1–50)]
+franchise_limit should be /admin franchiseLength [number of total seasons, up to 50]
+franchise_reset — should be /admin franchiseReset
+status should be /admin seasonStatus
+override — Set attribute rule overrides for the current season
+core_attrs — Set which attributes count as Core this season (1–10 slots)
+nfc_seeds — Register NFC playoff seeds 1–7
+afc_seeds — Register AFC playoff seeds 1–7
+division_bonus — Award division winner bonus (run at season end)
+set_week — Manually set the current league week
+advance_week — Advance or set the current league week
+reset_week — Clear game records/interviews for a week so members can re-qualify
+end_of_season — Calculate end-of-season tier payouts and post to commissioner log
+resend_payouts — Scan channels for missed payouts and issue them
+post_schedule — Post the full 18-week season schedule
+rollback — Reverse all data written by a franchise import after a given timestamp
+
+/admin rules
+
+new_section should be /admin rulesAddSection
+list should be /admin rulesListSection [Rule Number - optional] [Public - optional] [@nickname - up to 10 mentions - optional]
+set should be /admin rulesEdit [Section] [Rule Number] [Text]
+add should be /admin rulesAdd [Section] [Text]
+remove should be /admin rulesRemove [Section] [Rule Number]
+reset should be /admin rulesReset [Section/All Sections] should reset all rules in that section to their original defaults
+
+/admin store
+
+payouts_view — should be /admin viewPayoutSettings
+payouts_set — should be /admin setPayoutAmounts
+set_milestone_tier should be /admin setUserMilestoneTier
+set_stat_tier — should be /admin setEndOfSeasonPayoutSettings
+view_stat_tiers — should be /admin viewEndOfSeasonPayoutSettings
+settings_view — should be /admin viewCustomPlayerSettings
+settings_set — should be /admin setCustomPlayerSettings
+
+/admin archetypes
+
+list should be removed as an admin command. it is redundant considering the view customplayerarchetypes command exists
+seed_defaults — Seed all positions with default Madden-style archetypes - this command should be redundant. all archetypes should be hardcoded into the bot, and should not need to be seeded. 
+add should be /admin editArchetype [Position from dropdown] [Archetype Name from dropdown] and a menu will pop up allowing an admin to edit each attributes default value just like users can do in the creation menu when building a custom player, but with no cost associated here for an admin to adjust
+remove — can be removed, not a needed feature
+restore — can be removed, not a needed feature
+
+/admin legend
+
+add should be /admin addLegend
+list should be /admin listAllLegends
+edit should be /admin editLegend
+vault_add should be /admin addLegendToUsersPermanentInventory [@nickname] [ItemInventoryID]
+vault_view should be removed because its redundant
+vault_move should be /admin moveLegendinInventory
+vault_remove — should be /admin removeLegendfromInventory
+
+/admin inventory
+
+view should be /admin viewInventory [@nickname]
+remove should be /admin removeInventory [@nickname] [InventoryItemID]
+move should be /admin moveInventory [from @nicknames inventory] [to @nicknames inventory] [InventoryItemID]
+
+/admin tools
+
+full_sync should be /admin fullDataSync
+sync_milestones — Sync win/loss counters and issue missing milestone bonuses - should be rolled into the full sync command instead of separate
+manual_score should be /admin inputGameScore
+correct_payout should be /admin correctGamePayout
+resend_article should be /admin regenerateWeeklyArticle
+gotw should be /admin payoutGOTW
+potw should be /admin payoutPOTW
+settings should be /admin serverBotSettings
+
+on — Enable catchup mode (clears stats, disables payouts during MCA imports)
+off — Disable catchup mode (MCA imports resume normal payouts and notifications)
+status — Check whether catchup mode is currently active
+get rid of catchup mode as a feature entirely
+
+/view — League Information
+
+user_stats should be /view userStats [@nickname]
+player_stats should be /view playerStats [Top 10/Team Name] [Player Position from dropdown] [Player Name from Dropdown]
+team_stats should be /view teamStats
+store should be /view store
+custom_player_archetypes should be /view customPlayerArchetypes [Position from dropdown] [Archetype Name from dropdown]
+roster should be /view roster [team name]
+free_agents should be removed as a command
+trade_block should be /view tradeBlock
+player_details should be /view playerDetails [Team Name] [Player Position from dropdown] [Player Name from Dropdown]
+available_upgrades should be removed. users can see all of this in the userstats command view
+custom_player should be /purchase customPlayer 
+legend should be /purchase legend
+dev_up should be /purchase devUpgrade
+age_reset should be /purchase ageReset
+attribute_up should be /purchase attributeUpgrade
+
+/rules should be /view rules [Section] [Number - optional] [Public - optional - default ephemeral] [@nickname(s) - up to 10 users, optional]
+
+/help — View all available bot commands

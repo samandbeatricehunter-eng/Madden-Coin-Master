@@ -1,0 +1,112 @@
+/admin — Commissioner & Admin Tools
+/admin coins
+
+add_coins — Add coins to up to 32 users at once
+remove_coins — Remove coins from a user's balance
+transactions — View last 10 transactions for a user
+reverse_transaction — Reverse a coin transaction by ID
+/admin player
+
+set — Assign a team to an existing player
+view — Show all current player → team assignments
+clear — Unlink a user from their team and clear season records
+add — Add a new user to a team slot (clears old owner's data)
+delete — Permanently delete all data for a team/user
+set_user — Manually set any stat for a user
+grant — Grant bot-admin status to a user
+revoke — Revoke bot-admin status from a user
+list — List all current bot admins
+fix_names — Backfill missing player names from roster data
+view_stats — View full stats, coins, and inventory for any user
+list_teams — List all active users and their linked teams
+reset_upgrades — Reset a user's upgrade counts for the current season
+/admin season
+
+new — Advance to the next season
+set — Jump directly to a specific season number (1–50)
+franchise_limit — Set the maximum seasons allowed in this franchise
+franchise_reset — ⚠️ End-of-franchise reset (returns legends, resets coins, restarts at Season 1)
+status — View current season info
+override — Set attribute rule overrides for the current season
+core_attrs — Set which attributes count as Core this season (1–10 slots)
+nfc_seeds — Register NFC playoff seeds 1–7
+afc_seeds — Register AFC playoff seeds 1–7
+division_bonus — Award division winner bonus (run at season end)
+set_week — Manually set the current league week
+advance_week — Advance or set the current league week
+reset_week — Clear game records/interviews for a week so members can re-qualify
+end_of_season — Calculate end-of-season tier payouts and post to commissioner log
+resend_payouts — Scan channels for missed payouts and issue them
+post_schedule — Post the full 18-week season schedule
+rollback — Reverse all data written by a franchise import after a given timestamp
+/admin rules
+
+new_section — Create a new custom rules section
+list — List all rules in a section with their numbers
+set — Edit a specific rule by its number
+add — Append a new rule to a section
+remove — Remove a rule by number from a section
+reset — Reset a built-in section to defaults, or clear a custom section
+/admin store
+
+payouts_view — Show all current economy values (payouts, bonuses, store prices)
+payouts_set — Update a specific payout or bonus amount
+set_milestone_tier — Manually set a user's career milestone tier
+set_stat_tier — Set a tier threshold/payout for a stat bonus category
+view_stat_tiers — View all stat tier configs for the active season
+settings_view — View current custom player package settings
+settings_set — Update a custom player package's creation points and/or coin cost
+/admin archetypes
+
+list — List all archetypes (optionally filter by position)
+seed_defaults — Seed all positions with default Madden-style archetypes
+add — Add or replace an archetype (JSON format)
+remove — Deactivate an archetype
+restore — Re-activate a deactivated archetype
+/admin legend
+
+add — Add a new legend to the store
+list — View all legends (store, current-season owned, permanent vaults)
+edit — Edit a legend's details
+vault_add — Add a legend directly to a user's permanent vault
+vault_view — View all legend inventory for a user (shows item IDs)
+vault_move — Move a legend between current and permanent categories
+vault_remove — Remove a legend inventory item by its ID
+/admin inventory
+
+view — View all inventory items for a user (shows item IDs)
+remove — Remove an inventory item by its ID
+move — Transfer an inventory item to a different user
+/admin tools
+
+full_sync — Full sync: auto-link teams, process stored games, award missed payouts & milestones
+sync_milestones — Sync win/loss counters and issue missing milestone bonuses
+manual_score — Manually record a game result when MCA is unavailable
+correct_payout — Retroactively fix a game's payout type and correct coins/records
+resend_article — Regenerate and repost a weekly article for any week
+gotw — Award GOTW correct-guess bonuses in bulk
+potw — Award Player of the Week bonus (1–4 players)
+settings — Toggle server features on/off (coin economy, store items, wagers, trade block)
+on — Enable catchup mode (clears stats, disables payouts during MCA imports)
+off — Disable catchup mode (MCA imports resume normal payouts and notifications)
+status — Check whether catchup mode is currently active
+/view — League Information
+user_stats — Stats, coins, and inventory for any league member
+player_stats — Browse player season stats by team or top 10 stat leaders
+team_stats — Team standings or a specific team's season performance
+store — The league store (legends, prices, upgrade costs)
+custom_player_archetypes — Browse available custom player archetypes by position
+roster — Full roster of any team in the league
+free_agents — Available free agents from the most recent roster import
+trade_block — Active trade block listings and send offers
+player_details — Full attribute breakdown for any player in the league or free agent pool
+available_upgrades — How many attribute points, dev upgrades, and age resets you have left this season
+/purchase — Store & Upgrades
+custom_player — Build and buy a custom player (see /view store for prices)
+legend — Buy a legend (max 4 all-time)
+dev_up — Dev upgrade a player (Normal→Impact→Star→Superstar)
+age_reset — Reset a player's age
+attribute_up — Upgrade a player attribute (interactive paginated flow with scaling costs)
+Other Commands
+/rules — Display a section of the league rules or quote a specific rule
+/help — View all available bot commands
