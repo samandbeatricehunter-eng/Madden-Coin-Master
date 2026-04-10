@@ -13,7 +13,7 @@ function getApiBase(): string {
   const domain = (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim() ?? "";
   return domain ? `https://${domain}/api-server` : "http://localhost:8080";
 }
-function getWebhookKey(): string { return process.env["MCA_WEBHOOK_KEY"] ?? ""; }
+function getWebhookKey(): string { return process.env["MADDEN_WEBHOOK_KEY"] ?? ""; }
 function getLeagueInfo() {
   return {
     platform:    process.env["EA_PLATFORM"]    ?? "pc",
