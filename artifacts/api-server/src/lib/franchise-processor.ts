@@ -974,41 +974,72 @@ export async function syncWeekScoresToSchedule(
   weekType = "reg",
 ): Promise<void> {
   try {
-    const season    = await getOrCreateActiveSeason();
-    // Playoff weeks use a 1000+ offset so they never collide with reg-season rows
-    const weekIndex = weekType === "reg" ? weekNum - 1 : 1000 + weekNum - 1;
-    const games     = extractList(body, "gameScheduleInfoList", "scheduleInfoList", "games");
+    const season = await getOrCreateActiveSeason();
 
-    const updates: Promise<any>[] = [];
+    // EA sends all data (including playoffs) as weekType="reg" using EA's stageIndex=1.
+    // Weeks >= 19 within the "reg" stage are actually playoff rounds; apply the 1000-offset
+    // so they land at the correct playoff weekIndex (wildcard=1018, divisional=1019, etc.).
+    const isPlayoff = weekType !== "reg" || weekNum >= 19;
+    const weekIndex = isPlayoff ? 1000 + weekNum - 1 : weekNum - 1;
+
+    const games = extractList(body, "gameScheduleInfoList", "scheduleInfoList", "games");
+
+    // Load team name map so we can write readable team names into the schedule table.
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+
+    const upserts: Promise<any>[] = [];
     for (const g of games) {
       if (!g || typeof g !== "object") continue;
-      const status = Number(g.scheduleStatus ?? g.status ?? 0);
-      if (status < MIN_COMPLETED_STATUS) continue;
 
       const hId = Number(g.homeTeamId ?? -1);
       const aId = Number(g.awayTeamId ?? -1);
       if (hId < 0 || aId < 0) continue;
 
-      const homeScore = Number(g.homeScore ?? 0);
-      const awayScore = Number(g.awayScore ?? 0);
+      const status    = Number(g.scheduleStatus ?? g.status ?? 0);
+      const hName     = teamMap.get(hId)?.fullName ?? `Team${hId}`;
+      const aName     = teamMap.get(aId)?.fullName ?? `Team${aId}`;
+      const homeScore = status >= MIN_COMPLETED_STATUS ? Number(g.homeScore ?? 0) : null;
+      const awayScore = status >= MIN_COMPLETED_STATUS ? Number(g.awayScore ?? 0) : null;
 
-      // Update the existing schedule row with the real score and completed status.
-      // If the row doesn't exist yet (schedule not imported), this is a no-op —
-      // processSchedules will create it when MCA sends /schedules.
-      updates.push(
-        db.update(franchiseScheduleTable)
-          .set({ homeScore, awayScore, status })
-          .where(and(
-            eq(franchiseScheduleTable.seasonId,   season.id),
-            eq(franchiseScheduleTable.weekIndex,  weekIndex),
-            eq(franchiseScheduleTable.homeTeamId, hId),
-            eq(franchiseScheduleTable.awayTeamId, aId),
-          ))
+      // Upsert: creates the row if it doesn't exist yet (schedule not pre-imported),
+      // or updates scores/status when the game is completed.
+      upserts.push(
+        db.insert(franchiseScheduleTable)
+          .values({
+            seasonId:     season.id,
+            weekIndex,
+            homeTeamId:   hId,
+            awayTeamId:   aId,
+            homeTeamName: hName,
+            awayTeamName: aName,
+            homeScore,
+            awayScore,
+            status,
+            importedAt:   new Date(),
+          })
+          .onConflictDoUpdate({
+            target: [
+              franchiseScheduleTable.seasonId,
+              franchiseScheduleTable.weekIndex,
+              franchiseScheduleTable.homeTeamId,
+              franchiseScheduleTable.awayTeamId,
+            ],
+            set: {
+              homeTeamName: sql`excluded.home_team_name`,
+              awayTeamName: sql`excluded.away_team_name`,
+              homeScore:    sql`CASE WHEN excluded.status >= ${MIN_COMPLETED_STATUS} THEN excluded.home_score ELSE ${franchiseScheduleTable.homeScore} END`,
+              awayScore:    sql`CASE WHEN excluded.status >= ${MIN_COMPLETED_STATUS} THEN excluded.away_score ELSE ${franchiseScheduleTable.awayScore} END`,
+              status:       sql`GREATEST(${franchiseScheduleTable.status}, excluded.status)`,
+              importedAt:   new Date(),
+            },
+          })
       );
     }
 
-    await Promise.all(updates);
-    console.log(`[syncWeekScores] Wrote scores for season ${season.id} week ${weekNum} (${updates.length} games)`);
+    await Promise.all(upserts);
+    console.log(`[syncWeekScores] Upserted ${upserts.length} schedule entries for season ${season.id} week ${weekNum} (weekIndex=${weekIndex}, playoff=${isPlayoff})`);
   } catch (err) {
     console.error("[syncWeekScores] Error:", err);
   }
