@@ -360,8 +360,14 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
       getN(t, "defInterceptions","totalInts","ints","teamInts","defTotalInts","interceptionsFor","numInterceptions","defInts","interceptions");
     const getOffPpg = (t: any): number =>
       getN(t, "ptsPerGame","pointsPerGame","offPtsPerGame","ppg","avgPointsScored","avgPtsFor","pointsPerGameFor","offPpg");
-    const getTurnoverDiff = (t: any): number =>
-      getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet");
+    const getTurnoverDiff = (t: any): number => {
+      const direct = getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet","tOMargin");
+      if (direct !== 0) return direct;
+      const defTO = getN(t, "defTurnovers","defensiveTurnovers","defTO","takeaways","turnoversForced","turnoversGained","defTotalTO");
+      const offTO = getN(t, "offTurnovers","offensiveTurnovers","offTO","giveaways","turnoversCommitted","turnoversLost","offTotalTO");
+      if (defTO !== 0 || offTO !== 0) return defTO - offTO;
+      return 0;
+    };
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -479,8 +485,17 @@ export async function processTeamWeekStats(
       getN(t, "defRedZonePct","defensiveRedZonePct","defRedZoneAllowedPct","defRZPct","defenseRedZonePct","defRedzonePct");
     const getDefFumblesRec = (t: any): number =>
       getN(t, "defFumblesRec","fumblesRecovered","fumRec","fumRecovered","totalFumRec","defensiveFumblesRec","recoveredFumbles","fumbleRecoveries");
-    const getTurnoverDiff = (t: any): number =>
-      getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet");
+    const getTurnoverDiff = (t: any): number => {
+      const direct = getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet","tOMargin");
+      if (direct !== 0) return direct;
+      const defTO = getN(t, "defTurnovers","defensiveTurnovers","defTO","takeaways","turnoversForced","turnoversGained","defTotalTO");
+      const offTO = getN(t, "offTurnovers","offensiveTurnovers","offTO","giveaways","turnoversCommitted","turnoversLost","offTotalTO");
+      if (defTO !== 0 || offTO !== 0) return defTO - offTO;
+      return 0;
+    };
+
+    // ── Debug: log the first team's raw keys so we can see what EA sends ────────
+    let loggedTeamSample = false;
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -490,6 +505,18 @@ export async function processTeamWeekStats(
       if (teamId < 0 || isNaN(teamId)) continue;
       const teamEntry = teamMap.get(teamId);
       if (!teamEntry) continue;
+
+      if (!loggedTeamSample) {
+        const keys = Object.keys(t as object).join(", ");
+        const toFields: Record<string, any> = {};
+        for (const f of ["turnOverDiff","turnoverDiff","tOMargin","defTurnovers","offTurnovers",
+          "defTO","offTO","takeaways","giveaways","turnoversForced","turnoversCommitted"]) {
+          if ((t as any)[f] != null) toFields[f] = (t as any)[f];
+        }
+        console.log(`[team/week] Sample keys: ${keys}`);
+        console.log(`[team/week] Turnover-related fields:`, JSON.stringify(toFields));
+        loggedTeamSample = true;
+      }
 
       const offPassYds    = getOffPassYds(t);
       const offRushYds    = getOffRushYds(t);
@@ -680,16 +707,20 @@ export async function processPlayerWeekStats(
       let accumSet:     Record<string, any> = {};
 
       if (statType === "passing") {
-        const passYds  = getN(p, "passYds",  "passingYards",    "passyds");
-        const passTDs  = getN(p, "passTDs",  "passingTds",      "passtds");
-        const passAtt  = getN(p, "passAtt",  "passAttempts",    "passattempts",  "passatt",  "attempts");
-        const passComp = getN(p, "passComp", "passCompletions", "completions",   "passcomp", "completionAttempts");
-        insertFields = { passYds, passTDs, passAtt, passComp };
+        const passYds    = getN(p, "passYds",     "passingYards",    "passyds");
+        const passTDs    = getN(p, "passTDs",     "passingTds",      "passtds");
+        const passAtt    = getN(p, "passAtt",     "passAttempts",    "passattempts",  "passatt",  "attempts");
+        const passComp   = getN(p, "passComp",    "passCompletions", "completions",   "passcomp", "completionAttempts");
+        const passInts   = getN(p, "passInts",    "passingInts",     "interceptions", "passInt",  "passingInterceptions", "intsThrown");
+        const timesSacked = getN(p, "sackYdsLost","timesSacked",     "sacksRec",      "sacksAllowed", "sacksReceived", "qbSacks");
+        insertFields = { passYds, passTDs, passAtt, passComp, passInts, timesSacked };
         accumSet     = {
-          passYds:  sql`${playerSeasonStatsTable.passYds}  + ${passYds}`,
-          passTDs:  sql`${playerSeasonStatsTable.passTDs}  + ${passTDs}`,
-          passAtt:  sql`${playerSeasonStatsTable.passAtt}  + ${passAtt}`,
-          passComp: sql`${playerSeasonStatsTable.passComp} + ${passComp}`,
+          passYds:     sql`${playerSeasonStatsTable.passYds}     + ${passYds}`,
+          passTDs:     sql`${playerSeasonStatsTable.passTDs}     + ${passTDs}`,
+          passAtt:     sql`${playerSeasonStatsTable.passAtt}     + ${passAtt}`,
+          passComp:    sql`${playerSeasonStatsTable.passComp}    + ${passComp}`,
+          passInts:    sql`${playerSeasonStatsTable.passInts}    + ${passInts}`,
+          timesSacked: sql`${playerSeasonStatsTable.timesSacked} + ${timesSacked}`,
         };
         const pViolations = detectPlayerStatViolations(
           `${firstName} ${lastName}`.trim(), position, teamName,
@@ -700,11 +731,13 @@ export async function processPlayerWeekStats(
         const rushYds = getN(p, "rushYds", "rushingYards",    "rushyds");
         const rushTDs = getN(p, "rushTDs", "rushingTds",      "rushtds");
         const rushAtt = getN(p, "rushAtt", "rushAttempts",    "rushattempts", "rushatt", "carries", "rushCarries");
-        insertFields = { rushYds, rushTDs, rushAtt };
+        const fumbles = getN(p, "rushFum", "fumbles",         "fumLost",      "fumblesLost", "offFumbles", "fumTotal", "fum");
+        insertFields = { rushYds, rushTDs, rushAtt, fumbles };
         accumSet     = {
           rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
           rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
           rushAtt: sql`${playerSeasonStatsTable.rushAtt} + ${rushAtt}`,
+          fumbles: sql`${playerSeasonStatsTable.fumbles} + ${fumbles}`,
         };
         const rViolations = detectPlayerStatViolations(
           `${firstName} ${lastName}`.trim(), position, teamName,

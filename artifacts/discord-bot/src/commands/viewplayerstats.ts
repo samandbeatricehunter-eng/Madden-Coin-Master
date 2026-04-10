@@ -327,6 +327,7 @@ export async function handlePlayerSelect(
   }
 
   // ── Season stats block ───────────────────────────────────────────────────
+  const isQB = roster.position === "QB";
   const statLines: string[] = [];
   if (stats) {
     if (stats.passYds > 0 || stats.passAtt > 0) {
@@ -334,18 +335,24 @@ export async function handlePlayerSelect(
         ? ` (${((stats.passComp / stats.passAtt) * 100).toFixed(1)}% comp)` : "";
       const ypa = stats.passAtt > 0
         ? ` · ${(stats.passYds / stats.passAtt).toFixed(1)} YPA` : "";
+      const intsStr   = stats.passInts   > 0 ? ` · ${stats.passInts} INT` : "";
+      const sacksStr  = stats.timesSacked > 0 ? ` · ${stats.timesSacked} sacked` : "";
       statLines.push(
-        `🎯 **Passing:** ${stats.passYds.toLocaleString()} yds · ${stats.passTDs} TDs` +
-        `\n   ${stats.passComp}/${stats.passAtt}${compPct}${ypa}`,
+        `🎯 **Passing:** ${stats.passYds.toLocaleString()} yds · ${stats.passTDs} TDs${intsStr}` +
+        `\n   ${stats.passComp}/${stats.passAtt}${compPct}${ypa}${sacksStr}`,
       );
     }
     if (stats.rushYds > 0 || stats.rushAtt > 0) {
       const ypc = stats.rushAtt > 0
         ? ` · ${(stats.rushYds / stats.rushAtt).toFixed(1)} YPC` : "";
+      const fumStr = stats.fumbles > 0 ? ` · ${stats.fumbles} fum` : "";
+      const label = isQB ? "🏃 **QB Rush:**" : "💨 **Rushing:**";
       statLines.push(
-        `💨 **Rushing:** ${stats.rushYds.toLocaleString()} yds · ${stats.rushTDs} TDs` +
-        `\n   ${stats.rushAtt} carries${ypc}`,
+        `${label} ${stats.rushYds.toLocaleString()} yds · ${stats.rushTDs} TDs` +
+        `\n   ${stats.rushAtt} carries${ypc}${fumStr}`,
       );
+    } else if (isQB && stats.fumbles > 0) {
+      statLines.push(`💢 **Fumbles:** ${stats.fumbles}`);
     }
     if (stats.recYds > 0 || stats.recRec > 0) {
       const ypr = stats.recRec > 0
@@ -355,6 +362,7 @@ export async function handlePlayerSelect(
         `\n   ${stats.recRec} rec${ypr}`,
       );
     }
+    if (!isQB && stats.fumbles > 0) statLines.push(`💢 **Fumbles:** ${stats.fumbles}`);
     const tackles = stats.totalTackles > 0
       ? `${stats.totalTackles} total (${stats.tackleSolo} solo · ${stats.tackleAssist} ast)`
       : stats.tackleSolo + stats.tackleAssist > 0

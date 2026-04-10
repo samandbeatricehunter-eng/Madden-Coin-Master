@@ -442,9 +442,12 @@ export const playerSeasonStatsTable = pgTable("player_season_stats", {
   passTDs:      integer("pass_tds").notNull().default(0),
   passAtt:      integer("pass_att").notNull().default(0),
   passComp:     integer("pass_comp").notNull().default(0),
+  passInts:     integer("pass_ints").notNull().default(0),      // interceptions thrown (giveaways)
+  timesSacked:  integer("times_sacked").notNull().default(0),   // times the QB was sacked
   rushYds:      integer("rush_yds").notNull().default(0),
   rushTDs:      integer("rush_tds").notNull().default(0),
   rushAtt:      integer("rush_att").notNull().default(0),
+  fumbles:      integer("fumbles").notNull().default(0),         // total fumbles committed
   recYds:       integer("rec_yds").notNull().default(0),
   recTDs:       integer("rec_tds").notNull().default(0),
   recRec:       integer("rec_rec").notNull().default(0),
