@@ -5,13 +5,6 @@ import { getOrCreateActiveSeason, normalizeDefensivePositions } from "./lib/db-h
 // ── Unified admin + view commands ────────────────────────────────────────────
 import * as admin         from "./commands/admin.js";
 import * as view          from "./commands/view.js";
-import * as adminEosTestrun from "./commands/admin-eos-testrun.js";
-import * as adminStatReimport from "./commands/admin-stat-reimport.js";
-import * as adminEaConnect          from "./commands/admin-ea-connect.js";
-import * as adminEaExport           from "./commands/admin-ea-export.js";
-import * as adminCancelResendEos    from "./commands/admin-cancel-resend-eos.js";
-import * as adminRebuildHistorical  from "./commands/admin-rebuild-historical.js";
-import * as draftPresence           from "./commands/draft-presence.js";
 
 // ── Split admin slash commands ────────────────────────────────────────────────
 import * as slashAdminSeason    from "./commands/slash-admin-season.js";
@@ -34,7 +27,7 @@ import * as wager            from "./commands/wager.js";
 import * as teamlist         from "./commands/teamlist.js";
 import * as openteams        from "./commands/openteams.js";
 import * as seasonschedule   from "./commands/seasonschedule.js";
-import * as nextschedule    from "./commands/nextschedule.js";
+import * as nextschedule     from "./commands/nextschedule.js";
 import * as nextopp          from "./commands/nextopp.js";
 import * as myRoster         from "./commands/my-roster.js";
 import * as savings          from "./commands/savings.js";
@@ -46,6 +39,39 @@ import * as customarticle    from "./commands/customarticle.js";
 import * as webhookurl       from "./commands/webhookurl.js";
 import * as viewpayouttiers  from "./commands/viewpayouttiers.js";
 import * as interviewrequest from "./commands/interviewrequest.js";
+import * as advanceweek      from "./commands/advanceweek.js";
+import * as statleaders      from "./commands/statleaders.js";
+import * as availableupgrades from "./commands/availableupgrades.js";
+import * as purchasecustomplayer from "./commands/purchasecustomplayer.js";
+import * as viewFreeAgents   from "./commands/viewfreeagents.js";
+
+// ── Admin tools ───────────────────────────────────────────────────────────────
+import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
+import * as adminStatReimport        from "./commands/admin-stat-reimport.js";
+import * as adminEaConnect           from "./commands/admin-ea-connect.js";
+import * as adminEaExport            from "./commands/admin-ea-export.js";
+import * as adminCancelResendEos     from "./commands/admin-cancel-resend-eos.js";
+import * as adminRebuildHistorical   from "./commands/admin-rebuild-historical.js";
+import * as draftPresence            from "./commands/draft-presence.js";
+import * as adminPlayoffs            from "./commands/admin-playoffs.js";
+import * as adminGotw                from "./commands/admin-gotw.js";
+import * as adminPotw                from "./commands/admin-potw.js";
+import * as adminResendArticle       from "./commands/admin-resendarticle.js";
+import * as adminServer              from "./commands/adminserver.js";
+import * as adminCatchup             from "./commands/admin-catchup.js";
+import * as adminManualScore         from "./commands/admin-manualscore.js";
+import * as adminPostFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
+import * as adminRollbackFranchise   from "./commands/admin-rollback-franchise.js";
+import * as endofseasonpayout        from "./commands/endofseasonpayout.js";
+import * as adminTransactions        from "./commands/admin-transactions.js";
+import * as adminSetPayouts          from "./commands/admin-setpayouts.js";
+import * as adminSetStatTiers        from "./commands/admin-set-stat-tiers.js";
+import * as adminStatTiers           from "./commands/admin-stat-tiers.js";
+import * as adminSetMilestoneTier    from "./commands/admin-setmilestonetier.js";
+import * as adminLegendVault         from "./commands/admin-legendvault.js";
+import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
+import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
+import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
 
 // ── Records / rankings (standalone) ──────────────────────────────────────────
 import {
@@ -74,14 +100,11 @@ process.on("uncaughtException", (err) => {
 const token = process.env["DISCORD_TOKEN"];
 if (!token) throw new Error("DISCORD_TOKEN is required");
 
-// Production deployments run via `pnpm run start`; the dev workflow uses `pnpm run dev`.
-// npm_lifecycle_event is set to the script name by npm/pnpm — this is the reliable signal.
 const isProduction = process.env["npm_lifecycle_event"] === "start" || !!process.env["REPL_DEPLOYMENT"];
 const devBotEnabled = process.env["DEV_BOT_ENABLED"] === "true";
 const statusPort = parseInt(process.env["PORT"] ?? "8090");
 
 if (!isProduction && !devBotEnabled) {
-  // ── Standby mode: keep HTTP server alive but do NOT connect to Discord ────
   console.log("⚠️  Dev bot is in standby — will not connect to Discord.");
   console.log("    Set DEV_BOT_ENABLED=true to enable (avoid running alongside the production bot).");
   createServer((_, res) => {
@@ -89,13 +112,12 @@ if (!isProduction && !devBotEnabled) {
     res.end(JSON.stringify({ status: "standby", bot: "REC League Econo-Bot (dev disabled)" }));
   }).listen(statusPort, () => console.log(`✅ Status server on :${statusPort} (standby — not connected to Discord)`));
 } else {
-  // ── Active mode: connect to Discord ───────────────────────────────────────
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent, // privileged — must be enabled in Dev Portal
+      GatewayIntentBits.MessageContent,
     ],
   }) as Client & { commands: Collection<string, any> };
 
@@ -106,7 +128,7 @@ if (!isProduction && !devBotEnabled) {
     admin,
     view,
 
-    // Split admin slash commands
+    // Split admin slash commands (admin_season, admin_franchise, admin_upgrade, etc.)
     slashAdminSeason,
     slashAdminFranchise,
     slashAdminUpgrade,
@@ -139,6 +161,11 @@ if (!isProduction && !devBotEnabled) {
     webhookurl,
     viewpayouttiers,
     interviewrequest,
+    advanceweek,
+    statleaders,
+    availableupgrades,
+    purchasecustomplayer,
+    viewFreeAgents,
 
     // Admin tools
     adminEosTestrun,
@@ -148,6 +175,25 @@ if (!isProduction && !devBotEnabled) {
     adminCancelResendEos,
     adminRebuildHistorical,
     draftPresence,
+    adminPlayoffs,
+    adminGotw,
+    adminPotw,
+    adminResendArticle,
+    adminServer,
+    adminCatchup,
+    adminManualScore,
+    adminPostFullSeasonSchedule,
+    adminRollbackFranchise,
+    endofseasonpayout,
+    adminTransactions,
+    adminSetPayouts,
+    adminSetStatTiers,
+    adminStatTiers,
+    adminSetMilestoneTier,
+    adminLegendVault,
+    adminCustomArcetypes,
+    adminCustomPlayerSettings,
+    adminFixPlayerNames,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },
