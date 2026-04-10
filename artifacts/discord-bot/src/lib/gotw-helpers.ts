@@ -6,7 +6,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lt } from "drizzle-orm";
 import { addBalance, logTransaction } from "./db-helpers.js";
-import { GOTW_REGULAR_BONUS, GOTW_PLAYOFF_BONUS } from "../commands/admin-gotw.js";
+import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 
 export const GOTW_CHANNEL_ID    = "1485290029294289037";
 export const GOTW_COOLDOWN_WEEKS = 4;
@@ -364,7 +364,7 @@ export async function autoPayoutGotwVoters(
   }
 
   // 5. Issue payouts
-  const bonus     = isPlayoff ? GOTW_PLAYOFF_BONUS : GOTW_REGULAR_BONUS;
+  const bonus     = await getPayoutValue(isPlayoff ? PAYOUT_KEYS.GOTW_PLAYOFF_BONUS : PAYOUT_KEYS.GOTW_REGULAR_BONUS);
   const weekLabel = `Week ${weekNum}`;
   const paid: string[] = [];
 
@@ -442,6 +442,7 @@ export async function autoPayoutPlayoffGotw(
       eq(franchiseScheduleTable.weekIndex, weekIndex),
     ));
 
+  const playoffBonus = await getPayoutValue(PAYOUT_KEYS.GOTW_PLAYOFF_BONUS);
   const results: string[] = [];
 
   for (const poll of polls) {
@@ -517,9 +518,9 @@ export async function autoPayoutPlayoffGotw(
 
     const paid: string[] = [];
     for (const [userId, user] of voters) {
-      await addBalance(userId, GOTW_PLAYOFF_BONUS);
+      await addBalance(userId, playoffBonus);
       await logTransaction(
-        userId, GOTW_PLAYOFF_BONUS, "addcoins",
+        userId, playoffBonus, "addcoins",
         `Playoff GOTW correct guess — ${weekLabel} (${poll.teamName1} vs ${poll.teamName2})`,
         "auto",
       );
@@ -528,7 +529,7 @@ export async function autoPayoutPlayoffGotw(
         await user.send(
           `🏆 **Playoff GOTW Correct Guess!** Your pick of **${winnerName}** in the ` +
           `${poll.teamName1} vs ${poll.teamName2} matchup was right!\n` +
-          `**+${GOTW_PLAYOFF_BONUS} coins** added to your balance.`,
+          `**+${playoffBonus} coins** added to your balance.`,
         ).catch(() => {});
       } catch (_) {}
     }
@@ -544,6 +545,6 @@ export async function autoPayoutPlayoffGotw(
     );
   }
 
-  const header = `**${weekLabel.charAt(0).toUpperCase() + weekLabel.slice(1)} GOTW Payouts (+${GOTW_PLAYOFF_BONUS} coins/correct guess):**`;
+  const header = `**${weekLabel.charAt(0).toUpperCase() + weekLabel.slice(1)} GOTW Payouts (+${playoffBonus} coins/correct guess):**`;
   return `${header}\n${results.join("\n")}`;
 }

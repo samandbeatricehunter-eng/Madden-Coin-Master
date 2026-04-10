@@ -13,8 +13,10 @@ import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
 } from "../lib/db-helpers.js";
-import { getAllPayoutConfig, PAYOUT_KEYS } from "../lib/payout-config.js";
+import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
+
+const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 
 // ── OpenAI client ──────────────────────────────────────────────────────────────
 
@@ -1082,7 +1084,7 @@ BOT CODE KNOWLEDGE — HOW THE R.E.C. LEAGUE BOT WORKS INTERNALLY
 Use this to answer questions about how the bot works, what triggers what, and how features are built. You have deep knowledge of every system.
 
 ECONOMY SYSTEM:
-- Coins are earned via: H2H win (+50), H2H loss (+20), CPU win (+20), interview approval (+10), stream post (+10 each side), highlight video (+20 each, max 2/week), GOTW vote payout, savings interest, season-end bonuses.
+- Coins are earned via: H2H win, H2H loss, CPU win, interview approval (+10), stream post (each side), highlight video (max per week configurable), GOTW vote payout, savings interest, season-end bonuses. All game/activity/GOTW payout amounts are admin-configurable via /admin-setpayouts. Highlight payouts are higher during postseason (also configurable).
 - Coins are spent in the /store: legends (1000), custom players (100/200/300 by tier), attribute upgrades (10–25/pt), dev upgrades (250), age resets (250).
 - Savings account: deposit coins to earn interest at a configurable weekly rate. Withdraw anytime.
 - Wagers: two users agree on an amount tied to their upcoming H2H game. Winner collects automatically when the score is uploaded.
@@ -1191,9 +1193,6 @@ const STREAM_CHANNEL_ID     = "1486369417309978644";
 const HIGHLIGHTS_CHANNEL_ID = "1485643704206229638";
 // Matches any twitch.tv URL (including clips.twitch.tv, www.twitch.tv, etc.)
 const TWITCH_URL_RE         = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
-const STREAM_PAYOUT         = 10;
-const HIGHLIGHT_PAYOUT      = 20;
-const HIGHLIGHT_MAX_PER_WEEK = 2; // max payable videos per user per week
 
 async function handleStreamPost(message: Message): Promise<void> {
   if (!TWITCH_URL_RE.test(message.content)) return;
@@ -1209,8 +1208,9 @@ async function handleStreamPost(message: Message): Promise<void> {
   }
 
   try {
-    const season      = await getOrCreateActiveSeason();
-    const currentWeek = (season as any).currentWeek ?? "1";
+    const season       = await getOrCreateActiveSeason();
+    const currentWeek  = (season as any).currentWeek ?? "1";
+    const streamPayout = await getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT);
 
     // Duplicate guard — one stream payout per user per week.
     // We allow a re-try if there's a pending record with no commMessageId,
@@ -1289,8 +1289,8 @@ async function handleStreamPost(message: Message): Promise<void> {
 
     const isH2H      = !!opponentDiscordId;
     const payoutDesc = isH2H
-      ? `+${STREAM_PAYOUT} coins → <@${message.author.id}>\n+${STREAM_PAYOUT} coins → <@${opponentDiscordId}> (H2H opponent)`
-      : `+${STREAM_PAYOUT} coins → <@${message.author.id}> (CPU game — opponent not awarded)`;
+      ? `+${streamPayout} coins → <@${message.author.id}>\n+${streamPayout} coins → <@${opponentDiscordId}> (H2H opponent)`
+      : `+${streamPayout} coins → <@${message.author.id}> (CPU game — opponent not awarded)`;
 
     // Insert pending payout record (without commMessageId yet)
     const [inserted] = await db
@@ -1298,9 +1298,9 @@ async function handleStreamPost(message: Message): Promise<void> {
       .values({
         type:              "stream",
         discordId:         message.author.id,
-        amount:            STREAM_PAYOUT,
+        amount:            streamPayout,
         opponentDiscordId: opponentDiscordId ?? undefined,
-        opponentAmount:    isH2H ? STREAM_PAYOUT : undefined,
+        opponentAmount:    isH2H ? streamPayout : undefined,
         opponentTeam:      opponentTeam ?? undefined,
         channelId:         message.channelId,
         messageId:         message.id,
@@ -1367,8 +1367,13 @@ async function handleHighlightPost(message: Message): Promise<void> {
   }
 
   try {
-    const season      = await getOrCreateActiveSeason();
-    const currentWeek = (season as any).currentWeek ?? "1";
+    const season          = await getOrCreateActiveSeason();
+    const currentWeek     = (season as any).currentWeek ?? "1";
+    const isPlayoffWeek   = PLAYOFF_WEEKS_SET.has(currentWeek);
+    const highlightLimit  = await getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT);
+    const highlightPayout = await getPayoutValue(
+      isPlayoffWeek ? PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT : PAYOUT_KEYS.HIGHLIGHT_PAYOUT,
+    );
 
     // Count payouts for this user this week where the commissioner message was actually sent.
     // Orphaned pending records (no commMessageId) are excluded so a re-post can recover them.
@@ -1385,7 +1390,7 @@ async function handleHighlightPost(message: Message): Promise<void> {
       ));
 
     const usedSlots = Number(countRow?.total ?? 0);
-    if (usedSlots >= HIGHLIGHT_MAX_PER_WEEK) return; // max reached — silently ignore
+    if (usedSlots >= highlightLimit) return; // max reached — silently ignore
 
     // Delete any orphaned pending records (no commMessageId) to make room for fresh attempts
     await db.delete(pendingChannelPayoutsTable).where(and(
@@ -1406,7 +1411,7 @@ async function handleHighlightPost(message: Message): Promise<void> {
 
     const posterTeam = userRow?.team ?? null;
 
-    let slotsToCreate = Math.min(videoAttachments.length, HIGHLIGHT_MAX_PER_WEEK - usedSlots);
+    let slotsToCreate = Math.min(videoAttachments.length, highlightLimit - usedSlots);
 
     for (let i = 0; i < slotsToCreate; i++) {
       const videoNum = usedSlots + i + 1; // 1-indexed
@@ -1416,7 +1421,7 @@ async function handleHighlightPost(message: Message): Promise<void> {
         .values({
           type:      "highlight",
           discordId: message.author.id,
-          amount:    HIGHLIGHT_PAYOUT,
+          amount:    highlightPayout,
           channelId: message.channelId,
           messageId: message.id,
           guildId:   message.guildId!,
@@ -1428,13 +1433,14 @@ async function handleHighlightPost(message: Message): Promise<void> {
       const payoutId = inserted?.id;
       if (!payoutId) continue;
 
+      const seasonLabel = isPlayoffWeek ? " 🏆 Postseason" : "";
       const embed = new EmbedBuilder()
-        .setColor(Colors.Orange)
-        .setTitle("🎬 Highlight Payout — Approval Required")
+        .setColor(isPlayoffWeek ? Colors.Gold : Colors.Orange)
+        .setTitle(`🎬 Highlight Payout${seasonLabel} — Approval Required`)
         .setDescription(
           `<@${message.author.id}>${posterTeam ? ` (${posterTeam})` : ""} posted a highlight video.\n\n` +
-          `**Video:** #${videoNum} this week (${HIGHLIGHT_MAX_PER_WEEK} max paid per week)\n` +
-          `**Payout:** +${HIGHLIGHT_PAYOUT} coins → <@${message.author.id}>`
+          `**Video:** #${videoNum} this week (${highlightLimit} max paid per week)\n` +
+          `**Payout:** +${highlightPayout} coins → <@${message.author.id}>`
         )
         .setFooter({ text: `Payout #${payoutId} • Week ${currentWeek}` })
         .setTimestamp();

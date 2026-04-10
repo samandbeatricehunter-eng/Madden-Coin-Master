@@ -4,10 +4,9 @@ import {
 } from "discord.js";
 import { isAdminUser, addBalance, logTransaction, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 const PLAYOFF_WEEKS = ["wildcard", "divisional", "conference", "superbowl"];
-export const GOTW_REGULAR_BONUS  = 5;
-export const GOTW_PLAYOFF_BONUS  = 10;
 
 export const data = new SlashCommandBuilder()
   .setName("admin-gotw")
@@ -41,7 +40,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
   const isPlayoff   = PLAYOFF_WEEKS.includes(currentWeek);
-  const bonus       = isPlayoff ? GOTW_PLAYOFF_BONUS : GOTW_REGULAR_BONUS;
+  const bonus       = await getPayoutValue(isPlayoff ? PAYOUT_KEYS.GOTW_PLAYOFF_BONUS : PAYOUT_KEYS.GOTW_REGULAR_BONUS);
   const bonusLabel  = isPlayoff
     ? `+${bonus} coins (postseason — all games are GOTW)`
     : `+${bonus} coins (regular season)`;

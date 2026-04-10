@@ -7,6 +7,14 @@ export const PAYOUT_KEYS = {
   H2H_WIN:          "h2h_win",
   H2H_LOSS:         "h2h_loss",
   CPU_WIN:          "cpu_win",
+  // ── Channel activity payouts ─────────────────────────────────────────────────
+  STREAM_PAYOUT:           "stream_payout",           // Twitch stream post — each side
+  HIGHLIGHT_PAYOUT:        "highlight_payout",         // Highlight video — regular season
+  HIGHLIGHT_PLAYOFF_PAYOUT:"highlight_playoff_payout", // Highlight video — postseason
+  HIGHLIGHT_LIMIT:         "highlight_limit",          // Max paid highlight videos per user per week
+  // ── GOTW voter bonuses ────────────────────────────────────────────────────────
+  GOTW_REGULAR_BONUS:      "gotw_regular_bonus",       // Correct GOTW guess — regular season
+  GOTW_PLAYOFF_BONUS:      "gotw_playoff_bonus",       // Correct GOTW guess — playoffs
   // ── End-of-season bonuses ────────────────────────────────────────────────────
   AWARD_WIN_BONUS:  "award_win_bonus",
   SEASON_PR_1:      "season_pr_1",
@@ -39,6 +47,14 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   h2h_win:           { value: 50,  description: "H2H game win (both users played)",                           category: "Game Payouts"          },
   h2h_loss:          { value: 20,  description: "H2H game loss (both users played)",                           category: "Game Payouts"          },
   cpu_win:           { value: 20,  description: "CPU/force win (one-sided or simmed game)",                    category: "Game Payouts"          },
+  // ── Channel activity payouts ─────────────────────────────────────────────────
+  stream_payout:            { value: 10,  description: "Twitch stream post — coins paid to each side (streamer + opponent)", category: "Activity Payouts" },
+  highlight_payout:         { value: 20,  description: "Highlight video — regular season payout per video",              category: "Activity Payouts" },
+  highlight_playoff_payout: { value: 40,  description: "Highlight video — postseason payout per video",                  category: "Activity Payouts" },
+  highlight_limit:          { value: 2,   description: "Max paid highlight videos per user per week",                    category: "Activity Payouts" },
+  // ── GOTW voter bonuses ────────────────────────────────────────────────────────
+  gotw_regular_bonus: { value: 5,  description: "GOTW correct guess bonus — regular season",     category: "GOTW Bonuses" },
+  gotw_playoff_bonus: { value: 10, description: "GOTW correct guess bonus — playoffs",            category: "GOTW Bonuses" },
   // ── End-of-season bonuses ────────────────────────────────────────────────────
   award_win_bonus:   { value: 50,  description: "Coins per team with an in-game award winner",                 category: "Season Bonuses"        },
   season_pr_1:       { value: 150, description: "Season PR bonus — #1 ranked player",                          category: "Season Bonuses"        },
