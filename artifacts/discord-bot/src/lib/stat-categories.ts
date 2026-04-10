@@ -9,7 +9,7 @@ export interface StatCategory {
 }
 
 // All configurable end-of-season stat categories.
-// direction "higher" = higher value is better (offensive stats + def sacks/INTs/fumbles)
+// direction "higher" = higher value is better (offensive stats + def sacks/INTs)
 // direction "lower"  = lower value is better (def yards/pts/redzone allowed)
 export const STAT_CATEGORIES: StatCategory[] = [
   // ── Offense ──────────────────────────────────────────────────────────────────
@@ -76,13 +76,6 @@ export const STAT_CATEGORIES: StatCategory[] = [
     unit:       "INTs",
     direction:  "higher",
     jsonFields: ["defInts", "defTotalInts", "totalInts", "def_ints", "interceptions"],
-  },
-  {
-    key:        "def_fumbles_rec",
-    label:      "Recovered Fumbles",
-    unit:       "fumbles",
-    direction:  "higher",
-    jsonFields: ["defFumblesRec", "fumblesRecovered", "fumRec", "fumRecovered", "totalFumRec", "defensiveFumblesRec", "def_fumbles_rec", "recoveredFumbles", "fumbleRecoveries"],
   },
   {
     key:        "def_redzone_pct",
@@ -167,12 +160,6 @@ export const STAT_TIER_DEFAULTS: Record<string, { threshold: number; payout: num
     { threshold: 20, payout: 50 },
     { threshold: 25, payout: 75 },
     { threshold: 30, payout: 100 },
-  ],
-  def_fumbles_rec: [
-    { threshold: 5, payout: 25 },
-    { threshold: 8, payout: 50 },
-    { threshold: 11, payout: 75 },
-    { threshold: 15, payout: 100 },
   ],
   def_redzone_pct: [
     { threshold: 58, payout: 25 },

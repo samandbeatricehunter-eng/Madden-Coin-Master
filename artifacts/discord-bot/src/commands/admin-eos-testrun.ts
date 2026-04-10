@@ -327,12 +327,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ? (teamStats.defTDs ?? 0)
         : (schedStats?.ptsAllowed ?? 0);
 
-      // Fumble Recoveries — tier 1: MCA team total; tier 2: sum individual player fumble recoveries
-      const computedFumblesRec = playerRows.reduce((sum, p) => sum + (p.defFumblesRec ?? 0), 0);
-      const resolvedFumblesRec = (teamStats.defFumblesRec ?? 0) > 0
-        ? (teamStats.defFumblesRec ?? 0)
-        : computedFumblesRec;
-
       const resolvedSacks = (teamStats.teamSacks ?? 0) > 0 ? (teamStats.teamSacks ?? 0) : computedSacks;
       const resolvedInts  = (teamStats.teamInts  ?? 0) > 0 ? (teamStats.teamInts  ?? 0) : computedInts;
 
@@ -346,7 +340,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         defPassYds:    teamStats.defPassYds,
         defRushYds:    teamStats.defRushYds,
         defPtsAllowed: resolvedPtsAllowed,
-        defFumblesRec: resolvedFumblesRec,
         turnoverDiff:  teamStats.turnoverDiff,
         defRedZonePct: teamStats.defRedZonePct,
         defSacks:      resolvedSacks,

@@ -32,7 +32,6 @@ export const data = new SlashCommandBuilder()
   .addNumberOption(o => o.setName("def_pts_allowed").setDescription("Total Points Allowed").setRequired(false))
   .addNumberOption(o => o.setName("def_sacks").setDescription("Defensive Sacks (season total)").setRequired(false))
   .addNumberOption(o => o.setName("def_ints").setDescription("Defensive Interceptions (season total)").setRequired(false))
-  .addNumberOption(o => o.setName("def_fumbles_rec").setDescription("Recovered Fumbles (season total)").setRequired(false))
   .addNumberOption(o => o.setName("def_redzone_pct").setDescription("Defensive Red Zone % Allowed (e.g. 48.2)").setRequired(false))
   // ── Individual player bonuses ──────────────────────────────────────────────
   .addBooleanOption(o => o
