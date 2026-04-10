@@ -19,6 +19,7 @@ import * as wager              from "./commands/wager.js";
 import * as teamlist           from "./commands/teamlist.js";
 import * as openteams          from "./commands/openteams.js";
 import * as seasonschedule     from "./commands/seasonschedule.js";
+import * as nextschedule      from "./commands/nextschedule.js";
 import * as nextopp            from "./commands/nextopp.js";
 import * as myRoster           from "./commands/my-roster.js";
 import * as savings            from "./commands/savings.js";
@@ -63,7 +64,7 @@ const commands = [
   // User-facing commands
   help, balance, sendcoins, purchase, inventory,
   recentH2H, wager, teamlist, openteams,
-  seasonschedule, nextopp, myRoster, savings, weeklyMatchups,
+  seasonschedule, nextschedule, nextopp, myRoster, savings, weeklyMatchups,
   standings, tradeBlock, h2hrecord, customarticle, webhookurl,
   viewPayoutTiers, interviewrequest,
   adminEosTestrun,
