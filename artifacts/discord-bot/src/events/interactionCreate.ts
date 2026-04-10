@@ -36,7 +36,7 @@ import {
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
-  addBalance, logTransaction,
+  addBalance, deductBalance, logTransaction,
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
 } from "../lib/db-helpers.js";
 import { buildPageResponse } from "../commands/viewtradeblock.js";
@@ -1461,6 +1461,109 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Trade Block DM: Accept ───────────────────────────────────────────────────
+  if (action === "tb_dm_acc") {
+    // customId: tb_dm_acc:OFFEROR_ID:COINS:LISTING_ID:TYPE  (TYPE = L | I)
+    const offerorId  = parts[1]!;
+    const coins      = parseInt(parts[2] ?? "0", 10);
+    const entryId    = parseInt(parts[3] ?? "0", 10);
+    const entryType  = parts[4] ?? "L"; // L = listing, I = ISO
+
+    await interaction.deferUpdate();
+
+    const posterDiscordId = interaction.user.id;
+
+    // Pull offer details from the original DM embed
+    const originalEmbed  = interaction.message.embeds[0];
+    const listingField   = originalEmbed?.fields?.[0]?.value ?? "—";
+    const offerField     = originalEmbed?.fields?.[1]?.value ?? "—";
+
+    // Fetch DB info for poster team name and season
+    const season        = await getOrCreateActiveSeason();
+    const [posterRow]   = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
+      .from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1);
+    const [offerorRow]  = await db.select({ discordUsername: usersTable.discordUsername, balance: usersTable.balance })
+      .from(usersTable).where(eq(usersTable.discordId, offerorId)).limit(1);
+
+    const posterTeam    = posterRow?.team    ?? interaction.user.username;
+    const offerorName   = offerorRow?.discordUsername ?? offerorId;
+
+    // ── Coin transfer (offeror → poster) ────────────────────────────────────
+    let coinNote = "";
+    if (!isNaN(coins) && coins > 0) {
+      const deducted = await deductBalance(offerorId, coins);
+      if (deducted) {
+        await addBalance(posterDiscordId, coins);
+        coinNote = `\n💰 **${coins.toLocaleString()} coins** transferred from <@${offerorId}> to <@${posterDiscordId}>.`;
+      } else {
+        coinNote = `\n⚠️ Coin transfer of **${coins.toLocaleString()}** skipped — <@${offerorId}> had insufficient balance.`;
+      }
+    }
+
+    // ── Mark listing/ISO as removed ─────────────────────────────────────────
+    if (entryType === "I") {
+      await db.update(tradeBlockISOTable).set({ status: "removed" })
+        .where(eq(tradeBlockISOTable.id, entryId)).catch(() => {});
+    } else {
+      await db.update(tradeBlockListingsTable).set({ status: "removed" })
+        .where(eq(tradeBlockListingsTable.id, entryId)).catch(() => {});
+    }
+
+    // ── Record completed trade ────────────────────────────────────────────────
+    await db.insert(completedTradesTable).values({
+      seasonId:          season.id,
+      listingId:         entryId || null,
+      listingType:       entryType === "I" ? "iso" : "listing",
+      team1DiscordId:    posterDiscordId,
+      team1Name:         posterTeam,
+      team2Name:         offerorName,
+      whatTeam1Sent:     listingField,
+      whatTeam1Received: offerField,
+    }).catch(err => console.error("[tb_dm_acc] Failed to insert completedTrade:", err));
+
+    // ── DM the offeror ────────────────────────────────────────────────────────
+    try {
+      const offeror = await interaction.client.users.fetch(offerorId);
+      await offeror.send({
+        content: `✅ **Your trade offer was accepted** by **${posterTeam}**! Check the server for the official trade announcement.${coinNote}`,
+      });
+    } catch (_) {}
+
+    // ── @everyone announcement in general channel ────────────────────────────
+    const tradeEmbed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("🔔 TRADE ALERT")
+      .setDescription(`**${posterTeam}** and **${offerorName}** have completed a trade!`)
+      .addFields(
+        { name: `📤 ${posterTeam} sends`,    value: listingField },
+        { name: `📥 ${posterTeam} receives`, value: offerField },
+      )
+      .setFooter({ text: "Trade accepted via The R.E.C. League trade block" })
+      .setTimestamp();
+
+    try {
+      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID);
+      if (generalChannel?.isTextBased()) {
+        await (generalChannel as TextChannel).send({
+          content: `@everyone${coinNote}`,
+          embeds:  [tradeEmbed],
+        });
+      }
+    } catch (err) { console.error("[tb_dm_acc] Failed to post general announcement:", err); }
+
+    // ── Update the DM message (remove buttons, mark accepted) ────────────────
+    await interaction.editReply({
+      embeds:     interaction.message.embeds,
+      components: [],
+    }).catch(() => {});
+
+    await interaction.followUp({
+      content: `✅ **Trade accepted!** An announcement has been posted to the server.${coinNote}`,
+      ephemeral: false,
+    }).catch(() => {});
+    return;
+  }
+
   // ── Trade Block DM: Negotiate ─────────────────────────────────────────────────
   if (action === "tb_dm_neg") {
     const offerorId = secondPart!;
@@ -2377,11 +2480,16 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       .setFooter({ text: `Reply in this DM or reach out to ${senderName} in the server` })
       .setTimestamp();
 
+    const safeOfferCoins = !isNaN(offerCoins) && offerCoins > 0 ? offerCoins : 0;
     const dmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`tb_dm_acc:${interaction.user.id}:${safeOfferCoins}:${listingId}:L`)
+        .setLabel("✅ Accept")
+        .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`tb_dm_neg:${interaction.user.id}`)
         .setLabel("🤝 Negotiate")
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`tb_dm_ref:${interaction.user.id}`)
         .setLabel("❌ Decline")
@@ -2393,7 +2501,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       await poster.send({ embeds: [dmEmbed], components: [dmRow] });
     } catch (_) {}
 
-    await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Negotiate / Decline buttons in their DM." });
+    await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Accept / Negotiate / Decline buttons in their DM." });
     return;
   }
 
@@ -2502,11 +2610,16 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       .setFooter({ text: `Reply in this DM or reach out to ${senderName} in the server` })
       .setTimestamp();
 
+    const safeIsoCoins = !isNaN(offerCoins) && offerCoins > 0 ? offerCoins : 0;
     const dmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`tb_dm_acc:${interaction.user.id}:${safeIsoCoins}:${isoId}:I`)
+        .setLabel("✅ Accept")
+        .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`tb_dm_neg:${interaction.user.id}`)
         .setLabel("🤝 Negotiate")
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`tb_dm_ref:${interaction.user.id}`)
         .setLabel("❌ Decline")
@@ -2518,7 +2631,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       await poster.send({ embeds: [dmEmbed], components: [dmRow] });
     } catch (_) {}
 
-    await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Negotiate / Decline buttons in their DM." });
+    await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Accept / Negotiate / Decline buttons in their DM." });
     return;
   }
 
