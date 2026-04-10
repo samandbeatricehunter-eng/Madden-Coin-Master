@@ -14,9 +14,9 @@ import {
   leagueTwitterTable, leagueTwitterMatchupCacheTable, leagueTwitterTradeEventsTable,
   usersTable, seasonsTable,
   teamSeasonStatsTable, playerSeasonStatsTable,
-  userRecordsTable,
+  franchiseScheduleTable, franchiseRostersTable,
 } from "@workspace/db";
-import { eq, desc, and, gte } from "drizzle-orm";
+import { eq, desc, and, gte, isNotNull } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -106,59 +106,145 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
   // ── Season info ────────────────────────────────────────────────────────────
   parts.push(`SEASON: Season ${season.seasonNumber}, current week: ${season.currentWeek ?? "pre-season"}`);
 
-  // ── Standings (team records) ───────────────────────────────────────────────
-  const teamStats = await db.select()
+  // ── Standings — use MCA in-game records (teamSeasonStatsTable) ─────────────
+  // These come directly from the Madden CFM franchise data import and reflect
+  // the actual in-game regular season record, NOT the Discord H2H tracking record.
+  const mcaStandings = await db.select({
+    teamName:     teamSeasonStatsTable.teamName,
+    wins:         teamSeasonStatsTable.wins,
+    losses:       teamSeasonStatsTable.losses,
+    offPtsPerGame: teamSeasonStatsTable.offPtsPerGame,
+    turnoverDiff: teamSeasonStatsTable.turnoverDiff,
+  })
     .from(teamSeasonStatsTable)
     .where(eq(teamSeasonStatsTable.seasonId, season.id));
 
-  const records = await db.select({ discordId: userRecordsTable.discordId, wins: userRecordsTable.wins, losses: userRecordsTable.losses, team: userRecordsTable.team })
-    .from(userRecordsTable)
-    .where(eq(userRecordsTable.seasonId, season.id));
+  const activeStandings = mcaStandings
+    .filter(t => t.wins + t.losses > 0)
+    .sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
 
-  if (records.length > 0) {
-    const sorted = [...records].sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
-    const lines = sorted.map(r => `  ${r.team ?? "Unknown"}: ${r.wins}W-${r.losses}L`);
-    parts.push(`\nCURRENT STANDINGS:\n${lines.join("\n")}`);
-  }
-
-  // ── Team season stats highlights ───────────────────────────────────────────
-  if (teamStats.length > 0) {
-    const topOff = [...teamStats].sort((a, b) => b.offPtsPerGame - a.offPtsPerGame)[0];
-    const topDef = [...teamStats].sort((a, b) => a.defTDs - b.defTDs)[0];
-    const topTurnover = [...teamStats].sort((a, b) => b.turnoverDiff - a.turnoverDiff)[0];
-    parts.push(
-      `\nTEAM HIGHLIGHTS:` +
-      (topOff ? `\n  Best offense (PPG): ${topOff.teamName} (${topOff.offPtsPerGame.toFixed(1)} PPG)` : "") +
-      (topDef ? `\n  Best defense (fewest TDs allowed): ${topDef.teamName} (${topDef.defTDs} TDs allowed)` : "") +
-      (topTurnover ? `\n  Best turnover differential: ${topTurnover.teamName} (+${topTurnover.turnoverDiff})` : ""),
+  if (activeStandings.length > 0) {
+    const lines = activeStandings.map(r =>
+      `  ${r.teamName}: ${r.wins}W-${r.losses}L${r.offPtsPerGame > 0 ? ` (${r.offPtsPerGame.toFixed(1)} PPG)` : ""}`,
     );
+    parts.push(`\nCURRENT STANDINGS (in-game regular season record from Madden CFM):\n${lines.join("\n")}`);
   }
 
-  // ── Top players (by position) ──────────────────────────────────────────────
+  // ── Team season stat highlights ─────────────────────────────────────────────
+  if (mcaStandings.length > 0) {
+    const withStats = mcaStandings.filter(t => t.offPtsPerGame > 0);
+    const topOff     = [...withStats].sort((a, b) => b.offPtsPerGame - a.offPtsPerGame)[0];
+    const topDef     = await db.select({ teamName: teamSeasonStatsTable.teamName, defTDs: teamSeasonStatsTable.defTDs })
+      .from(teamSeasonStatsTable)
+      .where(eq(teamSeasonStatsTable.seasonId, season.id))
+      .orderBy(teamSeasonStatsTable.defTDs)
+      .limit(1);
+    const topTO      = [...withStats].sort((a, b) => b.turnoverDiff - a.turnoverDiff)[0];
+
+    const statLines: string[] = [];
+    if (topOff)        statLines.push(`  Best offense (PPG): ${topOff.teamName} (${topOff.offPtsPerGame.toFixed(1)} PPG)`);
+    if (topDef[0])     statLines.push(`  Best defense (fewest TDs allowed): ${topDef[0].teamName} (${topDef[0].defTDs} TDs allowed)`);
+    if (topTO && topTO.turnoverDiff > 0) statLines.push(`  Best turnover differential: ${topTO.teamName} (+${topTO.turnoverDiff})`);
+    if (statLines.length > 0) parts.push(`\nTEAM STAT LEADERS:\n${statLines.join("\n")}`);
+  }
+
+  // ── Top individual players (stat leaders) ──────────────────────────────────
   const players = await db.select()
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, season.id));
 
   if (players.length > 0) {
-    const topQBs = [...players].filter(p => p.position === "QB").sort((a, b) => b.passYds - a.passYds).slice(0, 3);
-    const topRBs = [...players].filter(p => p.position === "HB").sort((a, b) => b.rushYds - a.rushYds).slice(0, 3);
-    const topWRs = [...players].filter(p => ["WR","TE"].includes(p.position)).sort((a, b) => b.recYds - a.recYds).slice(0, 3);
+    const topQBs  = [...players].filter(p => p.position === "QB").sort((a, b) => b.passYds - a.passYds).slice(0, 3);
+    const topRBs  = [...players].filter(p => p.position === "HB").sort((a, b) => b.rushYds - a.rushYds).slice(0, 3);
+    const topWRs  = [...players].filter(p => ["WR","TE"].includes(p.position)).sort((a, b) => b.recYds - a.recYds).slice(0, 3);
     const topPass = [...players].filter(p => p.position === "QB").sort((a, b) => b.passTDs - a.passTDs)[0];
     const topSack = [...players].sort((a, b) => b.sacks - a.sacks)[0];
+    const topRush = [...players].filter(p => p.position === "HB").sort((a, b) => b.rushTDs - a.rushTDs)[0];
 
-    const fmt = (ps: typeof players) => ps.map(p => `${p.firstName} ${p.lastName} (${p.teamName})`).join(", ");
+    const fmt = (ps: typeof players) =>
+      ps.map(p => `${p.firstName} ${p.lastName} (${p.teamName}, ${p.position})`).join(", ");
 
-    parts.push(
-      `\nTOP PLAYERS THIS SEASON:` +
-      (topQBs.length ? `\n  QB (pass yds): ${fmt(topQBs)}` : "") +
-      (topRBs.length ? `\n  RB (rush yds): ${fmt(topRBs)}` : "") +
-      (topWRs.length ? `\n  WR/TE (rec yds): ${fmt(topWRs)}` : "") +
-      (topPass ? `\n  TD leader (pass): ${topPass.firstName} ${topPass.lastName} — ${topPass.passTDs} TDs` : "") +
-      (topSack ? `\n  Sack leader: ${topSack.firstName} ${topSack.lastName} — ${topSack.sacks} sacks` : ""),
-    );
+    const statLines: string[] = [];
+    if (topQBs.length) statLines.push(`  QB passing yards leaders: ${fmt(topQBs)}`);
+    if (topRBs.length) statLines.push(`  RB rushing yards leaders: ${fmt(topRBs)}`);
+    if (topWRs.length) statLines.push(`  WR/TE receiving yards leaders: ${fmt(topWRs)}`);
+    if (topPass)       statLines.push(`  Passing TD leader: ${topPass.firstName} ${topPass.lastName} (${topPass.teamName}) — ${topPass.passTDs} TDs`);
+    if (topRush)       statLines.push(`  Rushing TD leader: ${topRush.firstName} ${topRush.lastName} (${topRush.teamName}) — ${topRush.rushTDs} TDs`);
+    if (topSack)       statLines.push(`  Sack leader: ${topSack.firstName} ${topSack.lastName} (${topSack.teamName}) — ${topSack.sacks} sacks`);
+    if (statLines.length > 0) parts.push(`\nINDIVIDUAL STAT LEADERS THIS SEASON:\n${statLines.join("\n")}`);
   }
 
-  // ── Trade activity events (last 48 hours — logged fresh by trade commands) ──
+  // ── Team rosters (top 5 players per human team by OVR) ─────────────────────
+  // Included so the AI knows exactly who is on each roster. It must NEVER
+  // reference a player as being on a team if they are not listed here.
+  const rosterRows = await db.select({
+    teamName:  franchiseRostersTable.teamName,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    position:  franchiseRostersTable.position,
+    overall:   franchiseRostersTable.overall,
+  })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, season.id),
+      isNotNull(franchiseRostersTable.discordId),   // human-controlled teams only
+    ))
+    .orderBy(desc(franchiseRostersTable.overall));
+
+  if (rosterRows.length > 0) {
+    // Group by team, top 5 per team
+    const byTeam = new Map<string, typeof rosterRows>();
+    for (const p of rosterRows) {
+      const list = byTeam.get(p.teamName) ?? [];
+      if (list.length < 7) {
+        list.push(p);
+        byTeam.set(p.teamName, list);
+      }
+    }
+    const rosterLines: string[] = [];
+    for (const [team, roster] of byTeam) {
+      const players = roster.map(p => `${p.firstName} ${p.lastName} (${p.position}, ${p.overall} OVR)`).join(", ");
+      rosterLines.push(`  ${team}: ${players}`);
+    }
+    parts.push(`\nTEAM ROSTERS (top players by OVR — ONLY reference players listed here as being on these teams):\n${rosterLines.join("\n")}`);
+  }
+
+  // ── Recent completed game results (last 2 weeks) ────────────────────────────
+  const recentGames = await db.select({
+    weekIndex:    franchiseScheduleTable.weekIndex,
+    homeTeamName: franchiseScheduleTable.homeTeamName,
+    awayTeamName: franchiseScheduleTable.awayTeamName,
+    homeScore:    franchiseScheduleTable.homeScore,
+    awayScore:    franchiseScheduleTable.awayScore,
+  })
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId, season.id),
+      isNotNull(franchiseScheduleTable.homeScore),
+    ))
+    .orderBy(desc(franchiseScheduleTable.weekIndex))
+    .limit(16);
+
+  if (recentGames.length > 0) {
+    // Determine the most recent week(s) with results
+    const maxWeek = Math.max(...recentGames.map(g => g.weekIndex));
+    const latestWeekGames = recentGames.filter(g => g.weekIndex === maxWeek);
+    const prevWeekGames   = recentGames.filter(g => g.weekIndex === maxWeek - 1);
+
+    const fmtGame = (g: typeof recentGames[0]) => {
+      const winner = (g.homeScore ?? 0) > (g.awayScore ?? 0) ? g.homeTeamName : g.awayTeamName;
+      return `  ${g.awayTeamName} @ ${g.homeTeamName}: ${g.awayScore}–${g.homeScore} (${winner} wins)`;
+    };
+
+    if (latestWeekGames.length > 0) {
+      parts.push(`\nRECENT GAME RESULTS — Week ${maxWeek + 1}:\n${latestWeekGames.map(fmtGame).join("\n")}`);
+    }
+    if (prevWeekGames.length > 0) {
+      parts.push(`\nRECENT GAME RESULTS — Week ${maxWeek}:\n${prevWeekGames.map(fmtGame).join("\n")}`);
+    }
+  }
+
+  // ── Trade activity events (last 48 hours) ──────────────────────────────────
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
   const tradeEvents = await db.select()
     .from(leagueTwitterTradeEventsTable)
@@ -171,12 +257,13 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
 
   if (tradeEvents.length > 0) {
     const lines = tradeEvents.map(e => `  [${e.eventType.replace(/_/g, " ")}] ${e.summary}`);
-    parts.push(`\nRECENT TRADE BLOCK ACTIVITY (last 48 hours):\n${lines.join("\n")}`);
+    parts.push(`\nRECENT TRADE BLOCK ACTIVITY (last 48 hours — only events you may reference for trade/roster rumors):\n${lines.join("\n")}`);
+  } else {
+    // Explicit signal to the model: no trade activity to reference
+    parts.push(`\nRECENT TRADE BLOCK ACTIVITY: NONE in the last 48 hours. Do NOT invent or speculate about any trade block activity.`);
   }
 
   // ── Matchup cache (within 4-hour freshness window) ─────────────────────────
-  // Written by the matchup runners when they post; gives the AI real game data
-  // for matchup-related topics without the risk of stale schedule table entries.
   const fourHoursAgo = new Date(Date.now() - FOUR_HOURS_MS);
   const cachedMatchups = await db.select()
     .from(leagueTwitterMatchupCacheTable)
@@ -189,7 +276,7 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
 
   if (cachedMatchups[0]) {
     const cm = cachedMatchups[0];
-    parts.push(`\nUPCOMING MATCHUPS — ${cm.weekLabel} (just posted — use these for matchup commentary):\n${cm.matchupsText}`);
+    parts.push(`\nUPCOMING MATCHUPS — ${cm.weekLabel} (just posted):\n${cm.matchupsText}`);
   }
 
   return parts.join("\n");
@@ -265,22 +352,21 @@ export async function logTradeEvent(opts: {
 // ── Tweet generator ────────────────────────────────────────────────────────────
 
 const TOPIC_PROMPTS = [
-  "Focus on a specific player's season stat line and what it means for their team's playoff chances.",
-  "React to a recent trade and analyze what each team gained or gave up.",
-  "Break a 'rumor' about a team shopping a player or seeking a specific asset on the block.",
-  "Comment on a team's record this season — hot streak, cold streak, or surprising run.",
-  "Praise or roast a team's offensive or defensive season performance using their real stats.",
-  "Make the case for a playoff dark horse based on their season stats and record.",
-  "Drop a 'per sources' rumor about a player about to be moved or a team making a power play.",
-  "Write a short hot take about the best or worst team in the league based on their record.",
-  "Comment on the league's overall scoring trends or which defenses have been elite.",
-  "React to a new ISO or trade block listing as if it just broke on the wire.",
-  "Give a scouting report on a specific player's season stats — overhyped or underrated.",
-  "Speculate on which teams are buyers vs. sellers as the season nears its end.",
-  "React to the league's turnover differential or rushing/passing leaders.",
-  "Pick a team with a losing record and explain how they can still make noise.",
-  "Compare two teams' season records and stats and declare which is the more dangerous squad.",
-  "If upcoming matchups are listed in the context, hype up one specific game as a must-watch — only if real matchup data is provided.",
+  "Focus on a specific player's season stat line from the context and what it means for their team's playoff chances.",
+  "If RECENT TRADE BLOCK ACTIVITY lists real events, react to one of them. If the section says NONE, pick a different topic.",
+  "Comment on a team's in-game record from CURRENT STANDINGS — hot streak, cold streak, or surprising run.",
+  "Praise or roast a team's offensive or defensive performance using the real PPG or defensive stats from the context.",
+  "Make the case for a playoff dark horse using their actual record and stats from the context.",
+  "Write a short hot take about the best or worst team in the league using only stats and records from the context.",
+  "Comment on the league's scoring trends or which defenses have been elite based on team stat leaders in the context.",
+  "React to a completed game result from RECENT GAME RESULTS — highlight a blowout, comeback, or upset.",
+  "Give a scouting report on a stat leader from the context — overhyped or underrated given their numbers.",
+  "Based only on records and stats in the context, assess which teams look like buyers vs. sellers at this point in the season.",
+  "React to the league's turnover differential or rushing/passing leaders from the stat data in the context.",
+  "Pick a team with a losing record from the standings and explain how they can still make noise in the playoffs.",
+  "Compare two specific teams' records and stats from the context and declare which is the more dangerous squad.",
+  "If UPCOMING MATCHUPS are listed in the context, hype up one specific game — only if the matchup is explicitly listed.",
+  "Highlight a player from TEAM ROSTERS who is having a standout season based on their position and the stat leaders in the context.",
 ];
 
 async function generateTweet(reporter: Reporter, context: string): Promise<string> {
@@ -295,15 +381,19 @@ Write a single tweet (max 260 characters) in your authentic reporter voice about
 
 Rules:
 - Sound like a real sports Twitter post, not a bot
-- Mention specific player names, team names, stats, or trade details from the context
-- Use reporter-style language ("per sources", "I'm told", "breaking", etc.) when fitting for your persona
+- Mention specific player names, team names, stats, or trade details — but ONLY from the provided context
+- Reporter-style language ("per sources", "I'm told", "breaking") is fine for reacting to real events in the context
 - Emojis are fine if fitting (especially for hype-style reporters)
 - Do NOT use hashtags
 - Do NOT mention that this is a video game or simulation
 - Output ONLY the tweet text, nothing else
-- CRITICAL — Records: When citing a team's record, use ONLY the season W-L from the CURRENT STANDINGS section of the context. Never invent win-loss records.
-- CRITICAL — Matchups: Do NOT reference a specific game between two teams (e.g. "Team A hosts Team B") unless that exact matchup is explicitly listed in the context. No upcoming-game hype unless the matchup is in the data.
-- CRITICAL — H2H: Do NOT cite head-to-head records between teams. Only season records are provided and should be used.`;
+
+CRITICAL RULES — violating any of these is a failure:
+- RECORDS: Use ONLY the in-game season W-L from CURRENT STANDINGS. Never invent a record.
+- ROSTERS: Only say a player is on a team if they appear in that team's TEAM ROSTERS entry. Never place a player on a team not listed there.
+- TRADE/ROSTER RUMORS: NEVER invent or imply that a team is shopping, trading, releasing, or seeking a player unless that specific event appears in RECENT TRADE BLOCK ACTIVITY. If that section says "NONE", write about something else entirely — do not create any trade or personnel rumors.
+- MATCHUPS: Do not reference a specific upcoming game unless that exact matchup is listed under UPCOMING MATCHUPS.
+- H2H: Do not cite head-to-head records between two teams.`;
 
   const user = `LEAGUE CONTEXT:\n${context}\n\nTOPIC ANGLE: ${topic}\n\nWrite your tweet:`;
 
