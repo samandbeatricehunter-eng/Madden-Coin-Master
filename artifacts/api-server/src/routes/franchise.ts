@@ -10,6 +10,7 @@ import {
   processTeamRoster,
   processFreeAgentRoster,
   processDraftPicks,
+  processPlayoffSeedings,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload } from "../lib/mcaStorage.js";
@@ -139,6 +140,25 @@ router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, asy
   console.log("[mca/teamstats] Received payload, processing async...");
   const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/teamstats] Result:", result.message);
+});
+
+// ── /seedings — set playoff seeds from EA conferenceRank data ─────────────────
+// Called by /admin_ea_export standings on the bot. Accepts the same team stats
+// payload shape as /week/:weekType/:weekNum/team but bypasses the dedup guard
+// so it can be re-run any time to refresh seeds from the latest EA data.
+router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, async (req, res) => {
+  saveMcaPayload("mca/seedings-latest.json", req.body);
+  res.status(200).json({ status: "received" });
+  console.log("[mca/seedings] Received playoff seedings payload, processing...");
+  const result = await processPlayoffSeedings(req.body).catch(err => ({ ok: false, message: String(err) }));
+  console.log("[mca/seedings] Result:", result.message);
+  if (!result.ok && COMMISSIONER_CHANNEL_ID) {
+    sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+      title: "⚠️ Playoff Seedings Import Issue",
+      description: result.message,
+      color: 0xed4245,
+    }).catch(() => {});
+  }
 });
 
 // ── /schedules — full season schedule ─────────────────────────────────────────

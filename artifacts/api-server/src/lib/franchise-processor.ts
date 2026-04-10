@@ -584,9 +584,99 @@ export async function processTeamWeekStats(
     });
 
     console.log(`[mca/week${weekNum}/team] Accumulated ${upserted} team stat rows, marked processed`);
+
+    // Auto-seed playoffs if EA included conferenceRank data in this payload
+    // (EA consistently sends this on all regular-season team exports; the function
+    //  is a no-op if the field isn't present.)
+    if (weekType === "reg") {
+      void processPlayoffSeedings(body).then(r => {
+        if (!r.ok) console.warn("[mca/week/team] Playoff seeding auto-update failed:", r.message);
+        else if (r.message.includes("applied")) console.log("[mca/week/team] Playoff seedings:", r.message);
+      });
+    }
+
     return { ok: true, message: `week ${weekNum} team stats: accumulated ${upserted} teams`, details: { upserted } };
   } catch (err) {
     console.error("[mca/week/team] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── Auto-seed playoffs from conference rank fields in EA teamStats ─────────────
+//
+// EA sends conferenceRank (1–7 = playoff teams) and conferenceId (0=AFC, 1=NFC)
+// in the team stats payload. We read those here and write playoffSeed /
+// playoffConference to usersTable so the historical channel and other systems
+// can use them without manual /admin-playoffs setnfcseeds commands.
+//
+// Field name aliases tried (widest net, first non-zero wins):
+//   conferenceRank | confRank | conferencestanding | confStanding | confPlace
+//   conferenceId   | confId
+
+export async function processPlayoffSeedings(body: unknown): Promise<ProcessResult> {
+  try {
+    const season = await getOrCreateActiveSeason();
+    const stats  = extractList(body, "teamStatInfoList", "teamStatsInfoList", "teamStats");
+    if (stats.length === 0) {
+      return { ok: true, message: "No team stat entries — nothing to seed" };
+    }
+
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+
+    const getConfRank = (t: any): number =>
+      Number(t?.conferenceRank ?? t?.confRank ?? t?.conferencestanding
+        ?? t?.confStanding ?? t?.confPlace ?? 0);
+
+    const getConfId = (t: any): number | null => {
+      const v = t?.conferenceId ?? t?.confId;
+      if (v == null) return null;
+      return Number(v);
+    };
+
+    // Log raw conference data from first entry so we can validate the mapping
+    const firstWithRank = stats.find((t: any) => getConfRank(t) > 0);
+    if (firstWithRank) {
+      console.log(`[seedings] Sample conferenceRank=${getConfRank(firstWithRank)} conferenceId=${getConfId(firstWithRank)} teamId=${(firstWithRank as any).teamId}`);
+    } else {
+      return { ok: true, message: "No conferenceRank fields found in payload — seeds unchanged" };
+    }
+
+    let applied = 0;
+    const ops: Promise<any>[] = [];
+
+    for (const t of stats) {
+      const teamId   = Number(t?.teamId ?? t?.teamIndex ?? -1);
+      if (teamId < 0 || isNaN(teamId)) continue;
+      const teamEntry = teamMap.get(teamId);
+      if (!teamEntry?.discordId) continue; // skip CPU teams
+
+      const confRank = getConfRank(t);
+      if (confRank < 1 || confRank > 7) continue; // not a playoff team
+
+      const confId   = getConfId(t);
+      // conferenceId 0=AFC, 1=NFC (same convention as wildcard-automation / awards)
+      const conference = confId === 0 ? "AFC" : confId === 1 ? "NFC" : null;
+      if (!conference) {
+        console.warn(`[seedings] Unknown conferenceId=${confId} for teamId=${teamId} — skipping`);
+        continue;
+      }
+
+      console.log(`[seedings] → ${teamEntry.fullName} (discord ${teamEntry.discordId}): ${conference} Seed ${confRank}`);
+      ops.push(
+        db.update(usersTable)
+          .set({ playoffSeed: confRank, playoffConference: conference, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, teamEntry.discordId)),
+      );
+      applied++;
+    }
+
+    await Promise.all(ops);
+    console.log(`[seedings] Applied playoff seeds to ${applied} human teams`);
+    return { ok: true, message: `Playoff seeds applied to ${applied} human teams`, details: { applied } };
+  } catch (err) {
+    console.error("[seedings] Error:", err);
     return { ok: false, message: String(err) };
   }
 }

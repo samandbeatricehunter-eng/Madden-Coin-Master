@@ -70,13 +70,27 @@ export const data = new SlashCommandBuilder()
     s
       .setName("awards")
       .setDescription("Pull end-of-season award winners directly from EA (replaces MCA awards push)"),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName("standings")
+      .setDescription("Auto-set playoff seeds from EA conference rank data (run after Week 18 export)")
+      .addIntegerOption((o) =>
+        o
+          .setName("week")
+          .setDescription("Regular season week to pull standings from (default: 18)")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(18),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand(true);
-  if (sub === "week")     return handleWeek(interaction);
-  if (sub === "playoffs") return handlePlayoffs(interaction);
-  if (sub === "awards")   return handleAwards(interaction);
+  if (sub === "week")      return handleWeek(interaction);
+  if (sub === "playoffs")  return handlePlayoffs(interaction);
+  if (sub === "awards")    return handleAwards(interaction);
+  if (sub === "standings") return handleStandings(interaction);
 }
 
 // ── Build API base URL ────────────────────────────────────────────────────────
@@ -232,6 +246,71 @@ async function handlePlayoffs(interaction: ChatInputCommandInteraction): Promise
   const weekNum  = parseInt(roundStr, 10);
   // Playoffs are weeks 19–23 within the regular season stage (stageIndex=1)
   return exportWeek(interaction, weekNum, "reg", false);
+}
+
+// ── /admin_ea_export standings ────────────────────────────────────────────────
+async function handleStandings(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const conn = await loadEAConnection();
+  if (!conn) {
+    await interaction.editReply({
+      content: "❌ **No EA connection.** Run `/admin_ea_connect start` first to link your franchise.",
+    });
+    return;
+  }
+
+  const weekNum  = interaction.options.getInteger("week") ?? 18;
+  const { token, eaLeagueId } = conn;
+
+  await interaction.editReply({ content: `⏳ Fetching **Week ${weekNum}** team stats from EA for playoff seeding...` });
+
+  let stats: WeeklyExportData;
+  try {
+    // stageIndex=1 = regular season, weekIndex is 0-based
+    stats = await fetchWeeklyStats(token, eaLeagueId, weekNum - 1, 1);
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) {
+      await updateStoredToken(eaLeagueId, refreshed);
+    }
+  } catch (err: any) {
+    console.error("[ea-export/standings] Fetch error:", err);
+    await interaction.editReply({
+      content:
+        `❌ Failed to fetch Week ${weekNum} data from EA: ${err?.message ?? String(err)}\n\n` +
+        "If you see an auth error, run `/admin_ea_connect code` to refresh the connection.",
+    });
+    return;
+  }
+
+  await interaction.editReply({ content: "⏳ Applying playoff seeds from conference rank data..." });
+
+  const apiBase  = getApiBase();
+  const key      = getWebhookKey();
+  const platform = token.platform;
+  const url      = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/seedings`;
+
+  const res = await postToApiServer(url, stats.teamStats);
+
+  const embed = new EmbedBuilder()
+    .setColor(res.ok ? Colors.Green : Colors.Red)
+    .setTitle("🏈 Playoff Seedings from EA")
+    .setDescription(
+      res.ok
+        ? `✅ Playoff seeds auto-applied from Week ${weekNum} EA conference rank data.\n\n` +
+          "Check the API server logs to see which teams were seeded. " +
+          "If the seeds look wrong (wrong conference), the EA conferenceId mapping may need adjustment — let the dev know."
+        : `❌ Seeds data was fetched but failed to save (HTTP ${res.status}).\n\nCheck API server logs for details.`,
+    )
+    .addFields({
+      name: "What happens next",
+      value:
+        "Playoff seeds are now set in the database. Run `/admin-rebuild-historical` to refresh the historical channel with the updated playoff picture.",
+    })
+    .setFooter({ text: `Week ${weekNum} · League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()}` })
+    .setTimestamp();
+
+  await interaction.editReply({ content: "", embeds: [embed] });
 }
 
 // ── /admin_ea_export awards ───────────────────────────────────────────────────
