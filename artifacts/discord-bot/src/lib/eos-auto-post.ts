@@ -262,31 +262,35 @@ export async function runEosAutoPost(
         }
       }
 
-      // ── RB YPC (flat bonus) ───────────────────────────────────────────────────
-      // RB must meet minRbAtt carries AND average minRbYpc YPC (×10) to earn flat bonus.
-      const qualifyingRbs = playerRows
-        .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt >= minRbAtt)
+      // ── RB YPC (flat bonus per qualifying RB — mirrors DB INT bonus) ────────────
+      // Every RB meeting minRbAtt carries AND minRbYpc YPC earns the bonus independently.
+      const allRbs = playerRows
+        .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt > 0)
+        .sort((a, b) => b.rushAtt - a.rushAtt);  // lead RB first for display
+      const qualifyingRbs = allRbs
+        .filter(p => p.rushAtt >= minRbAtt)
         .map(p => ({ ...p, ypcScaled: Math.round((p.rushYds / p.rushAtt) * 10) }))
         .filter(p => p.ypcScaled >= minRbYpc);
 
       if (qualifyingRbs.length > 0) {
-        // Award the bonus once per team (for the best qualifying RB)
-        const topRb = qualifyingRbs.sort((a, b) => b.ypcScaled - a.ypcScaled)[0];
-        const playerLabel = `${topRb.firstName} ${topRb.lastName}`.trim() || "RB";
-        const ypcStr = (topRb.rushYds / topRb.rushAtt).toFixed(1);
-        displayLines.push(
-          `• **RB YPC Bonus (${playerLabel})**: ${ypcStr} YPC (${topRb.rushAtt} carries, min ${minRbAtt} carries + ${(minRbYpc / 10).toFixed(1)} YPC) → +${rbBonusAmt.toLocaleString()} coins`,
-        );
-        breakdown.push({ label: `RB YPC Bonus (${playerLabel})`, statValue: topRb.ypcScaled, unit: "YPC×10", tier: 1, coins: rbBonusAmt });
-        totalCoins += rbBonusAmt;
+        for (const rb of qualifyingRbs) {
+          const playerLabel = `${rb.firstName} ${rb.lastName}`.trim() || "RB";
+          const ypcStr = (rb.rushYds / rb.rushAtt).toFixed(1);
+          displayLines.push(
+            `• **RB YPC Bonus (${playerLabel})**: ${ypcStr} YPC (${rb.rushAtt} carries, min ${minRbAtt} carries + ${(minRbYpc / 10).toFixed(1)} YPC) → +${rbBonusAmt.toLocaleString()} coins`,
+          );
+          breakdown.push({ label: `RB YPC Bonus (${playerLabel})`, statValue: rb.ypcScaled, unit: "YPC×10", tier: 1, coins: rbBonusAmt });
+          totalCoins += rbBonusAmt;
+        }
         hasStats = true;
       } else {
-        const anyRb = playerRows.find(p => RB_POSITIONS.has(p.position.toUpperCase()));
-        if (anyRb) {
-          const carryNote = anyRb.rushAtt < minRbAtt
-            ? `only ${anyRb.rushAtt} carries (min ${minRbAtt})`
-            : `${(anyRb.rushYds / anyRb.rushAtt).toFixed(1)} YPC (min ${(minRbYpc / 10).toFixed(1)})`;
-          displayLines.push(`• **RB YPC Bonus**: ${anyRb.firstName} ${anyRb.lastName} — ${carryNote} — does not qualify`);
+        // Show the lead RB (most carries) for transparency — not just the first found
+        const leadRb = allRbs[0];
+        if (leadRb) {
+          const carryNote = leadRb.rushAtt < minRbAtt
+            ? `only ${leadRb.rushAtt} carries (min ${minRbAtt})`
+            : `${(leadRb.rushYds / leadRb.rushAtt).toFixed(1)} YPC (min ${(minRbYpc / 10).toFixed(1)})`;
+          displayLines.push(`• **RB YPC Bonus**: ${leadRb.firstName} ${leadRb.lastName} — ${carryNote} — does not qualify`);
         }
       }
 

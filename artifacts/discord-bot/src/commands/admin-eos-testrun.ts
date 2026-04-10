@@ -395,26 +395,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     }
 
-    // ── RB YPC Bonus ──────────────────────────────────────────────────────────
-    const qualifyingRbs = playerRows
-      .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt >= minRbAtt)
+    // ── RB YPC Bonus (per qualifying RB — mirrors DB INT bonus) ──────────────
+    // Every RB meeting minRbAtt carries AND minRbYpc YPC earns the bonus independently.
+    const allRbs = playerRows
+      .filter(p => RB_POSITIONS.has(p.position.toUpperCase()) && p.rushAtt > 0)
+      .sort((a, b) => b.rushAtt - a.rushAtt);  // lead RB first for display
+    const qualifyingRbs = allRbs
+      .filter(p => p.rushAtt >= minRbAtt)
       .map(p => ({ ...p, ypcScaled: Math.round((p.rushYds / p.rushAtt) * 10) }))
       .filter(p => p.ypcScaled >= minRbYpc);
 
     if (qualifyingRbs.length > 0) {
-      const topRb  = qualifyingRbs.sort((a, b) => b.ypcScaled - a.ypcScaled)[0]!;
-      const label  = `${topRb.firstName} ${topRb.lastName}`.trim() || "RB";
-      const ypcStr = (topRb.rushYds / topRb.rushAtt).toFixed(1);
-      displayLines.push(`• **RB YPC Bonus (${label})**: ${ypcStr} YPC, ${topRb.rushAtt} carries → +${rbBonusAmt.toLocaleString()} 🪙`);
-      totalCoins += rbBonusAmt;
+      for (const rb of qualifyingRbs) {
+        const label  = `${rb.firstName} ${rb.lastName}`.trim() || "RB";
+        const ypcStr = (rb.rushYds / rb.rushAtt).toFixed(1);
+        displayLines.push(`• **RB YPC Bonus (${label})**: ${ypcStr} YPC, ${rb.rushAtt} carries → +${rbBonusAmt.toLocaleString()} 🪙`);
+        totalCoins += rbBonusAmt;
+      }
       hasStats = true;
     } else {
-      const anyRb = playerRows.find(p => RB_POSITIONS.has(p.position.toUpperCase()));
-      if (anyRb && anyRb.rushAtt > 0) {
-        const note = anyRb.rushAtt < minRbAtt
-          ? `${anyRb.rushAtt} carries (min ${minRbAtt})`
-          : `${(anyRb.rushYds / anyRb.rushAtt).toFixed(1)} YPC (min ${(minRbYpc / 10).toFixed(1)})`;
-        displayLines.push(`• **RB YPC Bonus**: ${anyRb.firstName} ${anyRb.lastName} — ${note} — does not qualify`);
+      // Show the lead RB (most carries) so the user knows who was checked
+      const leadRb = allRbs[0];
+      if (leadRb) {
+        const note = leadRb.rushAtt < minRbAtt
+          ? `${leadRb.rushAtt} carries (min ${minRbAtt})`
+          : `${(leadRb.rushYds / leadRb.rushAtt).toFixed(1)} YPC (min ${(minRbYpc / 10).toFixed(1)})`;
+        displayLines.push(`• **RB YPC Bonus**: ${leadRb.firstName} ${leadRb.lastName} — ${note} — does not qualify`);
       }
     }
 
