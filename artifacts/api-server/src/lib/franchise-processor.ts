@@ -723,7 +723,7 @@ export async function processPlayerWeekStats(
         const passAtt    = getN(p, "passAtt",     "passAttempts",    "passattempts",  "passatt",  "attempts");
         const passComp   = getN(p, "passComp",    "passCompletions", "completions",   "passcomp", "completionAttempts");
         const passInts   = getN(p, "passInts",    "passingInts",     "interceptions", "passInt",  "passingInterceptions", "intsThrown");
-        const timesSacked = getN(p, "sackYdsLost","timesSacked",     "sacksRec",      "sacksAllowed", "sacksReceived", "qbSacks");
+        const timesSacked = getN(p, "passSacks", "sackYdsLost","timesSacked",     "sacksRec",      "sacksAllowed", "sacksReceived", "qbSacks");
         insertFields = { passYds, passTDs, passAtt, passComp, passInts, timesSacked };
         accumSet     = {
           passYds:     sql`${playerSeasonStatsTable.passYds}     + ${passYds}`,
