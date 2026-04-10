@@ -590,12 +590,14 @@ export async function processTeamWeekStats(
 // ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → playerSeasonStatsTable ──
 export type WeekStatType = "passing" | "rushing" | "receiving" | "defense";
 
+// "playerStatInfoList" is included last for every type as a generic EA fallback —
+// some EA WAL endpoints wrap all player records under this key regardless of stat category.
 const STAT_LIST_KEYS: Record<WeekStatType, string[]> = {
-  passing:   ["playerPassingStatInfoList",   "playerPassStatInfoList",   "playerPassingStatsInfoList",   "passingStats"],
-  rushing:   ["playerRushingStatInfoList",   "playerRushStatInfoList",   "playerRushingStatsInfoList",   "rushingStats"],
-  receiving: ["playerReceivingStatInfoList", "playerRecStatInfoList",    "playerReceivingStatsInfoList",  "receivingStats"],
+  passing:   ["playerPassingStatInfoList",   "playerPassStatInfoList",   "playerPassingStatsInfoList",   "passingStats",   "playerStatInfoList"],
+  rushing:   ["playerRushingStatInfoList",   "playerRushStatInfoList",   "playerRushingStatsInfoList",   "rushingStats",   "playerStatInfoList"],
+  receiving: ["playerReceivingStatInfoList", "playerRecStatInfoList",    "playerReceivingStatsInfoList",  "receivingStats", "playerStatInfoList"],
   defense:   [
-    "playerDefensiveStatInfoList",   // most common MCA key
+    "playerDefensiveStatInfoList",   // most common MCA / EA key
     "playerDefenseStatInfoList",     // alternate spelling
     "playerDefStatInfoList",         // short form
     "playerDefensiveStatsInfoList",  // plural variant
@@ -605,6 +607,7 @@ const STAT_LIST_KEYS: Record<WeekStatType, string[]> = {
     "defensiveStatInfoList",         // no-player prefix
     "defenseStatInfoList",           // no-player prefix alt
     "defStatInfoList",               // short no-prefix
+    "playerStatInfoList",            // generic EA WAL fallback
   ],
 };
 
@@ -620,9 +623,17 @@ export async function processPlayerWeekStats(
     const players = extractList(body, ...listKeys);
 
     if (!players.length) {
-      // Log the actual top-level keys so we can diagnose key-name mismatches
+      // Log everything we need to diagnose a key-name mismatch:
+      //   1. All top-level keys in the payload
+      //   2. First 600 chars of raw JSON so structure is visible
       const topKeys = body && typeof body === "object" ? Object.keys(body as object).join(", ") : String(body);
-      console.warn(`[mca/week${weekNum}/${statType}] No records found. Tried keys: [${listKeys.join(", ")}]. Payload top-level keys: ${topKeys || "(empty)"}`);
+      const rawSnippet = JSON.stringify(body).slice(0, 600);
+      console.warn(
+        `[mca/week${weekNum}/${statType}] ⚠️ No records found.\n` +
+        `  Tried keys : [${listKeys.join(", ")}]\n` +
+        `  Actual keys: ${topKeys || "(empty)"}\n` +
+        `  Payload    : ${rawSnippet}`,
+      );
       return { ok: true, message: `No ${statType} records in payload — tried keys: ${listKeys.join(", ")}` };
     }
 
