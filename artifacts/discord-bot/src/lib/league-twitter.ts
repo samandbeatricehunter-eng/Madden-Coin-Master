@@ -13,11 +13,11 @@ import { db } from "@workspace/db";
 import {
   leagueTwitterTable, usersTable, seasonsTable,
   teamSeasonStatsTable, playerSeasonStatsTable,
-  franchiseScheduleTable, completedTradesTable,
+  completedTradesTable,
   tradeBlockListingsTable, tradeBlockISOTable,
   userRecordsTable,
 } from "@workspace/db";
-import { eq, desc, and, gte, isNull } from "drizzle-orm";
+import { eq, desc, and, gte } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -158,24 +158,6 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     );
   }
 
-  // ── Upcoming schedule (games not yet played) ──────────────────────────────
-  const upcoming = await db.select({
-    weekIndex:    franchiseScheduleTable.weekIndex,
-    homeTeamName: franchiseScheduleTable.homeTeamName,
-    awayTeamName: franchiseScheduleTable.awayTeamName,
-  })
-    .from(franchiseScheduleTable)
-    .where(and(
-      eq(franchiseScheduleTable.seasonId, season.id),
-      isNull(franchiseScheduleTable.homeScore),
-    ))
-    .limit(16);
-
-  if (upcoming.length > 0) {
-    const matchups = upcoming.map(g => `  ${g.homeTeamName} vs ${g.awayTeamName} (Week ${g.weekIndex})`).join("\n");
-    parts.push(`\nUPCOMING MATCHUPS:\n${matchups}`);
-  }
-
   // ── Recent completed trades (last 7 days) ──────────────────────────────────
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const trades = await db.select()
@@ -244,21 +226,21 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
 // ── Tweet generator ────────────────────────────────────────────────────────────
 
 const TOPIC_PROMPTS = [
-  "Focus on a specific player's recent stat performance and what it means for their team.",
-  "React to a recent trade and analyze both sides of the deal.",
-  "Break a 'rumor' about a team shopping a player or seeking a deal.",
-  "Comment on a team's hot or cold streak and what it means for playoffs.",
-  "Praise or roast a team's offensive or defensive performance this season.",
-  "Speculate about a playoff dark horse or a team that's overachieving.",
-  "Hype up a big upcoming matchup as if it's must-watch TV.",
-  "Drop a 'per sources' rumor about a player about to be moved.",
-  "Write a short hot take about the best or worst team in the league.",
-  "Comment on the league's overall scoring trends or parity.",
+  "Focus on a specific player's season stat line and what it means for their team's playoff chances.",
+  "React to a recent trade and analyze what each team gained or gave up.",
+  "Break a 'rumor' about a team shopping a player or seeking a specific asset on the block.",
+  "Comment on a team's record this season — hot streak, cold streak, or surprising run.",
+  "Praise or roast a team's offensive or defensive season performance using their real stats.",
+  "Make the case for a playoff dark horse based on their season stats and record.",
+  "Drop a 'per sources' rumor about a player about to be moved or a team making a power play.",
+  "Write a short hot take about the best or worst team in the league based on their record.",
+  "Comment on the league's overall scoring trends or which defenses have been elite.",
   "React to a new ISO or trade block listing as if it just broke on the wire.",
-  "Give a scouting report take on a specific offensive or defensive player.",
-  "Speculate on what teams are buyers vs. sellers heading toward the deadline.",
-  "Write a quote tweet reacting to the league's turnover differential leaders.",
-  "Pick a sleeper team and make the case they can make a postseason run.",
+  "Give a scouting report on a specific player's season stats — overhyped or underrated.",
+  "Speculate on which teams are buyers vs. sellers as the season nears its end.",
+  "React to the league's turnover differential or rushing/passing leaders.",
+  "Pick a team with a losing record and explain how they can still make noise.",
+  "Compare two teams' season records and stats and declare which is the more dangerous squad.",
 ];
 
 async function generateTweet(reporter: Reporter, context: string): Promise<string> {
@@ -278,7 +260,10 @@ Rules:
 - Emojis are fine if fitting (especially for hype-style reporters)
 - Do NOT use hashtags
 - Do NOT mention that this is a video game or simulation
-- Output ONLY the tweet text, nothing else`;
+- Output ONLY the tweet text, nothing else
+- CRITICAL — Records: When citing a team's record, use ONLY the season W-L from the CURRENT STANDINGS section of the context. Never invent win-loss records.
+- CRITICAL — Matchups: Do NOT reference a specific game between two teams (e.g. "Team A hosts Team B") unless that exact matchup is explicitly listed in the context. No upcoming-game hype unless the matchup is in the data.
+- CRITICAL — H2H: Do NOT cite head-to-head records between teams. Only season records are provided and should be used.`;
 
   const user = `LEAGUE CONTEXT:\n${context}\n\nTOPIC ANGLE: ${topic}\n\nWrite your tweet:`;
 
