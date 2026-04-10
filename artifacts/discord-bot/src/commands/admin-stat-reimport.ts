@@ -7,7 +7,7 @@ import {
   playerSeasonStatsTable, playerStatWeekProcessedTable,
   teamSeasonStatsTable,
 } from "@workspace/db";
-import { eq, count, and } from "drizzle-orm";
+import { eq, count, and, lte, gte } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getPayoutValue, setPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { deleteMcaPayloads, listMcaFiles, readMcaJson } from "../lib/gcs-reader.js";
@@ -55,6 +55,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 // ── /admin_stat_reimport status ──────────────────────────────────────────────
 
+// Regular season = weeks 1-18; Playoffs = weeks 19+ (Wild Card=19, Div=20, Conf=21, SB=23)
+const REG_TOTAL      = 18;
+const PLAYOFF_TOTAL  = 4;   // Wild Card, Divisional, Conference, Super Bowl
+const SEASON_TOTAL   = REG_TOTAL + PLAYOFF_TOTAL; // 22
+
 async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
@@ -62,27 +67,44 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   const safeModeVal = await getPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE);
   const safeModeActive = safeModeVal > 0;
 
-  // Weeks imported per stat type
-  const weekRows = await db
+  // Regular season weeks (weekNum 1–18) per stat type
+  const regRows = await db
     .select({
-      statType: playerStatWeekProcessedTable.statType,
+      statType:  playerStatWeekProcessedTable.statType,
       weekCount: count(playerStatWeekProcessedTable.id),
     })
     .from(playerStatWeekProcessedTable)
-    .where(eq(playerStatWeekProcessedTable.seasonId, season.id))
+    .where(and(
+      eq(playerStatWeekProcessedTable.seasonId, season.id),
+      lte(playerStatWeekProcessedTable.weekNum, REG_TOTAL),
+    ))
     .groupBy(playerStatWeekProcessedTable.statType);
 
-  const weekMap: Record<string, number> = {};
-  for (const r of weekRows) weekMap[r.statType] = Number(r.weekCount);
+  // Playoff weeks (weekNum 19+) per stat type
+  const postRows = await db
+    .select({
+      statType:  playerStatWeekProcessedTable.statType,
+      weekCount: count(playerStatWeekProcessedTable.id),
+    })
+    .from(playerStatWeekProcessedTable)
+    .where(and(
+      eq(playerStatWeekProcessedTable.seasonId, season.id),
+      gte(playerStatWeekProcessedTable.weekNum, REG_TOTAL + 1),
+    ))
+    .groupBy(playerStatWeekProcessedTable.statType);
 
-  // Player rows in DB for this season
+  const regMap:  Record<string, number> = {};
+  const postMap: Record<string, number> = {};
+  for (const r of regRows)  regMap[r.statType]  = Number(r.weekCount);
+  for (const r of postRows) postMap[r.statType] = Number(r.weekCount);
+
+  // Player / team row counts
   const [playerCountRow] = await db
     .select({ cnt: count(playerSeasonStatsTable.id) })
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, season.id));
   const playerCount = Number(playerCountRow?.cnt ?? 0);
 
-  // Team stat rows
   const [teamCountRow] = await db
     .select({ cnt: count(teamSeasonStatsTable.id) })
     .from(teamSeasonStatsTable)
@@ -91,15 +113,23 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
 
   const statTypes = ["passing", "rushing", "receiving", "defense"];
 
+  // Per-type summary: "🟢 Passing: 18/18 reg · 4/4 post"
   const lines = statTypes.map(type => {
-    const wks = weekMap[type] ?? 0;
-    const bar = wks >= 17 ? "🟢" : wks >= 10 ? "🟡" : wks >= 1 ? "🟠" : "🔴";
-    return `${bar} **${type.charAt(0).toUpperCase() + type.slice(1)}**: ${wks}/17 weeks`;
+    const reg  = regMap[type]  ?? 0;
+    const post = postMap[type] ?? 0;
+    const total = reg + post;
+    const bar = total >= SEASON_TOTAL ? "🟢"
+              : total >= REG_TOTAL    ? "🟡"
+              : total >= 10           ? "🟠"
+              : total >= 1            ? "🟠"
+              : "🔴";
+    const label = type.charAt(0).toUpperCase() + type.slice(1);
+    return `${bar} **${label}**: ${reg}/${REG_TOTAL} reg · ${post}/${PLAYOFF_TOTAL} post (${total}/${SEASON_TOTAL} total)`;
   });
 
-  const defenseCount = weekMap["defense"] ?? 0;
-  const defenseTip = defenseCount === 0
-    ? "\n\n⚠️ **Defense is 0/17** — this means the defense endpoint was never hit OR the payload used an unrecognized JSON key. Check the API server logs for lines starting with `[mca/week#/defense]` after your next import to see the exact key MCA is sending."
+  const defenseTotal = (regMap["defense"] ?? 0) + (postMap["defense"] ?? 0);
+  const defenseTip = defenseTotal === 0
+    ? "\n\n⚠️ **Defense is 0/22** — the defense endpoint was never hit or used an unrecognized JSON key. Check API server logs for `[mca/week#/defense]` after your next import."
     : "";
 
   const embed = new EmbedBuilder()
@@ -113,7 +143,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
           : "Use `/admin_stat_reimport enable` before reimporting if you need to start from scratch.",
       },
       {
-        name: `Season ${season.seasonNumber} — Weeks Imported`,
+        name: `Season ${season.seasonNumber} — Weeks Imported (18 reg + 4 playoff = 22 total)`,
         value: lines.join("\n") + defenseTip,
       },
       {
@@ -359,17 +389,21 @@ async function handleDisable(interaction: ChatInputCommandInteraction): Promise<
   const season = await getOrCreateActiveSeason();
 
   // Quick stat summary so commissioner can confirm data looks right
-  const weekRows = await db
-    .select({
-      statType: playerStatWeekProcessedTable.statType,
-      weekCount: count(playerStatWeekProcessedTable.id),
-    })
-    .from(playerStatWeekProcessedTable)
-    .where(eq(playerStatWeekProcessedTable.seasonId, season.id))
-    .groupBy(playerStatWeekProcessedTable.statType);
+  const [regWeekRows, postWeekRows] = await Promise.all([
+    db.select({ statType: playerStatWeekProcessedTable.statType, weekCount: count(playerStatWeekProcessedTable.id) })
+      .from(playerStatWeekProcessedTable)
+      .where(and(eq(playerStatWeekProcessedTable.seasonId, season.id), lte(playerStatWeekProcessedTable.weekNum, REG_TOTAL)))
+      .groupBy(playerStatWeekProcessedTable.statType),
+    db.select({ statType: playerStatWeekProcessedTable.statType, weekCount: count(playerStatWeekProcessedTable.id) })
+      .from(playerStatWeekProcessedTable)
+      .where(and(eq(playerStatWeekProcessedTable.seasonId, season.id), gte(playerStatWeekProcessedTable.weekNum, REG_TOTAL + 1)))
+      .groupBy(playerStatWeekProcessedTable.statType),
+  ]);
 
-  const weekMap: Record<string, number> = {};
-  for (const r of weekRows) weekMap[r.statType] = Number(r.weekCount);
+  const regMap:  Record<string, number> = {};
+  const postMap: Record<string, number> = {};
+  for (const r of regWeekRows)  regMap[r.statType]  = Number(r.weekCount);
+  for (const r of postWeekRows) postMap[r.statType] = Number(r.weekCount);
 
   const [{ playerCount }] = await db
     .select({ playerCount: count(playerSeasonStatsTable.id) })
@@ -377,7 +411,11 @@ async function handleDisable(interaction: ChatInputCommandInteraction): Promise<
     .where(eq(playerSeasonStatsTable.seasonId, season.id));
 
   const statTypes = ["passing", "rushing", "receiving", "defense"];
-  const weekLines = statTypes.map(t => `• **${t}**: ${weekMap[t] ?? 0}/17 weeks`).join("\n");
+  const weekLines = statTypes.map(t => {
+    const reg  = regMap[t]  ?? 0;
+    const post = postMap[t] ?? 0;
+    return `• **${t}**: ${reg}/${REG_TOTAL} reg · ${post}/${PLAYOFF_TOTAL} post`;
+  }).join("\n");
 
   const embed = new EmbedBuilder()
     .setTitle("🟢 Safe Mode Disabled — EOS Payouts Re-enabled")

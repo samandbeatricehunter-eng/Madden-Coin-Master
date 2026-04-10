@@ -259,9 +259,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── 9. Build warning list ─────────────────────────────────────────────────────
   const warnings: string[] = [];
   warnings.push("⚠️ **GOTY Award Bonuses** — cannot be auto-detected. Apply manually with `/admin-addcoins`.");
-  if (passingWeeksImported < 17) {
+  if (passingWeeksImported < 18) {
     warnings.push(
-      `⚠️ **QB/RB Stats May Be Incomplete** — only **${passingWeeksImported}/17** weeks of passing stats and **${rushingWeeksImported}/17** weeks of rushing stats have been imported via MCA. QB YPA attempt counts and RB YPC carry counts may reflect less than a full season. Import all 17 weeks through MCA to get accurate totals.`,
+      `⚠️ **QB/RB Stats May Be Incomplete** — only **${passingWeeksImported}/18** regular season weeks of passing stats and **${rushingWeeksImported}/18** weeks of rushing stats have been imported. QB YPA attempt counts and RB YPC carry counts may reflect less than a full season. Import all 18 regular season weeks for accurate totals.`,
     );
   }
   if (!prDataAvailable) {
