@@ -77,7 +77,7 @@ function parsePlayerOption(raw: string | null): TradeItem | null {
   };
 }
 
-async function getMyTeam(discordId: string): Promise<string> {
+export async function getMyTeam(discordId: string): Promise<string> {
   const rows = await db.select({ team: usersTable.team }).from(usersTable)
     .where(eq(usersTable.discordId, discordId)).limit(1);
   return rows[0]?.team ?? "Unknown Team";
@@ -254,17 +254,6 @@ export const data = new SlashCommandBuilder()
     sub.setName("send-offer")
       .setDescription("Send a direct trade offer DM to another user")
       .addUserOption(o => o.setName("to").setDescription("The user you want to trade with").setRequired(true))
-      .addStringOption(o => o.setName("player1").setDescription("Player from your roster to offer").setAutocomplete(true))
-      .addStringOption(o => o.setName("player2").setDescription("2nd player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick1").setDescription("Pick to offer, e.g. '2027 Round 1' or '2026 Round 2 (from Raiders)'"))
-      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)"))
-      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
-      .addIntegerOption(o => o.setName("coins").setDescription("Coins to include in the offer").setMinValue(1))
-      .addStringOption(o => o.setName("looking_for").setDescription("What you want in return"))
-      .addStringOption(o => o.setName("message").setDescription("Optional personal message"))
   );
 
 // ── Autocomplete ──────────────────────────────────────────────────────────────
@@ -593,97 +582,26 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
 }
 
 // ── /tradeblock send-offer ────────────────────────────────────────────────────
+// Step 1: show the "Build Offer" button (the modal is triggered from interactionCreate.ts)
 
 async function handleSendOffer(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: true });
-
   const target = interaction.options.getUser("to", true);
 
   if (target.id === interaction.user.id) {
-    await interaction.editReply({ content: "❌ You can't send a trade offer to yourself." });
+    await interaction.reply({ content: "❌ You can't send a trade offer to yourself.", ephemeral: true });
     return;
   }
 
-  const items: TradeItem[] = [];
-  for (const key of ["player1","player2","player3","player4","player5"] as const) {
-    const p = parsePlayerOption(interaction.options.getString(key));
-    if (p) items.push(p);
-  }
-  for (const key of ["pick1","pick2","pick3"] as const) {
-    const desc = interaction.options.getString(key)?.trim();
-    if (desc) items.push({ type: "pick", description: desc });
-  }
-  const coins = interaction.options.getInteger("coins");
-  if (coins) items.push({ type: "coins", amount: coins });
-
-  if (items.length === 0) {
-    await interaction.editReply({ content: "❌ You must include at least one player, pick, or coin amount in your offer." });
-    return;
-  }
-  if (items.filter(i => i.type !== "coins").length > 7) {
-    await interaction.editReply({ content: "❌ You can include at most 7 players/picks in a single offer. Coins don't count toward this limit." });
-    return;
-  }
-
-  const lookingFor = interaction.options.getString("looking_for");
-  const message    = interaction.options.getString("message");
-  const myTeam     = await getMyTeam(interaction.user.id);
-
-  const offerEmbed = new EmbedBuilder()
-    .setColor(Colors.Gold)
-    .setTitle(`🤝 Trade Offer from ${myTeam}`)
-    .setDescription(
-      `<@${interaction.user.id}> has sent you a trade offer!` +
-      (message ? `\n\n💬 *"${message}"*` : "")
-    )
-    .addFields(
-      { name: "📦 They're Offering", value: items.map(itemLine).join("\n") },
-      { name: "🔎 They Want in Return", value: lookingFor || "*Open to discussion*" },
-    )
-    .setFooter({ text: `Reply to negotiate or reach out to ${interaction.user.username} in the server.` })
-    .setTimestamp();
-
-  const dmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`tb_dm_neg:${interaction.user.id}`)
-      .setLabel("🤝 Negotiate")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`tb_dm_ref:${interaction.user.id}`)
-      .setLabel("❌ Decline")
-      .setStyle(ButtonStyle.Danger),
+      .setCustomId(`so_start:${target.id}`)
+      .setLabel("📝 Build Your Offer")
+      .setStyle(ButtonStyle.Primary),
   );
 
-  try {
-    const targetUser = await interaction.client.users.fetch(target.id);
-    await targetUser.send({ embeds: [offerEmbed], components: [dmRow] });
-  } catch (_) {
-    await interaction.editReply({
-      content: `❌ Could not DM <@${target.id}>. They may have DMs disabled. Try reaching out directly in the server.`,
-    });
-    return;
-  }
-
-  const confirmEmbed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle("✅ Trade Offer Sent")
-    .setDescription(`Your offer was sent to <@${target.id}> via DM. They'll see Negotiate / Decline buttons.`)
-    .addFields({ name: "📦 You Offered", value: items.map(itemLine).join("\n") })
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [confirmEmbed] });
-
-  try {
-    const [season, targetTeam] = await Promise.all([
-      getOrCreateActiveSeason(),
-      getMyTeam(target.id),
-    ]);
-    void logTradeEvent({
-      seasonId:  season.id,
-      eventType: "offer_sent",
-      summary:   `${myTeam} sent a direct trade offer to ${targetTeam}`,
-      teamA:     myTeam,
-      teamB:     targetTeam,
-    });
-  } catch (_) {}
+  await interaction.reply({
+    content: `📤 Sending a trade offer to <@${target.id}>. Click below to fill out what you're offering and what you want in return.`,
+    components: [row],
+    ephemeral: true,
+  });
 }

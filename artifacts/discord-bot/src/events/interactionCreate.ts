@@ -40,7 +40,7 @@ import {
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
 } from "../lib/db-helpers.js";
 import { buildPageResponse } from "../commands/viewtradeblock.js";
-import { formatPickInfo } from "../commands/tradeblock.js";
+import { formatPickInfo, getMyTeam } from "../commands/tradeblock.js";
 import {
   getServerSettings, toggleFeature, buildSettingsEmbed, buildSettingsRows,
   FEATURE_LABELS,
@@ -1359,7 +1359,66 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Trade Block: Deal reached → show details modal ────────────────────────────
+  // ── Send Offer: open modal to build the offer ──────────────────────────────
+  // customId: so_start:TARGET_ID
+  if (action === "so_start") {
+    const targetId = secondPart!;
+    const modal = new ModalBuilder()
+      .setCustomId(`so_modal:${targetId}`)
+      .setTitle("📤 Build Your Trade Offer");
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("send_players")
+          .setLabel("Players You're Offering")
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder("e.g. Davante Adams (WR), Josh Allen (QB)")
+          .setRequired(false)
+          .setMaxLength(500),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("send_picks")
+          .setLabel("Picks You're Offering")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. 2027 Round 1, 2026 Round 2 (from Cowboys)")
+          .setRequired(false)
+          .setMaxLength(200),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("send_coins")
+          .setLabel("Coins You're Offering")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter a number, or leave blank for none")
+          .setRequired(false)
+          .setMaxLength(10),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("want_assets")
+          .setLabel("Players & Picks You Want Back")
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder("e.g. Tyreek Hill (WR), 2026 Round 1")
+          .setRequired(false)
+          .setMaxLength(500),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("want_coins")
+          .setLabel("Coins You Want Back")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter a number, or leave blank for none")
+          .setRequired(false)
+          .setMaxLength(10),
+      ),
+    );
+    await interaction.showModal(modal).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (so_start) error:", err);
+    });
+    return;
+  }
+
   if (action === "tb_deal_yes") {
     const listingId   = parseInt(secondPart ?? "0", 10);
     const listingType = userId ?? "L"; // L = regular listing, I = ISO
@@ -2457,6 +2516,103 @@ async function handleModal(interaction: ModalSubmitInteraction) {
         `You'll get a DM once it's approved or denied.`,
       ].join("\n"),
     });
+    return;
+  }
+
+  // ── Send Offer: modal submitted — build & DM the trade offer ─────────────────
+  // customId: so_modal:TARGET_ID
+  if (action === "so_modal") {
+    const targetId    = parts[1]!;
+    const sendPlayers = interaction.fields.getTextInputValue("send_players").trim();
+    const sendPicks   = interaction.fields.getTextInputValue("send_picks").trim();
+    const sendCoins   = interaction.fields.getTextInputValue("send_coins").trim();
+    const wantAssets  = interaction.fields.getTextInputValue("want_assets").trim();
+    const wantCoins   = interaction.fields.getTextInputValue("want_coins").trim();
+
+    // Require at least something being offered
+    if (!sendPlayers && !sendPicks && !sendCoins) {
+      await interaction.reply({
+        content: "❌ You must include at least one thing in your offer (players, picks, or coins).",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const myTeam = await getMyTeam(interaction.user.id);
+
+    // Build the "Offering" value
+    const offerParts: string[] = [];
+    if (sendPlayers) offerParts.push(`🏈 **Players:** ${sendPlayers}`);
+    if (sendPicks)   offerParts.push(`📋 **Picks:** ${sendPicks}`);
+    if (sendCoins)   offerParts.push(`💰 **Coins:** ${sendCoins}`);
+    const offerValue = offerParts.join("\n");
+
+    // Build the "Requesting" value
+    const wantParts: string[] = [];
+    if (wantAssets)  wantParts.push(wantAssets);
+    if (wantCoins)   wantParts.push(`💰 **Coins:** ${wantCoins}`);
+    const wantValue = wantParts.join("\n") || "*Open to discussion*";
+
+    const dmEmbed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle(`🤝 Trade Offer from ${myTeam}`)
+      .setDescription(`<@${interaction.user.id}> has sent you a trade offer!`)
+      .addFields(
+        { name: "📦 They're Offering", value: offerValue },
+        { name: "🔎 They Want in Return", value: wantValue },
+      )
+      .setFooter({ text: `Reply to negotiate or reach out to ${interaction.user.username} in the server.` })
+      .setTimestamp();
+
+    const dmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`tb_dm_neg:${interaction.user.id}`)
+        .setLabel("🤝 Negotiate")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`tb_dm_ref:${interaction.user.id}`)
+        .setLabel("❌ Decline")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    try {
+      const targetUser = await interaction.client.users.fetch(targetId);
+      await targetUser.send({ embeds: [dmEmbed], components: [dmRow] });
+    } catch (_) {
+      await interaction.editReply({
+        content: `❌ Could not DM <@${targetId}>. They may have DMs disabled. Try reaching out directly in the server.`,
+      });
+      return;
+    }
+
+    const confirmEmbed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Trade Offer Sent")
+      .setDescription(`Your offer was sent to <@${targetId}> via DM. They'll see Negotiate / Decline buttons.`)
+      .addFields(
+        { name: "📦 You Offered", value: offerValue },
+        { name: "🔎 You Want Back", value: wantValue },
+      )
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [confirmEmbed] });
+
+    try {
+      const [soSeason, targetTeam] = await Promise.all([
+        getOrCreateActiveSeason(),
+        getMyTeam(targetId),
+      ]);
+      void logTradeEvent({
+        seasonId:  soSeason.id,
+        eventType: "offer_sent",
+        summary:   `${myTeam} sent a direct trade offer to ${targetTeam}`,
+        teamA:     myTeam,
+        teamB:     targetTeam,
+      });
+    } catch (_) {}
+
     return;
   }
 
