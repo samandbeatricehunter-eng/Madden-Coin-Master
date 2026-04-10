@@ -393,6 +393,7 @@ const EXPORT_ENDPOINTS: Record<string, string> = {
   defense:   "CareerMode_GetWeeklyDefensiveStatsExport",
   teamStats: "CareerMode_GetWeeklyTeamStatsExport",
   schedules: "CareerMode_GetWeeklySchedulesExport",
+  awards:    "CareerMode_GetAwardsExport",
 };
 
 async function fetchExportData(
@@ -443,6 +444,16 @@ export async function fetchWeeklyStats(
   ]);
 
   return { passing, rushing, receiving, defense, teamStats, schedules };
+}
+
+// ── Awards export (season-level, no weekIndex needed) ─────────────────────────
+export async function fetchAwardsData(
+  token:      TokenInfo,
+  eaLeagueId: number,
+): Promise<unknown> {
+  const refreshed = await refreshTokenIfNeeded(token);
+  const session   = await createBlazeSession(refreshed);
+  return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.awards!, { leagueId: eaLeagueId });
 }
 
 // ── DB operations ─────────────────────────────────────────────────────────────

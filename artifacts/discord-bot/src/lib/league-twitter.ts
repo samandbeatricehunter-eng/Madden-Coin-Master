@@ -16,7 +16,7 @@ import {
   teamSeasonStatsTable, playerSeasonStatsTable,
   franchiseScheduleTable, franchiseRostersTable,
 } from "@workspace/db";
-import { eq, desc, and, gte, isNotNull } from "drizzle-orm";
+import { eq, desc, and, gte, isNotNull, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -260,11 +260,14 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
 
   // ── Trade activity events (last 48 hours) ──────────────────────────────────
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  // Exclude offer_sent — those are private negotiations and cause the AI to
+  // fabricate inaccurate "seeking" stories about the wrong team.
   const tradeEvents = await db.select()
     .from(leagueTwitterTradeEventsTable)
     .where(and(
       eq(leagueTwitterTradeEventsTable.seasonId, season.id),
       gte(leagueTwitterTradeEventsTable.createdAt, fortyEightHoursAgo),
+      ne(leagueTwitterTradeEventsTable.eventType, "offer_sent"),
     ))
     .orderBy(desc(leagueTwitterTradeEventsTable.createdAt))
     .limit(10);

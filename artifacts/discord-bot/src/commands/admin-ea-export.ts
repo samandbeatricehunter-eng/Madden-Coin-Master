@@ -8,6 +8,7 @@ import {
 import {
   loadEAConnection,
   fetchWeeklyStats,
+  fetchAwardsData,
   updateStoredToken,
   refreshTokenIfNeeded,
   type WeeklyExportData,
@@ -64,12 +65,18 @@ export const data = new SlashCommandBuilder()
             { name: "Super Bowl (Week 23)",              value: "23" },
           ),
       ),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName("awards")
+      .setDescription("Pull end-of-season award winners directly from EA (replaces MCA awards push)"),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand(true);
   if (sub === "week")     return handleWeek(interaction);
   if (sub === "playoffs") return handlePlayoffs(interaction);
+  if (sub === "awards")   return handleAwards(interaction);
 }
 
 // ── Build API base URL ────────────────────────────────────────────────────────
@@ -225,4 +232,62 @@ async function handlePlayoffs(interaction: ChatInputCommandInteraction): Promise
   const weekNum  = parseInt(roundStr, 10);
   // Playoffs are weeks 19–23 within the regular season stage (stageIndex=1)
   return exportWeek(interaction, weekNum, "reg", false);
+}
+
+// ── /admin_ea_export awards ───────────────────────────────────────────────────
+async function handleAwards(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const conn = await loadEAConnection();
+  if (!conn) {
+    await interaction.editReply({
+      content: "❌ **No EA connection.** Run `/admin_ea_connect start` first to link your franchise.",
+    });
+    return;
+  }
+
+  const { token, eaLeagueId } = conn;
+
+  await interaction.editReply({ content: "⏳ Fetching **end-of-season awards** from EA..." });
+
+  let awardsData: unknown;
+  try {
+    awardsData = await fetchAwardsData(token, eaLeagueId);
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) {
+      await updateStoredToken(eaLeagueId, refreshed);
+    }
+  } catch (err: any) {
+    console.error("[ea-export/awards] Fetch error:", err);
+    await interaction.editReply({
+      content:
+        `❌ Failed to fetch awards from EA: ${err?.message ?? String(err)}\n\n` +
+        "If you see an auth error, run `/admin_ea_connect code` to refresh the connection.\n" +
+        "If you see a 404 or endpoint error, the awards may not yet be available in EA — try again after the regular season ends.",
+    });
+    return;
+  }
+
+  // POST to the API server's existing awards endpoint so it saves to mca/awards.json
+  await interaction.editReply({ content: "⏳ Saving awards data..." });
+
+  const apiBase  = getApiBase();
+  const key      = getWebhookKey();
+  const platform = token.platform;
+  const url      = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/awards`;
+
+  const res = await postToApiServer(url, awardsData);
+
+  const embed = new EmbedBuilder()
+    .setColor(res.ok ? Colors.Green : Colors.Red)
+    .setTitle("🏆 EA Awards Export")
+    .setDescription(
+      res.ok
+        ? "✅ Awards data successfully pulled from EA and saved.\n\nYou can now run `/admin-rebuild-historical` to post awards to the historical channel."
+        : `❌ Awards were fetched from EA but failed to save (HTTP ${res.status}).\n\nCheck API server logs for details.`,
+    )
+    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()}` })
+    .setTimestamp();
+
+  await interaction.editReply({ content: "", embeds: [embed] });
 }
