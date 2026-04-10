@@ -375,39 +375,74 @@ Rules:
 
 // ── Post a tweet to the channel ────────────────────────────────────────────────
 
+/** Post a single tweet from the given reporter and persist it to the DB. */
+async function postOneTweet(
+  tc:       TextChannel,
+  reporter: Reporter,
+  context:  string,
+  seasonId: number,
+): Promise<void> {
+  const tweetText = await generateTweet(reporter, context);
+  if (!tweetText) return;
+
+  const header = `**${reporter.name}** ${reporter.handle} · *${reporter.outlet}*`;
+  const msg = await tc.send(`${header}\n\n${tweetText}`);
+
+  await db.insert(leagueTwitterTable).values({
+    seasonId,
+    messageId:      msg.id,
+    reporterName:   reporter.name,
+    reporterHandle: reporter.handle,
+    content:        tweetText,
+  });
+
+  console.log(`[league-twitter] Posted tweet by ${reporter.name}`);
+}
+
+/**
+ * Posts 1–3 tweets at each interval.
+ * The count is randomly selected; reporters are always different within a burst
+ * and won't repeat the last reporter from the previous interval.
+ */
 export async function postLeagueTweet(client: Client): Promise<void> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season  = await getOrCreateActiveSeason();
     const context = await buildLeagueContext(season);
-
-    // Avoid repeating the same reporter twice in a row
-    const [lastTweet] = await db.select({ reporterName: leagueTwitterTable.reporterName })
-      .from(leagueTwitterTable)
-      .where(eq(leagueTwitterTable.seasonId, season.id))
-      .orderBy(desc(leagueTwitterTable.postedAt))
-      .limit(1);
-
-    const reporter = pickReporter(lastTweet?.reporterName);
-    const tweetText = await generateTweet(reporter, context);
-    if (!tweetText) return;
 
     const ch = client.channels.cache.get(LEAGUE_TWITTER_CHANNEL_ID)
       ?? await client.channels.fetch(LEAGUE_TWITTER_CHANNEL_ID).catch(() => null);
     if (!ch?.isTextBased()) return;
     const tc = ch as TextChannel;
 
-    const header = `**${reporter.name}** ${reporter.handle} · *${reporter.outlet}*`;
-    const msg = await tc.send(`${header}\n\n${tweetText}`);
+    // How many tweets this burst (1, 2, or 3 — weighted toward 1-2)
+    const roll = Math.random();
+    const count = roll < 0.45 ? 1 : roll < 0.80 ? 2 : 3;
 
-    await db.insert(leagueTwitterTable).values({
-      seasonId:     season.id,
-      messageId:    msg.id,
-      reporterName: reporter.name,
-      reporterHandle: reporter.handle,
-      content:      tweetText,
-    });
+    // Seed: avoid repeating the reporter from the previous interval's last tweet
+    const [lastTweet] = await db.select({ reporterName: leagueTwitterTable.reporterName })
+      .from(leagueTwitterTable)
+      .where(eq(leagueTwitterTable.seasonId, season.id))
+      .orderBy(desc(leagueTwitterTable.postedAt))
+      .limit(1);
 
-    console.log(`[league-twitter] Posted tweet by ${reporter.name}`);
+    const usedReporters = new Set<string>(lastTweet ? [lastTweet.reporterName] : []);
+
+    for (let i = 0; i < count; i++) {
+      // Pick a reporter not already used this burst (or last interval's last tweet)
+      const available = REPORTERS.filter(r => !usedReporters.has(r.name));
+      const reporter  = available.length > 0
+        ? available[Math.floor(Math.random() * available.length)]!
+        : REPORTERS[Math.floor(Math.random() * REPORTERS.length)]!;
+
+      usedReporters.add(reporter.name);
+
+      await postOneTweet(tc, reporter, context, season.id);
+
+      // Short pause between tweets so they don't all land at the exact same second
+      if (i < count - 1) {
+        await new Promise(resolve => setTimeout(resolve, 4_000 + Math.random() * 6_000));
+      }
+    }
   } catch (err) {
     console.error("[league-twitter] Error posting tweet:", err);
   }
