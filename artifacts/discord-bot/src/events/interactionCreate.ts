@@ -1625,13 +1625,15 @@ async function handleButton(interaction: ButtonInteraction) {
     const breakdown = (payout.statBreakdown ?? []) as BreakdownItem[];
     const breakdownLines = breakdown.length > 0
       ? breakdown.map(b => `• **${b.label}**: Tier ${b.tier} (+${b.coins.toLocaleString()} coins)`).join("\n")
-      : "*No stat breakdown recorded.*";
+      : "*No qualifying stat tiers recorded.*";
+    const teamLabel = payout.teamName ? ` (${payout.teamName})` : "";
 
+    // ── Update commissioner embed to "Approved" ────────────────────────────────
     const eosApprovedEmbed = new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ EOS Payout Approved")
       .setDescription(
-        `**Team:** <@${discordId}>${payout.teamName ? ` (${payout.teamName})` : ""}\n` +
+        `**Team:** <@${discordId}>${teamLabel}\n` +
         `**Season:** ${payout.seasonId}\n\n` +
         `**Stat Breakdown:**\n${breakdownLines}\n\n` +
         `**Total Awarded:** ${payout.totalCoins.toLocaleString()} coins\n\n` +
@@ -1646,9 +1648,41 @@ async function handleButton(interaction: ButtonInteraction) {
       )],
     });
 
+    // ── Post to public payouts channel ─────────────────────────────────────────
+    const PAYOUTS_CHANNEL_ID = process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
+    try {
+      const payoutsCh = await interaction.client.channels.fetch(PAYOUTS_CHANNEL_ID);
+      if (payoutsCh?.isTextBased()) {
+        const publicEmbed = new EmbedBuilder()
+          .setColor(Colors.Gold)
+          .setTitle("🏆 End-of-Season Payout")
+          .setDescription(
+            `<@${discordId}>${teamLabel}\n\n` +
+            `${breakdownLines}\n\n` +
+            `**Total Earned: +${payout.totalCoins.toLocaleString()} 🪙**`,
+          )
+          .setFooter({ text: `Season ${payout.seasonId} • EOS Payout` })
+          .setTimestamp();
+        await (payoutsCh as TextChannel).send({ embeds: [publicEmbed] });
+      }
+    } catch (err) {
+      console.error("[eos_approve] Failed to post to payouts channel:", err);
+    }
+
+    // ── DM the recipient with their full breakdown ──────────────────────────────
     try {
       const u = await interaction.client.users.fetch(discordId);
-      await u.send(`🏆 **End-of-Season Payout Approved!**\n**+${payout.totalCoins.toLocaleString()} coins** have been added to your balance!`).catch(() => {});
+      const dmEmbed = new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle("🏆 End-of-Season Payout — Approved!")
+        .setDescription(
+          `Your Season ${payout.seasonId} payout has been approved!\n\n` +
+          `**Stat Breakdown:**\n${breakdownLines}\n\n` +
+          `**Total Added to Balance: +${payout.totalCoins.toLocaleString()} 🪙**`,
+        )
+        .setFooter({ text: "Coins have been added to your balance" })
+        .setTimestamp();
+      await u.send({ embeds: [dmEmbed] }).catch(() => {});
     } catch (_) {}
     return;
   }
