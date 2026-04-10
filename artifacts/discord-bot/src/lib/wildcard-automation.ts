@@ -850,11 +850,11 @@ async function createCommunityPolls(
     loudestOptions = [...teamMap.values()].sort().slice(0, 10);
   }
 
-  // ── Most heart: top 8 teams + bottom 8 teams from standings (deduped, max 10/poll) ──
-  const top8   = withRecords.slice(0, 8).map(r => r.team);
-  const bottom8 = withRecords.slice(-8).map(r => r.team).reverse(); // worst first
+  // ── Most heart: top 5 teams + bottom 5 teams from standings (deduped, max 10/poll) ──
+  const top5    = withRecords.slice(0, 5).map(r => r.team);
+  const bottom5 = withRecords.slice(-5).map(r => r.team).reverse(); // worst first
   // Merge, dedup, keep at most 10 (Discord hard limit per poll)
-  const heartSet = new Set([...top8, ...bottom8]);
+  const heartSet = new Set([...top5, ...bottom5]);
   const heartOptions = [...heartSet].slice(0, 10);
 
   // ── Bottom 5 for best/worst of the worst polls ─────────────────────────────────

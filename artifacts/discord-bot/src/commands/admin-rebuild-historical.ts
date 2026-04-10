@@ -7,7 +7,7 @@
  *  - In-game award winners (display only — no coin bonuses re-issued)
  *  - Stat leaders (top 3 per category)
  *  - Playoff picture / division winners (with W-L and point differentials)
- *  - Community polls (loudest mouth top-5 by message count; most heart top-8+bottom-8)
+ *  - Community polls (loudest mouth top-5 by message count; most heart top-5+bottom-5)
  *
  * PR bonuses and GOTY poll are NOT re-run (they were already issued).
  */
