@@ -582,10 +582,131 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
   await postAnnouncement(interaction.client, teamName, offeringItems, notes ?? null, true, seekingSummary);
 }
 
+// ── /tradeblock send-offer — shared state & page builder ─────────────────────
+
+export interface SoPlayerRow {
+  playerId:  string;
+  firstName: string;
+  lastName:  string;
+  position:  string;
+  overall:   number;
+}
+
+export interface SoState {
+  targetId: string;
+  players:  SoPlayerRow[];
+  selected: Set<string>;   // Set of playerId strings
+  page:     number;
+}
+
+/** In-memory session store. Key: `${senderDiscordId}:${targetDiscordId}` */
+export const sendOfferState = new Map<string, SoState>();
+
+// Max players shown on one page. 15 = 3 action rows × 5 buttons, leaving 2 rows for nav + done.
+const SO_PAGE_SIZE = 15;
+// If roster fits on a single page with no nav bar needed, we can use up to 20 (4 rows).
+const SO_SINGLE_PAGE_MAX = 20;
+
+/**
+ * Builds the ephemeral reply for the current page of the roster toggle UI.
+ * Returns `content` and `components` ready for `interaction.editReply()` or `interaction.update()`.
+ */
+export function buildSendOfferPage(
+  state: SoState,
+): { content: string; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const { players, selected, page, targetId } = state;
+
+  const needsPages  = players.length > SO_SINGLE_PAGE_MAX;
+  const pageSize    = needsPages ? SO_PAGE_SIZE : players.length;
+  const totalPages  = needsPages ? Math.ceil(players.length / SO_PAGE_SIZE) : 1;
+  const pageStart   = page * pageSize;
+  const pagePlayers = players.slice(pageStart, pageStart + pageSize);
+
+  const components: ActionRowBuilder<ButtonBuilder>[] = [];
+
+  // ── Player toggle buttons (5 per row) ───────────────────────────────────────
+  let currentRow = new ActionRowBuilder<ButtonBuilder>();
+  for (let i = 0; i < pagePlayers.length; i++) {
+    const p         = pagePlayers[i];
+    const isSel     = selected.has(p.playerId);
+    const initial   = p.firstName.charAt(0).toUpperCase();
+    // Keep label short: "☐ J. Jefferson (WR) 98"  — safely within 80-char limit
+    const nameStr   = `${initial}. ${p.lastName}`.slice(0, 22);
+    const label     = `${isSel ? "✅" : "☐"} ${nameStr} (${p.position}) ${p.overall}`.slice(0, 80);
+
+    currentRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`so_tog:${targetId}:${p.playerId}`)
+        .setLabel(label)
+        .setStyle(isSel ? ButtonStyle.Success : ButtonStyle.Secondary),
+    );
+
+    if ((i + 1) % 5 === 0 || i === pagePlayers.length - 1) {
+      components.push(currentRow);
+      currentRow = new ActionRowBuilder<ButtonBuilder>();
+    }
+  }
+
+  // ── Navigation row (only when paginating) ───────────────────────────────────
+  if (needsPages) {
+    components.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`so_pg:${targetId}:prev`)
+          .setLabel("◀ Prev")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page === 0),
+        new ButtonBuilder()
+          .setCustomId(`so_pg:${targetId}:info`)
+          .setLabel(`Page ${page + 1} / ${totalPages}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true),
+        new ButtonBuilder()
+          .setCustomId(`so_pg:${targetId}:next`)
+          .setLabel("Next ▶")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page >= totalPages - 1),
+      ),
+    );
+  }
+
+  // ── Continue / done row ──────────────────────────────────────────────────────
+  const doneLabel = selected.size > 0
+    ? `📤 Continue with ${selected.size} player${selected.size !== 1 ? "s" : ""} →`
+    : "📝 Continue — No Players →";
+
+  components.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`so_done:${targetId}`)
+        .setLabel(doneLabel)
+        .setStyle(selected.size > 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    ),
+  );
+
+  // ── Content summary ──────────────────────────────────────────────────────────
+  const selNames = [...selected].map(id => {
+    const p = players.find(x => x.playerId === id);
+    return p ? `${p.firstName} ${p.lastName} (${p.position})` : id;
+  });
+
+  const lines = [
+    `📤 **Building a trade offer for <@${targetId}>**`,
+    ``,
+    `**Step 1 — Select Players You're Offering**`,
+    `Toggle players on/off below (up to 7). Hit **Continue** when ready — you'll enter picks, coins & requests next.`,
+  ];
+  if (selected.size > 0) {
+    lines.push(``, `✅ **Selected (${selected.size}/7):** ${selNames.join(", ")}`);
+  }
+
+  return { content: lines.join("\n"), components };
+}
+
 // ── /tradeblock send-offer ────────────────────────────────────────────────────
-// Step 1: show roster dropdown for player selection + "No Players / Skip" button.
-// Selecting players → showModal() immediately (handled in interactionCreate so_player_sel).
-// Skipping → showModal() via so_continue button.
+// Step 1: show paginated roster toggle UI.
+// Each player is a button; clicking toggles selection.
+// "Continue →" button opens the offer detail modal.
 
 async function handleSendOffer(interaction: ChatInputCommandInteraction) {
   const target = interaction.options.getUser("to", true);
@@ -610,41 +731,40 @@ async function handleSendOffer(interaction: ChatInputCommandInteraction) {
       eq(franchiseRostersTable.seasonId, season.id),
       eq(franchiseRostersTable.discordId, interaction.user.id),
     ))
-    .orderBy(desc(franchiseRostersTable.overall))
-    .limit(25);
+    .orderBy(desc(franchiseRostersTable.overall));
 
-  const skipRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`so_continue:${target.id}`)
-      .setLabel("📝 No Players — Continue to Offer Details →")
-      .setStyle(ButtonStyle.Secondary),
-  );
-
+  // Empty roster — skip straight to the offer detail modal
   if (rosterRows.length === 0) {
     await interaction.editReply({
-      content: `📤 Building a trade offer for <@${target.id}>. Your roster is empty, so click below to fill in picks, coins, and what you want back.`,
-      components: [skipRow],
+      content: `📤 Building a trade offer for <@${target.id}>. Your roster is empty — click below to fill in picks, coins, and what you want back.`,
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`so_continue:${target.id}`)
+            .setLabel("📝 No Players — Continue to Offer Details →")
+            .setStyle(ButtonStyle.Secondary),
+        ),
+      ],
     });
     return;
   }
 
-  const menuOptions = rosterRows.map(p =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(`${p.firstName} ${p.lastName} (${p.position}) OVR ${p.overall}`.slice(0, 100))
-      .setValue(`${p.playerId}|${p.firstName} ${p.lastName}|${p.position}|${p.overall}`.slice(0, 100)),
-  );
+  // Convert to SoPlayerRow (playerId from DB is a number — store as string for Set membership)
+  const players: SoPlayerRow[] = rosterRows.map(r => ({
+    playerId:  String(r.playerId),
+    firstName: r.firstName ?? "",
+    lastName:  r.lastName  ?? "",
+    position:  r.position  ?? "?",
+    overall:   r.overall   ?? 0,
+  }));
 
-  const playerMenu = new StringSelectMenuBuilder()
-    .setCustomId(`so_player_sel:${target.id}`)
-    .setPlaceholder("Select players you're offering (up to 7, optional)")
-    .setMinValues(0)
-    .setMaxValues(Math.min(7, menuOptions.length))
-    .addOptions(menuOptions);
+  const key: string = `${interaction.user.id}:${target.id}`;
+  const state: SoState = { targetId: target.id, players, selected: new Set(), page: 0 };
+  sendOfferState.set(key, state);
 
-  const menuRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(playerMenu);
+  // Auto-expire after 20 minutes
+  setTimeout(() => { if (sendOfferState.get(key) === state) sendOfferState.delete(key); }, 20 * 60 * 1000);
 
-  await interaction.editReply({
-    content: `📤 Building a trade offer for <@${target.id}>.\n\n**Step 1 — Players Offering:** Select up to 7 players from your roster below (or skip if offering picks/coins only). Selecting will open the rest of the offer form.\n\n**Step 2 — Picks, Coins & What You Want:** Filled in the form that opens.`,
-    components: [menuRow, skipRow],
-  });
+  const { content, components } = buildSendOfferPage(state);
+  await interaction.editReply({ content, components });
 }

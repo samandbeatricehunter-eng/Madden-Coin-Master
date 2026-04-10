@@ -40,7 +40,7 @@ import {
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
 } from "../lib/db-helpers.js";
 import { buildPageResponse } from "../commands/viewtradeblock.js";
-import { formatPickInfo, getMyTeam } from "../commands/tradeblock.js";
+import { formatPickInfo, getMyTeam, sendOfferState, buildSendOfferPage } from "../commands/tradeblock.js";
 import {
   getServerSettings, toggleFeature, buildSettingsEmbed, buildSettingsRows,
   FEATURE_LABELS,
@@ -119,8 +119,9 @@ export async function execute(interaction: Interaction) {
   if (interaction.isModalSubmit())      { await handleModal(interaction); }
 }
 
-// ── Send-offer modal builder (shared by so_continue button & so_player_sel select) ──
+// ── Send-offer modal builder ───────────────────────────────────────────────────
 // 4 fields: picks offering | coins offering | players+picks wanting | coins wanting
+// Opened by so_done (player toggles), so_continue (empty roster fallback)
 function buildSendOfferModal(targetId: string): import("discord.js").ModalBuilder {
   const modal = new ModalBuilder()
     .setCustomId(`so_modal:${targetId}`)
@@ -1412,13 +1413,85 @@ async function handleButton(interaction: ButtonInteraction) {
   }
 
   // ── Send Offer: skip player dropdown — open offer details modal directly ──────
-  // customId: so_continue:TARGET_ID
+  // customId: so_continue:TARGET_ID  (empty-roster fallback — no players in DB)
   if (action === "so_continue") {
     const targetId = secondPart!;
-    // Clear any stale player selection for this sender:target pair
     pendingOfferPlayers.delete(`${interaction.user.id}:${targetId}`);
     await interaction.showModal(buildSendOfferModal(targetId)).catch((err: Error) => {
       if ((err as any).code !== 40060) console.error("showModal (so_continue) error:", err);
+    });
+    return;
+  }
+
+  // customId: so_tog:TARGET_ID:PLAYER_ID  — toggle a player on/off in the offer
+  if (action === "so_tog") {
+    const targetId = secondPart!;
+    const playerId = userId!; // third colon-segment
+    const key      = `${interaction.user.id}:${targetId}`;
+    const state    = sendOfferState.get(key);
+    if (!state) {
+      await interaction.update({ content: "❌ Session expired — please run `/tradeblock send-offer` again.", components: [] });
+      return;
+    }
+    if (state.selected.has(playerId)) {
+      state.selected.delete(playerId);
+    } else {
+      if (state.selected.size >= 7) {
+        await interaction.reply({ content: "❌ You can only include up to **7 players** in one offer.", ephemeral: true });
+        return;
+      }
+      state.selected.add(playerId);
+    }
+    const { content, components } = buildSendOfferPage(state);
+    await interaction.update({ content, components });
+    return;
+  }
+
+  // customId: so_pg:TARGET_ID:prev|next|info  — page navigation
+  if (action === "so_pg") {
+    const targetId = secondPart!;
+    const dir      = userId!; // "prev", "next", or "info" (disabled label btn)
+    if (dir === "info") { await interaction.deferUpdate(); return; }
+    const key   = `${interaction.user.id}:${targetId}`;
+    const state = sendOfferState.get(key);
+    if (!state) {
+      await interaction.update({ content: "❌ Session expired — please run `/tradeblock send-offer` again.", components: [] });
+      return;
+    }
+    const totalPages = Math.ceil(state.players.length / 15);
+    if (dir === "next") state.page = Math.min(state.page + 1, totalPages - 1);
+    if (dir === "prev") state.page = Math.max(state.page - 1, 0);
+    const { content, components } = buildSendOfferPage(state);
+    await interaction.update({ content, components });
+    return;
+  }
+
+  // customId: so_done:TARGET_ID  — user finished selecting; open the offer detail modal
+  if (action === "so_done") {
+    const targetId = secondPart!;
+    const key      = `${interaction.user.id}:${targetId}`;
+    const state    = sendOfferState.get(key);
+
+    // Translate selected playerIds back to the pipe-delimited format so_modal expects
+    const selectedValues: string[] = state
+      ? [...state.selected].map(pid => {
+          const p = state.players.find(x => x.playerId === pid);
+          return p ? `${p.playerId}|${p.firstName} ${p.lastName}|${p.position}|${p.overall}` : null;
+        }).filter((v): v is string => v !== null)
+      : [];
+
+    if (selectedValues.length > 0) {
+      pendingOfferPlayers.set(key, selectedValues);
+      setTimeout(() => pendingOfferPlayers.delete(key), 15 * 60 * 1000);
+    } else {
+      pendingOfferPlayers.delete(key);
+    }
+
+    // Clean up roster page state — no longer needed after modal opens
+    sendOfferState.delete(key);
+
+    await interaction.showModal(buildSendOfferModal(targetId)).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (so_done) error:", err);
     });
     return;
   }
@@ -2367,22 +2440,6 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
-  // ── Send Offer: player dropdown selection → store + open offer details modal ──
-  // customId: so_player_sel:TARGET_ID
-  if (action === "so_player_sel") {
-    const targetId = sessionId; // sessionId = parts[1]
-    const key      = `${interaction.user.id}:${targetId}`;
-
-    // Store the selected player values (cleared in so_modal after use)
-    pendingOfferPlayers.set(key, interaction.values);
-    // Auto-clean after 15 minutes in case the user never submits
-    setTimeout(() => pendingOfferPlayers.delete(key), 15 * 60 * 1000);
-
-    await interaction.showModal(buildSendOfferModal(targetId)).catch((err: Error) => {
-      if ((err as any).code !== 40060) console.error("showModal (so_player_sel) error:", err);
-    });
-    return;
-  }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
