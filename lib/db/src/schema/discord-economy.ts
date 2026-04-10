@@ -520,13 +520,14 @@ export const playoffGotwPollsTable = pgTable("playoff_gotw_polls", {
 // ── Draft presence tracker ────────────────────────────────────────────────────
 // One active session at a time per guild; presence rows track each user's status.
 export const draftSessionsTable = pgTable("draft_sessions", {
-  id:             serial("id").primaryKey(),
-  guildId:        text("guild_id").notNull(),
-  channelId:      text("channel_id").notNull(),
-  messageId:      text("message_id"),         // embed/status message — edited in-place
-  panelMessageId: text("panel_message_id"),   // user-toggle buttons message — re-posted to bottom
-  isActive:       boolean("is_active").notNull().default(true),
-  createdAt:      timestamp("created_at").notNull().defaultNow(),
+  id:              serial("id").primaryKey(),
+  guildId:         text("guild_id").notNull(),
+  channelId:       text("channel_id").notNull(),
+  messageId:       text("message_id"),          // embed/status message — edited in-place
+  panelMessageId:  text("panel_message_id"),    // kept for compat; prefer panelMessageIds
+  panelMessageIds: text("panel_message_ids"),   // JSON array of button-panel message IDs (multi-message support)
+  isActive:        boolean("is_active").notNull().default(true),
+  createdAt:       timestamp("created_at").notNull().defaultNow(),
 });
 
 export const draftPresenceTable = pgTable("draft_presence", {

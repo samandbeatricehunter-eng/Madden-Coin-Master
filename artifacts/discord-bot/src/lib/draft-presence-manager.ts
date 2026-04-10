@@ -2,19 +2,23 @@
  * Draft Presence Manager
  *
  * Two-message layout in the draft room channel:
- *   1. Embed message  (messageId)      — status display, edited in-place
- *   2. Buttons panel  (panelMessageId) — per-user toggle buttons + close, re-posted to bottom on every toggle
+ *   1. Embed message  (messageId)       — status display, edited in-place
+ *   2. Button panels  (panelMessageIds) — per-user toggle buttons + close,
+ *      re-posted to bottom on every toggle. Multiple messages if > 20 human teams.
  *
  * Per-user buttons:   customId = "draft_toggle:DISCORD_ID"
  * Close draft button: customId = "draft_presence_close"
+ *
+ * CPU / unregistered teams use a synthetic discordId "cpu:TEAMNAME" so they
+ * appear in the embed without receiving toggle buttons.
  *
  * Permissions:
  *   - Each user may only click their OWN button (checked in interactionCreate handler)
  *   - Admins may click any button
  *
  * Limits: Discord allows max 5 action rows × 5 buttons = 25 buttons per message.
- * We reserve row 5 for the Close button, so rows 1-4 hold up to 20 user buttons.
- * Leagues with >20 members: first 20 shown as buttons; remainder listed in embed only.
+ * We reserve one row for the Close button, so each panel message holds ≤20 user buttons.
+ * When there are more than 20 human teams, additional panel messages are posted.
  */
 
 import {
@@ -23,14 +27,25 @@ import {
   TextChannel, ChannelType,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { draftSessionsTable, draftPresenceTable, usersTable } from "@workspace/db";
+import {
+  draftSessionsTable, draftPresenceTable, usersTable,
+  franchiseMcaTeamsTable,
+} from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 export const DRAFT_TOGGLE_PREFIX   = "draft_toggle";   // full id: draft_toggle:DISCORD_ID
 export const DRAFT_CLOSE_BUTTON_ID = "draft_presence_close";
 
-const DRAFT_CATEGORY_ID = "1476321184311414978";
-const MAX_USER_BUTTONS  = 20; // rows 1-4 × 5 = 20; row 5 reserved for close
+const DRAFT_CATEGORY_ID  = "1476321184311414978";
+const MAX_BUTTONS_PER_PANEL = 20; // rows 1-4 × 5 = 20; row 5 reserved for close
+const MAX_TEAMS_PER_FIELD   = 15; // embed field value stays safely under 1024 chars
+
+/** Synthetic discordId prefix used for CPU / unregistered teams */
+const CPU_PREFIX = "cpu:";
+export function isCpuEntry(discordId: string): boolean {
+  return discordId.startsWith(CPU_PREFIX);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Session management
@@ -49,7 +64,6 @@ export async function startDraftSession(
   guildId: string,
   guild:   NonNullable<ReturnType<Client["guilds"]["cache"]["get"]>>,
 ): Promise<{ sessionId: number; channel: TextChannel }> {
-  // Close any stale sessions
   await db.update(draftSessionsTable)
     .set({ isActive: false })
     .where(and(eq(draftSessionsTable.guildId, guildId), eq(draftSessionsTable.isActive, true)));
@@ -69,7 +83,16 @@ export async function startDraftSession(
   return { sessionId: session!.id, channel };
 }
 
+/**
+ * Populate the session's presence rows.
+ *
+ * Human teams come from usersTable (real Discord IDs).
+ * All 32 Madden teams come from franchiseMcaTeamsTable; those not already
+ * covered by a registered user get a synthetic "cpu:TEAMNAME" discordId so
+ * they appear in the embed without a toggle button.
+ */
 export async function populatePresence(sessionId: number): Promise<void> {
+  // 1. Registered Discord users
   const leagueUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
     .from(usersTable);
 
@@ -78,9 +101,29 @@ export async function populatePresence(sessionId: number): Promise<void> {
       .values({ sessionId, discordId: u.discordId, teamName: u.team ?? null, isPresent: true })
       .onConflictDoNothing();
   }
+
+  // 2. All MCA teams (32 teams in the franchise)
+  const season   = await getOrCreateActiveSeason().catch(() => null);
+  if (!season) return;
+
+  const mcaTeams = await db.select()
+    .from(franchiseMcaTeamsTable)
+    .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+
+  const registeredDiscordIds = new Set(leagueUsers.map(u => u.discordId));
+
+  for (const t of mcaTeams) {
+    // Skip if a registered Discord user already covers this team
+    if (t.discordId && registeredDiscordIds.has(t.discordId)) continue;
+
+    const syntheticId = `${CPU_PREFIX}${t.nickName}`;
+    await db.insert(draftPresenceTable)
+      .values({ sessionId, discordId: syntheticId, teamName: t.fullName, isPresent: true })
+      .onConflictDoNothing();
+  }
 }
 
-/** Toggle a user's presence.  Returns new status, or null if they're not a league member. */
+/** Toggle a user's presence.  Returns new status, or null if they're not found. */
 export async function togglePresence(sessionId: number, discordId: string): Promise<boolean | null> {
   const [row] = await db.select()
     .from(draftPresenceTable)
@@ -101,11 +144,19 @@ export async function togglePresence(sessionId: number, discordId: string): Prom
 // Embed builder
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Chunk an array into groups of max size n */
+function chunkArray<T>(arr: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
 export async function buildPresenceEmbed(sessionId: number, isActive: boolean): Promise<EmbedBuilder> {
   const rows = await db.select()
     .from(draftPresenceTable)
     .where(eq(draftPresenceTable.sessionId, sessionId));
 
+  // Sort: present first, then alpha by team name
   rows.sort((a, b) => {
     if (a.isPresent !== b.isPresent) return a.isPresent ? -1 : 1;
     return (a.teamName ?? "").localeCompare(b.teamName ?? "");
@@ -122,29 +173,44 @@ export async function buildPresenceEmbed(sessionId: number, isActive: boolean): 
 
   if (isActive) {
     embed.setDescription(
-      `**${present.length} of ${total} managers are present**\n` +
+      `**${present.length} of ${total} teams are present**\n` +
       `Use the buttons below to toggle your status.\n\u200b`,
     );
   } else {
-    embed.setDescription(`**Final: ${present.length} of ${total} managers were present**\n\u200b`);
+    embed.setDescription(`**Final: ${present.length} of ${total} teams were present**\n\u200b`);
   }
 
-  embed.addFields({
-    name:  `✅ Present (${present.length})`,
-    value: present.map(r => `✅  **${r.teamName ?? "Unknown"}** — <@${r.discordId}>`).join("\n") || "*None yet*",
-  });
-
-  if (away.length > 0) {
-    embed.addFields({
-      name:  `🔴 Away (${away.length})`,
-      value: away.map(r => `🔴  **${r.teamName ?? "Unknown"}** — <@${r.discordId}>`).join("\n"),
+  // ── Present teams — split into fields of MAX_TEAMS_PER_FIELD ────────────────
+  if (present.length === 0) {
+    embed.addFields({ name: `✅ Present (0)`, value: "*None yet*" });
+  } else {
+    const chunks = chunkArray(present, MAX_TEAMS_PER_FIELD);
+    chunks.forEach((chunk, i) => {
+      const label = chunks.length > 1
+        ? `✅ Present (${present.length}) — Part ${i + 1}`
+        : `✅ Present (${present.length})`;
+      const lines = chunk.map(r => {
+        const team = r.teamName ?? "Unknown";
+        if (isCpuEntry(r.discordId)) return `✅  **${team}**`;
+        return `✅  **${team}** — <@${r.discordId}>`;
+      });
+      embed.addFields({ name: label, value: lines.join("\n") });
     });
   }
 
-  if (isActive && total > MAX_USER_BUTTONS) {
-    embed.addFields({
-      name:  "ℹ️ Note",
-      value: `Leagues with more than ${MAX_USER_BUTTONS} members: extra members use \`/draftpresence toggle\` to update their status.`,
+  // ── Away teams — split into fields of MAX_TEAMS_PER_FIELD ───────────────────
+  if (away.length > 0) {
+    const chunks = chunkArray(away, MAX_TEAMS_PER_FIELD);
+    chunks.forEach((chunk, i) => {
+      const label = chunks.length > 1
+        ? `🔴 Away (${away.length}) — Part ${i + 1}`
+        : `🔴 Away (${away.length})`;
+      const lines = chunk.map(r => {
+        const team = r.teamName ?? "Unknown";
+        if (isCpuEntry(r.discordId)) return `🔴  **${team}**`;
+        return `🔴  **${team}** — <@${r.discordId}>`;
+      });
+      embed.addFields({ name: label, value: lines.join("\n") });
     });
   }
 
@@ -160,44 +226,88 @@ export async function buildPresenceEmbed(sessionId: number, isActive: boolean): 
 type PresenceRow = { discordId: string; teamName: string | null; isPresent: boolean };
 
 /**
- * Builds up to 4 rows of per-user toggle buttons (MAX_USER_BUTTONS = 20).
- * Row 5 is always the admin Close Draft button.
+ * Builds component arrays for one or more button panel messages.
+ * Each message holds ≤20 human-team buttons (4 rows) + 1 Close button row.
+ * CPU/synthetic entries are skipped — they have no toggle button.
  */
-export function buildButtonPanel(rows: PresenceRow[]): ActionRowBuilder<ButtonBuilder>[] {
-  const userRows = rows.slice(0, MAX_USER_BUTTONS);
+export function buildButtonPanels(rows: PresenceRow[]): ActionRowBuilder<ButtonBuilder>[][] {
+  const humanRows = rows.filter(r => !isCpuEntry(r.discordId));
+  const panels: ActionRowBuilder<ButtonBuilder>[][] = [];
 
-  // Chunk into rows of 5
-  const buttonRows: ActionRowBuilder<ButtonBuilder>[] = [];
-  for (let i = 0; i < userRows.length; i += 5) {
-    const chunk = userRows.slice(i, i + 5);
-    const row   = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      chunk.map(r =>
+  const chunks = chunkArray(humanRows, MAX_BUTTONS_PER_PANEL);
+  for (const chunk of chunks) {
+    const componentRows: ActionRowBuilder<ButtonBuilder>[] = [];
+
+    // User buttons in rows of 5
+    for (let i = 0; i < chunk.length; i += 5) {
+      const slice = chunk.slice(i, i + 5);
+      componentRows.push(
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          slice.map(r =>
+            new ButtonBuilder()
+              .setCustomId(`${DRAFT_TOGGLE_PREFIX}:${r.discordId}`)
+              .setLabel(truncate(r.teamName ?? "Unknown", 20))
+              .setEmoji(r.isPresent ? "✅" : "🔴")
+              .setStyle(r.isPresent ? ButtonStyle.Success : ButtonStyle.Danger),
+          ),
+        ),
+      );
+    }
+
+    // Close button always occupies row 5 of every panel message
+    componentRows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-          .setCustomId(`${DRAFT_TOGGLE_PREFIX}:${r.discordId}`)
-          .setLabel(truncate(r.teamName ?? "Unknown", 20))
-          .setEmoji(r.isPresent ? "✅" : "🔴")
-          .setStyle(r.isPresent ? ButtonStyle.Success : ButtonStyle.Danger),
+          .setCustomId(DRAFT_CLOSE_BUTTON_ID)
+          .setLabel("Close Draft")
+          .setEmoji("🔒")
+          .setStyle(ButtonStyle.Secondary),
       ),
     );
-    buttonRows.push(row);
+
+    panels.push(componentRows);
   }
 
-  // Always add close button as last row
-  buttonRows.push(
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(DRAFT_CLOSE_BUTTON_ID)
-        .setLabel("Close Draft")
-        .setEmoji("🔒")
-        .setStyle(ButtonStyle.Secondary),
-    ),
-  );
+  // If there are no human teams at all, still show a close-only panel
+  if (panels.length === 0) {
+    panels.push([
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(DRAFT_CLOSE_BUTTON_ID)
+          .setLabel("Close Draft")
+          .setEmoji("🔒")
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ]);
+  }
 
-  return buttonRows;
+  return panels;
 }
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Panel message ID helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parsePanelIds(session: typeof draftSessionsTable.$inferSelect): string[] {
+  if (session.panelMessageIds) {
+    try { return JSON.parse(session.panelMessageIds) as string[]; } catch { /* fall through */ }
+  }
+  // Backward-compat: single panelMessageId column
+  if (session.panelMessageId) return [session.panelMessageId];
+  return [];
+}
+
+async function savePanelIds(sessionId: number, ids: string[]): Promise<void> {
+  await db.update(draftSessionsTable)
+    .set({
+      panelMessageIds: JSON.stringify(ids),
+      panelMessageId:  ids[ids.length - 1] ?? null,  // keep legacy column for compat
+    })
+    .where(eq(draftSessionsTable.id, sessionId));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,9 +322,9 @@ async function getChannel(client: Client, channelId: string): Promise<TextChanne
 
 /** Edit the embed message in-place (does not move it in the feed). */
 async function updateEmbedMessage(
-  client:    Client,
-  session:   typeof draftSessionsTable.$inferSelect,
-  isActive:  boolean,
+  client:   Client,
+  session:  typeof draftSessionsTable.$inferSelect,
+  isActive: boolean,
 ): Promise<void> {
   if (!session.messageId) return;
   const tc = await getChannel(client, session.channelId);
@@ -228,8 +338,8 @@ async function updateEmbedMessage(
 }
 
 /**
- * Delete old button panel → post fresh one at bottom → update DB.
- * This keeps the toggle buttons always at the bottom of the feed.
+ * Delete ALL old panel messages → post fresh set at bottom → update DB.
+ * Keeps toggle buttons always at the bottom of the feed.
  */
 async function repostButtonPanel(
   client:   Client,
@@ -239,9 +349,10 @@ async function repostButtonPanel(
   const tc = await getChannel(client, session.channelId);
   if (!tc) return;
 
-  // Delete old panel
-  if (session.panelMessageId) {
-    await tc.messages.delete(session.panelMessageId).catch(() => {});
+  // Delete all old panel messages
+  const oldIds = parsePanelIds(session);
+  for (const id of oldIds) {
+    await tc.messages.delete(id).catch(() => {});
   }
 
   if (!isActive) return; // no buttons needed after close
@@ -252,16 +363,19 @@ async function repostButtonPanel(
 
   presenceRows.sort((a, b) => (a.teamName ?? "").localeCompare(b.teamName ?? ""));
 
-  const components = buildButtonPanel(presenceRows);
-  const newMsg     = await tc.send({ components });
+  const panels    = buildButtonPanels(presenceRows);
+  const newIds: string[] = [];
 
-  await db.update(draftSessionsTable)
-    .set({ panelMessageId: newMsg.id })
-    .where(eq(draftSessionsTable.id, session.id));
+  for (const components of panels) {
+    const msg = await tc.send({ components });
+    newIds.push(msg.id);
+  }
+
+  await savePanelIds(session.id, newIds);
 }
 
 /**
- * Full refresh: update embed in-place + repost button panel at bottom.
+ * Full refresh: update embed in-place + repost all button panels at bottom.
  * Call this after every toggle.
  */
 export async function refreshPresence(client: Client, sessionId: number): Promise<void> {
@@ -275,16 +389,16 @@ export async function refreshPresence(client: Client, sessionId: number): Promis
   await repostButtonPanel(client, session, session.isActive);
 }
 
-/** Post the initial embed + button panel when the draft starts. */
+/** Post the initial embed + button panels when the draft starts. */
 export async function postInitialMessages(client: Client, sessionId: number, channel: TextChannel): Promise<void> {
-  const embed = await buildPresenceEmbed(sessionId, true);
+  const embed    = await buildPresenceEmbed(sessionId, true);
   const embedMsg = await channel.send({ embeds: [embed] });
 
   await db.update(draftSessionsTable)
     .set({ messageId: embedMsg.id })
     .where(eq(draftSessionsTable.id, sessionId));
 
-  // Post button panel (this re-fetches the session with the updated messageId)
+  // Re-fetch session with updated messageId, then post panels
   const [session] = await db.select()
     .from(draftSessionsTable)
     .where(eq(draftSessionsTable.id, sessionId))
@@ -310,15 +424,15 @@ export async function endDraftSession(client: Client, sessionId: number): Promis
   const tc = await getChannel(client, session.channelId);
 
   if (tc) {
-    // Remove old button panel
-    if (session.panelMessageId) {
-      await tc.messages.delete(session.panelMessageId).catch(() => {});
+    // Remove all panel messages
+    const oldIds = parsePanelIds(session);
+    for (const id of oldIds) {
+      await tc.messages.delete(id).catch(() => {});
     }
 
     // Update embed to final state
     await updateEmbedMessage(client, session, false);
 
-    // Post countdown notice
     await tc.send({
       content: "✅ **The draft has concluded.** This channel will be deleted in 10 seconds.",
     }).catch(() => {});
