@@ -119,15 +119,25 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     .from(teamSeasonStatsTable)
     .where(eq(teamSeasonStatsTable.seasonId, season.id));
 
+  // Sanity bounds: a Madden regular season has at most 17 games (18 with a bye bye),
+  // so any team showing wins > 25 or losses > 25 has corrupt data (the MCA export
+  // sometimes writes total season points into the wins/losses fields instead).
+  // Filter those out entirely so the AI never sees fabricated records.
   const activeStandings = mcaStandings
-    .filter(t => t.wins + t.losses > 0)
+    .filter(t => {
+      const total = t.wins + t.losses;
+      return total > 0 && t.wins <= 25 && t.losses <= 25;
+    })
     .sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
 
   if (activeStandings.length > 0) {
-    // IMPORTANT: show ONLY win-loss records here — no other numbers, to avoid
-    // the AI mis-reading any parenthetical stats as part of the record.
+    // Show ONLY win-loss records — no other numbers, to avoid the AI mis-reading
+    // any parenthetical stats as part of the record.
     const lines = activeStandings.map(r => `  ${r.teamName}: ${r.wins}W-${r.losses}L`);
     parts.push(`\nCURRENT STANDINGS (in-game regular season record — wins and losses only):\n${lines.join("\n")}`);
+  } else {
+    // No valid standings data — explicitly tell the model not to invent records.
+    parts.push(`\nCURRENT STANDINGS: Data not available this cycle. Do NOT invent, assume, or quote any team's record. Avoid any mention of win-loss records entirely.`);
   }
 
   // ── Team season stat highlights ─────────────────────────────────────────────
@@ -393,7 +403,7 @@ Rules:
 - Output ONLY the tweet text, nothing else
 
 CRITICAL RULES — violating any of these is a failure:
-- RECORDS: Use ONLY the in-game season W-L from CURRENT STANDINGS. Never invent a record.
+- RECORDS: Use ONLY the in-game season W-L from CURRENT STANDINGS. If CURRENT STANDINGS says "Data not available", do NOT mention any team's record at all — write about players, stats, or games instead. Never invent a record under any circumstances.
 - ROSTERS: Only say a player is on a team if they appear in that team's TEAM ROSTERS entry. Never place a player on a team not listed there.
 - TRADE/ROSTER RUMORS: NEVER invent or imply that a team is shopping, trading, releasing, or seeking a player unless that specific event appears in RECENT TRADE BLOCK ACTIVITY. If that section says "NONE", write about something else entirely — do not create any trade or personnel rumors.
 - MATCHUPS: Do not reference a specific upcoming game unless that exact matchup is listed under UPCOMING MATCHUPS.
