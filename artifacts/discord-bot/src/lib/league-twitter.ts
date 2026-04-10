@@ -383,8 +383,17 @@ const TOPIC_PROMPTS = [
   "Highlight a player from TEAM ROSTERS who is having a standout season based on their position and the stat leaders in the context.",
 ];
 
-async function generateTweet(reporter: Reporter, context: string): Promise<string> {
+async function generateTweet(
+  reporter: Reporter,
+  context: string,
+  recentTeams: string[] = [],
+): Promise<string> {
   const topic = TOPIC_PROMPTS[Math.floor(Math.random() * TOPIC_PROMPTS.length)]!;
+
+  // Build avoidance directive from recently-featured teams
+  const avoidDirective = recentTeams.length > 0
+    ? `\n- VARIETY: The following teams have been covered in the last several tweets — do NOT make any of them the main subject of this tweet: ${recentTeams.join(", ")}. Pick a DIFFERENT team from TEAM ROSTERS or CURRENT STANDINGS that has NOT been recently featured.`
+    : `\n- VARIETY: Rotate through all teams in the league. Never fixate on the same team twice in a row.`;
 
   const system = `You are ${reporter.name} (${reporter.handle}), a sports reporter for ${reporter.outlet}.
 Personality: ${reporter.style}
@@ -400,7 +409,7 @@ Rules:
 - Emojis are fine if fitting (especially for hype-style reporters)
 - Do NOT use hashtags
 - Do NOT mention that this is a video game or simulation
-- Output ONLY the tweet text, nothing else
+- Output ONLY the tweet text, nothing else${avoidDirective}
 
 CRITICAL RULES — violating any of these is a failure:
 - RECORDS: Use ONLY the in-game season W-L from CURRENT STANDINGS. If CURRENT STANDINGS says "Data not available", do NOT mention any team's record at all — write about players, stats, or games instead. Never invent a record under any circumstances.
@@ -468,12 +477,13 @@ Rules:
 
 /** Post a single tweet from the given reporter and persist it to the DB. */
 async function postOneTweet(
-  tc:       TextChannel,
-  reporter: Reporter,
-  context:  string,
-  seasonId: number,
+  tc:          TextChannel,
+  reporter:    Reporter,
+  context:     string,
+  seasonId:    number,
+  recentTeams: string[] = [],
 ): Promise<void> {
-  const tweetText = await generateTweet(reporter, context);
+  const tweetText = await generateTweet(reporter, context, recentTeams);
   if (!tweetText) return;
 
   const header = `**${reporter.name}** ${reporter.handle} · *${reporter.outlet}*`;
@@ -509,6 +519,45 @@ export async function postLeagueTweet(client: Client): Promise<void> {
     const roll = Math.random();
     const count = roll < 0.45 ? 1 : roll < 0.80 ? 2 : 3;
 
+    // ── Fetch recent tweet history to detect overused teams ────────────────────
+    // Pull the last 8 tweets and find team names that appear most frequently.
+    // Teams appearing 2+ times in the recent window are flagged as "overused".
+    const recentTweets = await db.select({ content: leagueTwitterTable.content })
+      .from(leagueTwitterTable)
+      .where(eq(leagueTwitterTable.seasonId, season.id))
+      .orderBy(desc(leagueTwitterTable.postedAt))
+      .limit(8);
+
+    // Pull all known human-team names from the DB for matching
+    const userTeams = await db.select({ team: usersTable.team })
+      .from(usersTable)
+      .where(isNotNull(usersTable.team));
+
+    const knownTeams = [...new Set(
+      userTeams.map(u => u.team).filter((t): t is string => !!t && t.trim().length > 0)
+    )];
+
+    // Count how many recent tweets mention each team (case-insensitive word boundary check)
+    const teamMentionCount = new Map<string, number>();
+    for (const { content } of recentTweets) {
+      if (!content) continue;
+      for (const teamName of knownTeams) {
+        // Match on any word in the team name (e.g. "Rams", "Los Angeles Rams")
+        const words = teamName.split(/\s+/);
+        const matched = words.some(w =>
+          w.length > 3 && new RegExp(`\\b${w}\\b`, "i").test(content)
+        );
+        if (matched) {
+          teamMentionCount.set(teamName, (teamMentionCount.get(teamName) ?? 0) + 1);
+        }
+      }
+    }
+
+    // Any team mentioned 2+ times in the last 8 tweets is "recently overused"
+    const recentTeams = [...teamMentionCount.entries()]
+      .filter(([, count]) => count >= 2)
+      .map(([team]) => team);
+
     // Seed: avoid repeating the reporter from the previous interval's last tweet
     const [lastTweet] = await db.select({ reporterName: leagueTwitterTable.reporterName })
       .from(leagueTwitterTable)
@@ -527,7 +576,7 @@ export async function postLeagueTweet(client: Client): Promise<void> {
 
       usedReporters.add(reporter.name);
 
-      await postOneTweet(tc, reporter, context, season.id);
+      await postOneTweet(tc, reporter, context, season.id, recentTeams);
 
       // Short pause between tweets so they don't all land at the exact same second
       if (i < count - 1) {
