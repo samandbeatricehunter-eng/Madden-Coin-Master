@@ -286,19 +286,20 @@ async function createBlazeSession(token: TokenInfo, attempt = 1): Promise<BlazeS
       sessionKey?:     string;
       personaDetails?: { personaId?: number } | { personaId?: number }[];
     };
-    error?: string;
+    error?: unknown;
     code?:  string;
   };
 
   // EA occasionally returns an error object or a response without userLoginInfo
   if (!body.userLoginInfo) {
-    const errDetail = body.error ? `${body.error} (${body.code ?? "?"})` : JSON.stringify(body).slice(0, 200);
+    const fullBody = JSON.stringify(body).slice(0, 400);
+    console.error(`[ea-client] Blaze login attempt ${attempt} failed. Full response: ${fullBody}`);
     if (attempt < 3) {
       // Retry up to 2 more times with a short backoff
-      await new Promise((r) => setTimeout(r, 1000 * attempt));
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
       return createBlazeSession(token, attempt + 1);
     }
-    throw new Error(`EA Blaze login returned no session after ${attempt} attempts: ${errDetail}`);
+    throw new Error(`EA Blaze login returned no session after ${attempt} attempts. EA response: ${fullBody}`);
   }
 
   if (!body.userLoginInfo.sessionKey) {
