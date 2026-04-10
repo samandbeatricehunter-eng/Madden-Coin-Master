@@ -37,8 +37,10 @@ export async function runEosAutoPost(
 
   // ── 1. Load all registered users ──────────────────────────────────────────────
   const allUsers = await db.select({
-    discordId: usersTable.discordId,
-    team:      usersTable.team,
+    discordId:         usersTable.discordId,
+    team:              usersTable.team,
+    playoffSeed:       usersTable.playoffSeed,
+    playoffConference: usersTable.playoffConference,
   }).from(usersTable);
 
   if (allUsers.length === 0) {
@@ -102,7 +104,7 @@ export async function runEosAutoPost(
   }
 
   // ── 4. Load admin-configurable attempt minimums and bonus thresholds ──────────
-  const [minQbAtt, minRbAtt, minQbYpa, minRbYpc, minDbInts, qbBonusAmt, rbBonusAmt, dbBonusAmt] = await Promise.all([
+  const [minQbAtt, minRbAtt, minQbYpa, minRbYpc, minDbInts, qbBonusAmt, rbBonusAmt, dbBonusAmt, missedPlayoffsAmt] = await Promise.all([
     getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_ATT),
     getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_ATT),
     getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_YPA),
@@ -111,6 +113,7 @@ export async function runEosAutoPost(
     getPayoutValue(PAYOUT_KEYS.EOS_QB_YPA_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_RB_YPC_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
+    getPayoutValue(PAYOUT_KEYS.EOS_MISSED_PLAYOFFS),
   ]);
 
   // ── 5. Get commissioner channel ───────────────────────────────────────────────
@@ -307,6 +310,40 @@ export async function runEosAutoPost(
           totalCoins += dbBonusAmt;
         }
         hasStats = true;
+      }
+
+      // ── Missed-playoffs welfare bonus ─────────────────────────────────────────
+      // A user "missed the playoffs" when playoffSeed is 0 or null.
+      // Seed is set by /admin-playoffs setnfcseeds/setafcseeds or by the new
+      // /admin_ea_export standings command.  If seeds have not been set at all
+      // (every user is 0/null), we skip the bonus entirely to avoid giving
+      // everyone consolation coins by mistake — this guards against running EOS
+      // before seeds are entered.
+      const anySeeded = allUsers.some(u => (u.playoffSeed ?? 0) > 0);
+      if (anySeeded && missedPlayoffsAmt > 0) {
+        const madePlayoffs = (user.playoffSeed ?? 0) > 0;
+        if (!madePlayoffs) {
+          displayLines.push(
+            `• **Missed Playoffs Consolation**: Did not qualify → +${missedPlayoffsAmt.toLocaleString()} coins`,
+          );
+          breakdown.push({
+            label:     "Missed Playoffs Consolation",
+            statValue: 0,
+            unit:      "consolation",
+            tier:      0,
+            coins:     missedPlayoffsAmt,
+          });
+          totalCoins += missedPlayoffsAmt;
+          hasStats = true;
+        } else {
+          displayLines.push(
+            `• **Missed Playoffs Consolation**: Made playoffs (${user.playoffConference ?? "?"} Seed ${user.playoffSeed}) → N/A`,
+          );
+        }
+      } else if (!anySeeded) {
+        displayLines.push(
+          `• **Missed Playoffs Consolation**: ⚠️ No playoff seeds set — run \`/admin_ea_export standings\` or \`/admin-playoffs set*seeds\` first`,
+        );
       }
 
       // ── Insert pending payout record ───────────────────────────────────────────
