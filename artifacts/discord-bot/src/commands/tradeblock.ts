@@ -2,12 +2,13 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   AutocompleteInteraction, TextChannel,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
   usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable,
 } from "@workspace/db";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { logTradeEvent } from "../lib/league-twitter.js";
@@ -582,7 +583,9 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
 }
 
 // ── /tradeblock send-offer ────────────────────────────────────────────────────
-// Step 1: show the "Build Offer" button (the modal is triggered from interactionCreate.ts)
+// Step 1: show roster dropdown for player selection + "No Players / Skip" button.
+// Selecting players → showModal() immediately (handled in interactionCreate so_player_sel).
+// Skipping → showModal() via so_continue button.
 
 async function handleSendOffer(interaction: ChatInputCommandInteraction) {
   const target = interaction.options.getUser("to", true);
@@ -592,16 +595,56 @@ async function handleSendOffer(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  await interaction.deferReply({ ephemeral: true });
+
+  const season     = await getOrCreateActiveSeason();
+  const rosterRows = await db.select({
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    position:  franchiseRostersTable.position,
+    overall:   franchiseRostersTable.overall,
+  })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, season.id),
+      eq(franchiseRostersTable.discordId, interaction.user.id),
+    ))
+    .orderBy(desc(franchiseRostersTable.overall))
+    .limit(25);
+
+  const skipRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`so_start:${target.id}`)
-      .setLabel("📝 Build Your Offer")
-      .setStyle(ButtonStyle.Primary),
+      .setCustomId(`so_continue:${target.id}`)
+      .setLabel("📝 No Players — Continue to Offer Details →")
+      .setStyle(ButtonStyle.Secondary),
   );
 
-  await interaction.reply({
-    content: `📤 Sending a trade offer to <@${target.id}>. Click below to fill out what you're offering and what you want in return.`,
-    components: [row],
-    ephemeral: true,
+  if (rosterRows.length === 0) {
+    await interaction.editReply({
+      content: `📤 Building a trade offer for <@${target.id}>. Your roster is empty, so click below to fill in picks, coins, and what you want back.`,
+      components: [skipRow],
+    });
+    return;
+  }
+
+  const menuOptions = rosterRows.map(p =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(`${p.firstName} ${p.lastName} (${p.position}) OVR ${p.overall}`.slice(0, 100))
+      .setValue(`${p.playerId}|${p.firstName} ${p.lastName}|${p.position}|${p.overall}`.slice(0, 100)),
+  );
+
+  const playerMenu = new StringSelectMenuBuilder()
+    .setCustomId(`so_player_sel:${target.id}`)
+    .setPlaceholder("Select players you're offering (up to 7, optional)")
+    .setMinValues(0)
+    .setMaxValues(Math.min(7, menuOptions.length))
+    .addOptions(menuOptions);
+
+  const menuRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(playerMenu);
+
+  await interaction.editReply({
+    content: `📤 Building a trade offer for <@${target.id}>.\n\n**Step 1 — Players Offering:** Select up to 7 players from your roster below (or skip if offering picks/coins only). Selecting will open the rest of the offer form.\n\n**Step 2 — Picks, Coins & What You Want:** Filled in the form that opens.`,
+    components: [menuRow, skipRow],
   });
 }

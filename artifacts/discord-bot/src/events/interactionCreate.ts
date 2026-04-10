@@ -63,6 +63,11 @@ const GENERAL_CHANNEL_ID        = "1476321282868908052";
 const VIOLATION_LOG_CHANNEL_ID  = "1491529826060734524";
 const GOTY_CHANNEL_ID           = "1485394206863392848";
 
+// ── Send-offer in-memory player selection store ────────────────────────────────
+// Key: `${senderDiscordId}:${targetDiscordId}`  Value: selected player option values
+// Entries are cleared after the modal submits or after 15 minutes (Discord interaction TTL).
+const pendingOfferPlayers = new Map<string, string[]>();
+
 export const name = "interactionCreate";
 
 export async function execute(interaction: Interaction) {
@@ -112,6 +117,53 @@ export async function execute(interaction: Interaction) {
   if (interaction.isButton())           { await handleButton(interaction);    return; }
   if (interaction.isStringSelectMenu()) { await handleSelectMenu(interaction); return; }
   if (interaction.isModalSubmit())      { await handleModal(interaction); }
+}
+
+// ── Send-offer modal builder (shared by so_continue button & so_player_sel select) ──
+// 4 fields: picks offering | coins offering | players+picks wanting | coins wanting
+function buildSendOfferModal(targetId: string): import("discord.js").ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId(`so_modal:${targetId}`)
+    .setTitle("📤 Trade Offer — Picks, Coins & Requests");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("send_picks")
+        .setLabel("Picks You're Offering (players from dropdown)")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("e.g. 2027 Round 1, 2026 Round 2 (from Cowboys)")
+        .setRequired(false)
+        .setMaxLength(300),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("send_coins")
+        .setLabel("Coins You're Offering")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Enter a number, or leave blank for none")
+        .setRequired(false)
+        .setMaxLength(10),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("want_players_picks")
+        .setLabel("Players & Picks You Want Back")
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder("e.g. Tyreek Hill (WR), 2026 R1 — up to 7 players/picks combined")
+        .setRequired(false)
+        .setMaxLength(600),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("want_coins")
+        .setLabel("Coins You Want Back")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Enter a number, or leave blank for none")
+        .setRequired(false)
+        .setMaxLength(10),
+    ),
+  );
+  return modal;
 }
 
 // ── Button handler ─────────────────────────────────────────────────────────────
@@ -1359,62 +1411,14 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Send Offer: open modal to build the offer ──────────────────────────────
-  // customId: so_start:TARGET_ID
-  if (action === "so_start") {
+  // ── Send Offer: skip player dropdown — open offer details modal directly ──────
+  // customId: so_continue:TARGET_ID
+  if (action === "so_continue") {
     const targetId = secondPart!;
-    const modal = new ModalBuilder()
-      .setCustomId(`so_modal:${targetId}`)
-      .setTitle("📤 Build Your Trade Offer");
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("send_players")
-          .setLabel("Players You're Offering")
-          .setStyle(TextInputStyle.Paragraph)
-          .setPlaceholder("e.g. Davante Adams (WR), Josh Allen (QB)")
-          .setRequired(false)
-          .setMaxLength(500),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("send_picks")
-          .setLabel("Picks You're Offering")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 2027 Round 1, 2026 Round 2 (from Cowboys)")
-          .setRequired(false)
-          .setMaxLength(200),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("send_coins")
-          .setLabel("Coins You're Offering")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("Enter a number, or leave blank for none")
-          .setRequired(false)
-          .setMaxLength(10),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("want_assets")
-          .setLabel("Players & Picks You Want Back")
-          .setStyle(TextInputStyle.Paragraph)
-          .setPlaceholder("e.g. Tyreek Hill (WR), 2026 Round 1")
-          .setRequired(false)
-          .setMaxLength(500),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("want_coins")
-          .setLabel("Coins You Want Back")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("Enter a number, or leave blank for none")
-          .setRequired(false)
-          .setMaxLength(10),
-      ),
-    );
-    await interaction.showModal(modal).catch((err: Error) => {
-      if ((err as any).code !== 40060) console.error("showModal (so_start) error:", err);
+    // Clear any stale player selection for this sender:target pair
+    pendingOfferPlayers.delete(`${interaction.user.id}:${targetId}`);
+    await interaction.showModal(buildSendOfferModal(targetId)).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (so_continue) error:", err);
     });
     return;
   }
@@ -2362,6 +2366,23 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     }
     return;
   }
+
+  // ── Send Offer: player dropdown selection → store + open offer details modal ──
+  // customId: so_player_sel:TARGET_ID
+  if (action === "so_player_sel") {
+    const targetId = sessionId; // sessionId = parts[1]
+    const key      = `${interaction.user.id}:${targetId}`;
+
+    // Store the selected player values (cleared in so_modal after use)
+    pendingOfferPlayers.set(key, interaction.values);
+    // Auto-clean after 15 minutes in case the user never submits
+    setTimeout(() => pendingOfferPlayers.delete(key), 15 * 60 * 1000);
+
+    await interaction.showModal(buildSendOfferModal(targetId)).catch((err: Error) => {
+      if ((err as any).code !== 40060) console.error("showModal (so_player_sel) error:", err);
+    });
+    return;
+  }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -2522,15 +2543,19 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   // ── Send Offer: modal submitted — build & DM the trade offer ─────────────────
   // customId: so_modal:TARGET_ID
   if (action === "so_modal") {
-    const targetId    = parts[1]!;
-    const sendPlayers = interaction.fields.getTextInputValue("send_players").trim();
-    const sendPicks   = interaction.fields.getTextInputValue("send_picks").trim();
-    const sendCoins   = interaction.fields.getTextInputValue("send_coins").trim();
-    const wantAssets  = interaction.fields.getTextInputValue("want_assets").trim();
-    const wantCoins   = interaction.fields.getTextInputValue("want_coins").trim();
+    const targetId        = parts[1]!;
+    const sendPicks       = interaction.fields.getTextInputValue("send_picks").trim();
+    const sendCoins       = interaction.fields.getTextInputValue("send_coins").trim();
+    const wantPlayersPicks = interaction.fields.getTextInputValue("want_players_picks").trim();
+    const wantCoins       = interaction.fields.getTextInputValue("want_coins").trim();
 
-    // Require at least something being offered
-    if (!sendPlayers && !sendPicks && !sendCoins) {
+    // Retrieve any players selected from the roster dropdown (may be empty if skipped)
+    const mapKey        = `${interaction.user.id}:${targetId}`;
+    const selectedPlayers = pendingOfferPlayers.get(mapKey) ?? [];
+    pendingOfferPlayers.delete(mapKey); // always clean up
+
+    // Require at least one thing being offered
+    if (selectedPlayers.length === 0 && !sendPicks && !sendCoins) {
       await interaction.reply({
         content: "❌ You must include at least one thing in your offer (players, picks, or coins).",
         ephemeral: true,
@@ -2542,18 +2567,29 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     const myTeam = await getMyTeam(interaction.user.id);
 
-    // Build the "Offering" value
+    // ── Build "Offering" section ───────────────────────────────────────────────
     const offerParts: string[] = [];
-    if (sendPlayers) offerParts.push(`🏈 **Players:** ${sendPlayers}`);
-    if (sendPicks)   offerParts.push(`📋 **Picks:** ${sendPicks}`);
-    if (sendCoins)   offerParts.push(`💰 **Coins:** ${sendCoins}`);
+
+    if (selectedPlayers.length > 0) {
+      const playerLines = selectedPlayers.map(v => {
+        const [, name, pos, ovr] = v.split("|");
+        return `• ${name} (${pos}) OVR ${ovr}`;
+      });
+      offerParts.push(`🏈 **Players (${selectedPlayers.length}):**\n${playerLines.join("\n")}`);
+    }
+    if (sendPicks)  offerParts.push(`📋 **Picks:** ${sendPicks}`);
+    if (sendCoins)  offerParts.push(`💰 **Coins:** ${sendCoins}`);
     const offerValue = offerParts.join("\n");
 
-    // Build the "Requesting" value
+    // ── Build "Requesting" section ─────────────────────────────────────────────
     const wantParts: string[] = [];
-    if (wantAssets)  wantParts.push(wantAssets);
-    if (wantCoins)   wantParts.push(`💰 **Coins:** ${wantCoins}`);
+    if (wantPlayersPicks) wantParts.push(wantPlayersPicks);
+    if (wantCoins)        wantParts.push(`💰 **Coins:** ${wantCoins}`);
     const wantValue = wantParts.join("\n") || "*Open to discussion*";
+
+    // ── Parse coins for Accept button transfer ─────────────────────────────────
+    const parsedCoins = parseInt(sendCoins.replace(/[^0-9]/g, ""), 10);
+    const safeCoins   = isNaN(parsedCoins) ? 0 : parsedCoins;
 
     const dmEmbed = new EmbedBuilder()
       .setColor(Colors.Gold)
@@ -2566,11 +2602,16 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       .setFooter({ text: `Reply to negotiate or reach out to ${interaction.user.username} in the server.` })
       .setTimestamp();
 
+    // Accept button uses tb_dm_acc with entryId=0 (direct offer, not a listing)
     const dmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`tb_dm_acc:${interaction.user.id}:${safeCoins}:0:L`)
+        .setLabel("✅ Accept")
+        .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`tb_dm_neg:${interaction.user.id}`)
         .setLabel("🤝 Negotiate")
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`tb_dm_ref:${interaction.user.id}`)
         .setLabel("❌ Decline")
@@ -2590,7 +2631,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const confirmEmbed = new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ Trade Offer Sent")
-      .setDescription(`Your offer was sent to <@${targetId}> via DM. They'll see Negotiate / Decline buttons.`)
+      .setDescription(`Your offer was sent to <@${targetId}> via DM. They'll see Accept / Negotiate / Decline buttons.`)
       .addFields(
         { name: "📦 You Offered", value: offerValue },
         { name: "🔎 You Want Back", value: wantValue },
