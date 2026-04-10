@@ -58,6 +58,16 @@ const AWARD_KEY_LABEL: Record<number, string> = {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+/** Discord's hard limit for poll answer text */
+const POLL_ANSWER_MAX = 55;
+
+/** Truncate a string to fit within Discord's poll answer character limit, adding … if cut. */
+function truncatePollAnswer(text: string): string {
+  const t = text.trim();
+  if (t.length <= POLL_ANSWER_MAX) return t;
+  return t.slice(0, POLL_ANSWER_MAX - 1) + "…";
+}
+
 /** Split an array into chunks of max size n */
 function chunks<T>(arr: T[], n: number): T[][] {
   const result: T[][] = [];
@@ -80,7 +90,7 @@ async function createPoll(
     const msg = await channel.send({
       poll: {
         question: { text: qText.slice(0, 300) },
-        answers:  batch.map(a => ({ text: a.slice(0, 55) })),
+        answers:  batch.map(a => ({ text: truncatePollAnswer(a) })),
         duration: durationHours,
         allow_multiselect: false,
       },
@@ -446,7 +456,7 @@ async function createGotyPoll(
     m => !m.author.bot && m.content.trim().length > 0,
   );
   const options = entryMessages
-    .map(m => m.content.trim().slice(0, 55))
+    .map(m => truncatePollAnswer(m.content))
     .slice(0, 100);
 
   if (options.length === 0) {
