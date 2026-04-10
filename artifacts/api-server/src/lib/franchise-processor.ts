@@ -361,10 +361,12 @@ export async function processTeamStats(body: unknown): Promise<ProcessResult> {
     const getOffPpg = (t: any): number =>
       getN(t, "ptsPerGame","pointsPerGame","offPtsPerGame","ppg","avgPointsScored","avgPtsFor","pointsPerGameFor","offPpg");
     const getTurnoverDiff = (t: any): number => {
-      const direct = getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet","tOMargin");
+      // EA sends "tODiff" (capital O) — must be first in the list
+      const direct = getN(t, "tODiff","turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet","tOMargin");
       if (direct !== 0) return direct;
-      const defTO = getN(t, "defTurnovers","defensiveTurnovers","defTO","takeaways","turnoversForced","turnoversGained","defTotalTO");
-      const offTO = getN(t, "offTurnovers","offensiveTurnovers","offTO","giveaways","turnoversCommitted","turnoversLost","offTotalTO");
+      // Component fallback: EA sends "tOTakeaways" / "tOGiveaways"
+      const defTO = getN(t, "tOTakeaways","defTurnovers","defensiveTurnovers","defTO","takeaways","turnoversForced","turnoversGained","defTotalTO");
+      const offTO = getN(t, "tOGiveaways","offTurnovers","offensiveTurnovers","offTO","giveaways","turnoversCommitted","turnoversLost","offTotalTO");
       if (defTO !== 0 || offTO !== 0) return defTO - offTO;
       return 0;
     };
@@ -486,10 +488,12 @@ export async function processTeamWeekStats(
     const getDefFumblesRec = (t: any): number =>
       getN(t, "defFumblesRec","fumblesRecovered","fumRec","fumRecovered","totalFumRec","defensiveFumblesRec","recoveredFumbles","fumbleRecoveries");
     const getTurnoverDiff = (t: any): number => {
-      const direct = getN(t, "turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet","tOMargin");
+      // EA sends "tODiff" (capital O) — must be first in the list
+      const direct = getN(t, "tODiff","turnOverDiff","turnoverDiff","turnoverDifferential","turnoverMargin","toMargin","toDiff","turnoversMargin","turnoversNet","tOMargin");
       if (direct !== 0) return direct;
-      const defTO = getN(t, "defTurnovers","defensiveTurnovers","defTO","takeaways","turnoversForced","turnoversGained","defTotalTO");
-      const offTO = getN(t, "offTurnovers","offensiveTurnovers","offTO","giveaways","turnoversCommitted","turnoversLost","offTotalTO");
+      // Component fallback: EA sends "tOTakeaways" / "tOGiveaways"
+      const defTO = getN(t, "tOTakeaways","defTurnovers","defensiveTurnovers","defTO","takeaways","turnoversForced","turnoversGained","defTotalTO");
+      const offTO = getN(t, "tOGiveaways","offTurnovers","offensiveTurnovers","offTO","giveaways","turnoversCommitted","turnoversLost","offTotalTO");
       if (defTO !== 0 || offTO !== 0) return defTO - offTO;
       return 0;
     };
