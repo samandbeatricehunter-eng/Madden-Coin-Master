@@ -1630,25 +1630,27 @@ async function handleButton(interaction: ButtonInteraction) {
     const listingField   = originalEmbed?.fields?.[0]?.value ?? "—";
     const offerField     = originalEmbed?.fields?.[1]?.value ?? "—";
 
-    // Fetch DB info for poster team name and season
+    // Fetch DB info for both teams
     const season        = await getOrCreateActiveSeason();
     const [posterRow]   = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
       .from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1);
-    const [offerorRow]  = await db.select({ discordUsername: usersTable.discordUsername, balance: usersTable.balance })
+    const [offerorRow]  = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername, balance: usersTable.balance })
       .from(usersTable).where(eq(usersTable.discordId, offerorId)).limit(1);
 
-    const posterTeam    = posterRow?.team    ?? interaction.user.username;
-    const offerorName   = offerorRow?.discordUsername ?? offerorId;
+    // Use in-game team names for both parties — fall back to Discord username only if no team set
+    const posterTeam    = posterRow?.team    ?? posterRow?.discordUsername    ?? interaction.user.username;
+    const offerorTeam   = offerorRow?.team   ?? offerorRow?.discordUsername  ?? offerorId;
 
     // ── Coin transfer (offeror → poster) ────────────────────────────────────
+    // The offeror offered coins as part of their deal; transfer them to the poster (acceptor).
     let coinNote = "";
     if (!isNaN(coins) && coins > 0) {
       const deducted = await deductBalance(offerorId, coins);
       if (deducted) {
         await addBalance(posterDiscordId, coins);
-        coinNote = `\n💰 **${coins.toLocaleString()} coins** transferred from <@${offerorId}> to <@${posterDiscordId}>.`;
+        coinNote = `\n💰 **${coins.toLocaleString()} coins** transferred from **${offerorTeam}** to **${posterTeam}**.`;
       } else {
-        coinNote = `\n⚠️ Coin transfer of **${coins.toLocaleString()}** skipped — <@${offerorId}> had insufficient balance.`;
+        coinNote = `\n⚠️ Coin transfer of **${coins.toLocaleString()}** skipped — **${offerorTeam}** had insufficient balance.`;
       }
     }
 
@@ -1662,13 +1664,15 @@ async function handleButton(interaction: ButtonInteraction) {
     }
 
     // ── Record completed trade ────────────────────────────────────────────────
+    // team1 = the offeror (who sent the send-offer); listingField = what they sent.
+    // team2 = the poster/acceptor.
     await db.insert(completedTradesTable).values({
       seasonId:          season.id,
       listingId:         entryId || null,
       listingType:       entryType === "I" ? "iso" : "listing",
-      team1DiscordId:    posterDiscordId,
-      team1Name:         posterTeam,
-      team2Name:         offerorName,
+      team1DiscordId:    offerorId,
+      team1Name:         offerorTeam,
+      team2Name:         posterTeam,
       whatTeam1Sent:     listingField,
       whatTeam1Received: offerField,
     }).catch(err => console.error("[tb_dm_acc] Failed to insert completedTrade:", err));
@@ -1676,9 +1680,9 @@ async function handleButton(interaction: ButtonInteraction) {
     void logTradeEvent({
       seasonId:  season.id,
       eventType: "trade_completed",
-      summary:   `${posterTeam} and ${offerorName} completed a trade`,
-      teamA:     posterTeam,
-      teamB:     offerorName,
+      summary:   `${offerorTeam} and ${posterTeam} completed a trade`,
+      teamA:     offerorTeam,
+      teamB:     posterTeam,
     });
 
     // ── DM the offeror ────────────────────────────────────────────────────────
@@ -1690,13 +1694,16 @@ async function handleButton(interaction: ButtonInteraction) {
     } catch (_) {}
 
     // ── @everyone announcement in general channel ────────────────────────────
+    // The DM embed fields describe the offeror's side:
+    //   field 0 (listingField) = what the offeror is sending
+    //   field 1 (offerField)   = what the offeror is receiving
     const tradeEmbed = new EmbedBuilder()
       .setColor(Colors.Gold)
       .setTitle("🔔 TRADE ALERT")
-      .setDescription(`**${posterTeam}** and **${offerorName}** have completed a trade!`)
+      .setDescription(`**${offerorTeam}** and **${posterTeam}** have completed a trade!`)
       .addFields(
-        { name: `📤 ${posterTeam} sends`,    value: listingField },
-        { name: `📥 ${posterTeam} receives`, value: offerField },
+        { name: `📤 ${offerorTeam} sends`,    value: listingField },
+        { name: `📥 ${offerorTeam} receives`, value: offerField },
       )
       .setFooter({ text: "Trade accepted via The R.E.C. League trade block" })
       .setTimestamp();

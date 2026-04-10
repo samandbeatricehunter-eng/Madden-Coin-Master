@@ -392,7 +392,7 @@ export async function postSeasonRecap(
   client: Client,
   seasonId: number,
   seasonNumber: number,
-  historicalChannel: TextChannel,
+  historicalChannel: TextChannel | null,
 ): Promise<void> {
   console.log(`[seasonRecap] Generating Season ${seasonNumber} recap article...`);
 
@@ -446,17 +446,21 @@ export async function postSeasonRecap(
     console.error("[seasonRecap] Failed to post to headlines:", err);
   }
 
-  // Post to historical records channel
-  try {
-    for (let i = 0; i < embedBatches.length; i++) {
-      await historicalChannel.send({
-        content: i === 0 ? "📰 **Season Recap**" : undefined,
-        embeds:  embedBatches[i],
-      });
+  // Post to historical records channel (if it was successfully created)
+  if (historicalChannel) {
+    try {
+      for (let i = 0; i < embedBatches.length; i++) {
+        await historicalChannel.send({
+          content: i === 0 ? "📰 **Season Recap**" : undefined,
+          embeds:  embedBatches[i],
+        });
+      }
+      console.log("[seasonRecap] Posted to historical channel");
+    } catch (err) {
+      console.error("[seasonRecap] Failed to post to historical channel:", err);
     }
-    console.log("[seasonRecap] Posted to historical channel");
-  } catch (err) {
-    console.error("[seasonRecap] Failed to post to historical channel:", err);
+  } else {
+    console.warn("[seasonRecap] Skipping historical channel post — channel unavailable");
   }
 
   console.log(`[seasonRecap] Done — ${chunks.length} embed(s) sent`);

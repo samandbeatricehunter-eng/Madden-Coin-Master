@@ -4,7 +4,7 @@ import {
   franchiseScheduleTable, franchiseMcaTeamsTable, usersTable,
   playoffGotwPollsTable, type Season,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, lte } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel, GOTW_CHANNEL_ID } from "./gotw-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
 
@@ -12,17 +12,24 @@ const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Playoff week metadata ──────────────────────────────────────────────────────
-// weekIndex mirrors the per-week EA export endpoint (weekType="reg", weekNum=N → weekIndex=N-1).
-// wildcard=19-1=18, divisional=20-1=19, conference=21-1=20, superbowl=23-1=22
+// weekIndex: processSchedules offsets playoff games by +1000 (weekType !== 1 → 1000 + rawWeekIdx).
+// syncWeekScoresToSchedule does the same: non-reg → 1000 + weekNum - 1.
+// Madden sends a continuous weekIndex (0-based across the full season), so:
+//   wildcard   rawWeekIdx=18  → stored as 1018  (weekNum 19, 1000+19-1=1018)
+//   divisional rawWeekIdx=19  → stored as 1019  (weekNum 20, 1000+20-1=1019)
+//   conference rawWeekIdx=20  → stored as 1020  (weekNum 21, 1000+21-1=1020)
+//   superbowl  rawWeekIdx=22  → stored as 1022  (weekNum 23, 1000+23-1=1022)
+// fallbackWeekIndex: the pre-1000-offset value, tried if primary lookup returns 0 rows.
 export const PLAYOFF_WEEK_META: Record<string, {
-  weekIndex: number;
-  weekNum:   number;
-  label:     string;
+  weekIndex:         number;
+  fallbackWeekIndex: number;
+  weekNum:           number;
+  label:             string;
 }> = {
-  wildcard:   { weekIndex: 18, weekNum: 19, label: "Wild Card"               },
-  divisional: { weekIndex: 19, weekNum: 20, label: "Divisional"              },
-  conference: { weekIndex: 20, weekNum: 21, label: "Conference Championship" },
-  superbowl:  { weekIndex: 22, weekNum: 23, label: "Super Bowl"              },
+  wildcard:   { weekIndex: 1018, fallbackWeekIndex: 18, weekNum: 19, label: "Wild Card"               },
+  divisional: { weekIndex: 1019, fallbackWeekIndex: 19, weekNum: 20, label: "Divisional"              },
+  conference: { weekIndex: 1020, fallbackWeekIndex: 20, weekNum: 21, label: "Conference Championship" },
+  superbowl:  { weekIndex: 1022, fallbackWeekIndex: 22, weekNum: 23, label: "Super Bowl"              },
 };
 
 function toKey(name: string): string {
@@ -66,17 +73,32 @@ export async function runPlayoffMatchupsFlow(
   const meta = PLAYOFF_WEEK_META[weekKey];
   if (!meta) return `❌ Unknown playoff week: ${weekKey}`;
 
-  const { weekIndex, label } = meta;
+  const { weekIndex, fallbackWeekIndex, label } = meta;
 
   const teamToDiscord = await buildTeamMap(season.id);
 
-  // 1. Fetch schedule for this playoff week
-  const games = await db.select()
+  // 1. Fetch schedule for this playoff week.
+  // Primary lookup uses the 1000-offset weekIndex (e.g. 1018 for wildcard).
+  // Fallback tries the non-offset value (e.g. 18) in case the MCA export stored
+  // playoff games with weekType=1 (no offset applied by processSchedules).
+  let games = await db.select()
     .from(franchiseScheduleTable)
     .where(and(
       eq(franchiseScheduleTable.seasonId,  season.id),
       eq(franchiseScheduleTable.weekIndex, weekIndex),
     ));
+
+  if (games.length === 0) {
+    console.log(`[playoff-runner] No games at weekIndex ${weekIndex}, trying fallback ${fallbackWeekIndex}...`);
+    games = await db.select()
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId,  season.id),
+        eq(franchiseScheduleTable.weekIndex, fallbackWeekIndex),
+      ));
+  }
+
+  const effectiveWeekIndex = games.length > 0 ? (games[0]?.weekIndex ?? weekIndex) : weekIndex;
 
   const h2hGames = games.filter(g =>
     teamToDiscord.has(toKey(g.awayTeamName)) &&
@@ -133,8 +155,9 @@ export async function runPlayoffMatchupsFlow(
 
   if (h2hGames.length === 0) {
     return (
-      `⚠️ **${label}** matchups embed posted, but no H2H games found at weekIndex ${weekIndex}.\n` +
-      `Make sure the EA playoff schedule export has been imported via \`/franchiseupdate\`.`
+      `⚠️ **${label}** matchups embed posted, but no H2H games found.\n` +
+      `Looked at weekIndex ${weekIndex} and fallback ${fallbackWeekIndex} — both returned 0 rows.\n` +
+      `Make sure the EA playoff schedule export has been imported via \`/franchiseupdate\` before advancing.`
     );
   }
 
@@ -175,7 +198,7 @@ export async function runPlayoffMatchupsFlow(
       await db.insert(playoffGotwPollsTable).values({
         seasonId:     season.id,
         weekLabel:    weekKey,
-        weekIndex,
+        weekIndex:    effectiveWeekIndex,
         matchupIndex: i,
         discordId1:   awayId,
         discordId2:   homeId,

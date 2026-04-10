@@ -3,9 +3,10 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { usersTable, seasonsTable } from "@workspace/db";
+import { eq, inArray, desc } from "drizzle-orm";
 import { isAdminUser, addBalance, logTransaction } from "../lib/db-helpers.js";
+import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow } from "../lib/playoff-matchups-runner.js";
 
 export const DIVISION_BONUS = 25;
 
@@ -52,6 +53,22 @@ export const data = new SlashCommandBuilder()
     .addUserOption(o => o.setName("winner6").setDescription("Division winner").setRequired(false))
     .addUserOption(o => o.setName("winner7").setDescription("Division winner").setRequired(false))
     .addUserOption(o => o.setName("winner8").setDescription("Division winner").setRequired(false))
+  )
+
+  // ── Re-run playoff matchups flow ──────────────────────────────────────────
+  .addSubcommand(sub => sub
+    .setName("runmatchups")
+    .setDescription("Re-run playoff matchups + GOTW polls for a round (use if advance ran before import)")
+    .addStringOption(o => o
+      .setName("round")
+      .setDescription("Which playoff round to post matchups for")
+      .setRequired(true)
+      .addChoices(
+        { name: "Wild Card",               value: "wildcard"   },
+        { name: "Divisional",              value: "divisional" },
+        { name: "Conference Championship", value: "conference" },
+        { name: "Super Bowl",              value: "superbowl"  },
+      ))
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -135,6 +152,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setTimestamp();
 
     await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── Re-run playoff matchups flow ──────────────────────────────────────────
+  if (sub === "runmatchups") {
+    const round = interaction.options.getString("round", true) as keyof typeof PLAYOFF_WEEK_META;
+
+    if (!PLAYOFF_WEEK_META[round]) {
+      await interaction.editReply({ content: `❌ Unknown round: ${round}` });
+      return;
+    }
+
+    const [season] = await db.select().from(seasonsTable).orderBy(desc(seasonsTable.id)).limit(1);
+    if (!season) {
+      await interaction.editReply({ content: "❌ No active season found." });
+      return;
+    }
+
+    await interaction.editReply({ content: `⏳ Running **${PLAYOFF_WEEK_META[round].label}** matchups flow…` });
+
+    try {
+      const summary = await runPlayoffMatchupsFlow(interaction.client, season, round);
+      await interaction.followUp({ content: summary, ephemeral: true });
+    } catch (err) {
+      console.error("[admin-playoffs/runmatchups] Error:", err);
+      await interaction.followUp({ content: `❌ Matchups flow failed: ${err}`, ephemeral: true });
+    }
     return;
   }
 }

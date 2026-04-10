@@ -153,7 +153,8 @@ export async function runWildcardAutomation(
       });
   } catch (err) {
     console.error("[wildcard] Failed to create/resolve historical channel:", err);
-    // Report failure to the general channel so admins are aware
+    // Notify admins but continue — historical channel failure should not block
+    // the wildcard announcement, payouts, bracket, or polls.
     try {
       const generalCh = resolvedGuild.channels.cache.get(GENERAL_CHANNEL_ID)
         ?? await resolvedGuild.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
@@ -163,7 +164,7 @@ export async function runWildcardAutomation(
         });
       }
     } catch { /* ignore */ }
-    return;
+    // historicalChannel stays null — downstream steps check for null before using it
   }
 
   // ── 2. AI season recap (headlines + historical channel) ──────────────────────
@@ -173,46 +174,51 @@ export async function runWildcardAutomation(
     console.error("[wildcard] Season recap failed:", err);
   }
 
-  // ── 3. Parse and post in-game awards ─────────────────────────────────────────
-  try {
-    await postAwards(client, historicalChannel, seasonId, seasonNumber);
-  } catch (err) {
-    console.error("[wildcard] Awards section failed:", err);
-  }
+  // ── 3–7. Historical channel steps — skip if channel unavailable ───────────────
+  if (historicalChannel) {
+    // ── 3. Parse and post in-game awards ───────────────────────────────────────
+    try {
+      await postAwards(client, historicalChannel, seasonId, seasonNumber);
+    } catch (err) {
+      console.error("[wildcard] Awards section failed:", err);
+    }
 
-  // ── 4. Issue season PR bonuses ───────────────────────────────────────────────
-  try {
-    await issueSeasonPrBonuses(client, historicalChannel, seasonId);
-  } catch (err) {
-    console.error("[wildcard] Season PR section failed:", err);
-  }
+    // ── 4. Issue season PR bonuses ─────────────────────────────────────────────
+    try {
+      await issueSeasonPrBonuses(client, historicalChannel, seasonId);
+    } catch (err) {
+      console.error("[wildcard] Season PR section failed:", err);
+    }
 
-  // ── 4. Create GOTY poll ───────────────────────────────────────────────────────
-  try {
-    await createGotyPoll(client, historicalChannel, seasonId);
-  } catch (err) {
-    console.error("[wildcard] GOTY poll failed:", err);
-  }
+    // ── 4. Create GOTY poll ─────────────────────────────────────────────────────
+    try {
+      await createGotyPoll(client, historicalChannel, seasonId);
+    } catch (err) {
+      console.error("[wildcard] GOTY poll failed:", err);
+    }
 
-  // ── 5. Post stat leaders (top 3 each) ────────────────────────────────────────
-  try {
-    await postStatLeaders(historicalChannel, seasonId, seasonNumber);
-  } catch (err) {
-    console.error("[wildcard] Stat leaders section failed:", err);
-  }
+    // ── 5. Post stat leaders (top 3 each) ──────────────────────────────────────
+    try {
+      await postStatLeaders(historicalChannel, seasonId, seasonNumber);
+    } catch (err) {
+      console.error("[wildcard] Stat leaders section failed:", err);
+    }
 
-  // ── 6. Post divisional winners + seeds ───────────────────────────────────────
-  try {
-    await postPlayoffSection(historicalChannel, seasonId, seasonNumber);
-  } catch (err) {
-    console.error("[wildcard] Playoff section failed:", err);
-  }
+    // ── 6. Post divisional winners + seeds ─────────────────────────────────────
+    try {
+      await postPlayoffSection(historicalChannel, seasonId, seasonNumber);
+    } catch (err) {
+      console.error("[wildcard] Playoff section failed:", err);
+    }
 
-  // ── 7. Create community polls ─────────────────────────────────────────────────
-  try {
-    await createCommunityPolls(client, historicalChannel, seasonId);
-  } catch (err) {
-    console.error("[wildcard] Community polls failed:", err);
+    // ── 7. Create community polls ───────────────────────────────────────────────
+    try {
+      await createCommunityPolls(client, historicalChannel, seasonId);
+    } catch (err) {
+      console.error("[wildcard] Community polls failed:", err);
+    }
+  } else {
+    console.warn("[wildcard] Historical channel unavailable — skipping awards, PR bonuses, GOTY poll, stat leaders, playoff section, and community polls");
   }
 
   console.log(`[wildcard] Automation complete for Season ${seasonNumber}`);
