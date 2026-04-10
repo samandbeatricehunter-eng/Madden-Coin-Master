@@ -602,6 +602,65 @@ export async function processTeamWeekStats(
   }
 }
 
+// ── Seed playoffs from MCA teamStandingInfoList (standings.json format) ───────
+//
+// The MCA standings push uses a different shape than the weekly team stats export:
+//   teamStandingInfoList[].seed          → conference rank 1–16 (1–7 = playoff)
+//   teamStandingInfoList[].conferenceName → "AFC" | "NFC"
+//   teamStandingInfoList[].teamId
+//
+// This function is called by the /reseed-from-standings endpoint which reads
+// mca/standings.json from GCS without needing a new EA export.
+
+export async function processStandingsSeedings(body: unknown): Promise<ProcessResult> {
+  try {
+    const season   = await getOrCreateActiveSeason();
+    const standings: any[] = (body as any)?.teamStandingInfoList ?? [];
+    if (standings.length === 0) {
+      return { ok: false, message: "No teamStandingInfoList entries in payload" };
+    }
+
+    const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
+
+    let applied = 0;
+    const ops: Promise<any>[] = [];
+
+    for (const t of standings) {
+      const teamId = Number(t?.teamId ?? -1);
+      if (teamId < 0 || isNaN(teamId)) continue;
+
+      const confSeed = Number(t?.seed ?? 0);
+      if (confSeed < 1 || confSeed > 7) continue; // not a playoff team
+
+      const conferenceName: string | undefined = t?.conferenceName;
+      if (conferenceName !== "AFC" && conferenceName !== "NFC") {
+        console.warn(`[standings-seedings] Unknown conferenceName="${conferenceName}" for teamId=${teamId} — skipping`);
+        continue;
+      }
+
+      const teamEntry = teamMap.get(teamId);
+      if (!teamEntry?.discordId) continue; // CPU team — no Discord user
+
+      console.log(`[standings-seedings] → ${teamEntry.fullName} (discord ${teamEntry.discordId}): ${conferenceName} Seed ${confSeed}`);
+      ops.push(
+        db.update(usersTable)
+          .set({ playoffSeed: confSeed, playoffConference: conferenceName, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, teamEntry.discordId)),
+      );
+      applied++;
+    }
+
+    await Promise.all(ops);
+    console.log(`[standings-seedings] Applied playoff seeds to ${applied} human teams`);
+    return { ok: true, message: `Playoff seeds applied to ${applied} human teams from standings`, details: { applied } };
+  } catch (err) {
+    console.error("[standings-seedings] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
 // ── Auto-seed playoffs from conference rank fields in EA teamStats ─────────────
 //
 // EA sends conferenceRank (1–7 = playoff teams) and conferenceId (0=AFC, 1=NFC)

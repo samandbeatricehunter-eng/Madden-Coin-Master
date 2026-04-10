@@ -7,6 +7,19 @@ import { usersTable, seasonsTable } from "@workspace/db";
 import { eq, inArray, desc } from "drizzle-orm";
 import { isAdminUser, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow } from "../lib/playoff-matchups-runner.js";
+import axios from "axios";
+
+function getApiBase(): string {
+  const domain = (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim() ?? "";
+  return domain ? `https://${domain}/api-server` : "http://localhost:8080";
+}
+function getWebhookKey(): string { return process.env["MCA_WEBHOOK_KEY"] ?? ""; }
+function getLeagueInfo() {
+  return {
+    platform:    process.env["EA_PLATFORM"]    ?? "pc",
+    eaLeagueId:  process.env["EA_LEAGUE_ID"]   ?? "0",
+  };
+}
 
 export const DIVISION_BONUS = 25;
 
@@ -69,6 +82,12 @@ export const data = new SlashCommandBuilder()
         { name: "Conference Championship", value: "conference" },
         { name: "Super Bowl",              value: "superbowl"  },
       ))
+  )
+
+  // ── Auto-seed from saved standings ────────────────────────────────────────
+  .addSubcommand(sub => sub
+    .setName("reseed")
+    .setDescription("Auto-set playoff seeds from the saved MCA standings export (reads from storage)")
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -178,6 +197,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     } catch (err) {
       console.error("[admin-playoffs/runmatchups] Error:", err);
       await interaction.followUp({ content: `❌ Matchups flow failed: ${err}`, ephemeral: true });
+    }
+    return;
+  }
+
+  // ── Auto-seed from saved MCA standings ────────────────────────────────────
+  if (sub === "reseed") {
+    await interaction.editReply({ content: "⏳ Reading standings from storage and applying playoff seeds…" });
+
+    try {
+      const { platform, eaLeagueId } = getLeagueInfo();
+      const key = getWebhookKey();
+      const url = `${getApiBase()}/madden/${key}/${platform}/${eaLeagueId}/reseed-from-standings`;
+      const res = await axios.post(url, {}, { validateStatus: () => true });
+      const body = res.data as { ok: boolean; message: string; details?: { applied: number } };
+
+      const embed = new EmbedBuilder()
+        .setColor(body.ok ? Colors.Green : Colors.Red)
+        .setTitle("🏈 Playoff Seeds — Auto-set from Standings")
+        .setDescription(
+          body.ok
+            ? `✅ **${body.details?.applied ?? "?"}** human teams seeded successfully from the saved MCA standings.\n\nRun \`/admin-rebuild-historical\` to refresh the historical channel.`
+            : `❌ Failed: ${body.message}`,
+        )
+        .setTimestamp();
+
+      await interaction.editReply({ content: "", embeds: [embed] });
+    } catch (err) {
+      console.error("[admin-playoffs/reseed] Error:", err);
+      await interaction.editReply({ content: `❌ Reseed failed: ${err}` });
     }
     return;
   }

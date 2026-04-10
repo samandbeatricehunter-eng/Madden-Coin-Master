@@ -11,9 +11,10 @@ import {
   processFreeAgentRoster,
   processDraftPicks,
   processPlayoffSeedings,
+  processStandingsSeedings,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
-import { saveMcaPayload } from "../lib/mcaStorage.js";
+import { saveMcaPayload, readMcaPayload } from "../lib/mcaStorage.js";
 import { db, statPaddingViolationsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
@@ -159,6 +160,19 @@ router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, asyn
       color: 0xed4245,
     }).catch(() => {});
   }
+});
+
+// ── /reseed-from-standings — read mca/standings.json from GCS and apply seeds ──
+// No body needed — the server reads the already-saved standings file from storage.
+// Called by /admin-playoffs reseed on the bot.
+router.post("/madden/:leagueKey/:platform/:leagueId/reseed-from-standings", validateKey, async (req, res) => {
+  const standingsData = await readMcaPayload("mca/standings.json").catch(() => null);
+  if (!standingsData) {
+    res.status(404).json({ ok: false, message: "mca/standings.json not found in storage — run a full MCA export first" });
+    return;
+  }
+  const result = await processStandingsSeedings(standingsData).catch(err => ({ ok: false, message: String(err) }));
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 // ── /schedules — full season schedule ─────────────────────────────────────────

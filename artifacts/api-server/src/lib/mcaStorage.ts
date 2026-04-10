@@ -36,6 +36,24 @@ function getBucket() {
 }
 
 /**
+ * Read and parse a previously saved MCA payload from GCS.
+ * Returns null if the file doesn't exist or GCS is unavailable.
+ */
+export async function readMcaPayload(key: string): Promise<unknown | null> {
+  const bucket = getBucket();
+  if (!bucket) return null;
+  try {
+    const [buf] = await bucket.file(key).download();
+    return JSON.parse(buf.toString("utf8"));
+  } catch (err: unknown) {
+    const code = (err as any)?.code;
+    if (code === 404 || code === "404") return null;
+    console.error(`[mcaStorage] Failed to read ${key}:`, err);
+    return null;
+  }
+}
+
+/**
  * Fire-and-forget: write raw MCA payload to GCS as a JSON file.
  * Each key is deterministic so re-exports overwrite the previous file.
  * Deferred via setImmediate so serialization never adds latency to responses.
