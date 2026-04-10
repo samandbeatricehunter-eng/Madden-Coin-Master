@@ -11,7 +11,7 @@ import axios from "axios";
 
 function getApiBase(): string {
   const domain = (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim() ?? "";
-  return domain ? `https://${domain}/api-server` : "http://localhost:8080";
+  return `https://${domain}/api`;
 }
 function getWebhookKey(): string { return process.env["MADDEN_WEBHOOK_KEY"] ?? ""; }
 function getLeagueInfo() {
@@ -206,11 +206,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({ content: "⏳ Reading standings from storage and applying playoff seeds…" });
 
     try {
-      const { platform, eaLeagueId } = getLeagueInfo();
       const key = getWebhookKey();
-      const url = `${getApiBase()}/madden/${key}/${platform}/${eaLeagueId}/reseed-from-standings`;
-      const res = await axios.post(url, {}, { validateStatus: () => true });
-      const body = res.data as { ok: boolean; message: string; details?: { applied: number } };
+      const url = `${getApiBase()}/internal/reseed-from-standings`;
+      const res = await axios.post(url, {}, {
+        validateStatus: () => true,
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+      });
+      const body = typeof res.data === "object" && res.data !== null
+        ? res.data as { ok: boolean; message: string; details?: { applied: number } }
+        : { ok: false, message: `HTTP ${res.status} — unexpected response format` };
 
       const embed = new EmbedBuilder()
         .setColor(body.ok ? Colors.Green : Colors.Red)
@@ -218,7 +222,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setDescription(
           body.ok
             ? `✅ **${body.details?.applied ?? "?"}** human teams seeded successfully from the saved MCA standings.\n\nRun \`/admin-rebuild-historical\` to refresh the historical channel.`
-            : `❌ Failed: ${body.message}`,
+            : `❌ Failed: ${body.message ?? `HTTP ${res.status}`}`,
         )
         .setTimestamp();
 

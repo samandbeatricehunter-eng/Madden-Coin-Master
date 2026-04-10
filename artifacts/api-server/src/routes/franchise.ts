@@ -162,10 +162,17 @@ router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, asyn
   }
 });
 
-// ── /reseed-from-standings — read mca/standings.json from GCS and apply seeds ──
-// No body needed — the server reads the already-saved standings file from storage.
+// ── /internal/reseed-from-standings — internal bot call, no league key in URL ──
+// Uses Authorization: Bearer <MADDEN_WEBHOOK_KEY> header instead of URL param.
 // Called by /admin-playoffs reseed on the bot.
-router.post("/madden/:leagueKey/:platform/:leagueId/reseed-from-standings", validateKey, async (req, res) => {
+router.post("/internal/reseed-from-standings", async (req: Request, res: Response) => {
+  const expected = process.env["MADDEN_WEBHOOK_KEY"];
+  const auth = req.headers["authorization"] ?? "";
+  const provided = auth.startsWith("Bearer ") ? auth.slice(7) : auth;
+  if (expected && provided !== expected) {
+    res.status(403).json({ ok: false, message: "Unauthorized" });
+    return;
+  }
   const standingsData = await readMcaPayload("mca/standings.json").catch(() => null);
   if (!standingsData) {
     res.status(404).json({ ok: false, message: "mca/standings.json not found in storage — run a full MCA export first" });
