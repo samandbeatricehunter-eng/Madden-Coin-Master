@@ -839,6 +839,16 @@ export const eaConnectionsTable = pgTable("ea_connections", {
   connectedBy:  text("connected_by").notNull(),
 });
 
+// ── League Twitter — matchup context cache (4-hour window) ───────────────────
+// Written by weekly/playoff matchup runners; read by league-twitter context builder.
+export const leagueTwitterMatchupCacheTable = pgTable("league_twitter_matchup_cache", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  weekLabel:    text("week_label").notNull(),     // e.g. "Week 12" or "Wild Card"
+  matchupsText: text("matchups_text").notNull(),  // plain-text list of matchups for the AI
+  postedAt:     timestamp("posted_at").notNull().defaultNow(),
+});
+
 // ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────
 export const leagueTwitterTable = pgTable("league_twitter_tweets", {
   id:           serial("id").primaryKey(),

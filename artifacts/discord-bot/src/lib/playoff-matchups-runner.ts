@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel, GOTW_CHANNEL_ID } from "./gotw-helpers.js";
+import { cacheMatchupsForTwitter } from "./league-twitter.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
@@ -119,6 +120,15 @@ export async function runPlayoffMatchupsFlow(
     await (matchupsCh as TextChannel).send({ embeds: [embed] }).catch(err =>
       console.error("[playoff-runner] Failed to post matchups embed:", err),
     );
+
+    // Cache matchup list for League Twitter (4-hour freshness window)
+    if (h2hGames.length > 0) {
+      await cacheMatchupsForTwitter(
+        season.id,
+        label,
+        h2hGames.map(g => ({ homeTeamName: g.homeTeamName, awayTeamName: g.awayTeamName })),
+      );
+    }
   }
 
   if (h2hGames.length === 0) {

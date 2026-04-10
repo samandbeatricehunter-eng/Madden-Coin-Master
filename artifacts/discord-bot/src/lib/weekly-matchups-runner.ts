@@ -8,6 +8,7 @@ import { eq, and, asc } from "drizzle-orm";
 import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "./gotw-helpers.js";
+import { cacheMatchupsForTwitter } from "./league-twitter.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
@@ -129,6 +130,13 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   }
 
   await (targetCh as TextChannel).send({ embeds: [embed] });
+
+  // Cache matchup list for League Twitter (4-hour freshness window)
+  await cacheMatchupsForTwitter(
+    season.id,
+    `Week ${displayWeekNum}`,
+    games.map(g => ({ homeTeamName: g.homeTeamName, awayTeamName: g.awayTeamName })),
+  );
 
   // ── Build reply content ────────────────────────────────────────────────────
   let replyContent =

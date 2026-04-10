@@ -11,7 +11,8 @@ import { Client, TextChannel } from "discord.js";
 import OpenAI from "openai";
 import { db } from "@workspace/db";
 import {
-  leagueTwitterTable, usersTable, seasonsTable,
+  leagueTwitterTable, leagueTwitterMatchupCacheTable,
+  usersTable, seasonsTable,
   teamSeasonStatsTable, playerSeasonStatsTable,
   completedTradesTable,
   tradeBlockListingsTable, tradeBlockISOTable,
@@ -24,7 +25,8 @@ import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 export const LEAGUE_TWITTER_CHANNEL_ID = "1492213174697726033";
 
-const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+const TWO_HOURS_MS   = 2 * 60 * 60 * 1000;
+const FOUR_HOURS_MS  = 4 * 60 * 60 * 1000;
 
 // ── OpenAI client (same proxy used by messageCreate) ──────────────────────────
 
@@ -220,7 +222,57 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     parts.push(`\nISO LISTINGS (teams seeking specific assets):\n${lines.join("\n")}`);
   }
 
+  // ── Matchup cache (within 4-hour freshness window) ─────────────────────────
+  // Written by the matchup runners when they post; gives the AI real game data
+  // for matchup-related topics without the risk of stale schedule table entries.
+  const fourHoursAgo = new Date(Date.now() - FOUR_HOURS_MS);
+  const cachedMatchups = await db.select()
+    .from(leagueTwitterMatchupCacheTable)
+    .where(and(
+      eq(leagueTwitterMatchupCacheTable.seasonId, season.id),
+      gte(leagueTwitterMatchupCacheTable.postedAt, fourHoursAgo),
+    ))
+    .orderBy(desc(leagueTwitterMatchupCacheTable.postedAt))
+    .limit(1);
+
+  if (cachedMatchups[0]) {
+    const cm = cachedMatchups[0];
+    parts.push(`\nUPCOMING MATCHUPS — ${cm.weekLabel} (just posted — use these for matchup commentary):\n${cm.matchupsText}`);
+  }
+
   return parts.join("\n");
+}
+
+// ── Matchup cache writer (called by matchup runners after posting) ─────────────
+
+/**
+ * Call this right after the matchup embed is sent to the channel.
+ * Writes plain-text matchup data to the cache so the twitter bot can reference
+ * it for the next 4 hours.
+ *
+ * @param seasonId   - Current season ID
+ * @param weekLabel  - Human-readable label, e.g. "Week 12" or "Wild Card"
+ * @param games      - Array of { homeTeamName, awayTeamName } objects
+ */
+export async function cacheMatchupsForTwitter(
+  seasonId:  number,
+  weekLabel: string,
+  games:     { homeTeamName: string; awayTeamName: string }[],
+): Promise<void> {
+  try {
+    const matchupsText = games
+      .map(g => `  ${g.awayTeamName} @ ${g.homeTeamName}`)
+      .join("\n");
+
+    await db.insert(leagueTwitterMatchupCacheTable).values({
+      seasonId,
+      weekLabel,
+      matchupsText,
+    });
+    console.log(`[league-twitter] Cached ${games.length} matchups for "${weekLabel}"`);
+  } catch (err) {
+    console.error("[league-twitter] Failed to cache matchups:", err);
+  }
 }
 
 // ── Tweet generator ────────────────────────────────────────────────────────────
@@ -241,6 +293,7 @@ const TOPIC_PROMPTS = [
   "React to the league's turnover differential or rushing/passing leaders.",
   "Pick a team with a losing record and explain how they can still make noise.",
   "Compare two teams' season records and stats and declare which is the more dangerous squad.",
+  "If upcoming matchups are listed in the context, hype up one specific game as a must-watch — only if real matchup data is provided.",
 ];
 
 async function generateTweet(reporter: Reporter, context: string): Promise<string> {
@@ -434,7 +487,7 @@ export function startLeagueTwitterScheduler(client: Client): void {
 
   setInterval(() => {
     postLeagueTweet(client).catch(err => console.error("[league-twitter] Scheduled tweet error:", err));
-  }, THREE_HOURS_MS);
+  }, TWO_HOURS_MS);
 
-  console.log("✅ League Twitter scheduler started (every 3 hours)");
+  console.log("✅ League Twitter scheduler started (every 2 hours)");
 }
