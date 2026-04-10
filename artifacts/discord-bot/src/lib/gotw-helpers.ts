@@ -2,7 +2,7 @@ import { Client, Guild, TextChannel } from "discord.js";
 import { db } from "@workspace/db";
 import {
   gotwHistoryTable, teamSeasonStatsTable, userRecordsTable,
-  franchiseScheduleTable,
+  franchiseScheduleTable, playoffGotwPollsTable,
 } from "@workspace/db";
 import { eq, and, gte, lt } from "drizzle-orm";
 import { addBalance, logTransaction } from "./db-helpers.js";
@@ -406,4 +406,144 @@ export async function autoPayoutGotwVoters(
     `Score: ${gotwGame.awayTeamName} **${gotwGame.awayScore}** – **${gotwGame.homeScore}** ${gotwGame.homeTeamName}\n` +
     `**+${bonus} coins** paid to ${paid.length} correct voter${paid.length === 1 ? "" : "s"}: ${paid.join(", ")}`
   );
+}
+
+// ── Auto-pay all playoff GOTW polls for a completed playoff week ───────────────
+// Finds all unpaid polls for a given playoff weekIndex, determines each winner
+// from franchise_schedule, and awards GOTW_PLAYOFF_BONUS to correct voters.
+// Safe to call multiple times — skips rows where payoutIssuedAt is already set.
+export async function autoPayoutPlayoffGotw(
+  client:     Client,
+  seasonId:   number,
+  weekIndex:  number,  // 18=wildcard, 19=divisional, 20=conference, 22=superbowl
+  weekLabel:  string,  // "wildcard" | "divisional" | "conference" | "superbowl" (for display)
+): Promise<string> {
+  const polls = await db.select()
+    .from(playoffGotwPollsTable)
+    .where(and(
+      eq(playoffGotwPollsTable.seasonId,  seasonId),
+      eq(playoffGotwPollsTable.weekIndex, weekIndex),
+    ));
+
+  if (polls.length === 0) {
+    return `⚠️ No playoff polls found for ${weekLabel} — skipping GOTW payout.`;
+  }
+
+  const ch = await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null);
+  if (!ch?.isTextBased()) {
+    return `❌ Cannot access GOTW channel for ${weekLabel} poll payouts.`;
+  }
+  const tc = ch as TextChannel;
+
+  const scheduleRows = await db.select()
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId,  seasonId),
+      eq(franchiseScheduleTable.weekIndex, weekIndex),
+    ));
+
+  const results: string[] = [];
+
+  for (const poll of polls) {
+    if (poll.payoutIssuedAt) {
+      results.push(`ℹ️ ${poll.teamName1} vs ${poll.teamName2} — already paid out`);
+      continue;
+    }
+
+    if (!poll.pollMessageId) {
+      results.push(`⚠️ ${poll.teamName1} vs ${poll.teamName2} — no poll message ID, skipping`);
+      continue;
+    }
+
+    // Match the game by team names (case-insensitive, try both orderings)
+    const t1 = poll.teamName1.toLowerCase().trim();
+    const t2 = poll.teamName2.toLowerCase().trim();
+    const game = scheduleRows.find(g => {
+      const away = g.awayTeamName.toLowerCase().trim();
+      const home = g.homeTeamName.toLowerCase().trim();
+      return (away === t1 && home === t2) || (away === t2 && home === t1);
+    });
+
+    if (!game) {
+      results.push(`⚠️ ${poll.teamName1} vs ${poll.teamName2} — game not found in schedule`);
+      continue;
+    }
+
+    if (game.homeScore == null || game.awayScore == null || game.status < 2) {
+      results.push(`⏳ ${poll.teamName1} vs ${poll.teamName2} — game not scored yet`);
+      continue;
+    }
+
+    if (game.homeScore === game.awayScore) {
+      results.push(`🤝 ${poll.teamName1} vs ${poll.teamName2} — tie, no payout`);
+      await db.update(playoffGotwPollsTable)
+        .set({ payoutIssuedAt: new Date() })
+        .where(eq(playoffGotwPollsTable.id, poll.id));
+      continue;
+    }
+
+    // Determine which poll answer (1=teamName1/away, 2=teamName2/home) corresponds to the winner
+    const awayWon      = game.awayScore > game.homeScore;
+    const gameAwayName = game.awayTeamName.toLowerCase().trim();
+
+    // poll answer 1 = teamName1; figure out if teamName1 was the away or home team
+    let winningAnswerId: number;
+    let winnerName: string;
+    if (gameAwayName === t1) {
+      winningAnswerId = awayWon ? 1 : 2;
+      winnerName      = awayWon ? poll.teamName1 : poll.teamName2;
+    } else {
+      winningAnswerId = awayWon ? 2 : 1;
+      winnerName      = awayWon ? poll.teamName2 : poll.teamName1;
+    }
+
+    const pollMsg = await tc.messages.fetch(poll.pollMessageId).catch(() => null);
+    if (!pollMsg?.poll) {
+      results.push(`⚠️ ${poll.teamName1} vs ${poll.teamName2} — poll message not found`);
+      continue;
+    }
+
+    const winningAnswer = pollMsg.poll.answers.get(winningAnswerId);
+    if (!winningAnswer) {
+      results.push(`❌ ${poll.teamName1} vs ${poll.teamName2} — answer ${winningAnswerId} missing from poll`);
+      continue;
+    }
+
+    const voters = await winningAnswer.fetchVoters().catch(() => null);
+    if (!voters) {
+      results.push(`❌ ${poll.teamName1} vs ${poll.teamName2} — failed to fetch voters`);
+      continue;
+    }
+
+    const paid: string[] = [];
+    for (const [userId, user] of voters) {
+      await addBalance(userId, GOTW_PLAYOFF_BONUS);
+      await logTransaction(
+        userId, GOTW_PLAYOFF_BONUS, "addcoins",
+        `Playoff GOTW correct guess — ${weekLabel} (${poll.teamName1} vs ${poll.teamName2})`,
+        "auto",
+      );
+      paid.push(`<@${userId}>`);
+      try {
+        await user.send(
+          `🏆 **Playoff GOTW Correct Guess!** Your pick of **${winnerName}** in the ` +
+          `${poll.teamName1} vs ${poll.teamName2} matchup was right!\n` +
+          `**+${GOTW_PLAYOFF_BONUS} coins** added to your balance.`,
+        ).catch(() => {});
+      } catch (_) {}
+    }
+
+    await db.update(playoffGotwPollsTable)
+      .set({ payoutIssuedAt: new Date() })
+      .where(eq(playoffGotwPollsTable.id, poll.id));
+
+    results.push(
+      paid.length > 0
+        ? `✅ ${poll.teamName1} vs ${poll.teamName2} — **${winnerName}** won · paid ${paid.length} voter${paid.length === 1 ? "" : "s"}: ${paid.join(", ")}`
+        : `📊 ${poll.teamName1} vs ${poll.teamName2} — **${winnerName}** won · no correct voters`,
+    );
+  }
+
+  const header = `**${weekLabel.charAt(0).toUpperCase() + weekLabel.slice(1)} GOTW Payouts (+${GOTW_PLAYOFF_BONUS} coins/correct guess):**`;
+  return `${header}\n${results.join("\n")}`;
 }

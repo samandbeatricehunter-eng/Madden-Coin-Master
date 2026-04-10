@@ -498,6 +498,25 @@ export const gotwHistoryTable = pgTable("gotw_history", {
   uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex),
 }));
 
+// ── Playoff GOTW polls (one per matchup, multiple per week) ───────────────────
+// Unlike gotwHistoryTable (one per week), each H2H playoff game gets its own row.
+export const playoffGotwPollsTable = pgTable("playoff_gotw_polls", {
+  id:             serial("id").primaryKey(),
+  seasonId:       integer("season_id").notNull(),
+  weekLabel:      text("week_label").notNull(),       // "wildcard" | "divisional" | "conference" | "superbowl"
+  weekIndex:      integer("week_index").notNull(),    // 18=wildcard, 19=divisional, 20=conference, 22=superbowl
+  matchupIndex:   integer("matchup_index").notNull(), // 0-based position within the week's games
+  discordId1:     text("discord_id_1").notNull(),     // away team discord ID
+  discordId2:     text("discord_id_2").notNull(),     // home team discord ID
+  teamName1:      text("team_name_1").notNull(),      // away team name
+  teamName2:      text("team_name_2").notNull(),      // home team name
+  pollMessageId:  text("poll_message_id"),
+  payoutIssuedAt: timestamp("payout_issued_at"),
+  createdAt:      timestamp("created_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqMatchup: uniqueIndex("playoff_gotw_polls_uniq").on(t.seasonId, t.weekIndex, t.matchupIndex),
+}));
+
 // ── Game matchup channels (created per week by /advanceweek, deleted on next advance) ──
 export const gameChannelsTable = pgTable("game_channels", {
   id:           serial("id").primaryKey(),

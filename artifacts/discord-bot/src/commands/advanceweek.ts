@@ -1,6 +1,6 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits, ChannelType,
+  PermissionFlagsBits, ChannelType, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable } from "@workspace/db";
@@ -12,10 +12,24 @@ import { runEosAutoPost } from "../lib/eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
+import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow } from "../lib/playoff-matchups-runner.js";
+import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
+const MATCHUP_CATEGORY_ID  = "1478427821666861272";
+const ANNOUNCE_CHANNEL_ID  = "1484689142515368188"; // general announcements / rule-change channel
 
-const MATCHUP_CATEGORY_ID = "1478427821666861272";
+// Channels wiped completely when advancing to offseason (excludes ANNOUNCE_CHANNEL_ID which is posted to, not just wiped)
+const OFFSEASON_WIPE_CHANNEL_IDS = [
+  "1486034589808853114",
+  "1477507190104527011",
+  "1485643704206229638",
+  "1486369417309978644",
+  "1477717664804896899",
+  "1478777175128932463",
+  "1478947361014288445",
+  "1484689142515368188",
+];
 
 export const WEEK_SEQUENCE = [
   "1","2","3","4","5","6","7","8","9","10",
@@ -168,6 +182,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // GOTW channel is fully cleared by /weeklymatchups instead
   }
 
+  // ── Playoff GOTW payout — fires when leaving a playoff week ──────────────────
+  // Pays all correct voters (10 coins each) for each poll posted the previous round.
+  const leavingPlayoffMeta = PLAYOFF_WEEK_META[season.currentWeek ?? ""];
+  if (leavingPlayoffMeta) {
+    try {
+      const payoutSummary = await autoPayoutPlayoffGotw(
+        interaction.client,
+        season.id,
+        leavingPlayoffMeta.weekIndex,
+        season.currentWeek!,
+      );
+      if (payoutSummary) channelLines.push(payoutSummary);
+    } catch (err) {
+      console.error("[advanceweek] Playoff GOTW payout error:", err);
+    }
+  }
+
   const oldLabel = weekLabel(season.currentWeek ?? "1");
   const newLabel = weekLabel(newWeek);
 
@@ -198,10 +229,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (deleted > 0) channelLines.push(`🗑️ Removed **${deleted}** previous matchup channel${deleted !== 1 ? "s" : ""}`);
     }
 
-    // 2. Create channels only for regular-season weeks (1–18)
+    // 2. Create channels for regular-season weeks (1–18) and all playoff rounds.
+    //    Offseason: no new channels created (old superbowl channels already deleted above).
     const newWeekNum = parseInt(newWeek, 10);
+    let channelWeekIndex: number | null = null;
+    let channelWeekDisplayLabel = weekLabel(newWeek);
+
     if (!isNaN(newWeekNum) && newWeekNum >= 1 && newWeekNum <= 18) {
-      const weekIndex = newWeekNum - 1; // DB uses 0-based weekIndex
+      channelWeekIndex = newWeekNum - 1; // DB uses 0-based weekIndex
+    } else if (PLAYOFF_WEEK_META[newWeek]) {
+      channelWeekIndex = PLAYOFF_WEEK_META[newWeek]!.weekIndex;
+    }
+    // offseason: channelWeekIndex stays null → no channels created
+
+    if (channelWeekIndex !== null) {
+      const weekIndex = channelWeekIndex;
 
       // Fetch the schedule for this week
       const games = await db.select()
@@ -215,7 +257,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // which already has alias-resolved discordIds from the franchise import.
       // This handles Madden CFM custom names like "G-Men", "Bolts", "Vikes", etc.
       const mcaTeams = await db.select({
-        fullName: franchiseMcaTeamsTable.fullName,
+        fullName:  franchiseMcaTeamsTable.fullName,
         discordId: franchiseMcaTeamsTable.discordId,
       }).from(franchiseMcaTeamsTable)
         .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
@@ -270,7 +312,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
           // Tag both users in the channel
           await newChannel.send(
-            `🏈 **${g.awayTeamName} vs ${g.homeTeamName}** — Week ${newWeekNum}\n` +
+            `🏈 **${g.awayTeamName} vs ${g.homeTeamName}** — ${channelWeekDisplayLabel}\n` +
             `<@${awayDiscordId}> <@${homeDiscordId}>\n` +
             `Good luck this week!`,
           );
@@ -433,13 +475,67 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     })();
   }
 
-  // ── Offseason — post season/all-time records to historical channel ─────────────
+  // ── Offseason — post season/all-time records + wipe channels + announcement ────
   if (newWeek === "offseason") {
     (async () => {
       try {
         await runOffseasonHistoricalPost(interaction.client, season.id, season.seasonNumber);
       } catch (err) {
         console.error("[advanceweek] Offseason historical post error:", err);
+      }
+
+      // Wipe all specified channels (old messages need 1-by-1 delete due to Discord 14-day limit)
+      for (const chId of OFFSEASON_WIPE_CHANNEL_IDS) {
+        try {
+          const ch = interaction.client.channels.cache.get(chId)
+            ?? await interaction.client.channels.fetch(chId).catch(() => null);
+          if (ch?.isTextBased()) {
+            await purgeChannel(ch as TextChannel).catch(err =>
+              console.error(`[advanceweek] Offseason wipe error (${chId}):`, err),
+            );
+          }
+        } catch (err) {
+          console.error(`[advanceweek] Could not wipe channel ${chId}:`, err);
+        }
+      }
+
+      // Post rule-change voting announcement to the announce channel
+      try {
+        const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
+          ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
+        if (announceCh?.isTextBased()) {
+          await (announceCh as TextChannel).send({
+            content:
+              `@everyone\n` +
+              `📣 **The rule change voting period has begun!**\n\n` +
+              `If you are requesting a specific rule change to be voted on by the league, ` +
+              `please post it in the **League Announcements** channel immediately to be considered.\n\n` +
+              `⚠️ This opportunity **ends once the Draft has begun**. Get your proposals in now!`,
+          });
+        }
+      } catch (err) {
+        console.error("[advanceweek] Offseason announcement error:", err);
+      }
+    })();
+  }
+
+  // ── New season — announce when advancing to Week 1 from offseason or a fresh season ──
+  if (newWeek === "1" && (!season.currentWeek || season.currentWeek === "offseason")) {
+    (async () => {
+      try {
+        const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
+          ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
+        if (announceCh?.isTextBased()) {
+          await (announceCh as TextChannel).send({
+            content:
+              `@everyone\n` +
+              `🏈 **A new season has begun!**\n\n` +
+              `We have officially advanced to **Season ${season.seasonNumber}**.\n` +
+              `Good luck to everyone this season — let's get to work! 💪`,
+          });
+        }
+      } catch (err) {
+        console.error("[advanceweek] New season announcement error:", err);
       }
     })();
   }
@@ -450,8 +546,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // posts new matchups, and sends admin an ephemeral GOTW prompt.
   const _newWeekNum = parseInt(newWeek, 10);
   if (!isNaN(_newWeekNum) && _newWeekNum >= 1 && _newWeekNum <= 18) {
-    // Send the GOTW admin prompt as a separate ephemeral follow-up so it
-    // doesn't interfere with the main advance-week summary embed.
     (async () => {
       try {
         await runWeeklyMatchupsFlow({
@@ -473,6 +567,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         try {
           await interaction.followUp({
             content: `⚠️ Advance week completed, but the weekly matchups flow failed: ${err}`,
+            ephemeral: true,
+          });
+        } catch { /* nothing we can do */ }
+      }
+    })();
+  }
+
+  // ── Playoff matchups flow — fires when advancing TO any playoff week ───────────
+  // Posts matchup embed, clears GOTW channel, creates one poll per H2H matchup.
+  // Does NOT fire for offseason.
+  if (PLAYOFF_WEEK_META[newWeek]) {
+    (async () => {
+      try {
+        const summary = await runPlayoffMatchupsFlow(
+          interaction.client,
+          season,
+          newWeek,
+        );
+        await interaction.followUp({ content: summary, ephemeral: true }).catch(() => {});
+      } catch (err) {
+        console.error("[advanceweek] Playoff matchups flow error:", err);
+        try {
+          await interaction.followUp({
+            content: `⚠️ Advance week completed, but the playoff matchups flow failed: ${err}`,
             ephemeral: true,
           });
         } catch { /* nothing we can do */ }
