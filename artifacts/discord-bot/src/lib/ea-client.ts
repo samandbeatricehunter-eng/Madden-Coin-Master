@@ -292,14 +292,25 @@ async function createBlazeSession(token: TokenInfo, attempt = 1): Promise<BlazeS
 
   // EA occasionally returns an error object or a response without userLoginInfo
   if (!body.userLoginInfo) {
-    const fullBody = JSON.stringify(body).slice(0, 400);
-    console.error(`[ea-client] Blaze login attempt ${attempt} failed. Full response: ${fullBody}`);
-    if (attempt < 3) {
-      // Retry up to 2 more times with a short backoff
-      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    const fullBody    = JSON.stringify(body).slice(0, 400);
+    const errorName   = (body.error as any)?.errorname ?? "";
+    const isErrSystem = errorName === "ERR_SYSTEM";
+    console.error(`[ea-client] Blaze login attempt ${attempt} failed (${errorName || "unknown"}). Response: ${fullBody}`);
+
+    const maxAttempts = isErrSystem ? 5 : 3;
+    if (attempt < maxAttempts) {
+      // ERR_SYSTEM = EA rate-limiting / session conflict — use longer exponential backoff
+      const delayMs = isErrSystem ? 4000 * attempt : 1500 * attempt;
+      console.log(`[ea-client] Retrying Blaze login in ${delayMs}ms (attempt ${attempt + 1}/${maxAttempts})...`);
+      await new Promise((r) => setTimeout(r, delayMs));
       return createBlazeSession(token, attempt + 1);
     }
-    throw new Error(`EA Blaze login returned no session after ${attempt} attempts. EA response: ${fullBody}`);
+    throw new Error(
+      `EA Blaze login returned no session after ${attempt} attempts. EA response: ${fullBody}\n\n` +
+      (isErrSystem
+        ? "This usually means EA is rate-limiting concurrent sessions. Wait 5–10 minutes and try again."
+        : ""),
+    );
   }
 
   if (!body.userLoginInfo.sessionKey) {
