@@ -104,13 +104,6 @@ function recordLine(rank: number, t: StandingRow): string {
   return `${badge}**${rank}. ${t.teamName}**${user} — ${t.wins}-${t.losses}${pct} | PD ${pd}${clinchNote(t.clinch)}`;
 }
 
-function formatDivisionBlock(div: string, teams: StandingRow[]): string {
-  const sorted = [...teams].sort(
-    (a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential,
-  );
-  const lines = sorted.map((t, i) => recordLine(i + 1, t));
-  return `**${div} Division**\n${lines.join("\n")}`;
-}
 
 function formatPlayoffPicture(seeds: StandingRow[]): string {
   const lines: string[] = [];
@@ -146,12 +139,7 @@ function buildConferenceEmbed(
   const DIVISIONS = ["East", "North", "South", "West"] as const;
   const color = CONF_COLORS[conf] ?? Colors.Blurple;
 
-  const divBlocks: string[] = [];
-  for (const div of DIVISIONS) {
-    const divTeams = annotated.filter(t => t.division === div);
-    if (divTeams.length > 0) divBlocks.push(formatDivisionBlock(div, divTeams));
-  }
-
+  // ── Seed order (div winners by record, then wild cards by record) ────────────
   const divWinnerSet = new Set<string>();
   for (const div of DIVISIONS) {
     const leader = annotated
@@ -169,20 +157,27 @@ function buildConferenceEmbed(
 
   const playoffSeeds = seeds.slice(0, 7);
   const bubbleTeams  = seeds.slice(7, 10);
-
-  const standingsField = divBlocks.join("\n\n");
-  const playoffField   = formatPlayoffPicture(playoffSeeds);
-  const bubbleField    = formatBubble(bubbleTeams, playoffSeeds[6]);
+  const playoffField = formatPlayoffPicture(playoffSeeds);
+  const bubbleField  = formatBubble(bubbleTeams, playoffSeeds[6]);
 
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(`🏈 ${conf} Standings — Season ${seasonNumber}`)
-    .addFields(
-      { name: "\u200B", value: standingsField || "No data", inline: false },
-      { name: `📊 ${conf} Playoff Picture`, value: playoffField || "No data", inline: false },
-    )
     .setFooter({ text: "🌟 1st-Rnd Bye  🏆 Clinched Division  ✅ Clinched Playoff Spot" })
     .setTimestamp();
+
+  // ── One field per division (avoids the 1024-char embed field limit) ──────────
+  for (const div of DIVISIONS) {
+    const divTeams = annotated
+      .filter(t => t.division === div)
+      .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+    if (divTeams.length === 0) continue;
+
+    const lines = divTeams.map((t, i) => recordLine(i + 1, t));
+    embed.addFields({ name: `${conf} ${div}`, value: lines.join("\n"), inline: false });
+  }
+
+  embed.addFields({ name: `📊 ${conf} Playoff Picture`, value: playoffField || "No data", inline: false });
 
   if (bubbleField) {
     embed.addFields({ name: `⚠️ ${conf} Bubble`, value: bubbleField, inline: false });
