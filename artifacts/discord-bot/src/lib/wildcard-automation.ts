@@ -15,7 +15,7 @@
  */
 
 import {
-  Client, ChannelType, TextChannel, Colors, EmbedBuilder,
+  Client, Guild, ChannelType, TextChannel, Colors, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
 } from "discord.js";
 import { db } from "@workspace/db";
@@ -24,7 +24,7 @@ import {
   franchiseMcaTeamsTable,
   pendingPollsTable, seasonHistoricalChannelsTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
 import { addBalance, logTransaction } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
@@ -105,33 +105,64 @@ export async function runWildcardAutomation(
   client: Client,
   seasonId: number,
   seasonNumber: number,
+  guild?: Guild | null,
 ): Promise<void> {
   console.log(`[wildcard] Starting automation for Season ${seasonNumber}...`);
 
+  // ── Resolve guild ─────────────────────────────────────────────────────────────
+  const resolvedGuild: Guild | null = guild
+    ?? client.guilds.cache.first()
+    ?? await client.guilds.fetch().then(async g => {
+      const first = g.first();
+      return first ? client.guilds.fetch(first.id) : null;
+    }).catch(() => null);
+
+  if (!resolvedGuild) {
+    console.error("[wildcard] No guild found — aborting");
+    return;
+  }
+
   // ── 1. Create historical records channel ─────────────────────────────────────
-  const guild = client.guilds.cache.first() ?? await client.guilds.fetch().then(g => {
-    const first = g.first();
-    return first ? client.guilds.fetch(first.id) : null;
-  }).catch(() => null);
-
-  if (!guild) { console.error("[wildcard] No guild found — aborting"); return; }
-
   let historicalChannel: TextChannel | null = null;
 
   try {
-    const chanName   = `historical-records-for-season-${seasonNumber}`;
-    const newChannel = await guild.channels.create({
-      name:   chanName,
-      type:   ChannelType.GuildText,
-      parent: HISTORICAL_CATEGORY_ID,
-    });
-    historicalChannel = newChannel as TextChannel;
+    const chanName = `historical-records-for-season-${seasonNumber}`;
+
+    // Guard: check if the channel already exists to avoid duplicates
+    const existing = resolvedGuild.channels.cache.find(c => c.name === chanName)
+      ?? await resolvedGuild.channels.fetch().then(cs => cs.find(c => c?.name === chanName)).catch(() => null);
+
+    if (existing?.isTextBased()) {
+      historicalChannel = existing as TextChannel;
+      console.log(`[wildcard] Historical channel already exists: ${existing.id}`);
+    } else {
+      const newChannel = await resolvedGuild.channels.create({
+        name:   chanName,
+        type:   ChannelType.GuildText,
+        parent: HISTORICAL_CATEGORY_ID,
+      });
+      historicalChannel = newChannel as TextChannel;
+      console.log(`[wildcard] Created historical channel: ${newChannel.id}`);
+    }
+
     await db.insert(seasonHistoricalChannelsTable)
-      .values({ seasonId, channelId: newChannel.id })
-      .onConflictDoUpdate({ target: seasonHistoricalChannelsTable.seasonId, set: { channelId: newChannel.id } });
-    console.log(`[wildcard] Created historical channel: ${newChannel.id}`);
+      .values({ seasonId, channelId: historicalChannel.id })
+      .onConflictDoUpdate({
+        target: seasonHistoricalChannelsTable.seasonId,
+        set: { channelId: historicalChannel.id },
+      });
   } catch (err) {
-    console.error("[wildcard] Failed to create historical channel:", err);
+    console.error("[wildcard] Failed to create/resolve historical channel:", err);
+    // Report failure to the general channel so admins are aware
+    try {
+      const generalCh = resolvedGuild.channels.cache.get(GENERAL_CHANNEL_ID)
+        ?? await resolvedGuild.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
+      if (generalCh?.isTextBased()) {
+        await (generalCh as TextChannel).send({
+          content: `⚠️ **Historical records channel could not be created** for Season ${seasonNumber}. Check bot permissions in the Historical Records category. Error: \`${err}\``,
+        });
+      }
+    } catch { /* ignore */ }
     return;
   }
 

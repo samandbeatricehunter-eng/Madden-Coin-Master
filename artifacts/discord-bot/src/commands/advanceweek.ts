@@ -437,7 +437,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (newWeek === "wildcard" && season.currentWeek === "18") {
     (async () => {
       try {
-        await runWildcardAutomation(interaction.client, season.id, season.seasonNumber);
+        await runWildcardAutomation(interaction.client, season.id, season.seasonNumber, interaction.guild);
       } catch (err) {
         console.error("[advanceweek] Wildcard automation error:", err);
       }
