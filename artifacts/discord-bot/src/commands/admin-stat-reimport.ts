@@ -7,10 +7,10 @@ import {
   playerSeasonStatsTable, playerStatWeekProcessedTable,
   teamSeasonStatsTable,
 } from "@workspace/db";
-import { eq, count } from "drizzle-orm";
+import { eq, count, and } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getPayoutValue, setPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
-import { deleteMcaPayloads } from "../lib/gcs-reader.js";
+import { deleteMcaPayloads, listMcaFiles, readMcaJson } from "../lib/gcs-reader.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin_stat_reimport")
@@ -33,6 +33,10 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(s => s
     .setName("status")
     .setDescription("Show safe mode state and how many weeks of stats have been imported this season")
+  )
+  .addSubcommand(s => s
+    .setName("fix_turnover")
+    .setDescription("Recalculate turnover diff for every team from stored payloads — no re-import needed")
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -44,6 +48,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     await handleEnable(interaction);
   } else if (sub === "disable") {
     await handleDisable(interaction);
+  } else if (sub === "fix_turnover") {
+    await handleFixTurnover(interaction);
   }
 }
 
@@ -208,6 +214,135 @@ async function handleEnable(interaction: ChatInputCommandInteraction): Promise<v
         "4. Advance to Wildcard week to trigger EOS payouts",
     })
     .setFooter({ text: `Season ${season.seasonNumber} (id: ${season.id})` })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+// ── /admin_stat_reimport fix_turnover ────────────────────────────────────────
+
+function extractTeamList(body: unknown): any[] {
+  if (!body || typeof body !== "object") return [];
+  for (const key of ["teamStatInfoList", "teamStatsInfoList", "teamStats"]) {
+    const val = (body as any)[key];
+    if (Array.isArray(val)) return val;
+  }
+  if (Array.isArray(body)) return body;
+  return [];
+}
+
+function getNum(obj: any, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined && v !== null && !isNaN(Number(v))) return Number(v);
+  }
+  return 0;
+}
+
+function parseTODiff(t: any): number {
+  const direct = getNum(t, "tODiff","turnOverDiff","turnoverDiff","turnoverDifferential","toMargin","toDiff","tOMargin");
+  if (direct !== 0) return direct;
+  const takeaways  = getNum(t, "tOTakeaways","defTurnovers","defensiveTurnovers","defTO","takeaways");
+  const giveaways  = getNum(t, "tOGiveaways","offTurnovers","offensiveTurnovers","offTO","giveaways");
+  if (takeaways !== 0 || giveaways !== 0) return takeaways - giveaways;
+  return 0;
+}
+
+async function handleFixTurnover(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  // 1. List every saved team-stat payload in GCS
+  let files: string[];
+  try {
+    files = await listMcaFiles("mca/week-");
+  } catch (err) {
+    await interaction.editReply({ content: `❌ Could not list GCS files: ${err}` });
+    return;
+  }
+
+  const teamFiles = files.filter(f => f.endsWith("-team.json"));
+  if (teamFiles.length === 0) {
+    await interaction.editReply({
+      content: "❌ No stored team-stat payloads found in object storage. You'll need to re-import from MCA.",
+    });
+    return;
+  }
+
+  // 2. Sum tODiff per EA teamId across every week
+  const toDiffByTeam = new Map<number, number>(); // teamId → season total
+  let weeksParsed = 0;
+
+  for (const key of teamFiles) {
+    let body: unknown;
+    try {
+      body = await readMcaJson(key);
+    } catch {
+      continue; // skip unreadable files
+    }
+
+    const teams = extractTeamList(body);
+    for (const t of teams) {
+      const teamId = Number(t?.teamId ?? -1);
+      if (isNaN(teamId) || teamId < 0) continue;
+      const diff = parseTODiff(t);
+      toDiffByTeam.set(teamId, (toDiffByTeam.get(teamId) ?? 0) + diff);
+    }
+    weeksParsed++;
+  }
+
+  if (toDiffByTeam.size === 0) {
+    await interaction.editReply({
+      content: `⚠️ Parsed ${weeksParsed} payload file(s) but found no team IDs with turnover data. ` +
+               `Check that the files are valid team-stat payloads.`,
+    });
+    return;
+  }
+
+  // 3. Patch ONLY turnoverDiff in team_season_stats for the active season
+  const season = await getOrCreateActiveSeason();
+  let updated = 0;
+
+  for (const [teamId, diff] of toDiffByTeam) {
+    const result = await db
+      .update(teamSeasonStatsTable)
+      .set({ turnoverDiff: diff, updatedAt: new Date() })
+      .where(
+        and(
+          eq(teamSeasonStatsTable.seasonId, season.id),
+          eq(teamSeasonStatsTable.teamId,   teamId),
+        ),
+      );
+    if (result.rowCount && result.rowCount > 0) updated++;
+  }
+
+  // 4. Show results with a sample
+  const topTeams = [...toDiffByTeam.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const sampleLines = topTeams.map(([id, diff]) => {
+    const sign = diff > 0 ? "+" : "";
+    return `Team ${id}: **${sign}${diff}**`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle("✅ Turnover Differential Fixed")
+    .setColor(Colors.Green)
+    .setDescription(
+      `Read **${weeksParsed}** stored payload file(s) and recalculated turnover diff from scratch.\n` +
+      `Updated **${updated}** team row(s) in the database — all other stats were left untouched.`,
+    )
+    .addFields(
+      {
+        name: `Top ${sampleLines.length} Teams by Turnover Diff`,
+        value: sampleLines.join("\n") || "No data",
+      },
+      {
+        name: "Next Step",
+        value: "Run `/admin_eos_testrun` to verify payout totals now include correct turnover differential.",
+      },
+    )
+    .setFooter({ text: `Season ${season.seasonNumber} — ${toDiffByTeam.size} teams patched` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
