@@ -280,6 +280,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       }
 
+      // Build a reverse map: discordId → proper NFL team name (from usersTable.team).
+      // This is used for channel names so we never use Madden nicknames like "G-Men".
+      const discordIdToProperTeam = new Map<string, string>();
+      for (const u of allUsers) {
+        if (u.team) discordIdToProperTeam.set(u.discordId, u.team);
+      }
+
       // Filter to H2H games only: both teams must have a registered user
       const h2hGames = games.filter(g => {
         const awayId = teamToDiscord.get(g.awayTeamName.toLowerCase().trim());
@@ -298,7 +305,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const awayDiscordId = teamToDiscord.get(g.awayTeamName.toLowerCase().trim())!;
         const homeDiscordId = teamToDiscord.get(g.homeTeamName.toLowerCase().trim())!;
 
-        const chanName = `${toChannelName(g.awayTeamName)}-vs-${toChannelName(g.homeTeamName)}`;
+        // Use the proper NFL team name from usersTable for channel names,
+        // falling back to the schedule name if no mapping is found.
+        const awayProper = discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName;
+        const homeProper = discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName;
+
+        const chanName = `${toChannelName(awayProper)}-vs-${toChannelName(homeProper)}`;
 
         try {
           // Create the channel under the matchup category
@@ -313,7 +325,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
           // Tag both users in the channel
           await newChannel.send(
-            `🏈 **${g.awayTeamName} vs ${g.homeTeamName}** — ${channelWeekDisplayLabel}\n` +
+            `🏈 **${awayProper} vs ${homeProper}** — ${channelWeekDisplayLabel}\n` +
             `<@${awayDiscordId}> <@${homeDiscordId}>\n` +
             `Good luck this week!`,
           );
@@ -323,8 +335,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             seasonId:     season.id,
             weekIndex,
             channelId:    newChannel.id,
-            awayTeamName: g.awayTeamName,
-            homeTeamName: g.homeTeamName,
+            awayTeamName: awayProper,
+            homeTeamName: homeProper,
           });
 
           created++;
