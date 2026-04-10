@@ -16,13 +16,13 @@
 
 import {
   Client, Guild, ChannelType, TextChannel, Colors, EmbedBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, playerSeasonStatsTable,
   franchiseMcaTeamsTable,
-  pendingPollsTable, seasonHistoricalChannelsTable,
+  pendingPollsTable, seasonHistoricalChannelsTable, seasonsTable,
 } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
@@ -98,6 +98,72 @@ async function createPoll(
     messages.push(msg);
   }
   return messages;
+}
+
+// ── Exported helper: post awards display-only (no coin bonuses) ────────────────
+export async function postAwardsDisplayOnly(
+  channel: TextChannel,
+  seasonId: number,
+  seasonNumber: number,
+): Promise<void> {
+  const raw = await readMcaJson("mca/awards.json");
+  if (!raw || typeof raw !== "object") {
+    await channel.send({
+      embeds: [new EmbedBuilder().setColor(Colors.Red)
+        .setTitle("🏆 Regular Season Awards (In-Game)")
+        .setDescription("*Award data not available — MCA awards export has not been received.*")
+        .setTimestamp()],
+    });
+    return;
+  }
+  const body = raw as Record<string, unknown>;
+  const listKey = Object.keys(body).find(k =>
+    k.toLowerCase().includes("award") && Array.isArray(body[k])
+  );
+  if (!listKey) {
+    await channel.send({ embeds: [new EmbedBuilder().setColor(Colors.Red)
+      .setTitle("🏆 Regular Season Awards (In-Game)")
+      .setDescription("*Award data received but could not be parsed.*")
+      .setTimestamp()] });
+    return;
+  }
+  const rawAwards = body[listKey] as Record<string, unknown>[];
+  const awards = rawAwards.map(a => ({
+    awardKey:     Number(a["awardKey"]     ?? a["awardId"]  ?? -1),
+    conferenceId: Number(a["conferenceId"] ?? a["confId"]   ?? 2),
+    firstName:    String(a["firstName"]    ?? a["fname"]    ?? ""),
+    lastName:     String(a["lastName"]     ?? a["lname"]    ?? ""),
+    teamName:     String(a["teamName"]     ?? a["teamNickName"] ?? a["teamShortName"] ?? ""),
+    teamId:       a["teamId"] != null ? Number(a["teamId"]) : undefined,
+  }));
+  const mcaTeams = await db.select({ teamId: franchiseMcaTeamsTable.teamId, nickName: franchiseMcaTeamsTable.nickName })
+    .from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, seasonId));
+  const teamIdToNick = new Map(mcaTeams.map(t => [t.teamId, t.nickName]));
+  const leagueWideKeys = new Set([0, 5]);
+  const leagueLines: string[] = [];
+  const afcLines:    string[] = [];
+  const nfcLines:    string[] = [];
+  for (const a of awards) {
+    if (a.awardKey < 0 || !(a.awardKey in AWARD_KEY_LABEL)) continue;
+    const label    = AWARD_KEY_LABEL[a.awardKey] ?? `Award #${a.awardKey}`;
+    const name     = [a.firstName, a.lastName].filter(Boolean).join(" ") || "Unknown";
+    const teamDisp = (a.teamId && teamIdToNick.get(a.teamId)) || a.teamName || "?";
+    const person   = a.awardKey === 5 ? teamDisp : `${name} (${teamDisp})`;
+    const line     = `${label} — ${person}`;
+    if (leagueWideKeys.has(a.awardKey)) leagueLines.push(line);
+    else if (a.conferenceId === 0)      afcLines.push(line);
+    else                                nfcLines.push(line);
+  }
+  const leagueSec = leagueLines.length ? `**REGULAR SEASON AWARDS (IN-GAME):**\n${leagueLines.map(l => `🏆 ${l}`).join("\n")}` : "*No league-wide awards data*";
+  const afcSec    = afcLines.length    ? `\n\n**AFC**\n${afcLines.map(l => `🏆 ${l}`).join("\n")}`                               : "";
+  const nfcSec    = nfcLines.length    ? `\n\n**NFC**\n${nfcLines.map(l => `🏆 ${l}`).join("\n")}`                               : "";
+  await channel.send({
+    embeds: [new EmbedBuilder()
+      .setTitle(`🏆 Season ${seasonNumber} — Regular Season Awards`)
+      .setColor(Colors.Gold)
+      .setDescription((leagueSec + afcSec + nfcSec).slice(0, 4000))
+      .setTimestamp()],
+  });
 }
 
 // ── Main export ────────────────────────────────────────────────────────────────
@@ -213,7 +279,9 @@ export async function runWildcardAutomation(
 
     // ── 7. Create community polls ───────────────────────────────────────────────
     try {
-      await createCommunityPolls(client, historicalChannel, seasonId);
+      const [seasonRow] = await db.select({ startedAt: seasonsTable.startedAt })
+        .from(seasonsTable).where(eq(seasonsTable.id, seasonId)).limit(1);
+      await createCommunityPolls(client, historicalChannel, seasonId, resolvedGuild, seasonRow?.startedAt ?? new Date(0));
     } catch (err) {
       console.error("[wildcard] Community polls failed:", err);
     }
@@ -623,9 +691,10 @@ async function postPlayoffSection(
     .where(sql`${usersTable.playoffSeed} IS NOT NULL`);
 
   const records = await db.select({
-    discordId: userRecordsTable.discordId,
-    wins:      userRecordsTable.wins,
-    losses:    userRecordsTable.losses,
+    discordId:         userRecordsTable.discordId,
+    wins:              userRecordsTable.wins,
+    losses:            userRecordsTable.losses,
+    pointDifferential: userRecordsTable.pointDifferential,
   }).from(userRecordsTable).where(eq(userRecordsTable.seasonId, seasonId));
 
   const recordMap = new Map(records.map(r => [r.discordId, r]));
@@ -633,8 +702,18 @@ async function postPlayoffSection(
   function formatSeedLine(u: typeof seededUsers[0], seed: number): string {
     const rec  = recordMap.get(u.discordId);
     const wl   = rec ? `${rec.wins}–${rec.losses}` : "?–?";
+    const pd   = rec ? (rec.pointDifferential >= 0 ? `+${rec.pointDifferential}` : String(rec.pointDifferential)) : "";
+    const pdStr = pd ? `, ${pd} PD` : "";
     const icon = seed <= 4 ? "🏆" : "🃏";
-    return `${icon} **Seed ${seed}** — ${u.team ?? "Unknown"} (${wl})`;
+    return `${icon} **Seed ${seed}** — ${u.team ?? "Unknown"} (${wl}${pdStr})`;
+  }
+
+  function formatDivLine(u: typeof seededUsers[0]): string {
+    const rec = recordMap.get(u.discordId);
+    const wl  = rec ? `${rec.wins}–${rec.losses}` : "?–?";
+    const pd  = rec ? (rec.pointDifferential >= 0 ? `+${rec.pointDifferential}` : String(rec.pointDifferential)) : "";
+    const pdStr = pd ? `, ${pd} PD` : "";
+    return `🏆 ${u.team ?? "Unknown"} (${wl}${pdStr})`;
   }
 
   const afc = seededUsers
@@ -647,6 +726,11 @@ async function postPlayoffSection(
   const afcDiv = afc.filter(u => (u.playoffSeed ?? 99) <= 4);
   const nfcDiv = nfc.filter(u => (u.playoffSeed ?? 99) <= 4);
 
+  if (afc.length === 0 && nfc.length === 0) {
+    await channel.send({ content: "*Playoff seeding not yet set — use `/admin_ea_export` or manually assign seeds.*" });
+    return;
+  }
+
   const embed = new EmbedBuilder()
     .setTitle(`🏈 Season ${seasonNumber} — Playoff Picture`)
     .setColor(Colors.DarkGreen);
@@ -654,21 +738,13 @@ async function postPlayoffSection(
   if (afcDiv.length > 0) {
     embed.addFields({
       name:  "🏅 AFC Division Winners",
-      value: afcDiv.map(u => {
-        const rec = recordMap.get(u.discordId);
-        const wl  = rec ? `${rec.wins}–${rec.losses}` : "?–?";
-        return `🏆 ${u.team ?? "Unknown"} (${wl})`;
-      }).join("\n"),
+      value: afcDiv.map(formatDivLine).join("\n"),
     });
   }
   if (nfcDiv.length > 0) {
     embed.addFields({
       name:  "🏅 NFC Division Winners",
-      value: nfcDiv.map(u => {
-        const rec = recordMap.get(u.discordId);
-        const wl  = rec ? `${rec.wins}–${rec.losses}` : "?–?";
-        return `🏆 ${u.team ?? "Unknown"} (${wl})`;
-      }).join("\n"),
+      value: nfcDiv.map(formatDivLine).join("\n"),
     });
   }
   if (afc.length > 0) {
@@ -686,10 +762,57 @@ async function postPlayoffSection(
 // SECTION 7: Community polls
 // ────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Scans guild text channels and counts messages sent by registered users
+ * after `since`. Returns a map of discordId → message count.
+ * Fetches up to `maxPerChannel` messages per channel (in 100-msg batches).
+ */
+async function countSeasonMessages(
+  guild: Guild,
+  registeredIds: Set<string>,
+  since: Date,
+  maxPerChannel = 400,
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const EXCLUDED_IDS = new Set([
+    process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "",
+  ].filter(Boolean));
+
+  const textChannels = [...guild.channels.cache.values()].filter(c => {
+    if (c.type !== ChannelType.GuildText) return false;
+    if (EXCLUDED_IDS.has(c.id)) return false;
+    const me = guild.members.me;
+    if (!me) return true;
+    return (c as TextChannel).permissionsFor(me)?.has(PermissionFlagsBits.ReadMessageHistory) ?? false;
+  }) as TextChannel[];
+
+  for (const channel of textChannels) {
+    let lastId: string | undefined;
+    let done = false;
+    let fetched = 0;
+    while (!done && fetched < maxPerChannel) {
+      const msgs = await channel.messages.fetch({ limit: 100, ...(lastId ? { before: lastId } : {}) }).catch(() => null);
+      if (!msgs || msgs.size === 0) break;
+      for (const msg of msgs.values()) {
+        if (msg.createdAt < since) { done = true; break; }
+        if (!msg.author.bot && registeredIds.has(msg.author.id)) {
+          counts.set(msg.author.id, (counts.get(msg.author.id) ?? 0) + 1);
+        }
+        lastId = msg.id;
+      }
+      fetched += msgs.size;
+      if (!done) await new Promise(r => setTimeout(r, 600));
+    }
+  }
+  return counts;
+}
+
 async function createCommunityPolls(
   client: Client,
   channel: TextChannel,
   seasonId: number,
+  guild: Guild,
+  seasonStartedAt: Date,
 ): Promise<void> {
   // Fetch all active users with teams
   const allUsers = await db.select({
@@ -697,27 +820,45 @@ async function createCommunityPolls(
     team:      usersTable.team,
   }).from(usersTable);
 
-  const activeTeams = allUsers
-    .map(u => u.team)
-    .filter((t): t is string => !!t)
-    .sort();
+  const teamMap = new Map(allUsers.filter(u => u.team).map(u => [u.discordId, u.team!]));
 
-  // Build season records to find bottom 5
+  // Build season records sorted best → worst
   const records = await db.select({
     discordId: userRecordsTable.discordId,
     wins:      userRecordsTable.wins,
     losses:    userRecordsTable.losses,
   }).from(userRecordsTable).where(eq(userRecordsTable.seasonId, seasonId));
 
-  const teamMap = new Map(allUsers.filter(u => u.team).map(u => [u.discordId, u.team!]));
-
-  // Sort by worst H2H record (fewest wins, then most losses)
   const withRecords = records
     .filter(r => teamMap.has(r.discordId))
     .map(r => ({ team: teamMap.get(r.discordId)!, wins: r.wins, losses: r.losses }))
-    .sort((a, b) => a.wins !== b.wins ? a.wins - b.wins : b.losses - a.losses);
+    .sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : a.losses - b.losses); // best first
 
-  const bottom5Teams = withRecords.slice(0, 5).map(r => r.team);
+  // ── Loudest mouth: top 5 users by message count during this season ────────────
+  const registeredIds = new Set(allUsers.map(u => u.discordId));
+  let loudestOptions: string[] = [];
+  try {
+    const msgCounts = await countSeasonMessages(guild, registeredIds, seasonStartedAt);
+    // Sort by message count descending, take top 5
+    loudestOptions = [...msgCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id]) => teamMap.get(id) ?? id);
+  } catch (err) {
+    console.error("[wildcard] Message count scan failed:", err);
+    // Fall back to alphabetical team list
+    loudestOptions = [...teamMap.values()].sort().slice(0, 10);
+  }
+
+  // ── Most heart: top 8 teams + bottom 8 teams from standings (deduped, max 10/poll) ──
+  const top8   = withRecords.slice(0, 8).map(r => r.team);
+  const bottom8 = withRecords.slice(-8).map(r => r.team).reverse(); // worst first
+  // Merge, dedup, keep at most 10 (Discord hard limit per poll)
+  const heartSet = new Set([...top8, ...bottom8]);
+  const heartOptions = [...heartSet].slice(0, 10);
+
+  // ── Bottom 5 for best/worst of the worst polls ─────────────────────────────────
+  const bottom5Teams = withRecords.slice(-5).map(r => r.team).reverse(); // worst first
 
   const expiresAt12 = new Date(Date.now() + 12 * 60 * 60 * 1000);
 
@@ -730,10 +871,10 @@ async function createCommunityPolls(
   });
 
   const pollDefs: Array<{ question: string; options: string[]; type: string }> = [
-    { question: "Who had the LOUDEST mouth?",    options: activeTeams, type: "loudest"     },
-    { question: "Who had the most HEART?",       options: activeTeams, type: "heart"       },
-    { question: "Who was the BEST of the WORST?",options: bottom5Teams, type: "best_worst"  },
-    { question: "Who was the WORST of the WORST?",options: bottom5Teams, type: "worst_worst" },
+    { question: "Who had the LOUDEST mouth?",     options: loudestOptions, type: "loudest"     },
+    { question: "Who had the most HEART?",        options: heartOptions,   type: "heart"       },
+    { question: "Who was the BEST of the WORST?", options: bottom5Teams,   type: "best_worst"  },
+    { question: "Who was the WORST of the WORST?",options: bottom5Teams,   type: "worst_worst" },
   ];
 
   for (const def of pollDefs) {
@@ -750,6 +891,86 @@ async function createCommunityPolls(
       });
     }
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// REBUILD: Delete + recreate historical channel (no coin bonuses, no PR bonuses)
+// ────────────────────────────────────────────────────────────────────────────────
+
+export async function rebuildHistoricalChannel(
+  client: Client,
+  seasonId: number,
+  seasonNumber: number,
+  guild: Guild,
+): Promise<TextChannel> {
+  const chanName = `historical-records-for-season-${seasonNumber}`;
+
+  // Delete old channel if it exists in DB
+  const [row] = await db.select().from(seasonHistoricalChannelsTable)
+    .where(eq(seasonHistoricalChannelsTable.seasonId, seasonId)).limit(1);
+  if (row) {
+    const oldCh = await client.channels.fetch(row.channelId).catch(() => null);
+    if (oldCh) await oldCh.delete(`Rebuilding historical records channel for Season ${seasonNumber}`).catch(() => {});
+    await db.delete(seasonHistoricalChannelsTable).where(eq(seasonHistoricalChannelsTable.seasonId, seasonId));
+  }
+
+  // Also check by name in case DB record was missing
+  const byName = guild.channels.cache.find(c => c.name === chanName);
+  if (byName) await byName.delete("Rebuilding historical records channel").catch(() => {});
+
+  // Create fresh channel
+  const newChannel = await guild.channels.create({
+    name:   chanName,
+    type:   ChannelType.GuildText,
+    parent: HISTORICAL_CATEGORY_ID,
+  }) as TextChannel;
+
+  await db.insert(seasonHistoricalChannelsTable)
+    .values({ seasonId, channelId: newChannel.id })
+    .onConflictDoUpdate({
+      target: seasonHistoricalChannelsTable.seasonId,
+      set: { channelId: newChannel.id },
+    });
+
+  // ── Season recap (historical channel only — no headlines @everyone) ───────────
+  try {
+    const { postSeasonRecap } = await import("./season-recap.js");
+    await postSeasonRecap(client, seasonId, seasonNumber, newChannel, /* skipHeadlines */ true);
+  } catch (err) {
+    console.error("[rebuild] Season recap failed:", err);
+  }
+
+  // ── Awards (display only — no coin bonuses) ───────────────────────────────────
+  try {
+    await postAwardsDisplayOnly(newChannel, seasonId, seasonNumber);
+  } catch (err) {
+    console.error("[rebuild] Awards display failed:", err);
+  }
+
+  // ── Stat leaders ──────────────────────────────────────────────────────────────
+  try {
+    await postStatLeaders(newChannel, seasonId, seasonNumber);
+  } catch (err) {
+    console.error("[rebuild] Stat leaders failed:", err);
+  }
+
+  // ── Playoff picture ───────────────────────────────────────────────────────────
+  try {
+    await postPlayoffSection(newChannel, seasonId, seasonNumber);
+  } catch (err) {
+    console.error("[rebuild] Playoff section failed:", err);
+  }
+
+  // ── Community polls ───────────────────────────────────────────────────────────
+  try {
+    const [seasonRow] = await db.select({ startedAt: seasonsTable.startedAt })
+      .from(seasonsTable).where(eq(seasonsTable.id, seasonId)).limit(1);
+    await createCommunityPolls(client, newChannel, seasonId, guild, seasonRow?.startedAt ?? new Date(0));
+  } catch (err) {
+    console.error("[rebuild] Community polls failed:", err);
+  }
+
+  return newChannel;
 }
 
 // ────────────────────────────────────────────────────────────────────────────────

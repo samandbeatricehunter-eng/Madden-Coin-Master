@@ -31,11 +31,13 @@ import * as customarticle      from "./commands/customarticle.js";
 import * as webhookurl         from "./commands/webhookurl.js";
 import * as viewPayoutTiers    from "./commands/viewpayouttiers.js";
 import * as interviewrequest   from "./commands/interviewrequest.js";
-import * as adminEosTestrun    from "./commands/admin-eos-testrun.js";
-import * as adminStatReimport  from "./commands/admin-stat-reimport.js";
-import * as adminEaConnect     from "./commands/admin-ea-connect.js";
-import * as adminEaExport      from "./commands/admin-ea-export.js";
-import * as draftPresence      from "./commands/draft-presence.js";
+import * as adminEosTestrun         from "./commands/admin-eos-testrun.js";
+import * as adminStatReimport       from "./commands/admin-stat-reimport.js";
+import * as adminEaConnect          from "./commands/admin-ea-connect.js";
+import * as adminEaExport           from "./commands/admin-ea-export.js";
+import * as adminCancelResendEos    from "./commands/admin-cancel-resend-eos.js";
+import * as adminRebuildHistorical  from "./commands/admin-rebuild-historical.js";
+import * as draftPresence           from "./commands/draft-presence.js";
 import { seasonPRData, allTimePRData } from "./commands/records.js";
 
 const token    = process.env["DISCORD_TOKEN"]!;
@@ -71,6 +73,8 @@ const commands = [
   adminStatReimport,
   adminEaConnect,
   adminEaExport,
+  adminCancelResendEos,
+  adminRebuildHistorical,
   draftPresence,
 ].map(c => c.data.toJSON());
 

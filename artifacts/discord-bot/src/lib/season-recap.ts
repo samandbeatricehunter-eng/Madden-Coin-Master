@@ -393,6 +393,7 @@ export async function postSeasonRecap(
   seasonId: number,
   seasonNumber: number,
   historicalChannel: TextChannel | null,
+  skipHeadlines = false,
 ): Promise<void> {
   console.log(`[seasonRecap] Generating Season ${seasonNumber} recap article...`);
 
@@ -430,20 +431,22 @@ export async function postSeasonRecap(
     embedBatches.push(embeds.slice(i, i + BATCH_SIZE));
   }
 
-  // Post to headlines channel
-  try {
-    const headlinesCh = await client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
-    if (headlinesCh?.isTextBased()) {
-      for (let i = 0; i < embedBatches.length; i++) {
-        await (headlinesCh as TextChannel).send({
-          content: i === 0 ? "@everyone 📰 **Season Recap is here!**" : undefined,
-          embeds:  embedBatches[i],
-        });
+  // Post to headlines channel (skipped on rebuilds to avoid duplicate @everyone pings)
+  if (!skipHeadlines) {
+    try {
+      const headlinesCh = await client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+      if (headlinesCh?.isTextBased()) {
+        for (let i = 0; i < embedBatches.length; i++) {
+          await (headlinesCh as TextChannel).send({
+            content: i === 0 ? "@everyone 📰 **Season Recap is here!**" : undefined,
+            embeds:  embedBatches[i],
+          });
+        }
+        console.log("[seasonRecap] Posted to headlines channel");
       }
-      console.log("[seasonRecap] Posted to headlines channel");
+    } catch (err) {
+      console.error("[seasonRecap] Failed to post to headlines:", err);
     }
-  } catch (err) {
-    console.error("[seasonRecap] Failed to post to headlines:", err);
   }
 
   // Post to historical records channel (if it was successfully created)
