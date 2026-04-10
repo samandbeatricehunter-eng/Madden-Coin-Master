@@ -55,6 +55,7 @@ import {
   scoreH2HMatchups, postGotwToChannel, GOTW_CHANNEL_ID,
 } from "../lib/gotw-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
+import { logTradeEvent } from "../lib/league-twitter.js";
 
 const HEADLINES_CHANNEL_ID     = "1477717664804896899";
 const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
@@ -1412,6 +1413,21 @@ async function handleButton(interaction: ButtonInteraction) {
       await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
     }
     await interaction.update({ content: "✅ Listing removed from the trade block.", components: [] });
+
+    try {
+      const [ndSeason, ndUser] = await Promise.all([
+        getOrCreateActiveSeason(),
+        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
+      ]);
+      const ndTeam = ndUser[0]?.team ?? interaction.user.username;
+      void logTradeEvent({
+        seasonId:  ndSeason.id,
+        eventType: listingType === "I" ? "iso_removed" : "listing_removed",
+        summary:   `${ndTeam} removed their ${listingType === "I" ? "ISO" : "trade block listing"} (no deal reached)`,
+        teamA:     ndTeam,
+      });
+    } catch (_) {}
+
     return;
   }
 
@@ -1520,6 +1536,14 @@ async function handleButton(interaction: ButtonInteraction) {
       whatTeam1Sent:     listingField,
       whatTeam1Received: offerField,
     }).catch(err => console.error("[tb_dm_acc] Failed to insert completedTrade:", err));
+
+    void logTradeEvent({
+      seasonId:  season.id,
+      eventType: "trade_completed",
+      summary:   `${posterTeam} and ${offerorName} completed a trade`,
+      teamA:     posterTeam,
+      teamB:     offerorName,
+    });
 
     // ── DM the offeror ────────────────────────────────────────────────────────
     try {
@@ -2502,6 +2526,24 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (_) {}
 
     await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Accept / Negotiate / Decline buttons in their DM." });
+
+    try {
+      const [tbSeason, offerorRows, posterRows] = await Promise.all([
+        getOrCreateActiveSeason(),
+        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
+        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1),
+      ]);
+      const offerorTeam = offerorRows[0]?.team ?? interaction.user.username;
+      const posterTeam  = posterRows[0]?.team ?? "Unknown Team";
+      void logTradeEvent({
+        seasonId:  tbSeason.id,
+        eventType: "offer_sent",
+        summary:   `${offerorTeam} sent a trade offer to ${posterTeam} (Listing #${listingId})`,
+        teamA:     offerorTeam,
+        teamB:     posterTeam,
+      });
+    } catch (_) {}
+
     return;
   }
 
@@ -2632,6 +2674,24 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (_) {}
 
     await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Accept / Negotiate / Decline buttons in their DM." });
+
+    try {
+      const [isoSeason, offerorIsoRows, posterIsoRows] = await Promise.all([
+        getOrCreateActiveSeason(),
+        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
+        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1),
+      ]);
+      const offerorIsoTeam = offerorIsoRows[0]?.team ?? interaction.user.username;
+      const posterIsoTeam  = posterIsoRows[0]?.team ?? "Unknown Team";
+      void logTradeEvent({
+        seasonId:  isoSeason.id,
+        eventType: "offer_sent",
+        summary:   `${offerorIsoTeam} sent an offer to ${posterIsoTeam}'s ISO (ISO #${isoId})`,
+        teamA:     offerorIsoTeam,
+        teamB:     posterIsoTeam,
+      });
+    } catch (_) {}
+
     return;
   }
 
@@ -2694,6 +2754,14 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (err) {
       console.error("[tb_deal_modal] Failed to insert completedTrade:", err);
     }
+
+    void logTradeEvent({
+      seasonId,
+      eventType: "trade_completed",
+      summary:   `${team1Name} and ${otherTeam} completed a trade — ${team1Name} sent: ${whatSent.slice(0, 80)}`,
+      teamA:     team1Name,
+      teamB:     otherTeam,
+    });
 
     // Build trade announcement embed
     const tradeEmbed = new EmbedBuilder()

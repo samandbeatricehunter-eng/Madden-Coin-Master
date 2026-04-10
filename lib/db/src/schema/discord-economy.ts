@@ -839,6 +839,19 @@ export const eaConnectionsTable = pgTable("ea_connections", {
   connectedBy:  text("connected_by").notNull(),
 });
 
+// ── League Twitter — trade activity event log ─────────────────────────────────
+// Written by trade block commands/interactions; only includes events from this
+// season forward. Replaces querying stale completedTradesTable for AI context.
+export const leagueTwitterTradeEventsTable = pgTable("league_twitter_trade_events", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  eventType: text("event_type").notNull(),   // "listing_posted" | "iso_posted" | "offer_sent" | "trade_completed" | "listing_removed" | "iso_removed"
+  summary:   text("summary").notNull(),       // human-readable one-liner for AI context
+  teamA:     text("team_a"),                  // primary team name
+  teamB:     text("team_b"),                  // secondary team name (if applicable)
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // ── League Twitter — matchup context cache (4-hour window) ───────────────────
 // Written by weekly/playoff matchup runners; read by league-twitter context builder.
 export const leagueTwitterMatchupCacheTable = pgTable("league_twitter_matchup_cache", {

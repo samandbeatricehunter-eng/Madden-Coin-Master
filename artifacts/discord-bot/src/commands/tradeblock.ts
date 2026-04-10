@@ -10,6 +10,7 @@ import {
 import { eq, and, count } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
+import { logTradeEvent } from "../lib/league-twitter.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -415,6 +416,13 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
     content: `✅ Listing #${listingId} posted! Use \`/viewtradeblock\` to see it on the block.`,
   });
 
+  void logTradeEvent({
+    seasonId:  season.id,
+    eventType: "listing_posted",
+    summary:   `${teamName} posted a trade block listing (Listing #${listingId})${notes ? ` — looking for: ${notes}` : ""}`,
+    teamA:     teamName,
+  });
+
   // Announce to general channel
   await postAnnouncement(interaction.client, teamName, items, notes ?? null, false);
 }
@@ -567,8 +575,17 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
     status:         "active",
   }).returning({ id: tradeBlockISOTable.id });
 
+  const isoId = inserted!.id;
+
   await interaction.editReply({
-    content: `✅ ISO #${inserted!.id} posted! Use \`/viewtradeblock\` to see it on the block.`,
+    content: `✅ ISO #${isoId} posted! Use \`/viewtradeblock\` to see it on the block.`,
+  });
+
+  void logTradeEvent({
+    seasonId:  season.id,
+    eventType: "iso_posted",
+    summary:   `${teamName} posted an ISO (seeking: ${seekingSummary || seekingType})`,
+    teamA:     teamName,
   });
 
   // Announce to general channel
@@ -655,4 +672,18 @@ async function handleSendOffer(interaction: ChatInputCommandInteraction) {
     .setTimestamp();
 
   await interaction.editReply({ embeds: [confirmEmbed] });
+
+  try {
+    const [season, targetTeam] = await Promise.all([
+      getOrCreateActiveSeason(),
+      getMyTeam(target.id),
+    ]);
+    void logTradeEvent({
+      seasonId:  season.id,
+      eventType: "offer_sent",
+      summary:   `${myTeam} sent a direct trade offer to ${targetTeam}`,
+      teamA:     myTeam,
+      teamB:     targetTeam,
+    });
+  } catch (_) {}
 }

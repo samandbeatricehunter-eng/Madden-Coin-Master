@@ -11,11 +11,9 @@ import { Client, TextChannel } from "discord.js";
 import OpenAI from "openai";
 import { db } from "@workspace/db";
 import {
-  leagueTwitterTable, leagueTwitterMatchupCacheTable,
+  leagueTwitterTable, leagueTwitterMatchupCacheTable, leagueTwitterTradeEventsTable,
   usersTable, seasonsTable,
   teamSeasonStatsTable, playerSeasonStatsTable,
-  completedTradesTable,
-  tradeBlockListingsTable, tradeBlockISOTable,
   userRecordsTable,
 } from "@workspace/db";
 import { eq, desc, and, gte } from "drizzle-orm";
@@ -160,66 +158,20 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     );
   }
 
-  // ── Recent completed trades (last 7 days) ──────────────────────────────────
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const trades = await db.select()
-    .from(completedTradesTable)
+  // ── Trade activity events (last 48 hours — logged fresh by trade commands) ──
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const tradeEvents = await db.select()
+    .from(leagueTwitterTradeEventsTable)
     .where(and(
-      eq(completedTradesTable.seasonId, season.id),
-      gte(completedTradesTable.announcedAt, sevenDaysAgo),
+      eq(leagueTwitterTradeEventsTable.seasonId, season.id),
+      gte(leagueTwitterTradeEventsTable.createdAt, fortyEightHoursAgo),
     ))
-    .orderBy(desc(completedTradesTable.announcedAt))
-    .limit(5);
+    .orderBy(desc(leagueTwitterTradeEventsTable.createdAt))
+    .limit(10);
 
-  if (trades.length > 0) {
-    const lines = trades.map(t =>
-      `  ${t.team1Name} traded [${t.whatTeam1Sent}] for [${t.whatTeam1Received}] with ${t.team2Name}`,
-    );
-    parts.push(`\nRECENT TRADES:\n${lines.join("\n")}`);
-  }
-
-  // ── Active trade block listings ─────────────────────────────────────────────
-  const listings = await db.select({
-    teamName: tradeBlockListingsTable.teamName,
-    items:    tradeBlockListingsTable.items,
-    notes:    tradeBlockListingsTable.notes,
-  })
-    .from(tradeBlockListingsTable)
-    .where(and(
-      eq(tradeBlockListingsTable.seasonId, season.id),
-      eq(tradeBlockListingsTable.status, "active"),
-    ))
-    .limit(6);
-
-  if (listings.length > 0) {
-    const lines = listings.map(l => {
-      const itemStr = (l.items as any[]).map((it: any) => {
-        if (it.type === "player") return `${it.firstName} ${it.lastName} (${it.position})`;
-        if (it.type === "pick")   return it.description;
-        if (it.type === "coins")  return `${it.amount} coins`;
-        return "asset";
-      }).join(", ");
-      return `  ${l.teamName} shopping: ${itemStr}${l.notes ? ` (wants: ${l.notes})` : ""}`;
-    });
-    parts.push(`\nACTIVE TRADE BLOCK:\n${lines.join("\n")}`);
-  }
-
-  // ── Active ISO listings ────────────────────────────────────────────────────
-  const isos = await db.select({
-    teamName:    tradeBlockISOTable.teamName,
-    seekingType: tradeBlockISOTable.seekingType,
-    offering:    tradeBlockISOTable.offering,
-  })
-    .from(tradeBlockISOTable)
-    .where(and(
-      eq(tradeBlockISOTable.seasonId, season.id),
-      eq(tradeBlockISOTable.status, "active"),
-    ))
-    .limit(4);
-
-  if (isos.length > 0) {
-    const lines = isos.map(l => `  ${l.teamName} ISO: seeking ${l.seekingType}`);
-    parts.push(`\nISO LISTINGS (teams seeking specific assets):\n${lines.join("\n")}`);
+  if (tradeEvents.length > 0) {
+    const lines = tradeEvents.map(e => `  [${e.eventType.replace(/_/g, " ")}] ${e.summary}`);
+    parts.push(`\nRECENT TRADE BLOCK ACTIVITY (last 48 hours):\n${lines.join("\n")}`);
   }
 
   // ── Matchup cache (within 4-hour freshness window) ─────────────────────────
@@ -272,6 +224,41 @@ export async function cacheMatchupsForTwitter(
     console.log(`[league-twitter] Cached ${games.length} matchups for "${weekLabel}"`);
   } catch (err) {
     console.error("[league-twitter] Failed to cache matchups:", err);
+  }
+}
+
+// ── Trade event logger (called by trade block commands/interactions) ──────────
+
+export type TradeEventType =
+  | "listing_posted"
+  | "iso_posted"
+  | "offer_sent"
+  | "trade_completed"
+  | "listing_removed"
+  | "iso_removed";
+
+/**
+ * Log a trade-related event for the League Twitter context window.
+ * Call this from every trade block command/interaction that creates activity.
+ * Events expire naturally from context after 48 hours.
+ */
+export async function logTradeEvent(opts: {
+  seasonId:  number;
+  eventType: TradeEventType;
+  summary:   string;
+  teamA?:    string;
+  teamB?:    string;
+}): Promise<void> {
+  try {
+    await db.insert(leagueTwitterTradeEventsTable).values({
+      seasonId:  opts.seasonId,
+      eventType: opts.eventType,
+      summary:   opts.summary,
+      teamA:     opts.teamA ?? null,
+      teamB:     opts.teamB ?? null,
+    });
+  } catch (err) {
+    console.error("[league-twitter] Failed to log trade event:", err);
   }
 }
 
