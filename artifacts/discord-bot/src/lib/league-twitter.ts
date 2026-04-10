@@ -140,6 +140,64 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     parts.push(`\nCURRENT STANDINGS: Data not available this cycle. Do NOT invent, assume, or quote any team's record. Avoid any mention of win-loss records entirely.`);
   }
 
+  // ── Playoff status ─────────────────────────────────────────────────────────
+  // Pull playoff seedings from usersTable (written by auto-seeding on every MCA sync).
+  // playoffSeed 1–7 = in playoffs; null = eliminated / missed playoffs.
+  const allUserTeams = await db.select({
+    team:              usersTable.team,
+    playoffSeed:       usersTable.playoffSeed,
+    playoffConference: usersTable.playoffConference,
+  })
+    .from(usersTable)
+    .where(isNotNull(usersTable.team));
+
+  const playoffTeams = allUserTeams
+    .filter(u => u.playoffSeed !== null && u.playoffSeed >= 1 && u.playoffSeed <= 7 && u.playoffConference)
+    .sort((a, b) => {
+      // Group by conference, then by seed ascending
+      if (a.playoffConference !== b.playoffConference) return (a.playoffConference ?? "").localeCompare(b.playoffConference ?? "");
+      return (a.playoffSeed ?? 99) - (b.playoffSeed ?? 99);
+    });
+
+  const eliminatedTeams = allUserTeams
+    .filter(u => !u.playoffSeed || u.playoffSeed < 1 || u.playoffSeed > 7)
+    .map(u => u.team)
+    .filter((t): t is string => !!t);
+
+  // Detect whether we are currently in the playoff phase by checking for any
+  // completed playoff schedule rows (weekIndex >= 1000).
+  const playoffGames = await db.select({ weekIndex: franchiseScheduleTable.weekIndex })
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId, season.id),
+      isNotNull(franchiseScheduleTable.homeScore),
+      gte(franchiseScheduleTable.weekIndex, 1000),
+    ))
+    .limit(1);
+
+  const isInPlayoffs = playoffGames.length > 0;
+
+  if (playoffTeams.length > 0) {
+    const phaseLabel = isInPlayoffs ? "CURRENT PLAYOFF FIELD" : "CURRENT PLAYOFF SEEDS (regular season, may change)";
+    const lines: string[] = [];
+    const conferences = [...new Set(playoffTeams.map(u => u.playoffConference))];
+    for (const conf of conferences) {
+      const confTeams = playoffTeams.filter(u => u.playoffConference === conf);
+      lines.push(`  ${conf}:`);
+      for (const u of confTeams) {
+        const bye = u.playoffSeed! <= 2 ? " (1st-round bye)" : "";
+        lines.push(`    Seed ${u.playoffSeed}: ${u.team}${bye}`);
+      }
+    }
+    if (eliminatedTeams.length > 0) {
+      lines.push(`  NOT in playoffs / eliminated: ${eliminatedTeams.join(", ")}`);
+    }
+    parts.push(`\n${phaseLabel}:\n${lines.join("\n")}`);
+  } else {
+    // No seedings available yet
+    parts.push(`\nPLAYOFF STATUS: Playoff seedings not yet determined for this season.`);
+  }
+
   // ── Team season stat highlights ─────────────────────────────────────────────
   if (mcaStandings.length > 0) {
     // Sanity-bound: offPtsPerGame should be under 80 to be a real per-game value.
@@ -484,7 +542,8 @@ CRITICAL RULES — violating any of these is a failure:
 - ROSTERS: Only say a player is on a team if they appear in that team's TEAM ROSTERS entry. Never place a player on a team not listed there.
 - TRADE/ROSTER RUMORS: NEVER invent or imply that a team is shopping, trading, releasing, or seeking a player unless that specific event appears in RECENT TRADE BLOCK ACTIVITY. If that section says "NONE", write about something else entirely — do not create any trade or personnel rumors.
 - MATCHUPS: Do not reference a specific upcoming game unless that exact matchup is listed under UPCOMING MATCHUPS.
-- H2H: Do not cite head-to-head records between two teams.`;
+- H2H: Do not cite head-to-head records between two teams.
+- PLAYOFFS: NEVER describe a team as being in the playoffs, competing for a playoff spot, or chasing the postseason unless they explicitly appear under CURRENT PLAYOFF SEEDS or CURRENT PLAYOFF FIELD in the context. Teams listed under "NOT in playoffs / eliminated" are OUT — do not imply they have any playoff chance or relevance whatsoever. If PLAYOFF STATUS says seedings are not yet determined, do not speculate about who is or isn't in.`;
 
   const user = `LEAGUE CONTEXT:\n${context}\n\nTOPIC ANGLE: ${topic}\n\nWrite your tweet:`;
 
