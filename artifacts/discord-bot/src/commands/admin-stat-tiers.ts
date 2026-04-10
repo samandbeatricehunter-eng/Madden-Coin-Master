@@ -42,8 +42,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     getPayoutValue(PAYOUT_KEYS.EOS_DB_MIN_INTS),
   ]);
 
-  const offCats  = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
-  const defCats  = STAT_CATEGORIES.filter(c => c.key.startsWith("def_"));
+  const offCats   = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
+  const defCats   = STAT_CATEGORIES.filter(c => c.key.startsWith("def_"));
+  const otherCats = STAT_CATEGORIES.filter(c => !c.key.startsWith("off_") && !c.key.startsWith("def_"));
   // Split defense into two fields to stay within Discord's 1024-char embed field limit
   const defCats1 = defCats.slice(0, 3); // Yards & Points Allowed
   const defCats2 = defCats.slice(3);    // Turnovers & Pressure
@@ -69,9 +70,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }).join("\n\n");
   }
 
-  const offBlock   = buildCategoryBlock(offCats);
-  const defBlock1  = buildCategoryBlock(defCats1);
-  const defBlock2  = buildCategoryBlock(defCats2);
+  const offBlock    = buildCategoryBlock(offCats);
+  const defBlock1   = buildCategoryBlock(defCats1);
+  const defBlock2   = buildCategoryBlock(defCats2);
+  const otherBlock  = otherCats.length > 0 ? buildCategoryBlock(otherCats) : "";
 
   const indivBlock = [
     `**QB YPA Bonus** — QB needs ${minQbAtt}+ attempts AND ${(minQbYpa / 10).toFixed(1)}+ YPA → **${qbBonus}🪙**`,
@@ -93,6 +95,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       { name: "🏈 Offense",                        value: offBlock,   inline: false },
       { name: "🛡️ Defense — Yards & Points",       value: defBlock1,  inline: false },
       { name: "🛡️ Defense — Turnovers & Pressure", value: defBlock2,  inline: false },
+      ...(otherBlock ? [{ name: "🔄 Other Stats", value: otherBlock, inline: false }] : []),
       { name: "💰 Individual Bonuses",              value: indivBlock, inline: false },
     )
     .setFooter({

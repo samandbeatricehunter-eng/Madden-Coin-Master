@@ -48,11 +48,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return `**${cat.label}**\n${tierParts.join(" · ")}${suffix}`;
   }
 
-  const offCats = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
-  const defCats = STAT_CATEGORIES.filter(c => c.key.startsWith("def_"));
+  const offCats   = STAT_CATEGORIES.filter(c => c.key.startsWith("off_"));
+  const defCats   = STAT_CATEGORIES.filter(c => c.key.startsWith("def_"));
+  const otherCats = STAT_CATEGORIES.filter(c => !c.key.startsWith("off_") && !c.key.startsWith("def_"));
 
-  const offBlock = offCats.map(buildCategoryLine).join("\n\n");
-  const defBlock = defCats.map(buildCategoryLine).join("\n\n");
+  const offBlock   = offCats.map(buildCategoryLine).join("\n\n");
+  const defBlock   = defCats.map(buildCategoryLine).join("\n\n");
+  const otherBlock = otherCats.map(buildCategoryLine).join("\n\n");
 
   const indivBlock = [
     `**RB YPC Bonus** — 7.0+ YPC (100+ carries) → **${rbBonus}🪙**`,
@@ -74,21 +76,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         : `⚠️ Stat tiers have not been fully seeded yet (${seededCount}/${totalCount} configured). Showing defaults for unseeded categories.`
     )
     .addFields(
-      {
-        name: "🏈 Offensive Stats",
-        value: offBlock,
-        inline: false,
-      },
-      {
-        name: "🛡️ Defensive Stats",
-        value: defBlock,
-        inline: false,
-      },
-      {
-        name: "💰 Individual & Consolation Bonuses",
-        value: indivBlock,
-        inline: false,
-      },
+      { name: "🏈 Offensive Stats",              value: offBlock,   inline: false },
+      { name: "🛡️ Defensive Stats",              value: defBlock,   inline: false },
+      ...(otherBlock ? [{ name: "🔄 Other Stats", value: otherBlock, inline: false }] : []),
+      { name: "💰 Individual & Consolation Bonuses", value: indivBlock, inline: false },
     )
     .setFooter({ text: "Individual bonuses (RB/QB/DB) are manually verified by the commissioner • Stats that fall below Tier 1 receive no payout" })
     .setTimestamp();
