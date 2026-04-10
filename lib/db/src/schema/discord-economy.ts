@@ -517,6 +517,29 @@ export const playoffGotwPollsTable = pgTable("playoff_gotw_polls", {
   uniqMatchup: uniqueIndex("playoff_gotw_polls_uniq").on(t.seasonId, t.weekIndex, t.matchupIndex),
 }));
 
+// ── Draft presence tracker ────────────────────────────────────────────────────
+// One active session at a time per guild; presence rows track each user's status.
+export const draftSessionsTable = pgTable("draft_sessions", {
+  id:             serial("id").primaryKey(),
+  guildId:        text("guild_id").notNull(),
+  channelId:      text("channel_id").notNull(),
+  messageId:      text("message_id"),         // embed/status message — edited in-place
+  panelMessageId: text("panel_message_id"),   // user-toggle buttons message — re-posted to bottom
+  isActive:       boolean("is_active").notNull().default(true),
+  createdAt:      timestamp("created_at").notNull().defaultNow(),
+});
+
+export const draftPresenceTable = pgTable("draft_presence", {
+  id:        serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull(),
+  discordId: text("discord_id").notNull(),
+  teamName:  text("team_name"),
+  isPresent: boolean("is_present").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniq: uniqueIndex("draft_presence_uniq").on(t.sessionId, t.discordId),
+}));
+
 // ── Game matchup channels (created per week by /advanceweek, deleted on next advance) ──
 export const gameChannelsTable = pgTable("game_channels", {
   id:           serial("id").primaryKey(),

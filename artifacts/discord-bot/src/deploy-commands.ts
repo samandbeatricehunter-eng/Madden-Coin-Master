@@ -34,6 +34,7 @@ import * as adminEosTestrun    from "./commands/admin-eos-testrun.js";
 import * as adminStatReimport  from "./commands/admin-stat-reimport.js";
 import * as adminEaConnect     from "./commands/admin-ea-connect.js";
 import * as adminEaExport      from "./commands/admin-ea-export.js";
+import * as draftPresence      from "./commands/draft-presence.js";
 import { seasonPRData, allTimePRData } from "./commands/records.js";
 
 const token    = process.env["DISCORD_TOKEN"]!;
@@ -69,6 +70,7 @@ const commands = [
   adminStatReimport,
   adminEaConnect,
   adminEaExport,
+  draftPresence,
 ].map(c => c.data.toJSON());
 
 commands.push(

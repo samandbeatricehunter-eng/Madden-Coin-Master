@@ -8,7 +8,8 @@ import * as view          from "./commands/view.js";
 import * as adminEosTestrun from "./commands/admin-eos-testrun.js";
 import * as adminStatReimport from "./commands/admin-stat-reimport.js";
 import * as adminEaConnect from "./commands/admin-ea-connect.js";
-import * as adminEaExport  from "./commands/admin-ea-export.js";
+import * as adminEaExport   from "./commands/admin-ea-export.js";
+import * as draftPresence   from "./commands/draft-presence.js";
 
 // ── Split admin slash commands ────────────────────────────────────────────────
 import * as slashAdminSeason    from "./commands/slash-admin-season.js";
@@ -139,6 +140,7 @@ if (!isProduction && !devBotEnabled) {
     adminStatReimport,
     adminEaConnect,
     adminEaExport,
+    draftPresence,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },

@@ -48,6 +48,10 @@ import {
 import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import {
+  DRAFT_TOGGLE_PREFIX, DRAFT_CLOSE_BUTTON_ID,
+  getActiveSession, togglePresence, refreshPresence, endDraftSession,
+} from "../lib/draft-presence-manager.js";
+import {
   scoreH2HMatchups, postGotwToChannel, GOTW_CHANNEL_ID,
 } from "../lib/gotw-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -163,6 +167,90 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "aup_back")    { await handleAupBack(interaction);            return; }
   if (action === "aup_confirm") { await handleAupConfirm(interaction);         return; }
   if (action === "aup_cancel")  { await handleAupCancel(interaction);          return; }
+
+  // ── Draft presence — per-user toggle ─────────────────────────────────────
+  if (action === DRAFT_TOGGLE_PREFIX) {
+    await interaction.deferUpdate();
+    const targetDiscordId = secondPart ?? "";
+
+    // Permission check: only the target user or an admin may click this button
+    const clickerId  = interaction.user.id;
+    const isSelfToggle = clickerId === targetDiscordId;
+
+    let isAdmin = false;
+    if (!isSelfToggle) {
+      const member = interaction.guild?.members.cache.get(clickerId)
+        ?? await interaction.guild?.members.fetch(clickerId).catch(() => null);
+      const hasDiscordAdmin = member?.permissions.has(0x8n) ?? false; // ADMINISTRATOR bit
+      const hasDbAdmin      = await isAdminUser(clickerId);
+      isAdmin = hasDiscordAdmin || hasDbAdmin;
+    }
+
+    if (!isSelfToggle && !isAdmin) {
+      await interaction.followUp({
+        content: "❌ You can only toggle your own presence status.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const guildId = interaction.guildId ?? "";
+    const session = await getActiveSession(guildId);
+    if (!session) {
+      await interaction.followUp({ content: "⚠️ No active draft session.", ephemeral: true });
+      return;
+    }
+
+    const newStatus = await togglePresence(session.id, targetDiscordId);
+    if (newStatus === null) {
+      await interaction.followUp({
+        content: "⚠️ That user is not registered in the league.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await refreshPresence(interaction.client, session.id);
+
+    const label = isSelfToggle
+      ? `You are now **${newStatus ? "Present ✅" : "Away 🔴"}**`
+      : `<@${targetDiscordId}> is now **${newStatus ? "Present ✅" : "Away 🔴"}**`;
+
+    await interaction.followUp({ content: label, ephemeral: true });
+    return;
+  }
+
+  // ── Draft presence — close button ─────────────────────────────────────────
+  if (action === DRAFT_CLOSE_BUTTON_ID) {
+    await interaction.deferUpdate();
+
+    const member = interaction.guild?.members.cache.get(interaction.user.id)
+      ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    const hasDiscordAdmin = member?.permissions.has(0x8n) ?? false;
+    const hasDbAdmin      = await isAdminUser(interaction.user.id);
+
+    if (!hasDiscordAdmin && !hasDbAdmin) {
+      await interaction.followUp({
+        content: "❌ Only admins can close the draft.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const session = await getActiveSession(interaction.guildId ?? "");
+    if (!session) {
+      await interaction.followUp({ content: "⚠️ No active draft session.", ephemeral: true });
+      return;
+    }
+
+    await interaction.followUp({
+      content: "✅ Closing draft room… channel will be deleted in 10 seconds.",
+      ephemeral: true,
+    });
+
+    endDraftSession(interaction.client, session.id).catch(console.error);
+    return;
+  }
 
   // ── Co-Commissioner action approval ────────────────────────────────────────
   if (action === "cocomm-approve" || action === "cocomm-deny") {
