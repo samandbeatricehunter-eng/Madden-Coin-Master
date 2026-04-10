@@ -23,7 +23,7 @@ import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 export const LEAGUE_TWITTER_CHANNEL_ID = "1492213174697726033";
 
-const TWO_HOURS_MS   = 2 * 60 * 60 * 1000;
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const FOUR_HOURS_MS  = 4 * 60 * 60 * 1000;
 
 // ── OpenAI client (same proxy used by messageCreate) ──────────────────────────
@@ -369,33 +369,98 @@ export async function logTradeEvent(opts: {
 // ── Tweet generator ────────────────────────────────────────────────────────────
 
 const TOPIC_PROMPTS = [
-  "Focus on a specific player's season stat line from the context and what it means for their team's playoff chances.",
-  "If RECENT TRADE BLOCK ACTIVITY lists real events, react to one of them. If the section says NONE, pick a different topic.",
-  "Comment on a team's in-game record from CURRENT STANDINGS — hot streak, cold streak, or surprising run.",
-  "Praise or roast a team's offensive or defensive performance using the real PPG or defensive stats from the context.",
-  "Make the case for a playoff dark horse using their actual record and stats from the context.",
-  "Write a short hot take about the best or worst team in the league using only stats and records from the context.",
-  "Comment on the league's scoring trends or which defenses have been elite based on team stat leaders in the context.",
-  "React to a completed game result from RECENT GAME RESULTS — highlight a blowout, comeback, or upset.",
-  "Give a scouting report on a stat leader from the context — overhyped or underrated given their numbers.",
-  "Based only on records and stats in the context, assess which teams look like buyers vs. sellers at this point in the season.",
-  "React to the league's turnover differential or rushing/passing leaders from the stat data in the context.",
-  "Pick a team with a losing record from the standings and explain how they can still make noise in the playoffs.",
-  "Compare two specific teams' records and stats from the context and declare which is the more dangerous squad.",
-  "If UPCOMING MATCHUPS are listed in the context, hype up one specific game — only if the matchup is explicitly listed.",
-  "Highlight a player from TEAM ROSTERS who is having a standout season based on their position and the stat leaders in the context.",
+  // Game results
+  "React to a specific completed game from RECENT GAME RESULTS — highlight the winner, the margin, or a surprising outcome.",
+  "Pick a blowout or close game from RECENT GAME RESULTS and explain what it reveals about both teams.",
+  "Focus on the SPOTLIGHT TEAM's most recent game result from RECENT GAME RESULTS. How did they perform?",
+
+  // Standings / records
+  "Comment on the SPOTLIGHT TEAM's in-game record from CURRENT STANDINGS — are they a legit contender or pretender?",
+  "Make the case for a team with a losing record from CURRENT STANDINGS — why they can still make noise.",
+  "Identify an overachieving team from CURRENT STANDINGS and ask if they're for real or due for a correction.",
+  "Call out a team with a great record from CURRENT STANDINGS that you think is actually overrated based on their stats.",
+  "Write a bold prediction about which team makes a late-season run based on their current form in the standings.",
+
+  // Individual players
+  "Focus on the SPOTLIGHT TEAM's top player from TEAM ROSTERS. Break down their season based on stat leaders in the context.",
+  "Give a scouting report on a passing yards or TD leader from INDIVIDUAL STAT LEADERS — overhyped or underrated?",
+  "Highlight the sack leader or best defensive player from INDIVIDUAL STAT LEADERS and what they mean to their team.",
+  "Focus on the rushing yards leader from INDIVIDUAL STAT LEADERS and whether their team is built around them.",
+  "Take a player from the SPOTLIGHT TEAM's roster and make the case for why they're underappreciated this season.",
+
+  // Offense / defense
+  "Praise or roast the SPOTLIGHT TEAM's offense using their real PPG or scoring data from the context.",
+  "Analyze the SPOTLIGHT TEAM's defensive performance — are they a top or bottom unit based on points allowed?",
+  "Comment on which defenses have been elite or awful this season based on points allowed in the team stat data.",
+  "React to the league's highest-scoring offense from TEAM STAT HIGHLIGHTS — sustainable or a fluke?",
+  "Highlight a team that scores a lot but also gives up a lot — which side will decide their fate?",
+
+  // Matchups / previews
+  "If UPCOMING MATCHUPS are listed in the context, hype up one specific game and predict the winner. Only use listed matchups.",
+  "Pick two teams from CURRENT STANDINGS and preview their rivalry — which team has the edge right now?",
+
+  // Trades / roster moves
+  "If RECENT TRADE BLOCK ACTIVITY lists real events, react to one. If it says NONE, pick any other topic instead.",
+  "Based on records and stats in context, assess which teams should be buyers or sellers at this point in the season.",
+
+  // Trends / analysis
+  "Comment on the league's turnover differential trends using the data in the context.",
+  "Discuss whether this season belongs to the passing game or rushing game based on the stat leaders in context.",
+  "Write a hot take about the biggest surprise — best or worst — team in the league using only context data.",
+  "Compare the SPOTLIGHT TEAM to the top team in the standings and explain what separates them.",
 ];
 
+// ── Topic rotation queue ────────────────────────────────────────────────────────
+// Topics are shuffled into a queue and consumed in order so the same topic
+// never fires twice in close succession. The queue reshuffles when exhausted.
+let _topicQueue: number[] = [];
+let _topicPos   = 0;
+
+function nextTopicIndex(): number {
+  if (_topicPos >= _topicQueue.length) {
+    _topicQueue = Array.from({ length: TOPIC_PROMPTS.length }, (_, i) => i)
+      .sort(() => Math.random() - 0.5);
+    _topicPos = 0;
+  }
+  return _topicQueue[_topicPos++]!;
+}
+
+// ── Spotlight team picker ───────────────────────────────────────────────────────
+// For each tweet we pick a "spotlight team" that hasn't been mentioned recently.
+// This forces coverage spread across the whole league rather than fixating on
+// the same 2-3 teams the AI finds most interesting.
+function pickSpotlightTeam(allTeams: string[], recentTeams: string[]): string | null {
+  const recentSet = new Set(recentTeams);
+  const fresh = allTeams.filter(t => !recentSet.has(t));
+  if (fresh.length > 0) {
+    return fresh[Math.floor(Math.random() * fresh.length)]!;
+  }
+  // All teams recently mentioned — pick anyone not in the last 3
+  const last3 = new Set(recentTeams.slice(0, 3));
+  const fallback = allTeams.filter(t => !last3.has(t));
+  return fallback[Math.floor(Math.random() * fallback.length)] ?? null;
+}
+
 async function generateTweet(
-  reporter: Reporter,
-  context: string,
-  recentTeams: string[] = [],
+  reporter:     Reporter,
+  context:      string,
+  recentTeams:  string[] = [],
+  spotlightTeam: string | null = null,
 ): Promise<string> {
-  const topic = TOPIC_PROMPTS[Math.floor(Math.random() * TOPIC_PROMPTS.length)]!;
+  const topicIdx = nextTopicIndex();
+  // Replace the placeholder token with the actual spotlight team name in the topic
+  const rawTopic = TOPIC_PROMPTS[topicIdx]!;
+  const topic    = spotlightTeam
+    ? rawTopic.replace(/SPOTLIGHT TEAM/g, spotlightTeam)
+    : rawTopic.replace(/the SPOTLIGHT TEAM('s)?/g, "any team in the league$1");
+
+  const spotlightDirective = spotlightTeam
+    ? `\n- SPOTLIGHT: This tweet's main subject MUST be the **${spotlightTeam}**. Do not make another team the focal point.`
+    : "";
 
   // Build avoidance directive from recently-featured teams
   const avoidDirective = recentTeams.length > 0
-    ? `\n- VARIETY: The following teams have been covered in the last several tweets — do NOT make any of them the main subject of this tweet: ${recentTeams.join(", ")}. Pick a DIFFERENT team from TEAM ROSTERS or CURRENT STANDINGS that has NOT been recently featured.`
+    ? `\n- VARIETY: These teams have dominated recent tweets — do NOT make them the main subject: ${recentTeams.join(", ")}. Choose a different team unless the spotlight overrides this.`
     : `\n- VARIETY: Rotate through all teams in the league. Never fixate on the same team twice in a row.`;
 
   const system = `You are ${reporter.name} (${reporter.handle}), a sports reporter for ${reporter.outlet}.
@@ -412,7 +477,7 @@ Rules:
 - Emojis are fine if fitting (especially for hype-style reporters)
 - Do NOT use hashtags
 - Do NOT mention that this is a video game or simulation
-- Output ONLY the tweet text, nothing else${avoidDirective}
+- Output ONLY the tweet text, nothing else${spotlightDirective}${avoidDirective}
 
 CRITICAL RULES — violating any of these is a failure:
 - RECORDS: Use ONLY the in-game season W-L from CURRENT STANDINGS. If CURRENT STANDINGS says "Data not available", do NOT mention any team's record at all — write about players, stats, or games instead. Never invent a record under any circumstances.
@@ -480,13 +545,14 @@ Rules:
 
 /** Post a single tweet from the given reporter and persist it to the DB. */
 async function postOneTweet(
-  tc:          TextChannel,
-  reporter:    Reporter,
-  context:     string,
-  seasonId:    number,
-  recentTeams: string[] = [],
+  tc:            TextChannel,
+  reporter:      Reporter,
+  context:       string,
+  seasonId:      number,
+  recentTeams:   string[] = [],
+  spotlightTeam: string | null = null,
 ): Promise<void> {
-  const tweetText = await generateTweet(reporter, context, recentTeams);
+  const tweetText = await generateTweet(reporter, context, recentTeams, spotlightTeam);
   if (!tweetText) return;
 
   const header = `**${reporter.name}** ${reporter.handle} · *${reporter.outlet}*`;
@@ -518,20 +584,10 @@ export async function postLeagueTweet(client: Client): Promise<void> {
     if (!ch?.isTextBased()) return;
     const tc = ch as TextChannel;
 
-    // How many tweets this burst (1, 2, or 3 — weighted toward 1-2)
-    const roll = Math.random();
-    const count = roll < 0.45 ? 1 : roll < 0.80 ? 2 : 3;
+    // How many tweets this burst — max 2 to prevent topic clustering
+    const count = Math.random() < 0.55 ? 1 : 2;
 
-    // ── Fetch recent tweet history to detect overused teams ────────────────────
-    // Pull the last 8 tweets and find team names that appear most frequently.
-    // Teams appearing 2+ times in the recent window are flagged as "overused".
-    const recentTweets = await db.select({ content: leagueTwitterTable.content })
-      .from(leagueTwitterTable)
-      .where(eq(leagueTwitterTable.seasonId, season.id))
-      .orderBy(desc(leagueTwitterTable.postedAt))
-      .limit(8);
-
-    // Pull all known human-team names from the DB for matching
+    // ── Pull all known human-team names ────────────────────────────────────────
     const userTeams = await db.select({ team: usersTable.team })
       .from(usersTable)
       .where(isNotNull(usersTable.team));
@@ -540,12 +596,23 @@ export async function postLeagueTweet(client: Client): Promise<void> {
       userTeams.map(u => u.team).filter((t): t is string => !!t && t.trim().length > 0)
     )];
 
-    // Count how many recent tweets mention each team (case-insensitive word boundary check)
+    // ── Fetch recent tweet history to detect overused teams ────────────────────
+    // Look back 14 tweets — any team appearing even once is flagged as "recent".
+    // Threshold of 1 (instead of 2) ensures much wider rotation.
+    const recentTweets = await db.select({
+      content:      leagueTwitterTable.content,
+      reporterName: leagueTwitterTable.reporterName,
+    })
+      .from(leagueTwitterTable)
+      .where(eq(leagueTwitterTable.seasonId, season.id))
+      .orderBy(desc(leagueTwitterTable.postedAt))
+      .limit(14);
+
+    // Count team mentions across the recent window
     const teamMentionCount = new Map<string, number>();
     for (const { content } of recentTweets) {
       if (!content) continue;
       for (const teamName of knownTeams) {
-        // Match on any word in the team name (e.g. "Rams", "Los Angeles Rams")
         const words = teamName.split(/\s+/);
         const matched = words.some(w =>
           w.length > 3 && new RegExp(`\\b${w}\\b`, "i").test(content)
@@ -556,9 +623,9 @@ export async function postLeagueTweet(client: Client): Promise<void> {
       }
     }
 
-    // Any team mentioned 2+ times in the last 8 tweets is "recently overused"
-    const recentTeams = [...teamMentionCount.entries()]
-      .filter(([, count]) => count >= 2)
+    // Any team mentioned 1+ time in the last 14 tweets is "recently covered"
+    const recentlyUsedTeams = [...teamMentionCount.entries()]
+      .filter(([, c]) => c >= 1)
       .map(([team]) => team);
 
     // Seed: avoid repeating the reporter from the previous interval's last tweet
@@ -570,6 +637,9 @@ export async function postLeagueTweet(client: Client): Promise<void> {
 
     const usedReporters = new Set<string>(lastTweet ? [lastTweet.reporterName] : []);
 
+    // Track spotlight teams used within this burst so each tweet covers a different team
+    const burstSpotlights = new Set<string>();
+
     for (let i = 0; i < count; i++) {
       // Pick a reporter not already used this burst (or last interval's last tweet)
       const available = REPORTERS.filter(r => !usedReporters.has(r.name));
@@ -579,9 +649,14 @@ export async function postLeagueTweet(client: Client): Promise<void> {
 
       usedReporters.add(reporter.name);
 
-      await postOneTweet(tc, reporter, context, season.id, recentTeams);
+      // Pick a spotlight team: avoid recently used AND already spotlighted this burst
+      const avoidForSpotlight = [...new Set([...recentlyUsedTeams, ...burstSpotlights])];
+      const spotlight = pickSpotlightTeam(knownTeams, avoidForSpotlight);
+      if (spotlight) burstSpotlights.add(spotlight);
 
-      // Short pause between tweets so they don't all land at the exact same second
+      await postOneTweet(tc, reporter, context, season.id, recentlyUsedTeams, spotlight);
+
+      // Short pause between tweets in the same burst
       if (i < count - 1) {
         await new Promise(resolve => setTimeout(resolve, 4_000 + Math.random() * 6_000));
       }
@@ -665,7 +740,7 @@ export function startLeagueTwitterScheduler(client: Client): void {
 
   setInterval(() => {
     postLeagueTweet(client).catch(err => console.error("[league-twitter] Scheduled tweet error:", err));
-  }, TWO_HOURS_MS);
+  }, THREE_HOURS_MS);
 
-  console.log("✅ League Twitter scheduler started (every 2 hours)");
+  console.log("✅ League Twitter scheduler started (every 3 hours)");
 }
