@@ -58,6 +58,7 @@ import * as messageCreate     from "./events/messageCreate.js";
 // ── Helpers ────────────────────────────────────────────────────────────────────
 import { startSavingsInterestScheduler } from "./lib/savings-interest.js";
 import { startPollChecker }              from "./lib/poll-checker.js";
+import { startLeagueTwitterScheduler }   from "./lib/league-twitter.js";
 
 // ── Global crash protection ────────────────────────────────────────────────────
 process.on("unhandledRejection", (reason) => {
@@ -174,6 +175,7 @@ if (!isProduction && !devBotEnabled) {
   client.once("ready", () => {
     startPollChecker(client);
     startSavingsInterestScheduler();
+    startLeagueTwitterScheduler(client);
   });
 
   init()

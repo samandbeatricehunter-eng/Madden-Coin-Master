@@ -15,6 +15,7 @@ import {
 } from "../lib/db-helpers.js";
 import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
+import { handleTwitterReply } from "../lib/league-twitter.js";
 
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 
@@ -1189,8 +1190,9 @@ If the commissioner is NOT giving an admin action order (just chatting), use the
 
 // ── Channel-based payout monitors ─────────────────────────────────────────────
 
-const STREAM_CHANNEL_ID     = "1486369417309978644";
-const HIGHLIGHTS_CHANNEL_ID = "1485643704206229638";
+const STREAM_CHANNEL_ID        = "1486369417309978644";
+const HIGHLIGHTS_CHANNEL_ID    = "1485643704206229638";
+const LEAGUE_TWITTER_CHANNEL_ID = "1492213174697726033";
 // Matches any twitch.tv URL (including clips.twitch.tv, www.twitch.tv, etc.)
 const TWITCH_URL_RE         = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
 
@@ -1509,6 +1511,14 @@ export const once  = false;
 export async function execute(message: Message): Promise<void> {
   if (!message.guild) return;
   if (message.author.bot) return;
+
+  // ── League Twitter reply handler ───────────────────────────────────────────
+  if (message.channelId === LEAGUE_TWITTER_CHANNEL_ID && message.reference?.messageId) {
+    handleTwitterReply(message.client, message).catch(err =>
+      console.error("[messageCreate] league twitter reply error:", err),
+    );
+    return;
+  }
 
   // ── Channel-based payout monitors (run before @mention guard) ─────────────
   if (message.channelId === STREAM_CHANNEL_ID) {

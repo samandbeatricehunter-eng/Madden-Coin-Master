@@ -838,3 +838,14 @@ export const eaConnectionsTable = pgTable("ea_connections", {
   connectedAt:  timestamp("connected_at").notNull().defaultNow(),
   connectedBy:  text("connected_by").notNull(),
 });
+
+// ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────
+export const leagueTwitterTable = pgTable("league_twitter_tweets", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  messageId:    text("message_id").notNull(),       // Discord message ID for reply mapping
+  reporterName: text("reporter_name").notNull(),    // e.g. "Adam Shaffer"
+  reporterHandle: text("reporter_handle").notNull(), // e.g. "@AdamShaffer"
+  content:      text("content").notNull(),          // full tweet text
+  postedAt:     timestamp("posted_at").notNull().defaultNow(),
+});

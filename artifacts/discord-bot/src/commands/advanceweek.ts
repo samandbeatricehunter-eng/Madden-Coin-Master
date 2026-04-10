@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, ChannelType, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable } from "@workspace/db";
+import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
@@ -29,6 +29,7 @@ const OFFSEASON_WIPE_CHANNEL_IDS = [
   "1478777175128932463",
   "1478947361014288445",
   "1484689142515368188",
+  "1492213174697726033", // league-twitter channel
 ];
 
 export const WEEK_SEQUENCE = [
@@ -497,6 +498,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         } catch (err) {
           console.error(`[advanceweek] Could not wipe channel ${chId}:`, err);
         }
+      }
+
+      // Wipe league twitter DB rows for the ending season
+      try {
+        await db.delete(leagueTwitterTable).where(eq(leagueTwitterTable.seasonId, season.id));
+      } catch (err) {
+        console.error("[advanceweek] Failed to wipe league twitter DB rows:", err);
       }
 
       // Post rule-change voting announcement to the announce channel
