@@ -124,28 +124,32 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     .sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
 
   if (activeStandings.length > 0) {
-    const lines = activeStandings.map(r =>
-      `  ${r.teamName}: ${r.wins}W-${r.losses}L${r.offPtsPerGame > 0 ? ` (${r.offPtsPerGame.toFixed(1)} PPG)` : ""}`,
-    );
-    parts.push(`\nCURRENT STANDINGS (in-game regular season record from Madden CFM):\n${lines.join("\n")}`);
+    // IMPORTANT: show ONLY win-loss records here — no other numbers, to avoid
+    // the AI mis-reading any parenthetical stats as part of the record.
+    const lines = activeStandings.map(r => `  ${r.teamName}: ${r.wins}W-${r.losses}L`);
+    parts.push(`\nCURRENT STANDINGS (in-game regular season record — wins and losses only):\n${lines.join("\n")}`);
   }
 
   // ── Team season stat highlights ─────────────────────────────────────────────
   if (mcaStandings.length > 0) {
-    const withStats = mcaStandings.filter(t => t.offPtsPerGame > 0);
-    const topOff     = [...withStats].sort((a, b) => b.offPtsPerGame - a.offPtsPerGame)[0];
-    const topDef     = await db.select({ teamName: teamSeasonStatsTable.teamName, defTDs: teamSeasonStatsTable.defTDs })
+    // Sanity-bound: offPtsPerGame should be under 80 to be a real per-game value.
+    // If the MCA export sends total season points in this field (e.g. 289), ignore it.
+    const withRealPpg = mcaStandings.filter(t => t.offPtsPerGame > 0 && t.offPtsPerGame < 80);
+    const topOff      = [...withRealPpg].sort((a, b) => b.offPtsPerGame - a.offPtsPerGame)[0];
+    const topTO       = [...mcaStandings].filter(t => t.turnoverDiff > 0).sort((a, b) => b.turnoverDiff - a.turnoverDiff)[0];
+
+    // Fetch defTDs (which actually stores total points allowed from MCA data) separately
+    const allDefStats = await db.select({ teamName: teamSeasonStatsTable.teamName, defTDs: teamSeasonStatsTable.defTDs })
       .from(teamSeasonStatsTable)
-      .where(eq(teamSeasonStatsTable.seasonId, season.id))
-      .orderBy(teamSeasonStatsTable.defTDs)
-      .limit(1);
-    const topTO      = [...withStats].sort((a, b) => b.turnoverDiff - a.turnoverDiff)[0];
+      .where(eq(teamSeasonStatsTable.seasonId, season.id));
+    // Only consider teams with real data (defTDs > 0 means they've actually played)
+    const topDef = allDefStats.filter(t => t.defTDs > 0).sort((a, b) => a.defTDs - b.defTDs)[0];
 
     const statLines: string[] = [];
-    if (topOff)        statLines.push(`  Best offense (PPG): ${topOff.teamName} (${topOff.offPtsPerGame.toFixed(1)} PPG)`);
-    if (topDef[0])     statLines.push(`  Best defense (fewest TDs allowed): ${topDef[0].teamName} (${topDef[0].defTDs} TDs allowed)`);
-    if (topTO && topTO.turnoverDiff > 0) statLines.push(`  Best turnover differential: ${topTO.teamName} (+${topTO.turnoverDiff})`);
-    if (statLines.length > 0) parts.push(`\nTEAM STAT LEADERS:\n${statLines.join("\n")}`);
+    if (topOff)  statLines.push(`  Best offense by scoring: ${topOff.teamName} (${topOff.offPtsPerGame.toFixed(1)} points per game)`);
+    if (topDef)  statLines.push(`  Best defense (fewest points allowed): ${topDef.teamName} (${topDef.defTDs} points allowed this season)`);
+    if (topTO)   statLines.push(`  Best turnover differential: ${topTO.teamName} (+${topTO.turnoverDiff})`);
+    if (statLines.length > 0) parts.push(`\nTEAM STAT HIGHLIGHTS:\n${statLines.join("\n")}`);
   }
 
   // ── Top individual players (stat leaders) ──────────────────────────────────
