@@ -226,24 +226,44 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     .where(eq(playerSeasonStatsTable.seasonId, season.id));
 
   if (players.length > 0) {
-    const topQBs  = [...players].filter(p => p.position === "QB").sort((a, b) => b.passYds - a.passYds).slice(0, 3);
-    const topRBs  = [...players].filter(p => p.position === "HB").sort((a, b) => b.rushYds - a.rushYds).slice(0, 3);
-    const topWRs  = [...players].filter(p => ["WR","TE"].includes(p.position)).sort((a, b) => b.recYds - a.recYds).slice(0, 3);
-    const topPass = [...players].filter(p => p.position === "QB").sort((a, b) => b.passTDs - a.passTDs)[0];
-    const topSack = [...players].sort((a, b) => b.sacks - a.sacks)[0];
-    const topRush = [...players].filter(p => p.position === "HB").sort((a, b) => b.rushTDs - a.rushTDs)[0];
+    // Sanity-bound player stats — Madden sometimes sends accumulator values mid-season
+    // that are wildly inflated. Cap at sane single-season maximums to avoid AI hallucinations.
+    const sanePlayers = players.filter(p =>
+      p.passYds  <= 7000 &&
+      p.rushYds  <= 2500 &&
+      p.recYds   <= 2500 &&
+      p.passTDs  <= 60   &&
+      p.rushTDs  <= 30   &&
+      p.recTDs   <= 25   &&
+      p.sacks    <= 30
+    );
 
-    const fmt = (ps: typeof players) =>
-      ps.map(p => `${p.firstName} ${p.lastName} (${p.teamName}, ${p.position})`).join(", ");
+    // Use sanePlayers for derived stats; fall back to all players if sanity filter wipes everyone
+    const pool = sanePlayers.length > 0 ? sanePlayers : players;
+
+    const topQBs  = [...pool].filter(p => p.position === "QB" && p.passYds > 0).sort((a, b) => b.passYds - a.passYds).slice(0, 3);
+    const topRBs  = [...pool].filter(p => p.position === "HB" && p.rushYds > 0).sort((a, b) => b.rushYds - a.rushYds).slice(0, 3);
+    const topWRs  = [...pool].filter(p => ["WR","TE"].includes(p.position) && p.recYds > 0).sort((a, b) => b.recYds - a.recYds).slice(0, 3);
+    const topPass = [...pool].filter(p => p.position === "QB" && p.passTDs > 0).sort((a, b) => b.passTDs - a.passTDs)[0];
+    const topSack = [...pool].filter(p => p.sacks > 0).sort((a, b) => b.sacks - a.sacks)[0];
+    const topRush = [...pool].filter(p => p.position === "HB" && p.rushTDs > 0).sort((a, b) => b.rushTDs - a.rushTDs)[0];
+
+    // Include ACTUAL stat numbers so the AI does not invent them
+    const fmtQBs  = (ps: typeof pool) =>
+      ps.map(p => `${p.firstName} ${p.lastName} (${p.teamName}) — ${p.passYds.toLocaleString()} yds`).join(", ");
+    const fmtRBs  = (ps: typeof pool) =>
+      ps.map(p => `${p.firstName} ${p.lastName} (${p.teamName}) — ${p.rushYds.toLocaleString()} yds`).join(", ");
+    const fmtWRs  = (ps: typeof pool) =>
+      ps.map(p => `${p.firstName} ${p.lastName} (${p.teamName}, ${p.position}) — ${p.recYds.toLocaleString()} yds`).join(", ");
 
     const statLines: string[] = [];
-    if (topQBs.length) statLines.push(`  QB passing yards leaders: ${fmt(topQBs)}`);
-    if (topRBs.length) statLines.push(`  RB rushing yards leaders: ${fmt(topRBs)}`);
-    if (topWRs.length) statLines.push(`  WR/TE receiving yards leaders: ${fmt(topWRs)}`);
+    if (topQBs.length) statLines.push(`  QB passing yards leaders: ${fmtQBs(topQBs)}`);
+    if (topRBs.length) statLines.push(`  RB rushing yards leaders: ${fmtRBs(topRBs)}`);
+    if (topWRs.length) statLines.push(`  WR/TE receiving yards leaders: ${fmtWRs(topWRs)}`);
     if (topPass)       statLines.push(`  Passing TD leader: ${topPass.firstName} ${topPass.lastName} (${topPass.teamName}) — ${topPass.passTDs} TDs`);
     if (topRush)       statLines.push(`  Rushing TD leader: ${topRush.firstName} ${topRush.lastName} (${topRush.teamName}) — ${topRush.rushTDs} TDs`);
     if (topSack)       statLines.push(`  Sack leader: ${topSack.firstName} ${topSack.lastName} (${topSack.teamName}) — ${topSack.sacks} sacks`);
-    if (statLines.length > 0) parts.push(`\nINDIVIDUAL STAT LEADERS THIS SEASON:\n${statLines.join("\n")}`);
+    if (statLines.length > 0) parts.push(`\nINDIVIDUAL STAT LEADERS THIS SEASON (use ONLY these exact numbers — do NOT invent or modify any statistic):\n${statLines.join("\n")}`);
   }
 
   // ── Team rosters (top 5 players per human team by OVR) ─────────────────────
@@ -543,7 +563,8 @@ CRITICAL RULES — violating any of these is a failure:
 - TRADE/ROSTER RUMORS: NEVER invent or imply that a team is shopping, trading, releasing, or seeking a player unless that specific event appears in RECENT TRADE BLOCK ACTIVITY. If that section says "NONE", write about something else entirely — do not create any trade or personnel rumors.
 - MATCHUPS: Do not reference a specific upcoming game unless that exact matchup is listed under UPCOMING MATCHUPS.
 - H2H: Do not cite head-to-head records between two teams.
-- PLAYOFFS: NEVER describe a team as being in the playoffs, competing for a playoff spot, or chasing the postseason unless they explicitly appear under CURRENT PLAYOFF SEEDS or CURRENT PLAYOFF FIELD in the context. Teams listed under "NOT in playoffs / eliminated" are OUT — do not imply they have any playoff chance or relevance whatsoever. If PLAYOFF STATUS says seedings are not yet determined, do not speculate about who is or isn't in.`;
+- PLAYOFFS: NEVER describe a team as being in the playoffs, competing for a playoff spot, or chasing the postseason unless they explicitly appear under CURRENT PLAYOFF SEEDS or CURRENT PLAYOFF FIELD in the context. Teams listed under "NOT in playoffs / eliminated" are OUT — do not imply they have any playoff chance or relevance whatsoever. If PLAYOFF STATUS says seedings are not yet determined, do not speculate about who is or isn't in.
+- STATS: Every single number you use MUST come verbatim from INDIVIDUAL STAT LEADERS or TEAM STAT HIGHLIGHTS in the context. Do NOT round, estimate, adjust, or invent any statistic. If a player's exact stat number is not listed, do not cite a number for them at all — reference them by name and role only. Never fabricate yardage totals, touchdown counts, or any other metric.`;
 
   const user = `LEAGUE CONTEXT:\n${context}\n\nTOPIC ANGLE: ${topic}\n\nWrite your tweet:`;
 
