@@ -1959,7 +1959,6 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── EOS payout: commissioner approves ────────────────────────────────────────
   if (action === "eos_approve") {
     const payoutId  = parseInt(secondPart ?? "0", 10);
-    const discordId = userId!;
     await interaction.deferUpdate();
 
     const [payout] = await db.select().from(pendingEosPayoutsTable)
@@ -1970,6 +1969,10 @@ async function handleButton(interaction: ButtonInteraction) {
       await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
       return;
     }
+
+    // Always use payout.discordId from the DB — authoritative source of truth
+    // regardless of what Discord ID was embedded in the button customId.
+    const discordId = payout.discordId;
 
     await addBalance(discordId, payout.totalCoins);
     await logTransaction(discordId, payout.totalCoins, "addcoins",
