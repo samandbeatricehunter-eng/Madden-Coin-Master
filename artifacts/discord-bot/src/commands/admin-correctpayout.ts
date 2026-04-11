@@ -11,12 +11,19 @@ import { eq, and, sql, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
+const PLAYOFF_WEEK_INDEX: Record<string, number> = {
+  wildcard:   1018,
+  divisional: 1019,
+  conference: 1020,
+  superbowl:  1022,
+};
+
 export const data = new SlashCommandBuilder()
   .setName("admin-correctpayout")
   .setDescription("Admin: retroactively fix a game's payout type and correct coins/records")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addIntegerOption(o => o
-    .setName("week").setDescription("Week number (1–18)").setRequired(true).setMinValue(1).setMaxValue(18))
+  .addStringOption(o => o
+    .setName("week").setDescription("Week number (1–18) or playoff round: wildcard, divisional, conference, superbowl").setRequired(true))
   .addUserOption(o => o
     .setName("homeuser").setDescription("The player who controlled the HOME team").setRequired(true))
   .addUserOption(o => o
@@ -47,13 +54,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const H2H_LOSS_PAYOUT = await getPayoutValue(PAYOUT_KEYS.H2H_LOSS);
   const CPU_WIN_PAYOUT  = await getPayoutValue(PAYOUT_KEYS.CPU_WIN);
 
-  const week           = interaction.options.getInteger("week", true);
+  const weekRaw        = interaction.options.getString("week", true).trim().toLowerCase();
   const homeDiscordUser = interaction.options.getUser("homeuser", true);
   const awayDiscordUser = interaction.options.getUser("awayuser", true);
   const newType        = interaction.options.getString("type", true) as "h2h" | "cpu" | "none";
   const winnerSide     = interaction.options.getString("winner") as "home" | "away" | null;
   const pointDiff      = interaction.options.getInteger("pointdiff") ?? null;
   const gameIdOverride = interaction.options.getString("gameid")?.trim() ?? null;
+
+  // ── Resolve week → weekIndex (supports regular 1–18 and playoff rounds) ───
+  const isPlayoffWeek = weekRaw in PLAYOFF_WEEK_INDEX;
+  const weekNum       = isPlayoffWeek ? null : parseInt(weekRaw, 10);
+  const weekLabel     = isPlayoffWeek
+    ? weekRaw.charAt(0).toUpperCase() + weekRaw.slice(1)
+    : `Week ${weekNum}`;
+
+  if (!isPlayoffWeek && (isNaN(weekNum!) || weekNum! < 1 || weekNum! > 18)) {
+    await interaction.editReply(
+      `❌ Invalid week: \`${weekRaw}\`. Enter a number 1–18 or a playoff round name: wildcard, divisional, conference, superbowl.`,
+    );
+    return;
+  }
+
+  const weekIndex = isPlayoffWeek
+    ? PLAYOFF_WEEK_INDEX[weekRaw]!
+    : weekNum! - 1;
 
   // ── Validate inputs ────────────────────────────────────────────────────────
   if (newType === "h2h" && (!winnerSide || pointDiff === null)) {
@@ -85,7 +110,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const season    = await getOrCreateActiveSeason();
-  const weekIndex = week - 1;
   const homeLower = homeUser.team.toLowerCase();
   const awayLower = awayUser.team.toLowerCase();
 
@@ -101,7 +125,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (!schedGame) {
     await interaction.editReply(
-      `❌ No schedule entry found for **${homeUser.team} vs ${awayUser.team}** in Week ${week}.\n` +
+      `❌ No schedule entry found for **${homeUser.team} vs ${awayUser.team}** in ${weekLabel}.\n` +
       `Make sure the home/away assignment is correct (try \`/weeklymatchups\` to see the matchups).`,
     );
     return;
@@ -148,7 +172,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const hId = schedGame.homeTeamId;
     const aId = schedGame.awayTeamId;
     await interaction.editReply(
-      `❌ Could not locate the processed game record for **${homeUser.team} vs ${awayUser.team}** in Week ${week}.\n\n` +
+      `❌ Could not locate the processed game record for **${homeUser.team} vs ${awayUser.team}** in ${weekLabel}.\n\n` +
       `Add the exact game ID using the \`gameid:\` parameter.\n` +
       `Expected format: \`s${season.id}-h${hId}-a${aId}-${schedGame.homeScore ?? "?"}-${schedGame.awayScore ?? "?"}\``,
     );
@@ -293,7 +317,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .where(eq(usersTable.discordId, inferredWinnerId));
         await tx.insert(coinTransactionsTable).values({
           discordId: inferredWinnerId, amount: -inferredWinnerCoins, type: "removecoins",
-          description: `[Correction Wk${week}] Reversed incorrect H2H win payout`, relatedUserId: null,
+          description: `[Correction ${weekLabel}] Reversed incorrect H2H win payout`, relatedUserId: null,
         });
         reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from winner`);
       }
@@ -303,7 +327,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .where(eq(usersTable.discordId, inferredLoserId));
         await tx.insert(coinTransactionsTable).values({
           discordId: inferredLoserId, amount: -inferredLoserCoins, type: "removecoins",
-          description: `[Correction Wk${week}] Reversed incorrect H2H loss payout`, relatedUserId: null,
+          description: `[Correction ${weekLabel}] Reversed incorrect H2H loss payout`, relatedUserId: null,
         });
         reversalLines.push(`❌ Removed ${inferredLoserCoins} coins from loser`);
       }
@@ -352,7 +376,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .where(eq(usersTable.discordId, inferredWinnerId));
         await tx.insert(coinTransactionsTable).values({
           discordId: inferredWinnerId, amount: -milestoneBonus, type: "removecoins",
-          description: `[Correction Wk${week}] Reversed milestone bonus (game reclassified as CPU)`, relatedUserId: null,
+          description: `[Correction ${weekLabel}] Reversed milestone bonus (game reclassified as CPU)`, relatedUserId: null,
         });
         await tx.update(usersTable)
           .set({ milestoneTierAwarded: milestonePrevTier, updatedAt: new Date() })
@@ -367,7 +391,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .where(eq(usersTable.discordId, inferredWinnerId));
         await tx.insert(coinTransactionsTable).values({
           discordId: inferredWinnerId, amount: -inferredWinnerCoins, type: "removecoins",
-          description: `[Correction Wk${week}] Reversed incorrect CPU win payout`, relatedUserId: null,
+          description: `[Correction ${weekLabel}] Reversed incorrect CPU win payout`, relatedUserId: null,
         });
         reversalLines.push(`❌ Removed ${inferredWinnerCoins} coins from prior winner`);
       }
@@ -384,14 +408,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .where(eq(usersTable.discordId, newWinnerUser.discordId));
       await tx.insert(coinTransactionsTable).values({
         discordId: newWinnerUser.discordId, amount: H2H_WIN_PAYOUT, type: "addcoins",
-        description: `[Correction Wk${week}] H2H win vs ${newLoserTeamName} (+${pointDiff})`, relatedUserId: null,
+        description: `[Correction ${weekLabel}] H2H win vs ${newLoserTeamName} (+${pointDiff})`, relatedUserId: null,
       });
       await tx.update(usersTable)
         .set({ balance: sql`${usersTable.balance} + ${H2H_LOSS_PAYOUT}`, updatedAt: new Date() })
         .where(eq(usersTable.discordId, newLoserUser.discordId));
       await tx.insert(coinTransactionsTable).values({
         discordId: newLoserUser.discordId, amount: H2H_LOSS_PAYOUT, type: "addcoins",
-        description: `[Correction Wk${week}] H2H loss vs ${newWinnerTeamName} (−${pointDiff})`, relatedUserId: null,
+        description: `[Correction ${weekLabel}] H2H loss vs ${newWinnerTeamName} (−${pointDiff})`, relatedUserId: null,
       });
       applyLines.push(`✅ +${H2H_WIN_PAYOUT} coins → **${newWinnerTeamName}** | +${H2H_LOSS_PAYOUT} coins → **${newLoserTeamName}**`);
 
@@ -465,7 +489,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .where(eq(usersTable.discordId, newWinnerUser.discordId));
       await tx.insert(coinTransactionsTable).values({
         discordId: newWinnerUser.discordId, amount: CPU_WIN_PAYOUT, type: "addcoins",
-        description: `[Correction Wk${week}] CPU win vs ${newLoserTeamName} (force/autopilot)`, relatedUserId: null,
+        description: `[Correction ${weekLabel}] CPU win vs ${newLoserTeamName} (force/autopilot)`, relatedUserId: null,
       });
       applyLines.push(`✅ +${CPU_WIN_PAYOUT} coins → **${newWinnerUser.team ?? ""}** *(no record change)*`);
       await tx.insert(gameLogTable).values({
@@ -497,7 +521,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Reply ─────────────────────────────────────────────────────────────────
   const wasLegacy = !oldType;
   const embed = new EmbedBuilder()
-    .setTitle(`🔧 Payout Corrected — Week ${week}: ${homeUser.team} vs ${awayUser.team}`)
+    .setTitle(`🔧 Payout Corrected — ${weekLabel}: ${homeUser.team} vs ${awayUser.team}`)
     .setColor(Colors.Orange)
     .addFields(
       {

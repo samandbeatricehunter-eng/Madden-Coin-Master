@@ -49,7 +49,7 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(s => s
     .setName("correct_game_payout")
     .setDescription("Retroactively fix a game's payout type and correct coins/records")
-    .addIntegerOption(o => o.setName("week").setDescription("Week number (1–18)").setRequired(true).setMinValue(1).setMaxValue(18))
+    .addStringOption(o => o.setName("week").setDescription("Week number (1–18) or playoff round: wildcard, divisional, conference, superbowl").setRequired(true))
     .addUserOption(o => o.setName("homeuser").setDescription("The player who controlled the HOME team").setRequired(true))
     .addUserOption(o => o.setName("awayuser").setDescription("The player who controlled the AWAY team").setRequired(true))
     .addStringOption(o => o.setName("type").setDescription("The CORRECT payout type for this game").setRequired(true)
