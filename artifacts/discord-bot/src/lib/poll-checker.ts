@@ -95,7 +95,8 @@ async function handleGotyPollExpiry(
     .setDescription(
       `The Game of the Year poll for Season has ended.\n\n` +
       (topAnswers ? `**Top vote-getters:**\n${topAnswers}\n\n` : "") +
-      `Select the **2 GOTY winners** below.\n` +
+      `Select **1 or 2 GOTY winners** below.\n` +
+      `*(Select 1 if one winner's team is now CPU-controlled.)*\n` +
       `Each winner receives **100 🪙** + **1 free XF promotion** for any player.`
     )
     .setFooter({ text: `Poll ID: ${poll.id} | Season ${poll.seasonId}` })

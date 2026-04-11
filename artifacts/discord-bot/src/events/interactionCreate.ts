@@ -2090,8 +2090,8 @@ async function handleButton(interaction: ButtonInteraction) {
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId(`goty_winners:${seasonId}`)
-      .setPlaceholder("Select the 2 GOTY winners...")
-      .setMinValues(2)
+      .setPlaceholder("Select 1 or 2 GOTY winners...")
+      .setMinValues(1)
       .setMaxValues(2)
       .addOptions(teamsWithUsers.map(u =>
         new StringSelectMenuOptionBuilder()
@@ -2100,7 +2100,7 @@ async function handleButton(interaction: ButtonInteraction) {
       ));
 
     await interaction.editReply({
-      content: "Select **exactly 2** GOTY winners. Each will receive coins + 1 free XF promotion:",
+      content: "Select **1 or 2** GOTY winners. Each will receive coins + 1 free XF promotion.\n*(Select 1 if the other winner's team is now CPU-controlled.)*",
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
     });
     return;
@@ -2367,16 +2367,20 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     }
 
     // Post to general channel
+    const gotyCount   = winnerIds.length;
+    const gotyNoun    = gotyCount === 1 ? "winner" : "winners";
+    const gotyEach    = gotyCount === 1 ? "The winner receives" : "Each winner receives";
+
     try {
       const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
       if (generalChannel?.isTextBased()) {
         const announceEmbed = new EmbedBuilder()
-          .setTitle("🎮 GAME OF THE YEAR AWARD WINNERS!")
+          .setTitle(`🎮 GAME OF THE YEAR AWARD ${gotyNoun.toUpperCase()}!`)
           .setColor(Colors.Gold)
           .setDescription(
-            `Congratulations to this season's **Game of the Year** award winners!\n\n` +
+            `Congratulations to this season's **Game of the Year** award ${gotyNoun}!\n\n` +
             winnerLines.join("\n") + "\n\n" +
-            `Each winner receives **+${gotyCoins} 🪙** and a **free XF promotion** for any player on their roster.\n` +
+            `${gotyEach} **+${gotyCoins} 🪙** and a **free XF promotion** for any player on their roster.\n` +
             `⚠️ The XF promotion cannot be saved — it must be used before the start of the next season.`
           )
           .setTimestamp();
