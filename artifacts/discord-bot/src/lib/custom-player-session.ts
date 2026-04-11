@@ -49,8 +49,9 @@ export interface CustomPlayerSession {
   attrSelectPage: number;
 
   // Housekeeping
-  expiresAt: number;    // Date.now() + TTL
-  step: number;         // current step (1–8) for display
+  expiresAt:  number;   // Date.now() + TTL
+  step:       number;   // current step (1–8) for display
+  submitted:  boolean;  // true once confirm has been processed — prevents double-submit
 }
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -89,6 +90,7 @@ export function createSession(userId: string, guildId: string): string {
     weightLbs:     null,
     expiresAt:     Date.now() + TTL_MS,
     step:          1,
+    submitted:     false,
   });
   return sessionId;
 }

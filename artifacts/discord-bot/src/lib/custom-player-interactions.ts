@@ -663,6 +663,19 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
 
   await interaction.deferUpdate();
 
+  // Guard: session already processed (prevents double-click or duplicate session confirm)
+  if (session.submitted) {
+    await interaction.editReply({
+      content: "⚠️ This player has already been submitted — check your DMs or the commissioner log for confirmation.",
+      embeds: [], components: [],
+    });
+    return;
+  }
+
+  // Mark submitted immediately before any async work — prevents race conditions
+  // if Discord fires the interaction twice (double-click, network retry, etc.)
+  session.submitted = true;
+
   // Final balance check
   const [uRow] = await db.select({ balance: usersTable.balance })
     .from(usersTable)
@@ -671,6 +684,8 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
   const balance = uRow?.balance ?? 0;
 
   if (balance < session.totalCost) {
+    // Unmark so the user can't be permanently locked out if they genuinely can't afford it
+    session.submitted = false;
     await interaction.editReply({
       content: `❌ Insufficient balance. You need **${session.totalCost} coins** but only have **${balance}**.`,
       embeds: [], components: [],
