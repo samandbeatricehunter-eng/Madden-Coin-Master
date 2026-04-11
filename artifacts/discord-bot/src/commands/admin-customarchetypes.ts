@@ -1,11 +1,48 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits,
+  PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { customArchetypesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { ALL_POSITIONS, formatArchetypeEmbed } from "../lib/custom-player-helpers.js";
+
+// Attribute groups for the view command — makes the output much easier to read
+const ATTR_GROUPS: Record<string, string[]> = {
+  "🏃 Athletic":        ["Speed","Acceleration","Agility","Strength","Jumping","ChangeOfDirection","Stamina","Toughness","Injury"],
+  "🏈 Ball Carrier":    ["Carrying","BCVision","BreakTackle","Trucking","StiffArm","SpinMove","JukeMove","Awareness"],
+  "🙌 Receiving":       ["Catching","CatchInTraffic","SpectacularCatch","ShortRouteRunning","MedRouteRunning","DeepRouteRunning","Release"],
+  "🎯 Passing":         ["ThrowingPower","ShortAccuracy","MedAccuracy","DeepAccuracy","ThrowOnRun","ThrowUnderPressure","BreakSack","PlayAction"],
+  "🛡️ Blocking":        ["PassBlocking","PassBlockPower","PassBlockFinesse","RunBlocking","RunBlockPower","RunBlockFinesse","LeadBlock","ImpactBlocking"],
+  "🔰 Defense":         ["PlayRecognition","Tackling","HitPower","BlockShedding","FinesseMoves","PowerMoves","Pursuit","ManCoverage","ZoneCoverage","Press"],
+  "🦵 Special Teams":   ["KickReturn","KickingPower","KickingAccuracy","LongSnap"],
+};
+
+function buildAttrViewFields(attrs: Record<string, number>) {
+  const fields: Array<{ name: string; value: string; inline: boolean }> = [];
+  const seen = new Set<string>();
+
+  for (const [groupName, attrNames] of Object.entries(ATTR_GROUPS)) {
+    const lines: string[] = [];
+    for (const a of attrNames) {
+      if (a in attrs) {
+        lines.push(`**${a}:** ${attrs[a]}`);
+        seen.add(a);
+      }
+    }
+    if (lines.length > 0) {
+      fields.push({ name: groupName, value: lines.join("  ·  "), inline: false });
+    }
+  }
+
+  // Catch any attributes not in a group
+  const extras = Object.entries(attrs).filter(([k]) => !seen.has(k));
+  if (extras.length > 0) {
+    fields.push({ name: "Other", value: extras.map(([k, v]) => `**${k}:** ${v}`).join("  ·  "), inline: false });
+  }
+
+  return fields;
+}
 
 // ── Default archetypes seeded per position ────────────────────────────────────
 // All 39 archetypes with exact Madden attribute ratings.
@@ -162,6 +199,26 @@ export const data = new SlashCommandBuilder()
     .addStringOption(o => o.setName("position").setDescription("Position").setRequired(true)
       .addChoices(ALL_POSITIONS.map(p => ({ name: p, value: p }))))
     .addStringOption(o => o.setName("name").setDescription("Archetype name").setRequired(true)),
+  )
+  .addSubcommand(sub => sub
+    .setName("view")
+    .setDescription("View all attribute ratings for a specific archetype")
+    .addStringOption(o => o.setName("position").setDescription("Position").setRequired(true)
+      .addChoices(ALL_POSITIONS.map(p => ({ name: p, value: p }))))
+    .addStringOption(o => o.setName("name").setDescription("Archetype name (e.g. Speed Rusher End)").setRequired(true)
+      .setAutocomplete(true)),
+  )
+  .addSubcommand(sub => sub
+    .setName("edit-attr")
+    .setDescription("Change one attribute rating on an existing archetype")
+    .addStringOption(o => o.setName("position").setDescription("Position").setRequired(true)
+      .addChoices(ALL_POSITIONS.map(p => ({ name: p, value: p }))))
+    .addStringOption(o => o.setName("name").setDescription("Archetype name (e.g. Speed Rusher End)").setRequired(true)
+      .setAutocomplete(true))
+    .addStringOption(o => o.setName("attribute").setDescription("Attribute to change (e.g. Speed, BlockShedding)").setRequired(true)
+      .setAutocomplete(true))
+    .addIntegerOption(o => o.setName("value").setDescription("New value (1–99)").setRequired(true)
+      .setMinValue(1).setMaxValue(99)),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -292,6 +349,85 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // ── View ─────────────────────────────────────────────────────────────────
+  if (sub === "view") {
+    const position = interaction.options.getString("position", true);
+    const name     = interaction.options.getString("name", true).trim();
+
+    const [row] = await db.select()
+      .from(customArchetypesTable)
+      .where(and(eq(customArchetypesTable.position, position), eq(customArchetypesTable.name, name)))
+      .limit(1);
+
+    if (!row) {
+      await interaction.editReply({ content: `❌ No archetype found: **${position}** — **${name}**\nRun \`/admin-customarchetypes list\` to see all archetypes.` });
+      return;
+    }
+
+    const attrs  = row.attributes as Record<string, number>;
+    const fields = buildAttrViewFields(attrs);
+    const embed  = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle(`📋 ${position} — ${name}${row.isActive ? "" : " ❌ (inactive)"}`)
+      .setDescription(`**${Object.keys(attrs).length} attributes** · Edit any with \`/admin-customarchetypes edit-attr\``)
+      .addFields(fields)
+      .setFooter({ text: "Values shown are base ratings (before user point allocation)" });
+
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── Edit-Attr ─────────────────────────────────────────────────────────────
+  if (sub === "edit-attr") {
+    const position  = interaction.options.getString("position", true);
+    const name      = interaction.options.getString("name", true).trim();
+    const attrInput = interaction.options.getString("attribute", true).trim();
+    const newValue  = interaction.options.getInteger("value", true);
+
+    const [row] = await db.select()
+      .from(customArchetypesTable)
+      .where(and(eq(customArchetypesTable.position, position), eq(customArchetypesTable.name, name)))
+      .limit(1);
+
+    if (!row) {
+      await interaction.editReply({ content: `❌ No archetype found: **${position}** — **${name}**` });
+      return;
+    }
+
+    const attrs = { ...(row.attributes as Record<string, number>) };
+
+    // Case-insensitive match on the attribute key
+    const matchKey = Object.keys(attrs).find(k => k.toLowerCase() === attrInput.toLowerCase());
+    if (!matchKey) {
+      await interaction.editReply({
+        content: `❌ Attribute **"${attrInput}"** not found on this archetype.\nAvailable: ${Object.keys(attrs).join(", ")}`,
+      });
+      return;
+    }
+
+    const oldValue = attrs[matchKey]!;
+    attrs[matchKey] = newValue;
+
+    await db.update(customArchetypesTable)
+      .set({ attributes: attrs, updatedAt: new Date() })
+      .where(eq(customArchetypesTable.id, row.id));
+
+    const change = newValue > oldValue ? `+${newValue - oldValue}` : `${newValue - oldValue}`;
+    const embed = new EmbedBuilder()
+      .setColor(newValue > oldValue ? Colors.Green : newValue < oldValue ? Colors.Orange : Colors.Grey)
+      .setTitle(`✅ Archetype Updated — ${position} / ${name}`)
+      .addFields(
+        { name: "Attribute",  value: matchKey,           inline: true },
+        { name: "Old Value",  value: String(oldValue),   inline: true },
+        { name: "New Value",  value: `**${newValue}** (${change})`, inline: true },
+      )
+      .setFooter({ text: "Changes affect new player builds. Existing purchased custom players are not retroactively updated." })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
   // ── Remove / Restore ─────────────────────────────────────────────────────
   const position = interaction.options.getString("position", true);
   const name     = interaction.options.getString("name", true).trim();
@@ -317,4 +453,52 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({
     content: `${activate ? "✅ Restored" : "🗑️ Deactivated"}: **${position}** — ${name}`,
   });
+}
+
+// ── Autocomplete ─────────────────────────────────────────────────────────────
+export async function autocomplete(interaction: AutocompleteInteraction) {
+  const sub      = interaction.options.getSubcommand(false);
+  const focused  = interaction.options.getFocused(true);
+  const position = interaction.options.getString("position") ?? "";
+
+  // Archetype name autocomplete (view + edit-attr)
+  if (focused.name === "name") {
+    if (!position) { await interaction.respond([]); return; }
+    const rows = await db.select({ name: customArchetypesTable.name })
+      .from(customArchetypesTable)
+      .where(eq(customArchetypesTable.position, position));
+    const typed = focused.value.toLowerCase();
+    const choices = rows
+      .filter(r => r.name.toLowerCase().includes(typed))
+      .slice(0, 25)
+      .map(r => ({ name: r.name, value: r.name }));
+    await interaction.respond(choices);
+    return;
+  }
+
+  // Attribute name autocomplete (edit-attr only)
+  if (focused.name === "attribute" && sub === "edit-attr") {
+    const name = interaction.options.getString("name") ?? "";
+    if (!position || !name) {
+      // Return common attributes as a helpful starting list
+      const common = ["Speed","Acceleration","Agility","Strength","Jumping","Awareness","Stamina","Toughness","Injury"];
+      await interaction.respond(common.map(a => ({ name: a, value: a })));
+      return;
+    }
+    const [row] = await db.select({ attributes: customArchetypesTable.attributes })
+      .from(customArchetypesTable)
+      .where(and(eq(customArchetypesTable.position, position), eq(customArchetypesTable.name, name)))
+      .limit(1);
+    if (!row) { await interaction.respond([]); return; }
+    const attrs = row.attributes as Record<string, number>;
+    const typed = focused.value.toLowerCase();
+    const choices = Object.keys(attrs)
+      .filter(k => k.toLowerCase().includes(typed))
+      .slice(0, 25)
+      .map(k => ({ name: `${k} (currently ${attrs[k]})`, value: k }));
+    await interaction.respond(choices);
+    return;
+  }
+
+  await interaction.respond([]);
 }
