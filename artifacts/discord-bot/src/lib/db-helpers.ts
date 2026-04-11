@@ -344,16 +344,18 @@ export async function normalizeDefensivePositions(): Promise<void> {
 
 // ── Streak computation ─────────────────────────────────────────────────────────
 // Returns the current consecutive W/L streak for a user.
-// h2hOnly=true skips any game where opponentLabel starts with "[CPU]".
+// h2hOnly=true skips CPU games (detected by [CPU] prefix on opponentLabel).
+// Orders by id DESC (not recordedAt) so batch-imported games within the same
+// timestamp don't produce non-deterministic results.
 export async function computeStreak(
   discordId: string,
   h2hOnly: boolean,
 ): Promise<{ result: "win" | "loss" | null; count: number }> {
   const rows = await db
-    .select({ result: gameLogTable.result, opponentLabel: gameLogTable.opponentLabel })
+    .select({ id: gameLogTable.id, result: gameLogTable.result, opponentLabel: gameLogTable.opponentLabel })
     .from(gameLogTable)
     .where(eq(gameLogTable.discordId, discordId))
-    .orderBy(desc(gameLogTable.recordedAt));
+    .orderBy(desc(gameLogTable.id));
 
   const filtered = h2hOnly
     ? rows.filter(r => !r.opponentLabel?.startsWith("[CPU]"))
