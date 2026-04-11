@@ -193,8 +193,7 @@ export const data = new SlashCommandBuilder()
       // What you're seeking
       .addStringOption(o =>
         o.setName("seeking_pos1")
-          .setDescription("Position you're looking for")
-          .setRequired(true)
+          .setDescription("Position you're looking for (required unless seeking picks)")
           .addChoices(...MADDEN_POSITIONS.map(p => ({ name: p, value: p })))
       )
       .addStringOption(o =>
@@ -514,7 +513,7 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
   const teamName = await getMyTeam(interaction.user.id);
 
   // Seeking
-  const pos1         = interaction.options.getString("seeking_pos1", true);
+  const pos1         = interaction.options.getString("seeking_pos1") ?? null;
   const pos2         = interaction.options.getString("seeking_pos2") ?? null;
   const pos3         = interaction.options.getString("seeking_pos3") ?? null;
   const picksRound   = interaction.options.getString("seeking_picks") ?? null;   // "any" | "1"-"7" | null
@@ -523,6 +522,11 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
   const wantsCoins   = interaction.options.getBoolean("seeking_coins") ?? false;
 
   const positions: string[] = [pos1, pos2, pos3].filter(Boolean) as string[];
+
+  if (positions.length === 0 && !picksRound) {
+    await interaction.editReply({ content: "❌ You must specify at least a position **or** a pick round you're looking for." });
+    return;
+  }
   const pickInfo = picksRound ? { round: picksRound, qty: picksQty, year: picksYear } : undefined;
 
   const seekingDetails = { positions, pickInfo, wantsCoins };
