@@ -50,7 +50,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Show upfront draft-pick warning before starting the builder ───────────
-  const sessionId = createSession(discordId, interaction.guild?.id ?? "");
+  const sessionId = createSession(discordId, interaction.guild?.id ?? "", season.id);
 
   const slotsLeft = cap - combined;
 

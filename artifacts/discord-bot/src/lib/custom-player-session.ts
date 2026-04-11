@@ -7,6 +7,7 @@ export type PackageTier = "bronze" | "silver" | "gold" | "kp";
 export interface CustomPlayerSession {
   userId:        string;
   guildId:       string;
+  seasonId:      number;
 
   // Step 1 – 4 selections
   position:      string | null;
@@ -59,11 +60,12 @@ const TTL_MS = 30 * 60 * 1000; // 30 minutes
 // sessionId → session
 export const customPlayerSessions = new Map<string, CustomPlayerSession>();
 
-export function createSession(userId: string, guildId: string): string {
+export function createSession(userId: string, guildId: string, seasonId: number): string {
   const sessionId = `${userId}-${Date.now()}`;
   customPlayerSessions.set(sessionId, {
     userId,
     guildId,
+    seasonId,
     position:      null,
     archetypeId:   null,
     archetypeName: null,

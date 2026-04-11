@@ -706,6 +706,7 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
   // Save to DB
   const [savedPlayer] = await db.insert(customPlayersTable).values({
     discordId:      session.userId,
+    seasonId:       session.seasonId,
     position:       session.position!,
     archetypeName:  session.archetypeName!,
     devTrait:       session.devTrait ?? "normal",

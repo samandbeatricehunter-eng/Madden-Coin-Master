@@ -183,8 +183,10 @@ export async function addBalance(discordId: string, amount: number): Promise<voi
 }
 
 export async function getInventoryCount(discordId: string, seasonId: number) {
-  // Legends come from inventoryTable; custom players from the new customPlayersTable
-  const [items, cpRows] = await Promise.all([
+  // Legends come from inventoryTable (approved/applied); custom players from customPlayersTable.
+  // Pending legend purchases live in purchasesTable until a commissioner approves them — we must
+  // count those too so the cap is enforced immediately on submission, not just after approval.
+  const [items, cpRows, pendingLegendRows] = await Promise.all([
     db.select().from(inventoryTable)
       .where(and(eq(inventoryTable.discordId, discordId), eq(inventoryTable.seasonId, seasonId))),
     db.select({ id: customPlayersTable.id })
@@ -194,9 +196,20 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
         eq(customPlayersTable.seasonId, seasonId),
         ne(customPlayersTable.status, "refunded"),
       )),
+    // Only "pending" — "approved" ones are already reflected in inventoryTable
+    db.select({ id: purchasesTable.id })
+      .from(purchasesTable)
+      .where(and(
+        eq(purchasesTable.discordId, discordId),
+        eq(purchasesTable.seasonId, seasonId),
+        eq(purchasesTable.purchaseType, "legend"),
+        eq(purchasesTable.status, "pending"),
+      )),
   ]);
-  // Only count legends that are "current" (purchased this season, not yet rolled to permanent vault)
-  const legends = items.filter(i => i.itemType === "legend" && i.legendCategory === "current").length;
+  // Approved/applied legends from inventory (current season, not yet rolled to permanent vault)
+  const appliedLegends = items.filter(i => i.itemType === "legend" && i.legendCategory === "current").length;
+  // Plus pending legend purchases that haven't been approved yet
+  const legends = appliedLegends + pendingLegendRows.length;
   // Count legacy custom_player inventory items + new-style customPlayersTable entries
   const legacyCustoms = items.filter(i =>
     (i.itemType === "custom_player_gold" || i.itemType === "custom_player_silver" || i.itemType === "custom_player_bronze")

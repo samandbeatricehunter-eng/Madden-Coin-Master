@@ -234,9 +234,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const traitLabel = (t: string) =>
     t === "superstar" ? "Superstar" : t === "star" ? "Star" : "Normal";
 
-  // Combined season inventory slots: current legends + active custom players
+  // Pending legend purchases count toward the cap immediately (before commissioner approval)
+  const pendingLegendCount = (seasonPurchases ?? []).filter(
+    p => p.purchaseType === "legend" && p.status === "pending",
+  ).length;
+
+  // Combined season inventory slots: applied legends + pending legend requests + active custom players
   const cap         = LIMITS.maxLegendsPlusCustomPlayers;
-  const combined    = currentLegends.length + activeCustoms.length;
+  const combined    = currentLegends.length + pendingLegendCount + activeCustoms.length;
   const cpSlotStr   = `${combined} / ${cap} season inventory slots used`;
 
   // Season inventory: custom players purchased this season (pre-draft)
