@@ -2,10 +2,12 @@ import { Client, EmbedBuilder, Colors, TextChannel } from "discord.js";
 import { db } from "@workspace/db";
 import {
   franchiseScheduleTable, franchiseMcaTeamsTable, usersTable,
+  userRecordsTable, franchiseProcessedGamesTable,
   playoffGotwPollsTable, type Season,
 } from "@workspace/db";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { eq, and, gte, lte, sql } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel, GOTW_CHANNEL_ID } from "./gotw-helpers.js";
+import { addBalance, logTransaction } from "./db-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
@@ -231,4 +233,209 @@ export async function runPlayoffMatchupsFlow(
     `✅ **${label}** — ${pollsPosted}/${h2hGames.length} polls created in <#${GOTW_CHANNEL_ID}>.\n` +
     `Matchups posted to <#${MATCHUPS_CHANNEL_ID}>. Payouts issue automatically on next advance.`
   );
+}
+
+// ── Playoff W/L payout (fires when leaving a playoff round) ───────────────────
+// Awards per-win coins (+75 for top-4 seeds, +100 for wildcard seeds 5–7),
+// elimination bonus (+50) to losers, and records playoff W/L in userRecordsTable.
+// Uses franchiseProcessedGamesTable to guarantee idempotency (safe to call twice).
+
+const PLAYOFF_WIN_BONUS_TOP4 = 75;
+const PLAYOFF_WIN_BONUS_WC   = 100;
+const PLAYOFF_LOSS_BONUS     = 50;
+
+export async function payoutPlayoffRoundResults(
+  client:  Client,
+  season:  Season,
+  weekKey: string,
+): Promise<string> {
+  const meta = PLAYOFF_WEEK_META[weekKey];
+  if (!meta) return `❌ Unknown playoff week: ${weekKey}`;
+
+  const { weekIndex, fallbackWeekIndex, label } = meta;
+
+  // ── Load already-processed playoff game IDs ─────────────────────────────
+  const allProcessed = await db.select({ gameId: franchiseProcessedGamesTable.gameId })
+    .from(franchiseProcessedGamesTable);
+  const processedSet = new Set(allProcessed.map(r => r.gameId));
+
+  // ── Build team-name → discordId map ─────────────────────────────────────
+  const teamToDiscord = await buildTeamMap(season.id);
+
+  // ── Fetch completed games for this playoff round ─────────────────────────
+  let games = await db.select()
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId,  season.id),
+      eq(franchiseScheduleTable.weekIndex, weekIndex),
+    ));
+
+  if (games.length === 0) {
+    games = await db.select()
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId,  season.id),
+        eq(franchiseScheduleTable.weekIndex, fallbackWeekIndex),
+      ));
+  }
+
+  const effectiveWeekIndex = games[0]?.weekIndex ?? weekIndex;
+
+  const completedH2H = games.filter(g =>
+    g.status >= MIN_COMPLETED_STATUS &&
+    g.homeScore != null &&
+    g.awayScore != null &&
+    teamToDiscord.has(toKey(g.homeTeamName)) &&
+    teamToDiscord.has(toKey(g.awayTeamName)),
+  );
+
+  if (completedH2H.length === 0) {
+    return (
+      `⚠️ No completed H2H playoff games found for **${label}** ` +
+      `(weekIndex ${weekIndex} / fallback ${fallbackWeekIndex}). ` +
+      `Run \`/franchiseupdate\` to import results first.`
+    );
+  }
+
+  // ── Load user data (seed for win-bonus rate, username for upsert) ────────
+  const allUsers = await db.select({
+    discordId:       usersTable.discordId,
+    discordUsername: usersTable.discordUsername,
+    team:            usersTable.team,
+    playoffSeed:     usersTable.playoffSeed,
+  }).from(usersTable);
+  const discordToUser = new Map(allUsers.map(u => [u.discordId, u]));
+
+  const lines:   string[] = [];
+  const skipped: string[] = [];
+
+  for (const g of completedH2H) {
+    const gameId = `playoff-${season.id}-${effectiveWeekIndex}-${toKey(g.homeTeamName)}-${toKey(g.awayTeamName)}`;
+
+    if (processedSet.has(gameId)) {
+      skipped.push(`${g.awayTeamName} @ ${g.homeTeamName}`);
+      continue;
+    }
+
+    const homeId = teamToDiscord.get(toKey(g.homeTeamName))!;
+    const awayId = teamToDiscord.get(toKey(g.awayTeamName))!;
+    const hs     = g.homeScore!;
+    const as_    = g.awayScore!;
+
+    if (hs === as_) continue; // playoff ties don't exist in Madden but guard anyway
+
+    const winnerId   = hs > as_ ? homeId : awayId;
+    const loserId    = hs > as_ ? awayId : homeId;
+    const winnerTeam = hs > as_ ? g.homeTeamName : g.awayTeamName;
+    const loserTeam  = hs > as_ ? g.awayTeamName : g.homeTeamName;
+    const hiScore    = Math.max(hs, as_);
+    const loScore    = Math.min(hs, as_);
+
+    const winnerUser = discordToUser.get(winnerId);
+    const loserUser  = discordToUser.get(loserId);
+
+    // ── Determine win bonus from winner's playoff seed ──────────────────
+    const seed = winnerUser?.playoffSeed ?? null;
+    const winBonus = (seed !== null && seed >= 1 && seed <= 4)
+      ? PLAYOFF_WIN_BONUS_TOP4
+      : PLAYOFF_WIN_BONUS_WC;
+
+    // ── Award coins ─────────────────────────────────────────────────────
+    await addBalance(winnerId, winBonus);
+    await logTransaction(winnerId, winBonus, "addcoins",
+      `Playoff win vs ${loserTeam} — ${label} (${hiScore}–${loScore})`);
+
+    await addBalance(loserId, PLAYOFF_LOSS_BONUS);
+    await logTransaction(loserId, PLAYOFF_LOSS_BONUS, "addcoins",
+      `Playoff elimination vs ${winnerTeam} — ${label} (${loScore}–${hiScore})`);
+
+    // ── Update season playoff W/L in userRecordsTable ───────────────────
+    // Upsert for winner
+    const existingWinner = await db.select({ id: userRecordsTable.id })
+      .from(userRecordsTable)
+      .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)))
+      .limit(1);
+
+    if (existingWinner.length > 0) {
+      await db.update(userRecordsTable)
+        .set({ playoffWins: sql`${userRecordsTable.playoffWins} + 1`, updatedAt: new Date() })
+        .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+    } else {
+      await db.insert(userRecordsTable).values({
+        discordId: winnerId,
+        discordUsername: winnerUser?.discordUsername ?? "",
+        team: winnerUser?.team ?? null,
+        seasonId: season.id,
+        playoffWins: 1,
+      });
+    }
+
+    // Upsert for loser
+    const existingLoser = await db.select({ id: userRecordsTable.id })
+      .from(userRecordsTable)
+      .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)))
+      .limit(1);
+
+    if (existingLoser.length > 0) {
+      await db.update(userRecordsTable)
+        .set({ playoffLosses: sql`${userRecordsTable.playoffLosses} + 1`, updatedAt: new Date() })
+        .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+    } else {
+      await db.insert(userRecordsTable).values({
+        discordId: loserId,
+        discordUsername: loserUser?.discordUsername ?? "",
+        team: loserUser?.team ?? null,
+        seasonId: season.id,
+        playoffLosses: 1,
+      });
+    }
+
+    // ── Mark game as processed ──────────────────────────────────────────
+    await db.insert(franchiseProcessedGamesTable).values({
+      gameId,
+      payoutType:       "playoff",
+      winnerDiscordId:  winnerId,
+      loserDiscordId:   loserId,
+      winnerCoins:      winBonus,
+      loserCoins:       PLAYOFF_LOSS_BONUS,
+      appliedPointDiff: hiScore - loScore,
+      seasonIdRef:      season.id,
+      weekIndexRef:     effectiveWeekIndex,
+      homeTeamRef:      toKey(g.homeTeamName),
+      awayTeamRef:      toKey(g.awayTeamName),
+    }).onConflictDoNothing();
+
+    processedSet.add(gameId);
+
+    lines.push(
+      `🏆 **${winnerTeam}** +${winBonus} 🪙 (${hiScore}–${loScore}) | ` +
+      `**${loserTeam}** +${PLAYOFF_LOSS_BONUS} 🪙 (elim bonus)`,
+    );
+
+    // ── DM both players ─────────────────────────────────────────────────
+    try {
+      const wu = await client.users.fetch(winnerId).catch(() => null);
+      if (wu) await wu.send(
+        `🏆 **Playoff Win!** You defeated **${loserTeam}** in the **${label}** ` +
+        `(${hiScore}–${loScore}) — **+${winBonus} 🪙 coins** added to your balance!\n` +
+        `Your season playoff record has been updated.`
+      ).catch(() => {});
+    } catch (_) {}
+
+    try {
+      const lu = await client.users.fetch(loserId).catch(() => null);
+      if (lu) await lu.send(
+        `🏈 **Playoff Elimination.** You were eliminated by **${winnerTeam}** in the **${label}** ` +
+        `(${loScore}–${hiScore}) — **+${PLAYOFF_LOSS_BONUS} 🪙 coins** added as an elimination bonus.\n` +
+        `Your season playoff record has been updated.`
+      ).catch(() => {});
+    } catch (_) {}
+  }
+
+  if (lines.length === 0 && skipped.length > 0) {
+    return `ℹ️ **${label}** playoff results already processed — ${skipped.length} game(s) skipped.`;
+  }
+
+  const skipNote = skipped.length > 0 ? `\n*(${skipped.length} already-processed game(s) skipped)*` : "";
+  return `✅ **${label}** playoff payouts issued:\n${lines.join("\n")}${skipNote}`;
 }

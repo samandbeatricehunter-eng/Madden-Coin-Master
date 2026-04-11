@@ -12,7 +12,7 @@ import { runEosAutoPost } from "../lib/eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
-import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow } from "../lib/playoff-matchups-runner.js";
+import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
@@ -183,10 +183,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // GOTW channel is fully cleared by /weeklymatchups instead
   }
 
-  // ── Playoff GOTW payout — fires when leaving a playoff week ──────────────────
-  // Pays all correct voters (10 coins each) for each poll posted the previous round.
+  // ── Playoff payouts — fires when leaving a playoff week ──────────────────────
+  // 1. Record playoff W/L + issue per-win coins and elimination bonus
+  // 2. Pay all correct GOTW voters (10 coins each)
   const leavingPlayoffMeta = PLAYOFF_WEEK_META[season.currentWeek ?? ""];
   if (leavingPlayoffMeta) {
+    // 1. Playoff W/L records + coin payouts
+    try {
+      const roundPayoutSummary = await payoutPlayoffRoundResults(
+        interaction.client,
+        season,
+        season.currentWeek!,
+      );
+      if (roundPayoutSummary) channelLines.push(roundPayoutSummary);
+    } catch (err) {
+      console.error("[advanceweek] Playoff round payout error:", err);
+    }
+
+    // 2. GOTW correct-guess payouts
     try {
       const payoutSummary = await autoPayoutPlayoffGotw(
         interaction.client,

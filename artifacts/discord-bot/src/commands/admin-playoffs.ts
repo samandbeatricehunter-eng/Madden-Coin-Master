@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { usersTable, seasonsTable } from "@workspace/db";
 import { eq, inArray, desc } from "drizzle-orm";
 import { isAdminUser, addBalance, logTransaction } from "../lib/db-helpers.js";
-import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow } from "../lib/playoff-matchups-runner.js";
+import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import axios from "axios";
 
 function getApiBase(): string {
@@ -75,6 +75,22 @@ export const data = new SlashCommandBuilder()
     .addStringOption(o => o
       .setName("round")
       .setDescription("Which playoff round to post matchups for")
+      .setRequired(true)
+      .addChoices(
+        { name: "Wild Card",               value: "wildcard"   },
+        { name: "Divisional",              value: "divisional" },
+        { name: "Conference Championship", value: "conference" },
+        { name: "Super Bowl",              value: "superbowl"  },
+      ))
+  )
+
+  // ── Manual playoff W/L payout (retroactive fix) ──────────────────────────
+  .addSubcommand(sub => sub
+    .setName("payoutround")
+    .setDescription("Manually issue playoff W/L records + win/elimination coins for a completed round")
+    .addStringOption(o => o
+      .setName("round")
+      .setDescription("Which completed playoff round to pay out")
       .setRequired(true)
       .addChoices(
         { name: "Wild Card",               value: "wildcard"   },
@@ -197,6 +213,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     } catch (err) {
       console.error("[admin-playoffs/runmatchups] Error:", err);
       await interaction.followUp({ content: `❌ Matchups flow failed: ${err}`, ephemeral: true });
+    }
+    return;
+  }
+
+  // ── Manual playoff round payout (retroactive) ────────────────────────────
+  if (sub === "payoutround") {
+    const round = interaction.options.getString("round", true) as keyof typeof PLAYOFF_WEEK_META;
+
+    if (!PLAYOFF_WEEK_META[round]) {
+      await interaction.editReply({ content: `❌ Unknown round: ${round}` });
+      return;
+    }
+
+    const [season] = await db.select().from(seasonsTable).orderBy(desc(seasonsTable.id)).limit(1);
+    if (!season) {
+      await interaction.editReply({ content: "❌ No active season found." });
+      return;
+    }
+
+    await interaction.editReply({
+      content: `⏳ Processing **${PLAYOFF_WEEK_META[round]!.label}** playoff results — issuing W/L records and coins…`,
+    });
+
+    try {
+      const summary = await payoutPlayoffRoundResults(interaction.client, season, round);
+      await interaction.followUp({ content: summary, ephemeral: true });
+    } catch (err) {
+      console.error("[admin-playoffs/payoutround] Error:", err);
+      await interaction.followUp({ content: `❌ Payout failed: ${err}`, ephemeral: true });
     }
     return;
   }
