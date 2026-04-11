@@ -1252,8 +1252,20 @@ async function handleStreamPost(message: Message): Promise<void> {
     let opponentTeam: string | null = null;
 
     if (streamerTeam) {
-      const weekIndex = parseInt(currentWeek, 10) - 1;
-      const [matchup] = await db
+      // Playoff weeks use string names ("wildcard", "divisional", etc.) which map
+      // to the 1000-offset weekIndex stored in franchiseScheduleTable.
+      // parseInt("wildcard") = NaN, which would cause a Drizzle query error.
+      const PLAYOFF_WEEK_INDEX: Record<string, number> = {
+        wildcard:   1000,
+        divisional: 1001,
+        conference: 1002,
+        superbowl:  1003,
+      };
+      const weekIndex = PLAYOFF_WEEKS_SET.has(currentWeek)
+        ? (PLAYOFF_WEEK_INDEX[currentWeek] ?? -1)
+        : parseInt(currentWeek, 10) - 1;
+
+      const [matchup] = weekIndex < 0 ? [undefined] : await db
         .select({
           homeTeamName: franchiseScheduleTable.homeTeamName,
           awayTeamName: franchiseScheduleTable.awayTeamName,
