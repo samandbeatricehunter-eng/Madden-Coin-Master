@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable,
   franchiseScheduleTable, franchiseRostersTable, franchiseProcessedGamesTable,
+  franchiseMcaTeamsTable,
   pendingChannelPayoutsTable, coinTransactionsTable,
   playerSeasonStatsTable, teamSeasonStatsTable, seasonStatTierConfigsTable,
 } from "@workspace/db";
@@ -1238,7 +1239,7 @@ async function handleStreamPost(message: Message): Promise<void> {
       await db.delete(pendingChannelPayoutsTable).where(eq(pendingChannelPayoutsTable.id, existing.id));
     }
 
-    // Look up the streamer's team
+    // Look up the streamer's team (for display in embed)
     const [userRow] = await db
       .select({ team: usersTable.team })
       .from(usersTable)
@@ -1247,66 +1248,135 @@ async function handleStreamPost(message: Message): Promise<void> {
 
     const streamerTeam = userRow?.team ?? null;
 
-    // Find this week's matchup to identify the opponent
+    // Find this week's matchup to identify the H2H opponent.
+    //
+    // Primary path: look up the streamer's teamId from franchiseMcaTeamsTable and
+    // query the schedule by integer teamId. This is immune to name mismatches between
+    // usersTable.team and franchiseScheduleTable.homeTeamName / awayTeamName (which
+    // are sourced from franchiseMcaTeamsTable.fullName, not from usersTable.team).
+    //
+    // Fallback path: the old name-based query against franchiseScheduleTable, used
+    // only when the streamer has no entry in franchiseMcaTeamsTable for this season.
+    //
+    // Playoff weeks store weekIndex as 1000 + rawWeekIdx (e.g. wildcard → 1018).
+    // A secondary fallback tries the non-offset value in case MCA stored without +1000.
     let opponentDiscordId: string | null = null;
     let opponentTeam: string | null = null;
 
-    if (streamerTeam) {
-      // Playoff weeks use string names ("wildcard", "divisional", etc.) which map
-      // to the 1000-offset weekIndex stored in franchiseScheduleTable.
-      // parseInt("wildcard") = NaN, which would cause a Drizzle query error.
-      // Primary weekIndex uses Madden's continuous raw weekNum offset by +1000
-      // (same values as PLAYOFF_WEEK_META in playoff-matchups-runner).
-      // Fallback tries the non-offset value in case MCA stored games without +1000.
-      const PLAYOFF_WEEK_INDEX: Record<string, { primary: number; fallback: number }> = {
-        wildcard:   { primary: 1018, fallback: 18 },
-        divisional: { primary: 1019, fallback: 19 },
-        conference: { primary: 1020, fallback: 20 },
-        superbowl:  { primary: 1022, fallback: 22 },
-      };
+    const PLAYOFF_WEEK_INDEX: Record<string, { primary: number; fallback: number }> = {
+      wildcard:   { primary: 1018, fallback: 18 },
+      divisional: { primary: 1019, fallback: 19 },
+      conference: { primary: 1020, fallback: 20 },
+      superbowl:  { primary: 1022, fallback: 22 },
+    };
 
-      const playoffMeta = PLAYOFF_WEEKS_SET.has(currentWeek) ? PLAYOFF_WEEK_INDEX[currentWeek] : null;
-      const weekIndex   = playoffMeta ? playoffMeta.primary : parseInt(currentWeek, 10) - 1;
+    const playoffMeta = PLAYOFF_WEEKS_SET.has(currentWeek) ? PLAYOFF_WEEK_INDEX[currentWeek] : null;
+    const weekIndex   = playoffMeta ? playoffMeta.primary : parseInt(currentWeek, 10) - 1;
 
-      const teamFilter = or(
-        eq(franchiseScheduleTable.homeTeamName, streamerTeam),
-        eq(franchiseScheduleTable.awayTeamName, streamerTeam),
-      );
-
-      let [matchup] = weekIndex < 0 ? [undefined] : await db
-        .select({
-          homeTeamName: franchiseScheduleTable.homeTeamName,
-          awayTeamName: franchiseScheduleTable.awayTeamName,
-        })
-        .from(franchiseScheduleTable)
-        .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), teamFilter))
+    if (weekIndex >= 0) {
+      // ── Primary: teamId-based lookup ──────────────────────────────────────────
+      const [mcaEntry] = await db
+        .select({ teamId: franchiseMcaTeamsTable.teamId, fullName: franchiseMcaTeamsTable.fullName })
+        .from(franchiseMcaTeamsTable)
+        .where(and(
+          eq(franchiseMcaTeamsTable.seasonId, season.id),
+          eq(franchiseMcaTeamsTable.discordId, message.author.id),
+        ))
         .limit(1);
 
-      // Fallback: try non-offset weekIndex if primary returned nothing
-      if (!matchup && playoffMeta) {
+      if (mcaEntry) {
+        const idFilter = or(
+          eq(franchiseScheduleTable.homeTeamId, mcaEntry.teamId),
+          eq(franchiseScheduleTable.awayTeamId, mcaEntry.teamId),
+        );
+
+        type SchedRow = { homeTeamId: number; awayTeamId: number; homeTeamName: string; awayTeamName: string };
+
+        let matchup: SchedRow | undefined;
         [matchup] = await db
           .select({
+            homeTeamId:   franchiseScheduleTable.homeTeamId,
+            awayTeamId:   franchiseScheduleTable.awayTeamId,
             homeTeamName: franchiseScheduleTable.homeTeamName,
             awayTeamName: franchiseScheduleTable.awayTeamName,
           })
           .from(franchiseScheduleTable)
-          .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), teamFilter))
+          .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), idFilter))
           .limit(1);
-      }
 
-      if (matchup) {
-        opponentTeam = matchup.homeTeamName === streamerTeam
-          ? matchup.awayTeamName
-          : matchup.homeTeamName;
-
-        // Look up opponent's Discord ID
-        if (opponentTeam) {
-          const [oppRow] = await db
-            .select({ discordId: usersTable.discordId })
-            .from(usersTable)
-            .where(eq(usersTable.team, opponentTeam))
+        if (!matchup && playoffMeta) {
+          [matchup] = await db
+            .select({
+              homeTeamId:   franchiseScheduleTable.homeTeamId,
+              awayTeamId:   franchiseScheduleTable.awayTeamId,
+              homeTeamName: franchiseScheduleTable.homeTeamName,
+              awayTeamName: franchiseScheduleTable.awayTeamName,
+            })
+            .from(franchiseScheduleTable)
+            .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), idFilter))
             .limit(1);
-          opponentDiscordId = oppRow?.discordId ?? null;
+        }
+
+        if (matchup) {
+          const isHome      = matchup.homeTeamId === mcaEntry.teamId;
+          const oppTeamId   = isHome ? matchup.awayTeamId : matchup.homeTeamId;
+          opponentTeam      = isHome ? matchup.awayTeamName : matchup.homeTeamName;
+
+          // Get opponent Discord ID from franchiseMcaTeamsTable (most reliable)
+          const [oppMca] = await db
+            .select({ discordId: franchiseMcaTeamsTable.discordId })
+            .from(franchiseMcaTeamsTable)
+            .where(and(
+              eq(franchiseMcaTeamsTable.seasonId, season.id),
+              eq(franchiseMcaTeamsTable.teamId, oppTeamId),
+            ))
+            .limit(1);
+          opponentDiscordId = oppMca?.discordId ?? null;
+
+          // Secondary fallback: look up by usersTable.team name
+          if (!opponentDiscordId && opponentTeam) {
+            const [oppRow] = await db
+              .select({ discordId: usersTable.discordId })
+              .from(usersTable)
+              .where(eq(usersTable.team, opponentTeam))
+              .limit(1);
+            opponentDiscordId = oppRow?.discordId ?? null;
+          }
+        }
+      } else if (streamerTeam) {
+        // ── Fallback: name-based lookup (when no MCA entry for this user) ────────
+        const nameFilter = or(
+          eq(franchiseScheduleTable.homeTeamName, streamerTeam),
+          eq(franchiseScheduleTable.awayTeamName, streamerTeam),
+        );
+
+        let nameMatchup: { homeTeamName: string; awayTeamName: string } | undefined;
+        [nameMatchup] = await db
+          .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
+          .from(franchiseScheduleTable)
+          .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), nameFilter))
+          .limit(1);
+
+        if (!nameMatchup && playoffMeta) {
+          [nameMatchup] = await db
+            .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
+            .from(franchiseScheduleTable)
+            .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), nameFilter))
+            .limit(1);
+        }
+
+        if (nameMatchup) {
+          opponentTeam = nameMatchup.homeTeamName === streamerTeam
+            ? nameMatchup.awayTeamName
+            : nameMatchup.homeTeamName;
+          if (opponentTeam) {
+            const [oppRow] = await db
+              .select({ discordId: usersTable.discordId })
+              .from(usersTable)
+              .where(eq(usersTable.team, opponentTeam))
+              .limit(1);
+            opponentDiscordId = oppRow?.discordId ?? null;
+          }
         }
       }
     }
