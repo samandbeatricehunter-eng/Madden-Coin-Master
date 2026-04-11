@@ -28,6 +28,7 @@ import {
   handleCcpSubmitAttrs, handleCcpConfirm, handleCcpCancel,
   handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
+  handleCcpMotionStyle, handleCcpQbDetailsModal, handleCcpAppearanceModal,
 } from "../lib/custom-player-interactions.js";
 import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/viewcustomarchetypes.js";
 import {
@@ -2315,15 +2316,16 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   }
 
   // ── Custom player builder ─────────────────────────────────────────────────────
-  if (action === "ccp_pos")       { await handleCcpPos(interaction, sessionId);      return; }
-  if (action === "ccp_arch")      { await handleCcpArch(interaction, sessionId);     return; }
-  if (action === "ccp_ol_pos")    { await handleCcpOlPos(interaction, sessionId);    return; }
-  if (action === "ccp_dev")      { await handleCcpDev(interaction, sessionId);     return; }
-  if (action === "ccp_pkg")      { await handleCcpPkg(interaction, sessionId);     return; }
-  if (action === "ccp_attr_sel") { await handleCcpAttrSel(interaction, sessionId); return; }
-  if (action === "ccp_hand")     { await handleCcpHand(interaction, sessionId);    return; }
-  if (action === "ccp_height")   { await handleCcpHeight(interaction, sessionId);  return; }
-  if (action === "ccp_weight")   { await handleCcpWeight(interaction, sessionId);  return; }
+  if (action === "ccp_pos")          { await handleCcpPos(interaction, sessionId);          return; }
+  if (action === "ccp_arch")         { await handleCcpArch(interaction, sessionId);         return; }
+  if (action === "ccp_ol_pos")       { await handleCcpOlPos(interaction, sessionId);        return; }
+  if (action === "ccp_motion_style") { await handleCcpMotionStyle(interaction, sessionId);  return; }
+  if (action === "ccp_dev")          { await handleCcpDev(interaction, sessionId);          return; }
+  if (action === "ccp_pkg")          { await handleCcpPkg(interaction, sessionId);          return; }
+  if (action === "ccp_attr_sel")     { await handleCcpAttrSel(interaction, sessionId);      return; }
+  if (action === "ccp_hand")         { await handleCcpHand(interaction, sessionId);         return; }
+  if (action === "ccp_height")       { await handleCcpHeight(interaction, sessionId);       return; }
+  if (action === "ccp_weight")       { await handleCcpWeight(interaction, sessionId);       return; }
 
   // ── Attribute-up: user selected an attribute to upgrade ───────────────────
   if (action === "aup_sel") { await handleAupSel(interaction); return; }
@@ -2459,8 +2461,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const idStr  = parts[1];
 
   // ── Custom player builder ─────────────────────────────────────────────────────
-  if (action === "ccp_modal")        { await handleCcpModal(interaction, idStr ?? "");       return; }
-  if (action === "ccp_refund_modal") { await handleCcpRefundModal(interaction, idStr ?? ""); return; }
+  if (action === "ccp_modal")            { await handleCcpModal(interaction, idStr ?? "");            return; }
+  if (action === "ccp_refund_modal")     { await handleCcpRefundModal(interaction, idStr ?? "");      return; }
+  if (action === "ccp_qb_details_modal") { await handleCcpQbDetailsModal(interaction, idStr ?? "");   return; }
+  if (action === "ccp_appearance_modal") { await handleCcpAppearanceModal(interaction, idStr ?? "");  return; }
 
   // ── Interview denial ─────────────────────────────────────────────────────────
   if (action === "interview_modal") {

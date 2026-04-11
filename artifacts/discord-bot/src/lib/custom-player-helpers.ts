@@ -9,6 +9,28 @@ import { eq } from "drizzle-orm";
 import type { CustomPlayerSession, PackageTier, DevTrait } from "./custom-player-session.js";
 import { pointsUsed, pointCostForRaise } from "./custom-player-session.js";
 
+// ── Throwing motion styles (QB only) ─────────────────────────────────────────
+export const THROWING_MOTIONS: Record<string, { min: number; max: number }> = {
+  "Over the Top":         { min: 0, max: 17 },
+  "Three Quarters":       { min: 1, max: 5  },
+  "High Three Quarters":  { min: 0, max: 14 },
+  "Low Three Quarters":   { min: 0, max: 2  },
+  "Lower Three Quarters": { min: 1, max: 2  },
+};
+
+export function throwingMotionStyleRow(sessionId: string) {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`ccp_motion_style:${sessionId}`)
+      .setPlaceholder("Select throwing motion style…")
+      .addOptions(
+        Object.keys(THROWING_MOTIONS).map(style =>
+          new StringSelectMenuOptionBuilder().setLabel(style).setValue(style),
+        ),
+      ),
+  );
+}
+
 // ── Positions ─────────────────────────────────────────────────────────────────
 export const ALL_POSITIONS = ["QB","RB","FB","WR","TE","OL","DL","LB","CB","FS","SS","K","P"] as const;
 export type Position = typeof ALL_POSITIONS[number];
@@ -329,23 +351,41 @@ export function buildCommissionerEmbed(playerId: number, session: CustomPlayerSe
   const heightStr  = `${session.heightFt}'${session.heightIn}"`;
   const devLabel = { normal: "Normal", star: "Star", superstar: "Superstar" }[session.devTrait!] ?? "Normal";
 
+  const fields: { name: string; value: string; inline: boolean }[] = [
+    { name: "Name",          value: `${session.firstName} ${session.lastName}`, inline: true },
+    { name: "Position",      value: session.position!,   inline: true },
+    { name: "Jersey #",      value: String(session.jerseyNumber ?? "?"), inline: true },
+    { name: "Height",        value: heightStr,           inline: true },
+    { name: "Weight",        value: `${session.weightLbs} lbs`, inline: true },
+    { name: "College",       value: session.college!,    inline: true },
+    { name: "Dominant Hand", value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
+    { name: "Dev Trait",     value: devLabel,            inline: true },
+    { name: "Package",       value: packageLabel(session.packageTier!), inline: true },
+    { name: "Archetype",     value: session.archetypeName!, inline: true },
+    { name: "Total Cost",    value: `${session.totalCost} coins`, inline: true },
+    { name: "Submitted By",  value: `<@${session.userId}>`, inline: true },
+  ];
+
+  if (session.throwingMotionStyle != null && session.throwingMotionNumber != null) {
+    fields.push({
+      name:   "Throwing Motion",
+      value:  `${session.throwingMotionStyle} #${session.throwingMotionNumber}`,
+      inline: true,
+    });
+  }
+
+  if (session.appearanceHead != null) {
+    fields.push({
+      name:   "Appearance (Head #)",
+      value:  session.appearanceHead === "any" ? "Any (random)" : `#${session.appearanceHead}`,
+      inline: true,
+    });
+  }
+
   return new EmbedBuilder()
     .setColor(Colors.Orange)
     .setTitle("🏈 Custom Player Submitted")
-    .addFields(
-      { name: "Name",          value: `${session.firstName} ${session.lastName}`, inline: true },
-      { name: "Position",      value: session.position!,   inline: true },
-      { name: "Jersey #",      value: String(session.jerseyNumber ?? "?"), inline: true },
-      { name: "Height",        value: heightStr,           inline: true },
-      { name: "Weight",        value: `${session.weightLbs} lbs`, inline: true },
-      { name: "College",       value: session.college!,    inline: true },
-      { name: "Dominant Hand", value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
-      { name: "Dev Trait",     value: devLabel,            inline: true },
-      { name: "Package",       value: packageLabel(session.packageTier!), inline: true },
-      { name: "Archetype",     value: session.archetypeName!, inline: true },
-      { name: "Total Cost",    value: `${session.totalCost} coins`, inline: true },
-      { name: "Submitted By",  value: `<@${session.userId}>`, inline: true },
-    )
+    .addFields(fields)
     .setTimestamp()
     .setFooter({ text: `Player ID: ${playerId}` });
 }

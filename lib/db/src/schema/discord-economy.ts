@@ -815,6 +815,9 @@ export const customPlayersTable = pgTable("custom_players", {
   heightIn:             integer("height_in").notNull(),
   weightLbs:            integer("weight_lbs").notNull(),
   attributes:           json("attributes").notNull().$type<Record<string, number>>(),
+  throwingMotionStyle:  text("throwing_motion_style"),   // QB only — e.g. "Over the Top"
+  throwingMotionNumber: integer("throwing_motion_number"), // QB only — 0–17 etc.
+  appearanceHead:       text("appearance_head"),           // "any" or a numeric string
   totalCost:            integer("total_cost").notNull().default(0),
   status:               text("status").notNull().default("pending"),   // pending|applied|refunded
   commissionerMessageId: text("commissioner_message_id"),

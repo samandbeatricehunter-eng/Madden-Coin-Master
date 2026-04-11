@@ -29,6 +29,7 @@ import {
   olSubPositionSelectRow, positionSelectRow,
   KP_POSITIONS, DEV_TRAIT_COST, DEV_TRAIT_LABEL,
   buildArchetypeNavRows, buildAttrPageNavRow, attrPageCount, formatArchetypeEmbed,
+  THROWING_MOTIONS, throwingMotionStyleRow,
 } from "./custom-player-helpers.js";
 import { addBalance, logTransaction, getOrCreateUser } from "./db-helpers.js";
 
@@ -52,7 +53,7 @@ export async function handleCcpPreConfirm(interaction: ButtonInteraction, sessio
 
   await interaction.editReply({
     content:
-      "**🏈 Custom Player Builder — Step 1 of 8**\n\n" +
+      "**🏈 Custom Player Builder — Step 1 of 9**\n\n" +
       "Select your player's position to get started:",
     embeds:     [],
     components: [positionSelectRow(sessionId)],
@@ -73,7 +74,7 @@ function archBrowserReply(session: CustomPlayerSession, sessionId: string) {
 
   return {
     content:
-      `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
+      `**🏈 Custom Player Builder — Step 2 of 9**\n\n` +
       `Position: **${session.position}**\n\n` +
       `Use **Prev/Next Attrs** to page through all base attributes. Use **Prev/Next** to switch archetypes. Press **Choose This Archetype** when ready.`,
     embeds:     [formatArchetypeEmbed(session.position!, arch.name, arch.attributes, attrPage)],
@@ -159,14 +160,39 @@ export async function handleCcpAttrPageNext(interaction: ButtonInteraction, sess
   await interaction.editReply(archBrowserReply(session, sessionId));
 }
 
+// ── Helper: show the appearance (head #) modal directly from a component interaction ──
+// Works for both ButtonInteraction and StringSelectMenuInteraction (no deferUpdate needed).
+async function showAppearanceModal(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sessionId: string,
+) {
+  const modal = new ModalBuilder()
+    .setCustomId(`ccp_appearance_modal:${sessionId}`)
+    .setTitle("Player Appearance");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("headNumber")
+        .setLabel("Head # (enter a number or type 'any')")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(4)
+        .setPlaceholder("e.g. 42 or any"),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
 // ── Step 2: Archetype selected — commit and advance ───────────────────────────
 export async function handleCcpArchPick(interaction: ButtonInteraction, sessionId: string) {
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
-  await interaction.deferUpdate();
 
   const arch = session.archetypeList[session.archetypePreviewIdx];
   if (!arch) {
+    await interaction.deferUpdate();
     await interaction.editReply({ content: "❌ No archetype selected — go back and try again.", components: [], embeds: [] });
     return;
   }
@@ -177,12 +203,14 @@ export async function handleCcpArchPick(interaction: ButtonInteraction, sessionI
   session.attributeBases = { ...arch.attributes };
   session.attributeOrder = Object.keys(arch.attributes);
 
-  // OL players must pick a specific sub-position (LT/LG/C/RG/RT) before continuing
+  // OL players must pick a specific sub-position (LT/LG/C/RG/RT) before continuing.
+  // Then the OL sub-pos handler shows the appearance modal.
   if (session.position === "OL") {
     session.step = 2;
+    await interaction.deferUpdate();
     await interaction.editReply({
       content:
-        `**🏈 Custom Player Builder — Step 2 of 8**\n\n` +
+        `**🏈 Custom Player Builder — Step 2 of 9**\n\n` +
         `Position: **OL** | Archetype: **${arch.name}**\n\n` +
         `Select your specific OL position:`,
       components: [olSubPositionSelectRow(sessionId)],
@@ -191,48 +219,44 @@ export async function handleCcpArchPick(interaction: ButtonInteraction, sessionI
     return;
   }
 
-  // K/P: auto-assign kp package, go straight to dev trait
-  if (KP_POSITIONS.has(session.position!)) {
-    const settings = await getSettings();
-    session.packageTier   = "kp";
-    session.packagePoints = packagePoints("kp", settings);
+  // QB players choose throwing motion style first (then motion # + appearance in one modal).
+  if (session.position === "QB") {
     session.step = 3;
+    await interaction.deferUpdate();
     await interaction.editReply({
       content:
-        `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
-        `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
-      components: [devTraitSelectRow(sessionId)],
+        `**🏈 Custom Player Builder — Step 3 of 9**\n\n` +
+        `Position: **QB** | Archetype: **${arch.name}**\n\n` +
+        `Select your throwing motion style:`,
+      components: [throwingMotionStyleRow(sessionId)],
       embeds: [],
     });
     return;
   }
 
+  // All other positions: show appearance modal directly.
+  // The modal submit handler (handleCcpAppearanceModal) creates the next message.
   session.step = 3;
-  const settings = await getSettings();
-  await interaction.editReply({
-    content:
-      `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
-      `Position: **${session.position}** | Archetype: **${arch.name}**\n\nSelect your creation package:`,
-    components: [packageSelectRow(sessionId, settings)],
-    embeds: [],
-  });
+  await showAppearanceModal(interaction, sessionId);
 }
 
 // ── Legacy: old ccp_arch select-menu handler (kept for any in-flight sessions) ─
 export async function handleCcpArch(interaction: StringSelectMenuInteraction, sessionId: string) {
-  // Old sessions used a dropdown — redirect to pick logic using the selected ID
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
 
   const archetypeId = parseInt(interaction.values[0]!, 10);
-  await interaction.deferUpdate();
 
   const [arch] = await db.select()
     .from(customArchetypesTable)
     .where(eq(customArchetypesTable.id, archetypeId))
     .limit(1);
 
-  if (!arch) { await interaction.editReply({ content: "❌ Archetype not found.", components: [] }); return; }
+  if (!arch) {
+    await interaction.deferUpdate();
+    await interaction.editReply({ content: "❌ Archetype not found.", components: [] });
+    return;
+  }
 
   session.archetypeId    = arch.id;
   session.archetypeName  = arch.name;
@@ -242,32 +266,27 @@ export async function handleCcpArch(interaction: StringSelectMenuInteraction, se
 
   if (session.position === "OL") {
     session.step = 2;
+    await interaction.deferUpdate();
     await interaction.editReply({
-      content: `**🏈 Custom Player Builder — Step 2 of 8**\n\nPosition: **OL** | Archetype: **${arch.name}**\n\nSelect your specific OL position:`,
+      content: `**🏈 Custom Player Builder — Step 2 of 9**\n\nPosition: **OL** | Archetype: **${arch.name}**\n\nSelect your specific OL position:`,
       components: [olSubPositionSelectRow(sessionId)], embeds: [],
     });
     return;
   }
-  if (KP_POSITIONS.has(session.position!)) {
-    const kpSettings = await getSettings();
-    session.packageTier   = "kp";
-    session.packagePoints = packagePoints("kp", kpSettings);
+  if (session.position === "QB") {
     session.step = 3;
+    await interaction.deferUpdate();
     await interaction.editReply({
-      content: `**🏈 Custom Player Builder — Step 3 of 8**\n\nPosition: **${session.position}** | Archetype: **${arch.name}**\n\nSelect development trait:`,
-      components: [devTraitSelectRow(sessionId)], embeds: [],
+      content: `**🏈 Custom Player Builder — Step 3 of 9**\n\nPosition: **QB** | Archetype: **${arch.name}**\n\nSelect your throwing motion style:`,
+      components: [throwingMotionStyleRow(sessionId)], embeds: [],
     });
     return;
   }
   session.step = 3;
-  const legacySettings = await getSettings();
-  await interaction.editReply({
-    content: `**🏈 Custom Player Builder — Step 3 of 8**\n\nPosition: **${session.position}** | Archetype: **${arch.name}**\n\nSelect your creation package:`,
-    components: [packageSelectRow(sessionId, legacySettings)], embeds: [],
-  });
+  await showAppearanceModal(interaction, sessionId);
 }
 
-// ── Step 2b (OL only): Specific OL position selected ──────────────────────────
+// ── Step 2b (OL only): Specific OL position selected → appearance modal ───────
 export async function handleCcpOlPos(interaction: StringSelectMenuInteraction, sessionId: string) {
   const session = getSession(sessionId);
   if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
@@ -276,17 +295,8 @@ export async function handleCcpOlPos(interaction: StringSelectMenuInteraction, s
   session.position = olPosition;
   session.step = 3;
 
-  await interaction.deferUpdate();
-
-  // OL sub-positions are never K/P — always show package first
-  const settings = await getSettings();
-  await interaction.editReply({
-    content:
-      `**🏈 Custom Player Builder — Step 3 of 8**\n\n` +
-      `Position: **${olPosition}** | Archetype: **${session.archetypeName}**\n\nSelect your creation package:`,
-    components: [packageSelectRow(sessionId, settings)],
-    embeds: [],
-  });
+  // Show appearance modal — the modal submit handler continues to package select.
+  await showAppearanceModal(interaction, sessionId);
 }
 
 // ── Step 3: Package selected ───────────────────────────────────────────────────
@@ -303,7 +313,7 @@ export async function handleCcpPkg(interaction: StringSelectMenuInteraction, ses
 
   await interaction.editReply({
     content:
-      `**🏈 Custom Player Builder — Step 4 of 8**\n\n` +
+      `**🏈 Custom Player Builder — Step 5 of 9**\n\n` +
       `Position: **${session.position}** | Archetype: **${session.archetypeName}**\n` +
       `Package: **${packageLabel(session.packageTier!)}** (${session.packagePoints} pts)\n\nSelect development trait:`,
     components: [devTraitSelectRow(sessionId)],
@@ -367,7 +377,7 @@ async function showBalanceCheck(
 
   await interaction.editReply({
     content:
-      `**🏈 Custom Player Builder — Step 6 of 8**\n\n` +
+      `**🏈 Custom Player Builder — Step 6 of 9**\n\n` +
       `Balance: **${balance} coins** | Cost: **${session.totalCost} coins** | After purchase: **${balance - session.totalCost} coins**`,
     embeds:     [embed],
     components: rows,
@@ -478,7 +488,7 @@ export async function handleCcpSubmitAttrs(interaction: ButtonInteraction, sessi
 
   const modal = new ModalBuilder()
     .setCustomId(`ccp_modal:${sessionId}`)
-    .setTitle("Player Details (1/2)");
+    .setTitle("Player Details");
 
   modal.addComponents(
     new ActionRowBuilder<TextInputBuilder>().addComponents(
@@ -536,7 +546,7 @@ export async function handleCcpModal(interaction: ModalSubmitInteraction, sessio
   await interaction.reply({
     ephemeral: true,
     content:
-      `**🏈 Custom Player Builder — Step 8 of 8**\n\n` +
+      `**🏈 Custom Player Builder — Step 8 of 9**\n\n` +
       `Name: **${firstName} ${lastName}** | #${jerseyNumber} | ${college}\n\nSelect dominant hand:`,
     components: [handRow],
   });
@@ -560,7 +570,7 @@ export async function handleCcpHand(interaction: StringSelectMenuInteraction, se
 
   await interaction.editReply({
     content:
-      `**🏈 Custom Player Builder — Step 8 of 8**\n\n` +
+      `**🏈 Custom Player Builder — Step 8 of 9**\n\n` +
       `Name: **${session.firstName} ${session.lastName}** | #${session.jerseyNumber} | ${session.college}\n` +
       `Hand: **${session.dominantHand === "left" ? "Left" : "Right"}**\n\nSelect height:`,
     components: [heightRow],
@@ -587,7 +597,7 @@ export async function handleCcpHeight(interaction: StringSelectMenuInteraction, 
 
   await interaction.editReply({
     content:
-      `**🏈 Custom Player Builder — Step 8 of 8**\n\n` +
+      `**🏈 Custom Player Builder — Step 8 of 9**\n\n` +
       `Name: **${session.firstName} ${session.lastName}** | #${session.jerseyNumber} | ${session.college}\n` +
       `Hand: **${session.dominantHand === "left" ? "Left" : "Right"}** | Height: **${inchesToDisplay(totalInches)}**\n\nSelect weight:`,
     components: [weightRow],
@@ -615,24 +625,43 @@ export async function handleCcpWeight(interaction: StringSelectMenuInteraction, 
     });
   const attrFieldValue = upgradedLines.length > 0 ? upgradedLines.join("  ·  ") : "No upgrades applied — base archetype stats";
 
+  const summaryFields: { name: string; value: string; inline: boolean }[] = [
+    { name: "Name",          value: `${session.firstName} ${session.lastName}`, inline: true },
+    { name: "Position",      value: session.position!,    inline: true },
+    { name: "Jersey #",      value: String(session.jerseyNumber ?? "?"), inline: true },
+    { name: "Height",        value: heightStr,            inline: true },
+    { name: "Weight",        value: `${session.weightLbs} lbs`, inline: true },
+    { name: "College",       value: session.college!,     inline: true },
+    { name: "Dominant Hand", value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
+    { name: "Package",       value: `${packageLabel(session.packageTier!)} (${session.packagePoints} pts)`, inline: true },
+    { name: "Dev Trait",     value: devLabel,             inline: true },
+    { name: "Archetype",     value: session.archetypeName!, inline: true },
+    { name: "Total Cost",    value: `**${session.totalCost} coins**`, inline: true },
+    { name: "\u200b",        value: "\u200b",             inline: true },
+  ];
+
+  if (session.throwingMotionStyle != null && session.throwingMotionNumber != null) {
+    summaryFields.push({
+      name:   "Throwing Motion",
+      value:  `${session.throwingMotionStyle} #${session.throwingMotionNumber}`,
+      inline: true,
+    });
+  }
+
+  if (session.appearanceHead != null) {
+    summaryFields.push({
+      name:   "Appearance (Head #)",
+      value:  session.appearanceHead === "any" ? "Any (random)" : `#${session.appearanceHead}`,
+      inline: true,
+    });
+  }
+
+  summaryFields.push({ name: "Attribute Upgrades", value: attrFieldValue.slice(0, 1020), inline: false });
+
   const summaryEmbed = new EmbedBuilder()
     .setColor(Colors.Gold)
-    .setTitle("📋 Review Your Custom Player")
-    .addFields(
-      { name: "Name",          value: `${session.firstName} ${session.lastName}`, inline: true },
-      { name: "Position",      value: session.position!,    inline: true },
-      { name: "Jersey #",      value: String(session.jerseyNumber ?? "?"), inline: true },
-      { name: "Height",        value: heightStr,            inline: true },
-      { name: "Weight",        value: `${session.weightLbs} lbs`, inline: true },
-      { name: "College",       value: session.college!,     inline: true },
-      { name: "Dominant Hand", value: session.dominantHand === "left" ? "Left" : "Right", inline: true },
-      { name: "Package",       value: `${packageLabel(session.packageTier!)} (${session.packagePoints} pts)`, inline: true },
-      { name: "Dev Trait",     value: devLabel,             inline: true },
-      { name: "Archetype",     value: session.archetypeName!, inline: true },
-      { name: "Total Cost",    value: `**${session.totalCost} coins**`, inline: true },
-      { name: "\u200b",        value: "\u200b",             inline: true },
-      { name: "Attribute Upgrades", value: attrFieldValue.slice(0, 1020) },
-    )
+    .setTitle("📋 Review Your Custom Player — Step 9 of 9")
+    .addFields(summaryFields)
     .setFooter({ text: "Review carefully — once submitted, coins are deducted immediately." });
 
   const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -705,24 +734,27 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
 
   // Save to DB
   const [savedPlayer] = await db.insert(customPlayersTable).values({
-    discordId:      session.userId,
-    seasonId:       session.seasonId,
-    position:       session.position!,
-    archetypeName:  session.archetypeName!,
-    devTrait:       session.devTrait ?? "normal",
-    packageTier:    session.packageTier!,
-    creationPoints: session.packagePoints,
-    firstName:      session.firstName!,
-    lastName:       session.lastName!,
-    jerseyNumber:   session.jerseyNumber!,
-    college:        session.college!,
-    dominantHand:   session.dominantHand ?? "right",
-    heightFt:       session.heightFt!,
-    heightIn:       session.heightIn!,
-    weightLbs:      session.weightLbs!,
-    attributes:     session.attributes,
-    totalCost:      session.totalCost,
-    status:         "pending",
+    discordId:           session.userId,
+    seasonId:            session.seasonId,
+    position:            session.position!,
+    archetypeName:       session.archetypeName!,
+    devTrait:            session.devTrait ?? "normal",
+    packageTier:         session.packageTier!,
+    creationPoints:      session.packagePoints,
+    firstName:           session.firstName!,
+    lastName:            session.lastName!,
+    jerseyNumber:        session.jerseyNumber!,
+    college:             session.college!,
+    dominantHand:        session.dominantHand ?? "right",
+    heightFt:            session.heightFt!,
+    heightIn:            session.heightIn!,
+    weightLbs:           session.weightLbs!,
+    attributes:          session.attributes,
+    throwingMotionStyle:  session.throwingMotionStyle  ?? null,
+    throwingMotionNumber: session.throwingMotionNumber ?? null,
+    appearanceHead:       session.appearanceHead       ?? null,
+    totalCost:           session.totalCost,
+    status:              "pending",
   }).returning();
 
   const playerId = savedPlayer!.id;
@@ -772,6 +804,148 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
 
   // Clean up session
   customPlayerSessions.delete(sessionId);
+}
+
+// ── QB Step 3: Throwing motion style selected → show combined QB details modal ─
+// (motion number + appearance in one modal, since motion # range depends on style)
+export async function handleCcpMotionStyle(interaction: StringSelectMenuInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) { await sessionExpired(interaction); return; }
+
+  const style = interaction.values[0]!;
+  const range = THROWING_MOTIONS[style];
+
+  if (!range) {
+    await interaction.reply({ content: "❌ Unknown throwing motion style. Please try again.", ephemeral: true });
+    return;
+  }
+
+  session.throwingMotionStyle = style;
+
+  const modal = new ModalBuilder()
+    .setCustomId(`ccp_qb_details_modal:${sessionId}`)
+    .setTitle("QB Details");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("motionNumber")
+        .setLabel(`Motion # (${range.min}–${range.max} for ${style})`)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(2)
+        .setPlaceholder(`Enter ${range.min}–${range.max}`),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("headNumber")
+        .setLabel("Appearance — Head # or type 'any' for random")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(4)
+        .setPlaceholder("e.g. 42 or any"),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+// ── QB Step 4: QB details modal submitted → package select ────────────────────
+export async function handleCcpQbDetailsModal(interaction: ModalSubmitInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) {
+    await interaction.reply({ content: "⏰ Session expired.", ephemeral: true });
+    return;
+  }
+
+  const motionRaw = interaction.fields.getTextInputValue("motionNumber").trim();
+  const headRaw   = interaction.fields.getTextInputValue("headNumber").trim();
+
+  const style = session.throwingMotionStyle;
+  const range = style ? THROWING_MOTIONS[style] : null;
+
+  if (!range || !style) {
+    await interaction.reply({ content: "❌ No throwing motion style recorded. Please start over with `/purchasecustomplayer`.", ephemeral: true });
+    return;
+  }
+
+  const motionNum = parseInt(motionRaw, 10);
+  if (isNaN(motionNum) || motionNum < range.min || motionNum > range.max) {
+    await interaction.reply({
+      content: `❌ Invalid motion number. **${style}** accepts **${range.min}–${range.max}**. You entered: \`${motionRaw}\``,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const headLower = headRaw.toLowerCase().trim();
+  const headNum   = parseInt(headRaw, 10);
+  if (headLower !== "any" && (isNaN(headNum) || headNum < 0)) {
+    await interaction.reply({ content: "❌ Head # must be a non-negative number, or type `any` for random.", ephemeral: true });
+    return;
+  }
+
+  session.throwingMotionNumber = motionNum;
+  session.appearanceHead = headLower === "any" ? "any" : String(headNum);
+  session.step = 5;
+
+  // QB can never be K/P — always show package select
+  const settings = await getSettings();
+  await interaction.reply({
+    ephemeral: true,
+    content:
+      `**🏈 Custom Player Builder — Step 5 of 9**\n\n` +
+      `Position: **QB** | Archetype: **${session.archetypeName}**\n` +
+      `Throwing Motion: **${style} #${motionNum}** | Appearance: **Head #${session.appearanceHead}**\n\nSelect your creation package:`,
+    components: [packageSelectRow(sessionId, settings)],
+  });
+}
+
+// ── Step 3 (all non-QB): Appearance modal submitted → package or dev trait ────
+export async function handleCcpAppearanceModal(interaction: ModalSubmitInteraction, sessionId: string) {
+  const session = getSession(sessionId);
+  if (!session || session.userId !== interaction.user.id) {
+    await interaction.reply({ content: "⏰ Session expired.", ephemeral: true });
+    return;
+  }
+
+  const headRaw   = interaction.fields.getTextInputValue("headNumber").trim();
+  const headLower = headRaw.toLowerCase().trim();
+  const headNum   = parseInt(headRaw, 10);
+
+  if (headLower !== "any" && (isNaN(headNum) || headNum < 0)) {
+    await interaction.reply({ content: "❌ Head # must be a non-negative number, or type `any` for random.", ephemeral: true });
+    return;
+  }
+
+  session.appearanceHead = headLower === "any" ? "any" : String(headNum);
+  session.step = 4;
+
+  const settings = await getSettings();
+
+  // K/P: auto-assign KP package, skip straight to dev trait
+  if (KP_POSITIONS.has(session.position!)) {
+    session.packageTier   = "kp";
+    session.packagePoints = packagePoints("kp", settings);
+    await interaction.reply({
+      ephemeral: true,
+      content:
+        `**🏈 Custom Player Builder — Step 4 of 9**\n\n` +
+        `Position: **${session.position}** | Archetype: **${session.archetypeName}**\n` +
+        `Appearance: **Head #${session.appearanceHead}**\n\nSelect development trait:`,
+      components: [devTraitSelectRow(sessionId)],
+    });
+    return;
+  }
+
+  await interaction.reply({
+    ephemeral: true,
+    content:
+      `**🏈 Custom Player Builder — Step 4 of 9**\n\n` +
+      `Position: **${session.position}** | Archetype: **${session.archetypeName}**\n` +
+      `Appearance: **Head #${session.appearanceHead}**\n\nSelect your creation package:`,
+    components: [packageSelectRow(sessionId, settings)],
+  });
 }
 
 // ── Cancel ─────────────────────────────────────────────────────────────────────

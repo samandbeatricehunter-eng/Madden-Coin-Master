@@ -31,6 +31,13 @@ export interface CustomPlayerSession {
   // Whether attributes have been locked (step 7 done)
   attrsLocked: boolean;
 
+  // QB throwing motion (set before package selection, QB only)
+  throwingMotionStyle:  string | null;
+  throwingMotionNumber: number | null;
+
+  // Appearance — head number from the game, or "any" for random (all positions)
+  appearanceHead: string | null;
+
   // Player details (step 8)
   firstName:     string | null;
   lastName:      string | null;
@@ -78,6 +85,9 @@ export function createSession(userId: string, guildId: string, seasonId: number)
     attributeOrder: [],
     selectedAttr:       null,
     attrsLocked:        false,
+    throwingMotionStyle:  null,
+    throwingMotionNumber: null,
+    appearanceHead:       null,
     archetypeList:       [],
     archetypePreviewIdx: 0,
     archetypeAttrPage:   0,
