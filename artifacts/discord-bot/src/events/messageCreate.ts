@@ -1255,31 +1255,44 @@ async function handleStreamPost(message: Message): Promise<void> {
       // Playoff weeks use string names ("wildcard", "divisional", etc.) which map
       // to the 1000-offset weekIndex stored in franchiseScheduleTable.
       // parseInt("wildcard") = NaN, which would cause a Drizzle query error.
-      const PLAYOFF_WEEK_INDEX: Record<string, number> = {
-        wildcard:   1000,
-        divisional: 1001,
-        conference: 1002,
-        superbowl:  1003,
+      // Primary weekIndex uses Madden's continuous raw weekNum offset by +1000
+      // (same values as PLAYOFF_WEEK_META in playoff-matchups-runner).
+      // Fallback tries the non-offset value in case MCA stored games without +1000.
+      const PLAYOFF_WEEK_INDEX: Record<string, { primary: number; fallback: number }> = {
+        wildcard:   { primary: 1018, fallback: 18 },
+        divisional: { primary: 1019, fallback: 19 },
+        conference: { primary: 1020, fallback: 20 },
+        superbowl:  { primary: 1022, fallback: 22 },
       };
-      const weekIndex = PLAYOFF_WEEKS_SET.has(currentWeek)
-        ? (PLAYOFF_WEEK_INDEX[currentWeek] ?? -1)
-        : parseInt(currentWeek, 10) - 1;
 
-      const [matchup] = weekIndex < 0 ? [undefined] : await db
+      const playoffMeta = PLAYOFF_WEEKS_SET.has(currentWeek) ? PLAYOFF_WEEK_INDEX[currentWeek] : null;
+      const weekIndex   = playoffMeta ? playoffMeta.primary : parseInt(currentWeek, 10) - 1;
+
+      const teamFilter = or(
+        eq(franchiseScheduleTable.homeTeamName, streamerTeam),
+        eq(franchiseScheduleTable.awayTeamName, streamerTeam),
+      );
+
+      let [matchup] = weekIndex < 0 ? [undefined] : await db
         .select({
           homeTeamName: franchiseScheduleTable.homeTeamName,
           awayTeamName: franchiseScheduleTable.awayTeamName,
         })
         .from(franchiseScheduleTable)
-        .where(and(
-          eq(franchiseScheduleTable.seasonId, season.id),
-          eq(franchiseScheduleTable.weekIndex, weekIndex),
-          or(
-            eq(franchiseScheduleTable.homeTeamName, streamerTeam),
-            eq(franchiseScheduleTable.awayTeamName, streamerTeam),
-          ),
-        ))
+        .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), teamFilter))
         .limit(1);
+
+      // Fallback: try non-offset weekIndex if primary returned nothing
+      if (!matchup && playoffMeta) {
+        [matchup] = await db
+          .select({
+            homeTeamName: franchiseScheduleTable.homeTeamName,
+            awayTeamName: franchiseScheduleTable.awayTeamName,
+          })
+          .from(franchiseScheduleTable)
+          .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), teamFilter))
+          .limit(1);
+      }
 
       if (matchup) {
         opponentTeam = matchup.homeTeamName === streamerTeam

@@ -211,26 +211,34 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           let opponentDiscordId: string | null = null;
           let opponentTeam: string | null = null;
           if (userRow.team) {
-            const PLAYOFF_WEEK_INDEX: Record<string, number> = {
-              wildcard: 1000, divisional: 1001, conference: 1002, superbowl: 1003,
+            const PLAYOFF_WEEK_INDEX: Record<string, { primary: number; fallback: number }> = {
+              wildcard:   { primary: 1018, fallback: 18 },
+              divisional: { primary: 1019, fallback: 19 },
+              conference: { primary: 1020, fallback: 20 },
+              superbowl:  { primary: 1022, fallback: 22 },
             };
-            const PLAYOFF_WEEKS = new Set(Object.keys(PLAYOFF_WEEK_INDEX));
-            const weekIndex = PLAYOFF_WEEKS.has(currentWeek)
-              ? (PLAYOFF_WEEK_INDEX[currentWeek] ?? -1)
-              : parseInt(currentWeek, 10) - 1;
+            const PLAYOFF_WEEKS    = new Set(Object.keys(PLAYOFF_WEEK_INDEX));
+            const playoffMeta      = PLAYOFF_WEEKS.has(currentWeek) ? PLAYOFF_WEEK_INDEX[currentWeek] : null;
+            const weekIndex        = playoffMeta ? playoffMeta.primary : parseInt(currentWeek, 10) - 1;
 
-            const [matchup] = weekIndex < 0 ? [undefined] : await db
+            const teamFilter = or(
+              eq(franchiseScheduleTable.homeTeamName, userRow.team),
+              eq(franchiseScheduleTable.awayTeamName, userRow.team),
+            );
+
+            let [matchup] = weekIndex < 0 ? [undefined] : await db
               .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
               .from(franchiseScheduleTable)
-              .where(and(
-                eq(franchiseScheduleTable.seasonId, season.id),
-                eq(franchiseScheduleTable.weekIndex, weekIndex),
-                or(
-                  eq(franchiseScheduleTable.homeTeamName, userRow.team),
-                  eq(franchiseScheduleTable.awayTeamName, userRow.team),
-                ),
-              ))
+              .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), teamFilter))
               .limit(1);
+
+            if (!matchup && playoffMeta) {
+              [matchup] = await db
+                .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
+                .from(franchiseScheduleTable)
+                .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), teamFilter))
+                .limit(1);
+            }
 
             if (matchup) {
               opponentTeam = matchup.homeTeamName === userRow.team ? matchup.awayTeamName : matchup.homeTeamName;
