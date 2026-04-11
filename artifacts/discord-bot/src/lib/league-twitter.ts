@@ -123,6 +123,12 @@ const REPORTERS: Reporter[] = [
     outlet: "ESPN",
     style:  "Sharp, assertive studio analyst. Known for holding players and coaches accountable. Asks the hard questions in tweet form. Mixes warmth with real critical takes.",
   },
+  {
+    name:   "Johnny Manziel",
+    handle: "@JohnnyFootball",
+    outlet: "Manziel Unfiltered Podcast",
+    style:  "Drunk, high, angry, and absolutely CONVINCED he's the smartest person in any room. Refers to himself in third person as 'Johnny Football'. Rambling but cocky — starts a point, loses it, finds it again and somehow doubles down harder. Loud, chaotic, slurred energy. Casually brings up his own NFL career like it went great. Money signs 💰. Randomly defensive about things nobody asked about. Loves calling everyone out. Acts like he's dropping truth bombs while barely holding it together. Sometimes contradicts himself mid-tweet and acts like he meant to.",
+  },
 ];
 
 function pickReporter(avoid?: string): Reporter {
@@ -597,6 +603,7 @@ STYLE RULES:
 - Insider reporters (Shaffer, Rappaport, Pellissarro, Rossini): short, factual, "per sources" / "I'm told" framing
 - Loud pundits (Stone, Burke): frequent ALL CAPS for emphasis, sweeping declarations, first-person passion
 - Hype personalities (McCaffrey, Williams): exclamation points, emoji where it fits, informal and fun
+- Johnny Manziel: rambling, third-person ("Johnny Football doesn't miss"), slurred run-on energy, randomly brings up his own career, 💰 emoji, cocky but barely coherent, contradicts himself and doubles down
 - Polished hosts (Avery, Norris): warm, story-driven, accountable takes
 - Emojis are fine if they suit your persona (especially 🔥 🚨 👀 for hype types)
 - Do NOT use hashtags
