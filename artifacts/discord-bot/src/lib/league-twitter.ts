@@ -356,21 +356,37 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     .limit(16);
 
   if (recentGames.length > 0) {
-    // Determine the most recent week(s) with results
-    const maxWeek = Math.max(...recentGames.map(g => g.weekIndex));
-    const latestWeekGames = recentGames.filter(g => g.weekIndex === maxWeek);
-    const prevWeekGames   = recentGames.filter(g => g.weekIndex === maxWeek - 1);
+    // Convert a raw weekIndex integer into a human-readable round label.
+    // Regular season: weekIndex is 0-based (0 = Week 1, 17 = Week 18).
+    // Playoffs use high weekIndex values matching the DB constants.
+    const weekIndexLabel = (wi: number): string => {
+      if (wi === 1018) return "Wild Card Round";
+      if (wi === 1019) return "Divisional Round";
+      if (wi === 1020) return "Conference Championship";
+      if (wi === 1022) return "Super Bowl";
+      if (wi >= 1000)  return `Playoff Round (week index ${wi})`;
+      return `Week ${wi + 1}`;  // regular season: 0-based → 1-based display
+    };
+
+    // Find the two most recent distinct weekIndex values (not necessarily consecutive,
+    // since playoff rounds skip indices, e.g. Conference=1020 → Super Bowl=1022).
+    const distinctWeeks = [...new Set(recentGames.map(g => g.weekIndex))].sort((a, b) => b - a);
+    const latestWeek = distinctWeeks[0];
+    const prevWeek   = distinctWeeks[1];
+
+    const latestWeekGames = recentGames.filter(g => g.weekIndex === latestWeek);
+    const prevWeekGames   = prevWeek !== undefined ? recentGames.filter(g => g.weekIndex === prevWeek) : [];
 
     const fmtGame = (g: typeof recentGames[0]) => {
       const winner = (g.homeScore ?? 0) > (g.awayScore ?? 0) ? g.homeTeamName : g.awayTeamName;
       return `  ${g.awayTeamName} @ ${g.homeTeamName}: ${g.awayScore}–${g.homeScore} (${winner} wins)`;
     };
 
-    if (latestWeekGames.length > 0) {
-      parts.push(`\nRECENT GAME RESULTS — Week ${maxWeek + 1}:\n${latestWeekGames.map(fmtGame).join("\n")}`);
+    if (latestWeekGames.length > 0 && latestWeek !== undefined) {
+      parts.push(`\nRECENT GAME RESULTS — ${weekIndexLabel(latestWeek)}:\n${latestWeekGames.map(fmtGame).join("\n")}`);
     }
-    if (prevWeekGames.length > 0) {
-      parts.push(`\nRECENT GAME RESULTS — Week ${maxWeek}:\n${prevWeekGames.map(fmtGame).join("\n")}`);
+    if (prevWeekGames.length > 0 && prevWeek !== undefined) {
+      parts.push(`\nPREVIOUS WEEK GAME RESULTS — ${weekIndexLabel(prevWeek)}:\n${prevWeekGames.map(fmtGame).join("\n")}`);
     }
   }
 
