@@ -72,6 +72,7 @@ import * as adminLegendVault         from "./commands/admin-legendvault.js";
 import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
+import * as adminEosReapprove        from "./commands/admin-eos-reapprove.js";
 
 // ── Records / rankings (standalone) ──────────────────────────────────────────
 import {
@@ -194,6 +195,7 @@ if (!isProduction && !devBotEnabled) {
     adminCustomArcetypes,
     adminCustomPlayerSettings,
     adminFixPlayerNames,
+    adminEosReapprove,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },
