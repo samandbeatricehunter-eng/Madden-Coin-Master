@@ -211,8 +211,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           let opponentDiscordId: string | null = null;
           let opponentTeam: string | null = null;
           if (userRow.team) {
-            const weekIndex = parseInt(currentWeek, 10) - 1;
-            const [matchup] = await db
+            const PLAYOFF_WEEK_INDEX: Record<string, number> = {
+              wildcard: 1000, divisional: 1001, conference: 1002, superbowl: 1003,
+            };
+            const PLAYOFF_WEEKS = new Set(Object.keys(PLAYOFF_WEEK_INDEX));
+            const weekIndex = PLAYOFF_WEEKS.has(currentWeek)
+              ? (PLAYOFF_WEEK_INDEX[currentWeek] ?? -1)
+              : parseInt(currentWeek, 10) - 1;
+
+            const [matchup] = weekIndex < 0 ? [undefined] : await db
               .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
               .from(franchiseScheduleTable)
               .where(and(
