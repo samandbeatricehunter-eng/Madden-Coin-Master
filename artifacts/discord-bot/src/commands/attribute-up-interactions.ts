@@ -33,8 +33,9 @@ interface AupSession {
   selectedAttr?: string;
   currentValue?: number;
   baseCost?: number;
-  scaledCost?: number;
+  scaledCost?: number;    // total cost for quantity upgrades
   isCore?: boolean;
+  quantity?: number;      // number of points to upgrade (default 1)
 }
 
 export const aupSessions = new Map<string, AupSession>();
@@ -51,6 +52,23 @@ function scaledCost(base: number, current: number): number | null {
   if (current >= 96) return base * 3;       // 96-98 → 3x
   if (current >= 91) return base * 2;       // 91-95 → 2x
   return base;                              // ≤ 90 → base cost
+}
+
+/**
+ * Compute the total cost for upgrading `qty` points starting from `current`.
+ * Returns null if any point in the range is already at 99 (can't upgrade).
+ */
+function stackedCost(base: number, current: number, qty: number): { total: number; pointsUpgradeable: number } | null {
+  let total = 0;
+  let upgradeable = 0;
+  for (let i = 0; i < qty; i++) {
+    const cost = scaledCost(base, current + i);
+    if (cost === null) break;  // hit 99, stop counting
+    total += cost;
+    upgradeable++;
+  }
+  if (upgradeable === 0) return null;
+  return { total, pointsUpgradeable: upgradeable };
 }
 
 // ── Build paginated attribute embed ───────────────────────────────────────────
@@ -162,9 +180,11 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     return;
   }
 
-  const targetUser = interaction.options.getUser("user") ?? interaction.user;
-  const playerName = interaction.options.getString("player", true);
-  const position   = interaction.options.getString("position", true);
+  const targetUser     = interaction.options.getUser("user") ?? interaction.user;
+  const playerName     = interaction.options.getString("player", true);
+  const position       = interaction.options.getString("position", true);
+  const presetAttr     = interaction.options.getString("attribute") ?? null;
+  const presetQuantity = interaction.options.getInteger("quantity") ?? 1;
 
   const season = await getOrCreateActiveSeason();
 
@@ -194,8 +214,7 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
 
   const attrs = playerRow.attributes as Record<string, number>;
   const rules = await getSeasonRules(season);
-
-  const sKey = sessionKey(interaction.user.id, playerRow.playerId);
+  const sKey  = sessionKey(interaction.user.id, playerRow.playerId);
   const session: AupSession = {
     invokerId: interaction.user.id,
     targetId: targetUser.id,
@@ -207,7 +226,75 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
   };
   aupSessions.set(sKey, session);
 
-  const embed = buildAttrPage(session, rules);
+  // ── Direct path: attribute was specified in the slash command ────────────────
+  if (presetAttr) {
+    const coreSet = getCoreAttributes(season);
+    const isCore  = coreSet.has(presetAttr as any);
+    const base    = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
+    const current = attrs[presetAttr] ?? 0;
+
+    if (current >= 99) {
+      await interaction.editReply({ content: `❌ **${presetAttr}** is already at max (99) — cannot upgrade further.` });
+      aupSessions.delete(sKey);
+      return;
+    }
+
+    const result = stackedCost(base, current, presetQuantity);
+    if (!result) {
+      await interaction.editReply({ content: `❌ **${presetAttr}** cannot be upgraded (current value: ${current}).` });
+      aupSessions.delete(sKey);
+      return;
+    }
+
+    const { total, pointsUpgradeable } = result;
+    const qty = pointsUpgradeable;  // may be less than requested if 99 cap is hit
+
+    session.selectedAttr = presetAttr;
+    session.currentValue = current;
+    session.baseCost     = base;
+    session.scaledCost   = total;
+    session.isCore       = isCore;
+    session.quantity     = qty;
+
+    const invoker   = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const canAfford = invoker.balance >= total;
+    const category  = isCore ? "Core ⭐" : "Non-core";
+
+    const capNote = qty < presetQuantity
+      ? `\n⚠️ Only **${qty}** point(s) upgradeable (would hit 99 at ${current + qty}).`
+      : "";
+
+    const embed = new EmbedBuilder()
+      .setColor(canAfford ? Colors.Green : Colors.Red)
+      .setTitle("⚡ Confirm Attribute Upgrade")
+      .setDescription(
+        `**Player:** ${session.playerName} (${session.playerPosition})\n` +
+        `**Attribute:** ${presetAttr}\n` +
+        `**Upgrade:** ${current} → **${current + qty}** (+${qty} point${qty !== 1 ? "s" : ""})\n` +
+        `**Category:** ${category}\n` +
+        `**Total cost:** ${total.toLocaleString()} coins\n` +
+        `**Your balance:** ${invoker.balance.toLocaleString()} coins${capNote}\n\n` +
+        (canAfford ? `✅ You can afford this upgrade.` : `❌ You need **${(total - invoker.balance).toLocaleString()}** more coins.`)
+      );
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`aup_confirm:${sKey}`)
+        .setLabel(`✅ Confirm (+${qty} point${qty !== 1 ? "s" : ""})`)
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!canAfford),
+      new ButtonBuilder()
+        .setCustomId(`aup_cancel:${sKey}`)
+        .setLabel("✖ Cancel")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [row] });
+    return;
+  }
+
+  // ── Interactive path: no attribute specified — show paginated browser ─────────
+  const embed    = buildAttrPage(session, rules);
   const dropdown = buildAttrDropdown(session, rules, sKey);
   const navRow   = buildNavRow(session, sKey);
 
@@ -355,6 +442,7 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
     const rules   = await getSeasonRules(season);
     const user    = await getOrCreateUser(interaction.user.id, interaction.user.username);
     const cost    = session.scaledCost;
+    const qty     = session.quantity ?? 1;
     const isCore  = session.isCore ?? false;
     const cap     = isCore ? rules.coreAttrCap     : rules.nonCoreAttrCap;
     const used    = isCore ? stats.coreAttrPurchased : stats.nonCoreAttrPurchased;
@@ -369,10 +457,10 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
       return;
     }
 
-    if (remaining <= 0) {
+    if (remaining < qty) {
       const category = isCore ? "Core" : "Non-core";
       await interaction.editReply({
-        embeds: [errorEmbed(`${category} Attribute Cap Reached`, `You've used all **${cap}** ${category.toLowerCase()} attribute upgrades this season.`)],
+        embeds: [errorEmbed(`${category} Attribute Cap Reached`, `You only have **${remaining}** ${category.toLowerCase()} upgrade${remaining !== 1 ? "s" : ""} remaining (cap: ${cap}), but this purchase requires **${qty}**.`)],
         components: [],
       });
       aupSessions.delete(sKey);
@@ -383,16 +471,16 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
     await deductBalance(interaction.user.id, cost);
     await logTransaction(
       interaction.user.id, -cost, "purchase",
-      `Attribute upgrade — ${session.selectedAttr} (${session.isCore ? "Core" : "Non-core"}) for ${session.playerName} (${session.playerPosition})`
+      `Attribute upgrade ×${qty} — ${session.selectedAttr} (${session.isCore ? "Core" : "Non-core"}) for ${session.playerName} (${session.playerPosition})`
     );
 
-    // Update season stats
+    // Update season stats (increment by qty, not just 1)
     await db.update(seasonStatsTable).set({
       coreAttrPurchased: isCore
-        ? sql`${seasonStatsTable.coreAttrPurchased} + 1`
+        ? sql`${seasonStatsTable.coreAttrPurchased} + ${qty}`
         : seasonStatsTable.coreAttrPurchased,
       nonCoreAttrPurchased: !isCore
-        ? sql`${seasonStatsTable.nonCoreAttrPurchased} + 1`
+        ? sql`${seasonStatsTable.nonCoreAttrPurchased} + ${qty}`
         : seasonStatsTable.nonCoreAttrPurchased,
     }).where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
 
@@ -406,7 +494,10 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
       attributeName: session.selectedAttr,
       playerName: session.playerName,
       playerPosition: session.playerPosition,
-      notes: session.targetId !== interaction.user.id ? `for:<@${session.targetId}>` : null,
+      notes: [
+        qty > 1 ? `qty:${qty}` : null,
+        session.targetId !== interaction.user.id ? `for:<@${session.targetId}>` : null,
+      ].filter(Boolean).join(";") || null,
     }).returning();
 
     await db.insert(inventoryTable).values({
@@ -417,7 +508,10 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
       attributeName: session.selectedAttr,
       playerName: session.playerName,
       playerPosition: session.playerPosition,
-      notes: session.targetId !== interaction.user.id ? `for:<@${session.targetId}>` : null,
+      notes: [
+        qty > 1 ? `qty:${qty}` : null,
+        session.targetId !== interaction.user.id ? `for:<@${session.targetId}>` : null,
+      ].filter(Boolean).join(";") || null,
     });
 
     // Commissioner notification
@@ -431,8 +525,8 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
           session.targetId !== interaction.user.id ? `**Player Owner:** <@${session.targetId}>` : null,
           `**Attribute:** ${session.selectedAttr} (${category})`,
           `**Player:** ${session.playerName} (${session.playerPosition})`,
-          `**Upgrade:** ${session.currentValue} → ${session.currentValue + 1}`,
-          `**Cost:** ${cost.toLocaleString()} coins (base: ${session.baseCost}, scaled ${isCore ? (cost / session.baseCost!) : (cost / session.baseCost!)}×)`,
+          `**Upgrade:** ${session.currentValue} → ${session.currentValue + qty} (+${qty} point${qty !== 1 ? "s" : ""})`,
+          `**Cost:** ${cost.toLocaleString()} coins total`,
           `**Purchase ID:** #${purchase!.id}`,
           ``,
           `Click the button below once this has been applied in-game.`,
@@ -458,9 +552,9 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
         .setTitle("✅ Attribute Upgrade Submitted!")
         .setDescription(
           `**${session.selectedAttr}** (${category}) upgrade for **${session.playerName}** (${session.playerPosition}) submitted!\n\n` +
-          `**Upgrade:** ${session.currentValue} → ${session.currentValue + 1}\n` +
+          `**Upgrade:** ${session.currentValue} → ${session.currentValue + qty} (+${qty} point${qty !== 1 ? "s" : ""})\n` +
           `**Cost:** ${cost.toLocaleString()} coins deducted.\n` +
-          `**${isCore ? "Core" : "Non-core"} upgrades used this season:** ${used + 1}/${cap}`
+          `**${isCore ? "Core" : "Non-core"} upgrades used this season:** ${used + qty}/${cap}`
         )
       ],
       components: [],

@@ -107,7 +107,7 @@ export const data = new SlashCommandBuilder()
   // ── Attribute Upgrade (interactive) ─────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("attribute_upgrade")
-      .setDescription("Upgrade a player attribute — interactive paginated flow with scaling costs")
+      .setDescription("Upgrade a player attribute — pick attribute/quantity here or use the interactive UI")
       .addStringOption(opt =>
         opt.setName("position")
           .setDescription("Player's position on the roster")
@@ -119,6 +119,19 @@ export const data = new SlashCommandBuilder()
           .setDescription("Player to upgrade attributes for (from autocomplete)")
           .setRequired(true)
           .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("attribute")
+          .setDescription("Attribute to upgrade (optional — omit to browse all attributes interactively)")
+          .setRequired(false)
+          .setAutocomplete(true)
+      )
+      .addIntegerOption(opt =>
+        opt.setName("quantity")
+          .setDescription("How many points to upgrade (default 1, max 10)")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(10)
       )
       .addUserOption(opt =>
         opt.setName("user")
@@ -165,6 +178,17 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
         await interaction.respond(matches);
         return;
       }
+    }
+
+    if (sub === "attribute_upgrade" && focused.name === "attribute") {
+      // Autocomplete attribute names from the master ATTRIBUTES list
+      const q = focused.value.toLowerCase();
+      const choices = ATTRIBUTES
+        .filter(a => a.toLowerCase().includes(q))
+        .slice(0, 25)
+        .map(a => ({ name: a, value: a }));
+      await interaction.respond(choices);
+      return;
     }
 
     if (sub === "dev_upgrade" || sub === "age_reset" || sub === "attribute_upgrade") {
