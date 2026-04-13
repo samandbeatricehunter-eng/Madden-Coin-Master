@@ -10,9 +10,11 @@ import {
   fetchWeeklyStats,
   fetchAwardsData,
   fetchScheduleForWeek,
+  fetchLeagueTeamsAndRosters,
   updateStoredToken,
   refreshTokenIfNeeded,
   type WeeklyExportData,
+  type RostersExportData,
 } from "../lib/ea-client.js";
 import axios from "axios";
 
@@ -100,6 +102,13 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((s) =>
     s
+      .setName("rosters")
+      .setDescription(
+        "Fetch league team info + all 32 team rosters + free agents from EA and sync them (run weekly)",
+      ),
+  )
+  .addSubcommand((s) =>
+    s
       .setName("check-api")
       .setDescription("Verify that the bot can reach the API server (use when MCA exports seem to fail silently)"),
   );
@@ -111,6 +120,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "awards")        return handleAwards(interaction);
   if (sub === "standings")     return handleStandings(interaction);
   if (sub === "full-schedule") return handleFullSchedule(interaction);
+  if (sub === "rosters")       return handleRosters(interaction);
   if (sub === "check-api")     return handleCheckApi(interaction);
 }
 
@@ -457,6 +467,95 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
     .setTimestamp();
 
   await interaction.editReply({ content: "", embeds: [schedEmbed] });
+}
+
+// ── /admin_ea_export rosters ──────────────────────────────────────────────────
+// Fetches: leagueTeams (all 32 teams' info + userName mapping) → per-team rosters
+// (one request per team using the same Blaze session) → free agents.
+// The snallabot source confirmed the command is CareerMode_GetTeamRostersExport
+// with { leagueId, listIndex: teamIndex, returnFreeAgents: false, teamId }.
+// All results are POSTed to the API server just as MCA would send them.
+async function handleRosters(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const conn = await loadEAConnection();
+  if (!conn) {
+    await interaction.editReply({ content: "❌ **No EA connection.** Run `/admin_ea_connect start` first." });
+    return;
+  }
+
+  const { token, eaLeagueId } = conn;
+  const apiBase  = getApiBase();
+  const key      = getWebhookKey();
+  const platform = token.platform;
+  const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+
+  await interaction.editReply({ content: "⏳ Fetching league teams + all rosters from EA (this takes ~60s)..." });
+
+  let rosterData: RostersExportData;
+  try {
+    rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId);
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
+  } catch (err: any) {
+    console.error("[ea-export/rosters] Fetch error:", err);
+    await interaction.editReply({
+      content:
+        `❌ Failed to fetch roster data from EA: ${err?.message ?? String(err)}\n\n` +
+        "If you see an auth error, run `/admin_ea_connect code` to refresh the connection.\n" +
+        "EA rate-limits Blaze sessions — if you see ERR_SYSTEM, wait 5–10 minutes and retry.",
+    });
+    return;
+  }
+
+  await interaction.editReply({ content: "⏳ Syncing league teams + rosters to the processor..." });
+
+  const results: Array<{ name: string; ok: boolean; status: number }> = [];
+
+  // 1 — leagueTeams (team OVR, name, userName assignment)
+  const teamsRes = await postToApiServer(`${leagueBase}/leagueteams`, rosterData.leagueTeams);
+  results.push({ name: "leagueTeams", ...teamsRes });
+
+  // 2 — per-team rosters
+  for (const { teamId, data } of rosterData.teamRosters) {
+    const res = await postToApiServer(`${leagueBase}/team/${teamId}/roster`, data);
+    results.push({ name: `roster:${teamId}`, ...res });
+  }
+
+  // 3 — free agents
+  const faRes = await postToApiServer(`${leagueBase}/freeagents/roster`, rosterData.freeAgents);
+  results.push({ name: "freeAgents", ...faRes });
+
+  const succeeded = results.filter(r => r.ok).length;
+  const failed    = results.filter(r => !r.ok);
+
+  // Summarise — show per-team failures but collapse successes to a count
+  const rostersFailed  = failed.filter(r => r.name.startsWith("roster:") || r.name === "freeAgents");
+  const rostersSynced  = results.filter(r => r.ok && (r.name.startsWith("roster:") || r.name === "freeAgents")).length;
+  const teamFailed     = failed.find(r => r.name === "leagueTeams");
+
+  const summaryLines: string[] = [
+    teamFailed ? `❌ leagueTeams (HTTP ${teamFailed.status})` : `✅ leagueTeams`,
+    rostersFailed.length === 0
+      ? `✅ ${rostersSynced} team rosters + free agents`
+      : `⚠️ ${rostersSynced}/${rosterData.teamRosters.length + 1} rosters synced — ${rostersFailed.length} failed`,
+    ...rostersFailed.map(r => `  ❌ ${r.name} (HTTP ${r.status})`),
+  ];
+
+  const embed = new EmbedBuilder()
+    .setColor(failed.length === 0 ? Colors.Green : succeeded > 0 ? Colors.Yellow : Colors.Red)
+    .setTitle("🏈 EA Roster Sync")
+    .setDescription(summaryLines.join("\n"))
+    .addFields({
+      name:  "Result",
+      value: failed.length === 0
+        ? `✅ All ${succeeded} endpoints synced — rosters are up to date`
+        : `⚠️ ${succeeded}/${results.length} synced (${failed.length} failed)`,
+    })
+    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · Run after every trade or start of week` })
+    .setTimestamp();
+
+  await interaction.editReply({ content: "", embeds: [embed] });
 }
 
 // ── /admin_ea_export check-api ────────────────────────────────────────────────

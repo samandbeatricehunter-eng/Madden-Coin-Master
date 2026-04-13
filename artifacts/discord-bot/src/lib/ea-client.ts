@@ -399,13 +399,18 @@ export async function getLeaguesFromToken(token: TokenInfo): Promise<EALeague[]>
 
 // ── Export data fetch (direct WAL endpoint, no message auth needed) ────────────
 const EXPORT_ENDPOINTS: Record<string, string> = {
-  passing:   "CareerMode_GetWeeklyPassingStatsExport",
-  rushing:   "CareerMode_GetWeeklyRushingStatsExport",
-  receiving: "CareerMode_GetWeeklyReceivingStatsExport",
-  defense:   "CareerMode_GetWeeklyDefensiveStatsExport",
-  teamStats: "CareerMode_GetWeeklyTeamStatsExport",
-  schedules: "CareerMode_GetWeeklySchedulesExport",
-  awards:    "CareerMode_GetAwardsExport",
+  passing:    "CareerMode_GetWeeklyPassingStatsExport",
+  rushing:    "CareerMode_GetWeeklyRushingStatsExport",
+  receiving:  "CareerMode_GetWeeklyReceivingStatsExport",
+  defense:    "CareerMode_GetWeeklyDefensiveStatsExport",
+  teamStats:  "CareerMode_GetWeeklyTeamStatsExport",
+  schedules:  "CareerMode_GetWeeklySchedulesExport",
+  awards:     "CareerMode_GetAwardsExport",
+  // League-level (no week/stage params needed)
+  leagueTeams: "CareerMode_GetLeagueTeamsExport",
+  standings:   "CareerMode_GetStandingsExport",
+  // Roster (uses leagueId + teamId + listIndex + returnFreeAgents)
+  teamRoster:  "CareerMode_GetTeamRostersExport",
 };
 
 async function fetchExportData(
@@ -479,6 +484,80 @@ export async function fetchScheduleForWeek(
   const session   = await createBlazeSession(refreshed);
   const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
   return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!, body);
+}
+
+// ── Fetch league teams (season-level, no week needed) ─────────────────────────
+// Returns the leagueTeamInfoList — team names, OVR ratings, userName assignments
+export async function fetchLeagueTeams(
+  token:      TokenInfo,
+  eaLeagueId: number,
+): Promise<unknown> {
+  const refreshed = await refreshTokenIfNeeded(token);
+  const session   = await createBlazeSession(refreshed);
+  return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.leagueTeams!, { leagueId: eaLeagueId });
+}
+
+// ── Fetch standings (season-level, no week needed) ────────────────────────────
+export async function fetchStandings(
+  token:      TokenInfo,
+  eaLeagueId: number,
+): Promise<unknown> {
+  const refreshed = await refreshTokenIfNeeded(token);
+  const session   = await createBlazeSession(refreshed);
+  return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.standings!, { leagueId: eaLeagueId });
+}
+
+// ── Roster export result type ─────────────────────────────────────────────────
+export type RostersExportData = {
+  leagueTeams:  unknown;
+  teamRosters:  Array<{ teamId: number; data: unknown }>;
+  freeAgents:   unknown;
+};
+
+// ── Fetch all team rosters + free agents in one Blaze session ─────────────────
+// Must fetch leagueTeams first to discover all teamIds and their 0-based listIndex.
+// Uses the same session for every call to avoid Blaze rate-limiting (no re-auth).
+// Teams are fetched 4 at a time to avoid overloading the Blaze server.
+export async function fetchLeagueTeamsAndRosters(
+  token:      TokenInfo,
+  eaLeagueId: number,
+): Promise<RostersExportData> {
+  const refreshed = await refreshTokenIfNeeded(token);
+  const session   = await createBlazeSession(refreshed);
+
+  // Step 1 — league teams (needed to get team IDs and list indices)
+  const leagueTeams = await fetchExportData(
+    refreshed, session, EXPORT_ENDPOINTS.leagueTeams!, { leagueId: eaLeagueId },
+  );
+  const teamList = ((leagueTeams as any)?.leagueTeamInfoList ?? []) as Array<{ teamId: number }>;
+
+  // Step 2 — per-team rosters (4 at a time to avoid Blaze rate-limiting)
+  const CHUNK = 4;
+  const teamRosters: Array<{ teamId: number; data: unknown }> = [];
+  for (let i = 0; i < teamList.length; i += CHUNK) {
+    const chunk = teamList.slice(i, i + CHUNK);
+    const results = await Promise.all(
+      chunk.map((team, chunkIdx) =>
+        fetchExportData(refreshed, session, EXPORT_ENDPOINTS.teamRoster!, {
+          leagueId:         eaLeagueId,
+          listIndex:        i + chunkIdx,
+          returnFreeAgents: false,
+          teamId:           team.teamId,
+        }).then((data) => ({ teamId: team.teamId, data })),
+      ),
+    );
+    teamRosters.push(...results);
+  }
+
+  // Step 3 — free agents (listIndex = -1, teamId = 0, returnFreeAgents = true)
+  const freeAgents = await fetchExportData(refreshed, session, EXPORT_ENDPOINTS.teamRoster!, {
+    leagueId:         eaLeagueId,
+    listIndex:        -1,
+    returnFreeAgents: true,
+    teamId:           0,
+  });
+
+  return { leagueTeams, teamRosters, freeAgents };
 }
 
 // ── DB operations ─────────────────────────────────────────────────────────────
