@@ -21,6 +21,90 @@ import { ATTRIBUTES } from "../lib/constants.js";
 import { errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { getServerSettings } from "../lib/server-settings.js";
 
+// ── Attribute key lookup ───────────────────────────────────────────────────────
+// EA franchise data stores attributes as camelCase keys (e.g. "speedRating"),
+// but our ATTRIBUTES constant uses display names (e.g. "Speed").
+// This map translates display name → all known DB key variants so we can read
+// the player's actual current value regardless of which format the roster uses.
+const DISPLAY_TO_DB_KEYS: Record<string, string[]> = {
+  "Speed":               ["speedRating"],
+  "Acceleration":        ["accelerationRating", "accelRating"],
+  "Agility":             ["agilityRating"],
+  "Strength":            ["strengthRating"],
+  "Awareness":           ["awarenessRating", "awareRating"],
+  "Carrying":            ["carryingRating", "carryRating"],
+  "BC Vision":           ["ballCarrierVisionRating", "bCVRating"],
+  "Break Tackle":        ["breakTackleRating"],
+  "Trucking":            ["truckingRating", "truckRating"],
+  "Stiff Arm":           ["stiffArmRating"],
+  "Change of Direction": ["changeOfDirectionRating"],
+  "Spin Move":           ["spinMoveRating"],
+  "Juke Move":           ["jukeMoveRating"],
+  "Catching":            ["catchingRating", "catchRating"],
+  "Catch in Traffic":    ["catchInTrafficRating", "cITRating"],
+  "Spectacular Catch":   ["specCatchRating"],
+  "Short Route Running": ["shortRouteRunningRating", "routeRunShortRating"],
+  "Medium Route Running":["medRouteRunningRating",  "routeRunMedRating"],
+  "Deep Route Running":  ["deepRouteRunningRating",  "routeRunDeepRating"],
+  "Release":             ["releaseRating"],
+  "Jumping":             ["jumpingRating", "jumpRating"],
+  "Throwing Power":      ["throwPowerRating"],
+  "Short Accuracy":      ["throwAccuracyShortRating", "throwAccShortRating"],
+  "Medium Accuracy":     ["throwAccuracyMedRating",   "throwAccMidRating"],
+  "Deep Accuracy":       ["throwAccuracyDeepRating",  "throwAccDeepRating"],
+  "Throw on the Run":    ["throwOnRunRating"],
+  "Throw Under Pressure":["throwUnderPressureRating"],
+  "Break Sack":          ["breakSackRating"],
+  "Play Action":         ["playActionRating"],
+  "Pass Blocking":       ["passBlockRating"],
+  "Pass Block Power":    ["passBlockPowerRating"],
+  "Pass Block Finesse":  ["passBlockFinesseRating"],
+  "Run Blocking":        ["runBlockRating"],
+  "Run Block Power":     ["runBlockPowerRating"],
+  "Run Block Finesse":   ["runBlockFinesseRating"],
+  "Lead Block":          ["leadBlockRating"],
+  "Impact Blocking":     ["impactBlockingRating", "impactBlockRating"],
+  "Play Recognition":    ["playRecognitionRating", "playRecRating"],
+  "Tackling":            ["tacklingRating", "tackleRating"],
+  "Hit Power":           ["hitPowerRating"],
+  "Block Shedding":      ["blockSheddingRating", "blockShedRating"],
+  "Finesse Moves":       ["finesseMovesRating"],
+  "Power Moves":         ["powerMovesRating"],
+  "Pursuit":             ["pursuitRating"],
+  "Man Coverage":        ["manCoverageRating", "manCoverRating"],
+  "Zone Coverage":       ["zoneCoverageRating", "zoneCoverRating"],
+  "Press":               ["pressRating"],
+  "Kick/Punt Return":    ["kickReturnRating", "kickRetRating"],
+  "Kicking Power":       ["kickPowerRating"],
+  "Kicking Accuracy":    ["kickAccuracyRating", "kickAccRating"],
+  "Stamina":             ["staminaRating"],
+  "Toughness":           ["toughnessRating", "toughRating"],
+  "Injury":              ["injuryRating"],
+  "Long Snap":           ["longSnapRating"],
+};
+
+/**
+ * Resolve a display-name attribute (e.g. "Speed") to its current numeric value
+ * from a player's attributes JSON, handling both:
+ *   - EA franchise keys  (e.g. "speedRating")
+ *   - Display-name keys  (e.g. "Speed" — used by custom players)
+ * Returns 0 if the key cannot be found.
+ */
+function lookupAttrValue(attrs: Record<string, unknown>, displayName: string): number {
+  // 1. Direct match — custom player data uses display names as keys
+  const direct = attrs[displayName];
+  if (typeof direct === "number") return direct;
+
+  // 2. Try all known EA key variants for this display name
+  const candidates = DISPLAY_TO_DB_KEYS[displayName] ?? [];
+  for (const key of candidates) {
+    const v = attrs[key];
+    if (typeof v === "number") return v;
+  }
+
+  return 0;
+}
+
 // ── Session store ──────────────────────────────────────────────────────────────
 interface AupSession {
   invokerId: string;       // discord ID of user who ran the command
@@ -79,7 +163,7 @@ function buildAttrPage(session: AupSession, rules: { coreAttrCost: number; nonCo
 
   const lines: string[] = [];
   for (const attr of pageAttrs) {
-    const current = session.attributes[attr] ?? 0;
+    const current = lookupAttrValue(session.attributes, attr);
     const isCore = coreAttrs.has(attr as any);
     const base = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
     const cost = scaledCost(base, current);
@@ -108,11 +192,11 @@ function buildAttrDropdown(session: AupSession, rules: { coreAttrCost: number; n
 
   const options = pageAttrs
     .filter(attr => {
-      const cur = session.attributes[attr] ?? 0;
+      const cur = lookupAttrValue(session.attributes, attr);
       return cur < 99;
     })
     .map(attr => {
-      const cur = session.attributes[attr] ?? 0;
+      const cur = lookupAttrValue(session.attributes, attr);
       const isCore = coreAttrs.has(attr as any);
       const base = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
       const cost = scaledCost(base, cur)!;
@@ -231,7 +315,7 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     const coreSet = getCoreAttributes(season);
     const isCore  = coreSet.has(presetAttr as any);
     const base    = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
-    const current = attrs[presetAttr] ?? 0;
+    const current = lookupAttrValue(attrs, presetAttr);
 
     if (current >= 99) {
       await interaction.editReply({ content: `❌ **${presetAttr}** is already at max (99) — cannot upgrade further.` });
@@ -334,7 +418,7 @@ export async function handleAupSel(interaction: StringSelectMenuInteraction): Pr
   }
 
   const attrName   = interaction.values[0]!;
-  const current    = session.attributes[attrName] ?? 0;
+  const current    = lookupAttrValue(session.attributes, attrName);
 
   const season     = await getOrCreateActiveSeason();
   const rules      = await getSeasonRules(season);
