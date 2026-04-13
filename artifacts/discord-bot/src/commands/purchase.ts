@@ -20,6 +20,8 @@ import { getServerSettings } from "../lib/server-settings.js";
 import * as purchaseCustomPlayer from "./purchasecustomplayer.js";
 import { startAttributeUp } from "./attribute-up-interactions.js";
 
+const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor" };
+
 export const data = new SlashCommandBuilder()
   .setName("purchase")
   .setDescription("Purchase an item from the store")
@@ -269,7 +271,6 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
           return true;
         });
 
-        const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor" };
         const choices = eligible
           .filter(r => `${r.firstName} ${r.lastName}`.toLowerCase().includes(q))
           .slice(0, 25)
@@ -406,10 +407,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
 
-    // Find the player on the roster (for their position) — use roster season in case new season not yet imported
+    // Find the player on the roster (for their position + current dev trait) — use roster season in case new season not yet imported
     const rosterSeasonId = await getRosterSeasonId();
     const rosterRows = await db
-      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
+      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position, devTrait: franchiseRostersTable.devTrait })
       .from(franchiseRostersTable)
       .where(and(
         eq(franchiseRostersTable.seasonId, rosterSeasonId),
@@ -417,6 +418,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ));
     const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
     const playerPosition = match?.position ?? interaction.options.getString("position", true);
+    const currentDevLabel = DEV_LABEL[match?.devTrait ?? 0] ?? "Normal";
 
     await deductBalance(interaction.user.id, totalCost);
     await logTransaction(interaction.user.id, -totalCost, "purchase", `Dev upgrade (${devUpType}) — ${playerInput} (${playerPosition})`);
@@ -447,6 +449,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await sendCommissionerNotification(interaction, "dev_upgrade", purchase!.id, {
       playerName: playerInput, playerPosition, devUpType, quantity: "1", costPer: String(costPer),
+      currentDevLabel,
       ownerNote: targetUser.id !== interaction.user.id ? `Owner: <@${targetUser.id}>` : undefined,
     });
 
@@ -479,10 +482,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (user.balance < costPer) return insufficientFunds(interaction, costPer, user.balance);
 
-    // Find position from roster — use roster season in case new season not yet imported
+    // Find position + current age from roster — use roster season in case new season not yet imported
     const rosterSeasonIdForAge = await getRosterSeasonId();
     const rosterRows = await db
-      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
+      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position, age: franchiseRostersTable.age })
       .from(franchiseRostersTable)
       .where(and(
         eq(franchiseRostersTable.seasonId, rosterSeasonIdForAge),
@@ -490,6 +493,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ));
     const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
     const playerPosition = match?.position ?? interaction.options.getString("position", true);
+    const currentAge = match?.age ?? null;
 
     await deductBalance(interaction.user.id, costPer);
     await logTransaction(interaction.user.id, -costPer, "purchase", `Age reset — ${playerInput} (${playerPosition})`);
@@ -520,6 +524,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await sendCommissionerNotification(interaction, "age_reset", purchase!.id, {
       playerName: playerInput, playerPosition, quantity: "1", costPer: String(costPer),
+      currentAge: currentAge !== null ? String(currentAge) : undefined,
       ownerNote: targetUser.id !== interaction.user.id ? `Owner: <@${targetUser.id}>` : undefined,
     });
 
@@ -568,24 +573,28 @@ async function sendCommissionerNotification(
     buttonLabel = "✅ Added to Draft Pool";
   } else if (type === "dev_upgrade") {
     const costPer = details["costPer"];
+    const fromDev  = details["currentDevLabel"] ?? "?";
+    const toDev    = details["devUpType"] ?? "?";
     title = "📈 Dev Upgrade Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
       details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-      `**Upgrade Type:** ${details["devUpType"]}`,
+      `**Dev Level:** ${fromDev} → ${toDev}`,
       `**Cost:** ${costPer} coins`,
       `**Purchase ID:** #${purchaseId}`,
       "",
       "Click the button below once this has been applied in-game.",
     ].filter(Boolean).join("\n");
   } else if (type === "age_reset") {
-    const costPer = details["costPer"];
+    const costPer    = details["costPer"];
+    const ageBefore  = details["currentAge"] ? `${details["currentAge"]} → 23` : "→ 23";
     title = "🔄 Age Reset Request";
     description = [
       `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
       details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
       `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Age:** ${ageBefore}`,
       `**Cost:** ${costPer} coins`,
       `**Purchase ID:** #${purchaseId}`,
       "",
