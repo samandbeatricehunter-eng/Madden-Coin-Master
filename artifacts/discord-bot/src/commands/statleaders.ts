@@ -6,8 +6,9 @@ import { db } from "@workspace/db";
 import {
   playerSeasonStatsTable, teamSeasonStatsTable,
   franchiseScheduleTable, franchiseMcaTeamsTable, userRecordsTable, usersTable,
+  franchiseRostersTable,
 } from "@workspace/db";
-import { eq, gte, and, aliasedTable } from "drizzle-orm";
+import { eq, gte, and, aliasedTable, isNotNull } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
@@ -104,7 +105,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const homeMca = aliasedTable(franchiseMcaTeamsTable, "home_mca");
   const awayMca = aliasedTable(franchiseMcaTeamsTable, "away_mca");
 
-  const [players, teamStats, completedGames, allRecords, allUsers] = await Promise.all([
+  const [players, teamStats, completedGames, allRecords, allUsers, rosterRows] = await Promise.all([
     db.select().from(playerSeasonStatsTable)
       .where(eq(playerSeasonStatsTable.seasonId, season.id)),
     db.select().from(teamSeasonStatsTable)
@@ -132,11 +133,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     db.select().from(userRecordsTable)
       .where(eq(userRecordsTable.seasonId, season.id)),
     db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable),
+    // Live roster fallback — used to fill missing firstName/lastName/position/teamName
+    // on stat rows where the backfill didn't find a match (e.g. playerId mismatch).
+    db.select({
+      playerId:  franchiseRostersTable.playerId,
+      firstName: franchiseRostersTable.firstName,
+      lastName:  franchiseRostersTable.lastName,
+      position:  franchiseRostersTable.position,
+      teamName:  franchiseRostersTable.teamName,
+    }).from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        isNotNull(franchiseRostersTable.firstName),
+      )),
   ]);
 
-  if (players.length === 0 && teamStats.length === 0 && completedGames.length === 0) {
+  // ── Completed-games guard ────────────────────────────────────────────────────
+  // Stats can exist in the DB from a preseason import or an accidental re-import
+  // before any real games have been played. Don't show a stat leaderboard if
+  // there are no completed schedule rows to back them up.
+  if (completedGames.length === 0) {
     await interaction.editReply({
-      content: "📭 No stat data found for this season. Run a weekly MCA export first.",
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Yellow)
+          .setTitle("📭 No Completed Games Yet")
+          .setDescription(
+            "No completed game results have been recorded for this season.\n\n" +
+            "Stat leaders will appear here once at least one week has been exported via the Madden Companion App."
+          )
+          .setFooter({ text: `Season ${season.seasonNumber ?? season.id}` })
+          .setTimestamp(),
+      ],
     });
     return;
   }
@@ -167,9 +195,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
   const discordIdToRecord = new Map(allRecords.map(r => [r.discordId, r]));
 
+  // Roster fallback map: playerId → { firstName, lastName, position, teamName }
+  // Used at display time to fill in any stat row that the backfill missed
+  // (e.g. playerId present in stats but not matched in a prior backfill run).
+  const rosterByPlayerId = new Map(rosterRows.map(r => [r.playerId, r]));
+
   const userTeamStats = teamStats.filter(t =>
     t.discordId != null || teamNameToUser.has(t.teamName?.toLowerCase().trim() ?? "")
   );
+
+  // ── Helper: resolve player display name/team from stat row + roster fallback ─
+  function resolvePlayer(p: typeof players[0]) {
+    const roster = rosterByPlayerId.get(p.playerId);
+    const firstName = p.firstName || roster?.firstName || "";
+    const lastName  = p.lastName  || roster?.lastName  || "";
+    const position  = p.position  || roster?.position  || "";
+    const teamName  = p.teamName  || (roster?.teamName && roster.teamName !== "Free Agents" ? roster.teamName : "") || "";
+    return { firstName, lastName, position, teamName };
+  }
 
   // ── Helper: build top-N player leaders ──────────────────────────────────────
   function buildPlayerLeaders(cat: PlayerStatCat, topN: number): string {
@@ -181,9 +224,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (!entries.length) return "*No player data yet — export weekly stats via the Madden Companion App*";
     return entries.map(({ p, val }, i) => {
-      const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Unknown";
-      const pos  = p.position ? `, ${p.position}` : "";
-      return `**#${i + 1}** ${name}${pos} (${p.teamName || "?"}) — ${val.toLocaleString()} ${cat.unit}`;
+      const { firstName, lastName, position, teamName } = resolvePlayer(p);
+      const name = [firstName, lastName].filter(Boolean).join(" ") || "Unknown";
+      const pos  = position ? `, ${position}` : "";
+      return `**#${i + 1}** ${name}${pos} (${teamName || "?"}) — ${val.toLocaleString()} ${cat.unit}`;
     }).join("\n");
   }
 

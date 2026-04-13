@@ -367,7 +367,25 @@ export async function getArticleStandings(
     }
   } catch { /* non-fatal — standings still show without usernames */ }
 
-  // ── 5. Return early with schedule-based standings if we have data ─────────────
+  // ── 5. Merge schedule nameMap with franchise_mca_teams so ALL 32 teams appear ─
+  // The schedule only contains teams that have been scheduled against each other.
+  // On week 1 some teams may not appear yet. We use franchise_mca_teams (populated
+  // every export) as the authoritative team list and fall back to schedule names for
+  // teams that haven't been synced there yet.
+  try {
+    const mcaTeamRows = await db.select({
+      teamId:   franchiseMcaTeamsTable.teamId,
+      fullName: franchiseMcaTeamsTable.fullName,
+    }).from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, seasonId));
+
+    for (const t of mcaTeamRows) {
+      if (!nameMap.has(t.teamId)) {
+        nameMap.set(t.teamId, t.fullName);
+      }
+    }
+  } catch { /* non-fatal — schedule-only teams still show */ }
+
   if (nameMap.size > 0) {
     const standings: ArticleStanding[] = [];
     for (const [teamId, name] of nameMap) {
@@ -385,7 +403,7 @@ export async function getArticleStandings(
     return standings.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
   }
 
-  // ── 6. franchise_schedule is empty — try franchise_mca_teams (populated by roster sync) ───
+  // ── 6. No schedule OR mca_teams data — try franchise_mca_teams standalone ────
   // The roster sync (run every week export) populates this table with all 32 teams.
   // It has no W/L data (that comes from schedule), so records are 0-0 until the
   // first game is completed — but at least all 32 teams show up correctly.
