@@ -688,7 +688,8 @@ async function preFilterContext(rawContext: string): Promise<string> {
           "• VALID STANDINGS: team records (W-L only, no speculation)\n" +
           "• VALID PLAYOFF SEEDS: confirmed seeds/eliminations only\n" +
           "• VALID TRADES: confirmed trade/roster events from the activity log only\n" +
-          "• VALID ROSTERS: player–team associations explicitly listed\n\n" +
+          "• VALID ROSTERS: player–team associations explicitly listed\n" +
+          "• VALID PREVIOUS SEASON DATA [Season N]: any facts from the PREVIOUS SEASON block — label every fact with '[LAST SEASON]' prefix so the writer knows it is historical\n\n" +
           "If a fact cannot be directly verified from the input → exclude it. No hallucinations.",
       },
       {
@@ -768,6 +769,7 @@ STEP 3 — FACT VALIDATION RULES (STRICT)
 - Trades: Only reference trades if explicitly listed (no speculation)
 - Stats: Use ONLY exact numbers provided (no rounding or estimating)
 - Matchups: Only reference games listed in matchups
+- PREVIOUS SEASON DATA: If ANY fact comes from "[LAST SEASON]" or the PREVIOUS SEASON block, you MUST include explicit time language in the tweet — e.g. "last season", "last year", "a season ago", or "in Season [N]". It is NEVER acceptable to state last season's stats, records, or results as if they are current. This rule cannot be overridden.
 
 If ANY detail cannot be verified from context → DO NOT USE IT
 
@@ -793,6 +795,7 @@ Before output, confirm:
 - No missing data used
 - Under 260 characters
 - Reads like a real tweet
+- If ANY last-season fact was used: the tweet EXPLICITLY says "last season", "last year", "a season ago", or "in Season [N]"
 
 If unsure about ANY detail → simplify the tweet`;
 
