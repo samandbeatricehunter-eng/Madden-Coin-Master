@@ -12,6 +12,7 @@ import { runEosAutoPost } from "../lib/eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
+import { postFullSeasonScheduleToChannel, SCHEDULE_CHANNEL_ID } from "../lib/season-schedule-post.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
 
@@ -577,9 +578,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     })();
   }
 
-  // ── New season — announce when advancing to Week 1 from offseason, training camp, or a fresh season ──
+  // ── New season — announce + post full season schedule ────────────────────────
   if (newWeek === "1" && (!season.currentWeek || season.currentWeek === "offseason" || season.currentWeek === "training_camp")) {
     (async () => {
+      // Season start announcement
       try {
         const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
           ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
@@ -594,6 +596,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       } catch (err) {
         console.error("[advanceweek] New season announcement error:", err);
+      }
+
+      // Auto-post full 18-week schedule to schedule channel
+      try {
+        const postedWeeks = await postFullSeasonScheduleToChannel(
+          interaction.client,
+          season.id,
+          season.seasonNumber ?? season.id,
+        );
+        if (postedWeeks > 0) {
+          await interaction.followUp({
+            content: `📅 Full Season ${season.seasonNumber} schedule (${postedWeeks} weeks) posted to <#${SCHEDULE_CHANNEL_ID}>.`,
+            ephemeral: true,
+          }).catch(() => {});
+        } else {
+          await interaction.followUp({
+            content: `⚠️ Could not auto-post season schedule — no schedule data found. Run \`/franchiseupdate\` then \`/postfullseasonschedule\` manually.`,
+            ephemeral: true,
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error("[advanceweek] Auto season schedule post error:", err);
+        await interaction.followUp({
+          content: `⚠️ Season schedule auto-post failed: ${err}. Run \`/postfullseasonschedule\` manually.`,
+          ephemeral: true,
+        }).catch(() => {});
       }
     })();
   }

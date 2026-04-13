@@ -3,12 +3,13 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { franchiseScheduleTable, usersTable, type Season } from "@workspace/db";
-import { eq, and, asc } from "drizzle-orm";
+import { franchiseScheduleTable, franchiseMcaTeamsTable, usersTable, type Season } from "@workspace/db";
+import { eq, and, asc, isNotNull } from "drizzle-orm";
 import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "./gotw-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
+import { getRosterSeasonId } from "./db-helpers.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
@@ -28,11 +29,109 @@ export interface RunWeeklyMatchupsOpts {
   replyFn:         MatchupsReplyFn;
 }
 
+/**
+ * Build a team-name → discordId map from franchise_mca_teams.
+ * Indexes by BOTH fullName and nickName so schedule team names match correctly.
+ * Falls back to the most recent season with roster data if the active season
+ * has no MCA team entries yet (e.g. right after a new-season advance).
+ */
+async function buildTeamToDiscord(): Promise<Map<string, string>> {
+  const rosterSeasonId = await getRosterSeasonId();
+  const mcaTeams = await db
+    .select({
+      fullName:  franchiseMcaTeamsTable.fullName,
+      nickName:  franchiseMcaTeamsTable.nickName,
+      discordId: franchiseMcaTeamsTable.discordId,
+    })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId),
+      isNotNull(franchiseMcaTeamsTable.discordId),
+    ));
+
+  const map = new Map<string, string>();
+  for (const t of mcaTeams) {
+    if (t.discordId) {
+      map.set(t.fullName.toLowerCase().trim(), t.discordId);
+      map.set(t.nickName.toLowerCase().trim(), t.discordId);
+    }
+  }
+
+  // Also add economy_users short names as a secondary fallback
+  if (map.size === 0) {
+    const allUsers = await db
+      .select({ discordId: usersTable.discordId, team: usersTable.team })
+      .from(usersTable);
+    for (const u of allUsers) {
+      if (u.team) map.set(u.team.toLowerCase().trim(), u.discordId);
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Score H2H matchups for a week and send the commissioner the GOTW
+ * selection prompt (confirm / choose-different buttons).
+ *
+ * Extracted so it can be called both from runWeeklyMatchupsFlow (auto)
+ * and from the /admin-gotw post manual retry command.
+ */
+export async function runGotwPrompt(opts: {
+  season:        Season;
+  weekNum:       number;
+  teamToDiscord: Map<string, string>;
+  games:         Array<{ awayTeamName: string; homeTeamName: string }>;
+  baseContent:   string;
+  replyFn:       MatchupsReplyFn;
+}): Promise<void> {
+  const { season, weekNum, teamToDiscord, games, baseContent, replyFn } = opts;
+  const weekIndex = weekNum - 1;
+
+  let scored;
+  try {
+    scored = await scoreH2HMatchups(season.id, weekIndex, games, teamToDiscord);
+  } catch (err) {
+    console.error("[weekly-runner] GOTW scoring error:", err);
+  }
+
+  if (!scored || scored.length === 0) {
+    await replyFn({
+      content: baseContent + `\n\n⚠️ No H2H matchups found for GOTW selection. Make sure both teams in at least one game are registered members.`,
+    });
+    return;
+  }
+
+  const top = scored[0]!;
+  const cooldownNote = top.eligible ? "" : " *(all teams on cooldown — showing best available)*";
+
+  const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`gotw_confirm:${season.id}:${weekIndex}:${top.awayDiscordId}:${top.homeDiscordId}`)
+      .setLabel("✅ Confirm GOTW")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`gotw_decline:${season.id}:${weekIndex}`)
+      .setLabel("❌ Choose Different")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  await replyFn({
+    content:
+      baseContent + `\n\n` +
+      `**🏆 Recommended GOTW${cooldownNote}**\n` +
+      `<@${top.awayDiscordId}> **${top.awayTeamName}** vs <@${top.homeDiscordId}> **${top.homeTeamName}**\n\n` +
+      `Confirm this pick or choose a different game:`,
+    components: [confirmRow],
+    ephemeral: true,
+  });
+}
+
 export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promise<void> {
   const { client, guild, season, displayWeekNum, payoutWeekIndex, replyFn } = opts;
 
   const displayWeekIndex = displayWeekNum - 1;
-  const isPlayoff        = false; // regular-season only
+  const isPlayoff        = false;
 
   let payoutSummary = "";
 
@@ -62,18 +161,14 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
 
   if (games.length === 0) {
     await replyFn({
-      content: `📭 No matchups found for Week ${displayWeekNum}. Run \`/franchiseupdate\` first.`,
+      content: `📭 No matchups found for Week ${displayWeekNum}. Run \`/franchiseupdate\` first, then use \`/admin-gotw post week:${displayWeekNum}\` to retry the GOTW prompt.`,
     });
     return;
   }
 
-  // ── Team → Discord ID ──────────────────────────────────────────────────────
-  const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
-    .from(usersTable);
-  const teamToDiscord = new Map<string, string>();
-  for (const u of allUsers) {
-    if (u.team) teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
-  }
+  // ── Build team → Discord ID from franchise_mca_teams ──────────────────────
+  // Uses fullName + nickName so MCA schedule names match correctly.
+  const teamToDiscord = await buildTeamToDiscord();
 
   function mention(teamName: string): string {
     const id = teamToDiscord.get(teamName.toLowerCase().trim());
@@ -131,57 +226,20 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
 
   await (targetCh as TextChannel).send({ embeds: [embed] });
 
-  // Cache matchup list for League Twitter (4-hour freshness window)
+  // Cache matchup list for League Twitter
   await cacheMatchupsForTwitter(
     season.id,
     `Week ${displayWeekNum}`,
     games.map(g => ({ homeTeamName: g.homeTeamName, awayTeamName: g.awayTeamName })),
   );
 
-  // ── Build reply content ────────────────────────────────────────────────────
-  let replyContent =
+  // ── Build reply base + send GOTW prompt ───────────────────────────────────
+  let baseContent =
     `✅ Week ${displayWeekNum} matchups posted to <#${MATCHUPS_CHANNEL_ID}>.\n` +
     `GOTW channel cleared.`;
   if (payoutSummary) {
-    replyContent += `\n\n**Previous Week GOTW Payout:**\n${payoutSummary}`;
+    baseContent += `\n\n**Previous Week GOTW Payout:**\n${payoutSummary}`;
   }
 
-  // ── Score H2H matchups for GOTW recommendation ─────────────────────────────
-  let scored;
-  try {
-    scored = await scoreH2HMatchups(season.id, displayWeekIndex, games, teamToDiscord);
-  } catch (err) {
-    console.error("[weekly-runner] GOTW scoring error:", err);
-  }
-
-  if (!scored || scored.length === 0) {
-    await replyFn({
-      content: replyContent + `\n\n*No H2H matchups found for GOTW selection.*`,
-    });
-    return;
-  }
-
-  const top = scored[0]!;
-  const cooldownNote = top.eligible ? "" : " *(all teams on cooldown — showing best available)*";
-
-  const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`gotw_confirm:${season.id}:${displayWeekIndex}:${top.awayDiscordId}:${top.homeDiscordId}`)
-      .setLabel("✅ Confirm GOTW")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`gotw_decline:${season.id}:${displayWeekIndex}`)
-      .setLabel("❌ Choose Different")
-      .setStyle(ButtonStyle.Secondary),
-  );
-
-  await replyFn({
-    content:
-      replyContent + `\n\n` +
-      `**🏆 Recommended GOTW**${cooldownNote}\n` +
-      `<@${top.awayDiscordId}> **${top.awayTeamName}** vs <@${top.homeDiscordId}> **${top.homeTeamName}**\n\n` +
-      `Confirm this pick or choose a different game below:`,
-    components: [confirmRow],
-    ephemeral: true,
-  });
+  await runGotwPrompt({ season, weekNum: displayWeekNum, teamToDiscord, games, baseContent, replyFn });
 }
