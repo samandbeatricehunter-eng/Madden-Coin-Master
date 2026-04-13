@@ -16,6 +16,8 @@ import {
   type WeeklyExportData,
   type RostersExportData,
 } from "../lib/ea-client.js";
+import { postFullSeasonScheduleToChannel, SCHEDULE_CHANNEL_ID } from "../lib/season-schedule-post.js";
+import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import axios from "axios";
 
 export const data = new SlashCommandBuilder()
@@ -299,6 +301,43 @@ async function exportWeek(
   const schedRes = await postToApiServer(`${weekBase}/schedules`, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
 
+  // ── Week 1 of regular season: also push schedule to the full-season endpoint ──
+  // EA embeds a weekIndex field on every game in the payload. The full-season
+  // /schedules processor reads those weekIndex values, so if EA includes all 18
+  // weeks in the one response they will all be slotted correctly without extra
+  // calls. The per-week endpoint above only assigns everything to week 1.
+  let fullScheduleNote = "";
+  if (weekNum === 1 && weekType === "reg") {
+    await interaction.editReply({ content: `⏳ Populating full season schedule from Week 1 export...` });
+
+    const fullSchedUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/schedules`;
+    const fullSchedRes = await postToApiServer(fullSchedUrl, stats.schedules);
+
+    if (fullSchedRes.ok) {
+      // Try to post the schedule embed to the schedule channel
+      try {
+        const season = await getOrCreateActiveSeason();
+        const postedWeeks = await postFullSeasonScheduleToChannel(
+          interaction.client,
+          season.id,
+          season.seasonNumber ?? season.id,
+        );
+        if (postedWeeks > 0) {
+          fullScheduleNote = `✅ Full season schedule parsed & posted to <#${SCHEDULE_CHANNEL_ID}> (${postedWeeks} weeks)`;
+        } else {
+          fullScheduleNote = `⚠️ Schedule synced to DB but no weeks found — run \`/postfullseasonschedule\` manually`;
+        }
+      } catch (err: any) {
+        console.error("[ea-export/week1] Schedule channel post error:", err);
+        fullScheduleNote = `⚠️ Schedule synced to DB but channel post failed — run \`/postfullseasonschedule\` manually`;
+      }
+    } else {
+      fullScheduleNote = `⚠️ Full-season schedule sync failed (HTTP ${fullSchedRes.status}) — run \`/admin_ea_export full-schedule\` if weeks 2-18 are missing`;
+    }
+
+    results.push({ name: "full-season schedules", ...fullSchedRes });
+  }
+
   // Build combined result embed
   const statsSuccessCount = results.filter((r) => r.ok).length;
   const statsFailCount    = results.filter((r) => !r.ok).length;
@@ -310,25 +349,31 @@ async function exportWeek(
   const overallOk = statsFailCount === 0 && rostersAllOk;
   const hasWarning = (statsFailCount > 0 || !rostersAllOk);
 
+  const fields: { name: string; value: string }[] = [
+    {
+      name:  "📊 Weekly Stats",
+      value: statsLines.join("\n") || "none",
+    },
+    {
+      name:  "🏈 Roster Sync",
+      value: rosterSummary,
+    },
+    {
+      name:  "Result",
+      value: overallOk
+        ? `✅ Stats + rosters fully synced`
+        : `⚠️ ${statsSuccessCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "rosters had errors"}`,
+    },
+  ];
+
+  if (fullScheduleNote) {
+    fields.push({ name: "📅 Season Schedule", value: fullScheduleNote });
+  }
+
   const embed = new EmbedBuilder()
     .setColor(overallOk ? Colors.Green : hasWarning ? Colors.Yellow : Colors.Red)
     .setTitle(`📥 EA Export — ${weekLabel}`)
-    .addFields(
-      {
-        name:  "📊 Weekly Stats",
-        value: statsLines.join("\n") || "none",
-      },
-      {
-        name:  "🏈 Roster Sync",
-        value: rosterSummary,
-      },
-      {
-        name:  "Result",
-        value: overallOk
-          ? `✅ Stats + rosters fully synced`
-          : `⚠️ ${statsSuccessCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "rosters had errors"}`,
-      },
-    )
+    .addFields(...fields)
     .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · Rosters auto-updated each week` })
     .setTimestamp();
 
