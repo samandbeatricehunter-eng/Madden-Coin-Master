@@ -63,23 +63,46 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `❓ <@${u.discordId}> (${u.discordUsername}) — no team assigned`
     );
 
+    // Split an array of lines into chunks that each fit within Discord's 1024-char field limit
+    function chunkLines(lines: string[], limit = 1020): string[] {
+      const chunks: string[] = [];
+      let current = "";
+      for (const line of lines) {
+        const addition = current ? "\n" + line : line;
+        if (current.length + addition.length > limit) {
+          chunks.push(current);
+          current = line;
+        } else {
+          current += addition;
+        }
+      }
+      if (current) chunks.push(current);
+      return chunks;
+    }
+
     const embed = new EmbedBuilder()
       .setColor(Colors.Blue)
       .setTitle("🏈 Team Assignments")
       .setTimestamp();
 
     if (linkedLines.length > 0) {
-      embed.addFields({
-        name: `Linked Players (${linked.length})`,
-        value: linkedLines.join("\n").slice(0, 1024),
+      const chunks = chunkLines(linkedLines);
+      chunks.forEach((chunk, i) => {
+        embed.addFields({
+          name: i === 0 ? `Linked Players (${linked.length})` : `Linked Players (cont.)`,
+          value: chunk,
+        });
       });
     }
 
     if (unlinkedLines.length > 0) {
-      embed.addFields({
-        name: `⚠️ Unlinked Players (${unlinked.length})`,
-        value: unlinkedLines.join("\n").slice(0, 1024) +
-          "\n\nUse `/admin-linkteam set` to assign their teams.",
+      const chunks = chunkLines(unlinkedLines);
+      chunks.forEach((chunk, i) => {
+        const isLast = i === chunks.length - 1;
+        embed.addFields({
+          name: i === 0 ? `⚠️ Unlinked Players (${unlinked.length})` : `⚠️ Unlinked Players (cont.)`,
+          value: chunk + (isLast ? "\n\nUse `/admin set_user_team` to assign their teams." : ""),
+        });
       });
     }
 
