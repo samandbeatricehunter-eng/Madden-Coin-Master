@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable, serverSettingsTable, customPlayersTable } from "@workspace/db";
+import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable, serverSettingsTable, customPlayersTable, franchiseMcaTeamsTable, franchiseRostersTable } from "@workspace/db";
 import { eq, and, sql, ne } from "drizzle-orm";
 import { logTransaction } from "../lib/db-helpers.js";
 import { ATTRIBUTES } from "../lib/constants.js";
@@ -335,6 +335,56 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await db.update(seasonsTable).set({ isActive: false });
     const [newSeason] = await db.insert(seasonsTable).values({ seasonNumber: nextNumber, isActive: true }).returning();
 
+    // ── Carry forward MCA team links and roster data from the previous season ──
+    // This keeps the Discord↔team links and player attribute data intact so
+    // all roster-based features keep working until MCA reimports fresh data.
+    let carryTeams = 0, carryRosters = 0;
+    if (currentSeason && newSeason) {
+      const prevTeams = await db.select().from(franchiseMcaTeamsTable)
+        .where(eq(franchiseMcaTeamsTable.seasonId, currentSeason.id));
+
+      if (prevTeams.length > 0) {
+        const teamRows = prevTeams.map(t => ({
+          seasonId:  newSeason.id,
+          teamId:    t.teamId,
+          fullName:  t.fullName,
+          nickName:  t.nickName,
+          userName:  t.userName,
+          isHuman:   t.isHuman,
+          discordId: t.discordId,
+        }));
+        await db.insert(franchiseMcaTeamsTable).values(teamRows).onConflictDoNothing();
+        carryTeams = teamRows.length;
+
+        const prevRosters = await db.select().from(franchiseRostersTable)
+          .where(eq(franchiseRostersTable.seasonId, currentSeason.id));
+
+        if (prevRosters.length > 0) {
+          const rosterRows = prevRosters.map(r => ({
+            seasonId:          newSeason.id,
+            teamId:            r.teamId,
+            teamName:          r.teamName,
+            discordId:         r.discordId,
+            playerId:          r.playerId,
+            firstName:         r.firstName,
+            lastName:          r.lastName,
+            position:          r.position,
+            overall:           r.overall,
+            devTrait:          r.devTrait,
+            age:               r.age,
+            jerseyNum:         r.jerseyNum,
+            contractYearsLeft: r.contractYearsLeft,
+            attributes:        r.attributes,
+          }));
+          // Insert in batches of 500 to avoid parameter limits
+          for (let i = 0; i < rosterRows.length; i += 500) {
+            await db.insert(franchiseRostersTable).values(rosterRows.slice(i, i + 500)).onConflictDoNothing();
+          }
+          carryRosters = rosterRows.length;
+        }
+      }
+    }
+
     const isLast = nextNumber === maxSeasons;
     const embed  = new EmbedBuilder()
       .setColor(isLast ? Colors.Orange : Colors.Green)
@@ -346,6 +396,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )
       .addFields({ name: "🏅 Legend Vault Rollover", value: rolloverMsg });
     if (cpRolloverMsg) embed.addFields({ name: "🏈 Custom Player Rollover", value: cpRolloverMsg });
+    embed.addFields({
+      name: "📋 Roster Carry-Forward",
+      value: carryTeams > 0
+        ? `${carryTeams} team links + ${carryRosters} roster rows copied from Season ${currentSeason!.seasonNumber}. MCA will overwrite with fresh data on next import.`
+        : "No previous roster data to carry forward — MCA import required before roster features work.",
+    });
     embed.setTimestamp();
     return interaction.editReply({ embeds: [embed] });
   }
