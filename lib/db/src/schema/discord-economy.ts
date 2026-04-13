@@ -116,6 +116,9 @@ export const inventoryTable = pgTable("inventory", {
   // "current" = bought this season, not yet rolled over
   // "permanent" = carried over from a past season, counts toward the 4-legend vault cap
   legendCategory: text("legend_category").notNull().default("current"),
+  // Franchise team name (e.g. "Cowboys") — set when item is promoted to permanent so
+  // items follow the TEAM across ownership changes, not the individual Discord user.
+  team: text("team"),
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
 

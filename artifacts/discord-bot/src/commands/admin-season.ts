@@ -33,11 +33,19 @@ async function rolloverLegends(seasonId: number): Promise<string> {
   let returned = 0;
 
   for (const [userId, legends] of Object.entries(byUser)) {
-    // Count existing permanent legends for this user
+    // Resolve the team this user currently controls — items will be stamped with it
+    // so the permanent vault follows the FRANCHISE, not the individual Discord account.
+    const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
+      .where(eq(usersTable.discordId, userId)).limit(1);
+    const teamName = userRow?.team ?? null;
+
+    // Count existing permanent legends for this team (or user as fallback)
     const countRows = await db.select({ c: sql<string>`COUNT(*)` })
       .from(inventoryTable)
       .where(and(
-        eq(inventoryTable.discordId, userId),
+        teamName
+          ? eq(inventoryTable.team, teamName)
+          : eq(inventoryTable.discordId, userId),
         eq(inventoryTable.itemType, "legend"),
         sql`${inventoryTable.legendCategory} = 'permanent'`,
       ));
@@ -49,7 +57,7 @@ async function rolloverLegends(seasonId: number): Promise<string> {
 
     for (const item of toPromote) {
       await db.update(inventoryTable)
-        .set({ legendCategory: "permanent" })
+        .set({ legendCategory: "permanent", ...(teamName ? { team: teamName } : {}) })
         .where(eq(inventoryTable.id, item.id));
       promoted++;
     }
@@ -93,7 +101,12 @@ async function rolloverCustomPlayers(seasonId: number): Promise<string> {
 
   let rolled = 0;
   for (const cp of active) {
-    // Check if already in inventory (idempotent guard using commissionerMessageId as a proxy key)
+    // Resolve the team this user currently controls so the permanent item follows the franchise.
+    const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
+      .where(eq(usersTable.discordId, cp.discordId)).limit(1);
+    const teamName = userRow?.team ?? null;
+
+    // Check if already in inventory (idempotent guard)
     const existing = await db.select({ id: inventoryTable.id })
       .from(inventoryTable)
       .where(and(
@@ -116,6 +129,7 @@ async function rolloverCustomPlayers(seasonId: number): Promise<string> {
       playerPosition:   cp.position,
       notes:            `Dev: ${cp.devTrait} | Archetype: ${cp.archetypeName} | Tier: ${cp.packageTier.toUpperCase()}`,
       legendCategory:   "permanent",
+      ...(teamName ? { team: teamName } : {}),
     });
     rolled++;
   }

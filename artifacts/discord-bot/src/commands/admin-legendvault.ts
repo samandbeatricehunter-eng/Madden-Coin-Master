@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { inventoryTable, legendsTable, usersTable } from "@workspace/db";
-import { eq, and, sql, ilike } from "drizzle-orm";
+import { eq, and, sql, ilike, isNull, or } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
 const PERMANENT_CAP = 4;
@@ -88,18 +88,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Guard: permanent vault cap
+    // Resolve the team this user controls (permanent vault belongs to the franchise)
+    const teamName = userRows[0]!.team ?? null;
+
+    // Guard: permanent vault cap — count by team if available, else by discordId
+    const capWhere = and(
+      teamName
+        ? or(eq(inventoryTable.team, teamName), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, t.id)))
+        : eq(inventoryTable.discordId, t.id),
+      eq(inventoryTable.itemType, "legend"),
+      sql`${inventoryTable.legendCategory} = 'permanent'`,
+    );
     const countRows = await db.select({ c: sql<string>`COUNT(*)` })
       .from(inventoryTable)
-      .where(and(
-        eq(inventoryTable.discordId, t.id),
-        eq(inventoryTable.itemType, "legend"),
-        sql`${inventoryTable.legendCategory} = 'permanent'`,
-      ));
+      .where(capWhere);
     const permanentCount = parseInt(countRows[0]?.c ?? "0", 10);
     if (permanentCount >= PERMANENT_CAP) {
       await interaction.editReply({
-        content: `❌ <@${t.id}> already has **${permanentCount}/${PERMANENT_CAP}** permanent legends. Remove one first.`,
+        content: `❌ <@${t.id}>${teamName ? ` (${teamName})` : ""} already has **${permanentCount}/${PERMANENT_CAP}** permanent legends. Remove one first.`,
       });
       return;
     }
@@ -125,7 +131,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       wasCreated = true;
     }
 
-    // Add to permanent vault using season.id as the anchor season
+    // Add to permanent vault — stamp with team so the vault follows the franchise
     await db.insert(inventoryTable).values({
       discordId:      t.id,
       seasonId:       season.id,
@@ -135,6 +141,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       legendName,
       playerPosition: position,
       legendCategory: "permanent",
+      ...(teamName ? { team: teamName } : {}),
     });
 
     // Increment all-time legend purchase count
@@ -159,24 +166,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── VIEW ────────────────────────────────────────────────────────────────────
   if (sub === "vault_view") {
-    const items = await db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.discordId, t.id), eq(inventoryTable.itemType, "legend")))
-      .orderBy(inventoryTable.legendCategory, inventoryTable.addedAt);
+    // Resolve the user's team so we can show team-owned permanent items
+    const [viewUserRow] = await db.select({ team: usersTable.team }).from(usersTable)
+      .where(eq(usersTable.discordId, t.id)).limit(1);
+    const viewTeam = viewUserRow?.team ?? null;
 
-    const current   = items.filter(i => i.legendCategory === "current");
-    const permanent = items.filter(i => i.legendCategory === "permanent");
+    // Current-season legends: always by discordId
+    const currentItems = await db.select().from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.discordId, t.id),
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'current'`,
+      ))
+      .orderBy(inventoryTable.addedAt);
 
-    const fmt = (arr: typeof items) =>
+    // Permanent legends: by team (or discordId fallback for pre-team rows)
+    const permanentItems = await db.select().from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+        viewTeam
+          ? or(eq(inventoryTable.team, viewTeam), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, t.id)))
+          : eq(inventoryTable.discordId, t.id),
+      ))
+      .orderBy(inventoryTable.addedAt);
+
+    const fmt = (arr: typeof currentItems) =>
       arr.length > 0
         ? arr.map(i => `**ID ${i.id}** — ${i.legendName ?? i.playerName ?? "?"} (${i.playerPosition ?? "?"})`).join("\n")
         : "*None*";
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Blurple)
-      .setTitle(`🏅 Legend Vault — ${t.username}`)
+      .setTitle(`🏅 Legend Vault — ${t.username}${viewTeam ? ` (${viewTeam})` : ""}`)
       .addFields(
-        { name: `⚡ Current Season (${current.length})`,           value: fmt(current)   },
-        { name: `🔒 Permanent Vault (${permanent.length}/${PERMANENT_CAP})`, value: fmt(permanent) },
+        { name: `⚡ Current Season (${currentItems.length})`,                    value: fmt(currentItems)   },
+        { name: `🔒 Permanent Vault (${permanentItems.length}/${PERMANENT_CAP})`, value: fmt(permanentItems) },
       )
       .setFooter({ text: "Use item IDs with /admin-legendvault move or remove" });
 
@@ -204,15 +229,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Enforce permanent cap when moving to permanent
+    // Enforce permanent cap when moving to permanent (count by team if available)
     if (to === "permanent") {
+      const [moveUserRow] = await db.select({ team: usersTable.team }).from(usersTable)
+        .where(eq(usersTable.discordId, t.id)).limit(1);
+      const moveTeam = moveUserRow?.team ?? null;
+
+      const capWhere = and(
+        moveTeam
+          ? or(eq(inventoryTable.team, moveTeam), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, t.id)))
+          : eq(inventoryTable.discordId, t.id),
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      );
       const permanentCount = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(inventoryTable)
-        .where(and(
-          eq(inventoryTable.discordId, t.id),
-          eq(inventoryTable.itemType, "legend"),
-          sql`${inventoryTable.legendCategory} = 'permanent'`,
-        ));
+        .from(inventoryTable).where(capWhere);
       const count = Number(permanentCount[0]?.count ?? 0);
       if (count >= PERMANENT_CAP) {
         await interaction.editReply({
@@ -220,11 +251,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         });
         return;
       }
-    }
 
-    await db.update(inventoryTable)
-      .set({ legendCategory: to })
-      .where(eq(inventoryTable.id, itemId));
+      // Stamp with team so item follows the franchise going forward
+      await db.update(inventoryTable)
+        .set({ legendCategory: "permanent", ...(moveTeam ? { team: moveTeam } : {}) })
+        .where(eq(inventoryTable.id, itemId));
+    } else {
+      await db.update(inventoryTable)
+        .set({ legendCategory: to })
+        .where(eq(inventoryTable.id, itemId));
+    }
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Green)
