@@ -48,7 +48,6 @@ import * as adminPlayoffs            from "./commands/admin-playoffs.js";
 import * as adminGotw                from "./commands/admin-gotw.js";
 import * as adminPotw                from "./commands/admin-potw.js";
 import * as adminResendArticle       from "./commands/admin-resendarticle.js";
-import * as adminServer              from "./commands/adminserver.js";
 import * as adminCatchup             from "./commands/admin-catchup.js";
 import * as adminManualScore         from "./commands/admin-manualscore.js";
 import * as adminPostFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
@@ -162,7 +161,6 @@ if (!isProduction && !devBotEnabled) {
     adminGotw,
     adminPotw,
     adminResendArticle,
-    adminServer,
     adminCatchup,
     adminManualScore,
     adminPostFullSeasonSchedule,

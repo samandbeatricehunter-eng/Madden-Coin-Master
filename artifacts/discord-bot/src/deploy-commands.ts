@@ -46,7 +46,6 @@ import * as adminPlayoffs            from "./commands/admin-playoffs.js";
 import * as adminGotw                from "./commands/admin-gotw.js";
 import * as adminPotw                from "./commands/admin-potw.js";
 import * as adminResendArticle       from "./commands/admin-resendarticle.js";
-import * as adminServer              from "./commands/adminserver.js";
 import * as adminCatchup             from "./commands/admin-catchup.js";
 import * as adminManualScore         from "./commands/admin-manualscore.js";
 import * as adminPostFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
@@ -91,7 +90,7 @@ const commands = [
   // Admin tools
   adminEosTestrun, adminStatReimport, adminEaConnect, adminEaExport,
   adminCancelResendEos, adminRebuildHistorical, draftPresence,
-  adminPlayoffs, adminGotw, adminPotw, adminResendArticle, adminServer,
+  adminPlayoffs, adminGotw, adminPotw, adminResendArticle,
   adminCatchup, adminManualScore, adminPostFullSeasonSchedule, adminRollbackFranchise,
   endofseasonpayout, adminTransactions, adminSetPayouts,
   adminSetStatTiers, adminStatTiers, adminSetMilestoneTier,
