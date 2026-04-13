@@ -828,6 +828,18 @@ export async function processPlayerWeekStats(
     const listKeys = STAT_LIST_KEYS[statType];
     const players = extractList(body, ...listKeys);
 
+    // Secondary guard: EA embeds stageIndex on every player record.
+    // stageIndex 0 = preseason, 1 = regular season, 2+ = playoffs.
+    // If the first record shows stageIndex 0 we know this is preseason data
+    // regardless of what the weekType URL param says — reject it here too.
+    if (players.length > 0) {
+      const firstStage = Number((players[0] as any)?.stageIndex ?? -1);
+      if (firstStage === 0) {
+        console.warn(`[mca/week${weekNum}/${statType}] ⚠️ stageIndex=0 detected in EA records — treating as preseason, skipping`);
+        return { ok: true, message: `Preseason Week ${weekNum} ${statType} — rejected (stageIndex=0 in EA records)` };
+      }
+    }
+
     if (!players.length) {
       // Log everything we need to diagnose a key-name mismatch:
       //   1. All top-level keys in the payload

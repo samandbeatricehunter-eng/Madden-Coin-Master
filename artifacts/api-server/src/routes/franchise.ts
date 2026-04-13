@@ -16,7 +16,7 @@ import {
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload } from "../lib/mcaStorage.js";
-import { db, statPaddingViolationsTable, usersTable } from "@workspace/db";
+import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
 
@@ -600,6 +600,31 @@ router.post("/madden/:leagueKey/:platform/:leagueId/awards", validateKey, (req, 
   const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
   console.log("[mca/awards] Received. Top-level keys:", keys);
   console.log("[mca/awards] First item sample:", JSON.stringify(sample)?.slice(0, 600));
+});
+
+// ── /admin/purge-preseason-stats — remove preseason-tainted player stats ────────
+// Deletes all player_season_stats and player_stat_week_processed rows for a given
+// season so the season can be cleanly re-imported from reg-season EA exports only.
+// Protected by the webhook key. Call once to fix seasons that had preseason data
+// accumulated before the stageIndex guard was in place.
+router.post("/madden/:leagueKey/admin/purge-preseason-stats", validateKey, async (req, res) => {
+  const seasonId = parseInt(String((req.body as any)?.seasonId ?? "0"), 10);
+  if (!seasonId || isNaN(seasonId)) {
+    res.status(400).json({ error: "seasonId required" });
+    return;
+  }
+  try {
+    const [statsResult, processedResult] = await Promise.all([
+      db.delete(playerSeasonStatsTable).where(eq(playerSeasonStatsTable.seasonId, seasonId)),
+      db.delete(playerStatWeekProcessedTable).where(eq(playerStatWeekProcessedTable.seasonId, seasonId)),
+    ]);
+    const msg = `Purged season ${seasonId}: player_season_stats and player_stat_week_processed cleared. Re-run /admin_ea_export week for each reg-season week.`;
+    console.log(`[admin/purge-preseason-stats] ${msg}`);
+    res.status(200).json({ ok: true, message: msg });
+  } catch (err: any) {
+    console.error("[admin/purge-preseason-stats] Error:", err);
+    res.status(500).json({ ok: false, error: String(err?.message ?? err) });
+  }
 });
 
 // ── Catch-all: log any MCA endpoint we haven't explicitly handled ─────────────

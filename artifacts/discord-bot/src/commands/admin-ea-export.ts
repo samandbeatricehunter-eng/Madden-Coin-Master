@@ -114,17 +114,30 @@ export const data = new SlashCommandBuilder()
     s
       .setName("check-api")
       .setDescription("Verify that the bot can reach the API server (use when MCA exports seem to fail silently)"),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName("purge-preseason")
+      .setDescription("⚠️ Delete preseason-tainted stats for a season so it can be cleanly re-imported")
+      .addIntegerOption((o) =>
+        o
+          .setName("season_id")
+          .setDescription("The numeric season ID to purge (check /viewstandings or ask dev for the number)")
+          .setRequired(true)
+          .setMinValue(1),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand(true);
-  if (sub === "week")          return handleWeek(interaction);
-  if (sub === "playoffs")      return handlePlayoffs(interaction);
-  if (sub === "awards")        return handleAwards(interaction);
-  if (sub === "standings")     return handleStandings(interaction);
-  if (sub === "full-schedule") return handleFullSchedule(interaction);
-  if (sub === "rosters")       return handleRosters(interaction);
-  if (sub === "check-api")     return handleCheckApi(interaction);
+  if (sub === "week")             return handleWeek(interaction);
+  if (sub === "playoffs")         return handlePlayoffs(interaction);
+  if (sub === "awards")           return handleAwards(interaction);
+  if (sub === "standings")        return handleStandings(interaction);
+  if (sub === "full-schedule")    return handleFullSchedule(interaction);
+  if (sub === "rosters")          return handleRosters(interaction);
+  if (sub === "check-api")        return handleCheckApi(interaction);
+  if (sub === "purge-preseason")  return handlePurgePreseason(interaction);
 }
 
 // ── Build API base URL ────────────────────────────────────────────────────────
@@ -695,4 +708,49 @@ async function handleCheckApi(interaction: ChatInputCommandInteraction): Promise
       .setDescription(lines.join("\n"))
       .setTimestamp()],
   });
+}
+
+// ── Purge preseason-tainted stats for a season ────────────────────────────────
+async function handlePurgePreseason(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const seasonId = interaction.options.getInteger("season_id", true);
+
+  let apiBase: string;
+  let key: string;
+  try {
+    apiBase = getApiBase();
+    key     = getWebhookKey();
+  } catch (err: any) {
+    await interaction.editReply({ content: `❌ Config error: ${err.message}` });
+    return;
+  }
+
+  const url = `${apiBase}/madden/${key}/admin/purge-preseason-stats`;
+  let responseMsg = "";
+  let success = false;
+  try {
+    const res = await axios.post(url, { seasonId }, { timeout: 30_000, validateStatus: () => true });
+    success = res.status >= 200 && res.status < 300;
+    responseMsg = (res.data as any)?.message ?? (res.data as any)?.error ?? JSON.stringify(res.data);
+  } catch (err: any) {
+    responseMsg = err?.message ?? String(err);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(success ? Colors.Orange : Colors.Red)
+    .setTitle(success ? "🗑️ Preseason Stats Purged" : "❌ Purge Failed")
+    .setDescription(
+      success
+        ? `Season **${seasonId}** player stats and weekly processed records have been deleted.\n\n` +
+          `**Next step:** Run \`/admin_ea_export week number:1\` (and any other completed reg-season weeks) to re-import clean data.`
+        : `Error: ${responseMsg}`,
+    )
+    .setTimestamp();
+
+  if (success) {
+    console.log(`[ea-export/purge-preseason] Season ${seasonId} purged by ${interaction.user.tag}`);
+  }
+
+  await interaction.editReply({ embeds: [embed] });
 }
