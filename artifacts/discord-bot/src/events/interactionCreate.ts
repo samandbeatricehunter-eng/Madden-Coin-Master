@@ -35,6 +35,7 @@ import {
   handleAupPageNav, handleAupSel, handleAupBack, handleAupConfirm, handleAupCancel,
 } from "../commands/attribute-up-interactions.js";
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
+import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin-inventory.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
@@ -2323,6 +2324,14 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "ccp_hand")         { await handleCcpHand(interaction, sessionId);         return; }
   if (action === "ccp_height")       { await handleCcpHeight(interaction, sessionId);       return; }
   if (action === "ccp_weight")       { await handleCcpWeight(interaction, sessionId);       return; }
+
+  // ── Admin: add custom player — position select ─────────────────────────────
+  // customId: acp_pos:<targetDiscordId>:<seasonId>:<notesEncoded>
+  if (action === "acp_pos") { await handleAcpPositionSelect(interaction); return; }
+
+  // ── Admin: add custom player — player select ───────────────────────────────
+  // customId: acp_player:<targetDiscordId>:<seasonId>:<notesEncoded>
+  if (action === "acp_player") { await handleAcpPlayerSelect(interaction); return; }
 
   // ── Attribute-up: user selected an attribute to upgrade ───────────────────
   if (action === "aup_sel") { await handleAupSel(interaction); return; }

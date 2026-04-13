@@ -1,9 +1,10 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits,
+  PermissionFlagsBits, StringSelectMenuInteraction,
+  ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { inventoryTable, usersTable } from "@workspace/db";
+import { inventoryTable, usersTable, franchiseRostersTable } from "@workspace/db";
 import { eq, and, or, desc } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
@@ -17,11 +18,25 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   custom_player_bronze: "Custom Player (Bronze)",
 };
 
-const TIER_TO_ITEM_TYPE: Record<string, string> = {
-  gold:   "custom_player_gold",
-  silver: "custom_player_silver",
-  bronze: "custom_player_bronze",
+const DEV_LABEL: Record<number, string> = {
+  0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
 };
+
+const POSITION_ORDER = [
+  "QB", "HB", "FB",
+  "WR", "TE",
+  "LT", "LG", "C", "RG", "RT",
+  "LE", "RE", "DT",
+  "LOLB", "MLB", "ROLB",
+  "CB", "FS", "SS",
+  "K", "P",
+];
+
+function sortPositions(positions: string[]): string[] {
+  const known   = POSITION_ORDER.filter(p => positions.includes(p));
+  const unknown = positions.filter(p => !POSITION_ORDER.includes(p)).sort();
+  return [...known, ...unknown];
+}
 
 function itemSummary(item: typeof inventoryTable.$inferSelect): string {
   const type = ITEM_TYPE_LABELS[item.itemType] ?? item.itemType;
@@ -76,25 +91,9 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand(sub =>
     sub.setName("add_custom_player")
-      .setDescription("Manually label an existing roster player as a permanent custom player for a user")
+      .setDescription("Add a permanent custom player for a user — picks from their team's live roster")
       .addUserOption(opt =>
         opt.setName("user").setDescription("The user who owns this custom player").setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("player_name").setDescription("Full player name (e.g. John Smith)").setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("position").setDescription("Player position (e.g. QB, HB, WR)").setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("tier")
-          .setDescription("Custom player tier")
-          .setRequired(true)
-          .addChoices(
-            { name: "Gold", value: "gold" },
-            { name: "Silver", value: "silver" },
-            { name: "Bronze", value: "bronze" },
-          )
       )
       .addStringOption(opt =>
         opt.setName("notes").setDescription("Optional notes (e.g. archetype, backstory)").setRequired(false)
@@ -114,7 +113,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const targetUser = interaction.options.getUser("user", true);
     const season = await getOrCreateActiveSeason();
 
-    // Show current-season items AND all permanent items for this user
     const items = await db.select().from(inventoryTable)
       .where(
         and(
@@ -201,57 +199,188 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── ADD CUSTOM PLAYER ────────────────────────────────────────────────────────
+  // Step 1: Look up the user's linked team, then show a position dropdown from
+  //         their live franchise roster. Format: acp_pos:<targetDiscordId>:<seasonId>:<notes|->
   if (sub === "add_custom_player") {
+    await interaction.deferReply({ ephemeral: true });
+
     const targetUser = interaction.options.getUser("user", true);
-    const playerName = interaction.options.getString("player_name", true).trim();
-    const position   = interaction.options.getString("position", true).trim().toUpperCase();
-    const tier       = interaction.options.getString("tier", true) as "gold" | "silver" | "bronze";
-    const notes      = interaction.options.getString("notes")?.trim() ?? null;
+    const notes      = interaction.options.getString("notes")?.trim() ?? "";
 
     const season = await getOrCreateActiveSeason();
 
-    // Look up user record to get their team name
-    const userRow = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
+    const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
       .from(usersTable)
       .where(eq(usersTable.discordId, targetUser.id))
       .limit(1);
 
-    if (userRow.length === 0) {
-      await interaction.reply({
-        content: `❌ **${targetUser.username}** is not registered in the bot. Use \`/admin linkteam\` first.`,
-        ephemeral: true,
-      });
+    if (!userRow) {
+      await interaction.editReply(`❌ **${targetUser.username}** is not registered in the bot. Use \`/admin linkteam\` first.`);
       return;
     }
 
-    const { team, discordUsername } = userRow[0]!;
-    const itemType = TIER_TO_ITEM_TYPE[tier]! as "custom_player_gold" | "custom_player_silver" | "custom_player_bronze";
+    if (!userRow.team) {
+      await interaction.editReply(`❌ **${targetUser.username}** is not linked to a team yet. Use \`/admin linkteam\` first.`);
+      return;
+    }
 
-    const [inserted] = await db.insert(inventoryTable).values({
-      discordId:        targetUser.id,
-      seasonId:         season.id,
-      purchaseId:       0,
-      itemType,
-      playerName,
-      playerPosition:   position,
-      notes,
-      legendCategory:   "permanent",
-      team:             team ?? null,
-    }).returning();
+    // Load distinct positions for this user's team from the live roster
+    const rosterPositions = await db
+      .selectDistinct({ position: franchiseRostersTable.position })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.teamName, userRow.team),
+      ));
 
-    const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
-    const teamNote  = team ? ` (team: **${team}**)` : "";
-    const notesNote = notes ? `\n📝 Notes: ${notes}` : "";
+    if (rosterPositions.length === 0) {
+      await interaction.editReply(
+        `❌ No roster data found for **${userRow.team}**. Make sure the MCA roster has been imported.`
+      );
+      return;
+    }
 
-    await interaction.reply({
-      content: [
-        `✅ Added **${playerName}** (${position}) as a permanent **${tierLabel}** custom player for **${discordUsername}**${teamNote}.`,
-        `They will now appear under 🗃️ Permanent Custom Players in \`/userstats\`.`,
-        notesNote,
-        `\n*Item ID: ${inserted?.id ?? "—"} — use \`/admininventory remove\` to undo.*`,
-      ].filter(Boolean).join("\n"),
-      ephemeral: true,
+    const positions = sortPositions(
+      rosterPositions.map(r => r.position).filter((p): p is string => Boolean(p))
+    );
+
+    // Encode notes in the customId, replacing colons and encoding empty as "-"
+    const notesEncoded = (notes || "-").replace(/:/g, "COLON");
+
+    const posMenu = new StringSelectMenuBuilder()
+      .setCustomId(`acp_pos:${targetUser.id}:${season.id}:${notesEncoded}`)
+      .setPlaceholder(`Select a position from ${userRow.team}…`)
+      .addOptions(
+        positions.slice(0, 25).map(pos =>
+          new StringSelectMenuOptionBuilder().setLabel(pos).setValue(pos)
+        )
+      );
+
+    await interaction.editReply({
+      content: `**Add Custom Player for ${userRow.discordUsername ?? targetUser.username}** (${userRow.team})\nSelect a position:`,
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(posMenu)],
+    });
+  }
+}
+
+// ── Step 2: Position selected → show player dropdown ─────────────────────────
+// customId: acp_pos:<targetDiscordId>:<seasonId>:<notesEncoded>
+export async function handleAcpPositionSelect(interaction: StringSelectMenuInteraction) {
+  await interaction.deferUpdate();
+
+  const parts           = interaction.customId.split(":");
+  const targetDiscordId = parts[1] ?? "";
+  const seasonId        = parseInt(parts[2] ?? "0", 10);
+  const notesEncoded    = parts[3] ?? "-";
+  const position        = interaction.values[0]!;
+
+  // Look up the user's team name
+  const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
+    .from(usersTable)
+    .where(eq(usersTable.discordId, targetDiscordId))
+    .limit(1);
+
+  if (!userRow?.team) {
+    await interaction.editReply({ content: "❌ Could not find team for this user.", components: [] });
+    return;
+  }
+
+  // Load players at this position on the team, sorted by OVR desc
+  const players = await db.select({
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+    jerseyNum: franchiseRostersTable.jerseyNum,
+  })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, seasonId),
+      eq(franchiseRostersTable.teamName, userRow.team),
+      eq(franchiseRostersTable.position, position),
+    ))
+    .orderBy(desc(franchiseRostersTable.overall))
+    .limit(25);
+
+  if (players.length === 0) {
+    await interaction.editReply({
+      content: `❌ No **${position}** players found on **${userRow.team}**'s roster.`,
+      components: [],
     });
     return;
   }
+
+  const playerMenu = new StringSelectMenuBuilder()
+    .setCustomId(`acp_player:${targetDiscordId}:${seasonId}:${notesEncoded}`)
+    .setPlaceholder(`Select a ${userRow.team} ${position}…`)
+    .addOptions(
+      players.map(p => {
+        const name  = `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || `Player ${p.playerId}`;
+        const jersey = p.jerseyNum != null ? `#${p.jerseyNum} ` : "";
+        const dev   = DEV_LABEL[p.devTrait ?? 0] ?? "Normal";
+        const label = `${jersey}${name}`.slice(0, 100);
+        const desc  = `${p.overall ?? 0} OVR · ${dev}`;
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(label)
+          .setDescription(desc)
+          .setValue(`${p.playerId}:${name}:${position}`);
+      })
+    );
+
+  await interaction.editReply({
+    content: `**${userRow.team} — ${position}s** · Select the player to mark as a custom player:`,
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(playerMenu)],
+    embeds: [],
+  });
+}
+
+// ── Step 3: Player selected → insert inventory item ───────────────────────────
+// customId: acp_player:<targetDiscordId>:<seasonId>:<notesEncoded>
+// value:    <playerId>:<playerName>:<position>
+export async function handleAcpPlayerSelect(interaction: StringSelectMenuInteraction) {
+  await interaction.deferUpdate();
+
+  const parts           = interaction.customId.split(":");
+  const targetDiscordId = parts[1] ?? "";
+  const seasonId        = parseInt(parts[2] ?? "0", 10);
+  const notesEncoded    = parts[3] ?? "-";
+  const notes           = notesEncoded === "-" ? null : notesEncoded.replace(/COLON/g, ":");
+
+  const valueParts = (interaction.values[0] ?? "").split(":");
+  const playerName = valueParts[1] ?? "Unknown";
+  const position   = valueParts[2] ?? "";
+
+  // Look up the user's team
+  const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
+    .from(usersTable)
+    .where(eq(usersTable.discordId, targetDiscordId))
+    .limit(1);
+
+  const [inserted] = await db.insert(inventoryTable).values({
+    discordId:      targetDiscordId,
+    seasonId,
+    purchaseId:     0,
+    itemType:       "custom_player_gold",
+    playerName,
+    playerPosition: position,
+    notes,
+    legendCategory: "permanent",
+    team:           userRow?.team ?? null,
+  }).returning();
+
+  const ownerName  = userRow?.discordUsername ?? `<@${targetDiscordId}>`;
+  const teamNote   = userRow?.team ? ` (${userRow.team})` : "";
+  const notesNote  = notes ? `\n📝 Notes: ${notes}` : "";
+
+  await interaction.editReply({
+    content: [
+      `✅ Added **${playerName}** (${position}) as a permanent custom player for **${ownerName}**${teamNote}.`,
+      `They will now appear under 🗃️ Permanent Custom Players in \`/userstats\`.`,
+      notesNote,
+      `\n*Item ID: ${inserted?.id ?? "—"} — use \`/admininventory remove\` to undo.*`,
+    ].filter(Boolean).join("\n"),
+    components: [],
+    embeds: [],
+  });
 }
