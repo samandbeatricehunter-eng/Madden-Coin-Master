@@ -240,12 +240,12 @@ async function exportWeek(
   const stageLabel = weekType === "pre" ? "Preseason" : weekType === "post" ? "Playoff" : "Reg Season";
   const weekLabel  = `${stageLabel} Week ${weekNum}`;
 
-  await interaction.editReply({ content: `⏳ Fetching **${weekLabel}** data from EA...` });
+  // ── PHASE 1: Fetch stats from EA (Blaze session 1) ───────────────────────────
+  await interaction.editReply({ content: `⏳ Fetching **${weekLabel}** stats from EA...` });
 
   let stats: WeeklyExportData;
   try {
     stats = await fetchWeeklyStats(token, eaLeagueId, weekIndex, stageIndex);
-    // Persist refreshed token if it was updated
     const refreshed = await refreshTokenIfNeeded(token);
     if (refreshed.accessToken !== token.accessToken) {
       await updateStoredToken(eaLeagueId, refreshed);
@@ -260,7 +260,14 @@ async function exportWeek(
     return;
   }
 
-  // POST each stat type to the API server
+  // ── PHASE 2: Fetch rosters from EA (Blaze session 2 — sequential, after session 1 closes)
+  // Rosters are fetched BEFORE stats are posted so that when the processor handles
+  // the stat payloads, franchise_mca_teams already has all 32 teams and their names.
+  await interaction.editReply({ content: `⏳ Fetching rosters from EA (~60s)...` });
+
+  const { summaryLine: rosterSummary, allOk: rostersAllOk } = await runRosterSync(token, eaLeagueId);
+
+  // ── PHASE 3: Post to API (rosters already posted inside runRosterSync, now post stats)
   const apiBase  = getApiBase();
   const key      = getWebhookKey();
   const platform = token.platform;
@@ -291,11 +298,6 @@ async function exportWeek(
   // Schedules / scores (always included)
   const schedRes = await postToApiServer(`${weekBase}/schedules`, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
-
-  // ── Now automatically sync rosters (league teams + all 32 rosters + free agents)
-  await interaction.editReply({ content: `⏳ **${weekLabel}** stats done — now syncing rosters (~60s)...` });
-
-  const { summaryLine: rosterSummary, allOk: rostersAllOk } = await runRosterSync(token, eaLeagueId);
 
   // Build combined result embed
   const statsSuccessCount = results.filter((r) => r.ok).length;

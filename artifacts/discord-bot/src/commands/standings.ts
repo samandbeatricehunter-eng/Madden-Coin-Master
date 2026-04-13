@@ -52,7 +52,8 @@ function annotateClinch(confTeams: ArticleStanding[]): StandingRow[] {
     if (!isLeader) continue;
 
     const divRivals = confTeams.filter(t => t.division === div && t.teamName !== team.teamName);
-    const clinchesDiv = divRivals.every(rival => magicNumber(team, rival) <= 0);
+    // Guard: vacuous truth — if no rivals shown yet, don't mark clinched
+    const clinchesDiv = divRivals.length > 0 && divRivals.every(rival => magicNumber(team, rival) <= 0);
     if (clinchesDiv) clinch.set(team.teamName, "division");
   }
 

@@ -249,19 +249,23 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       }
 
       if (focused.name === "player") {
+        const positionFilter = interaction.options.getString("position");
         const rosterSeasonId = await getRosterSeasonId();
         const season = { id: rosterSeasonId };
-        const rows: { firstName: string; lastName: string; devTrait: number; overall: number }[] =
+        const rows: { firstName: string; lastName: string; devTrait: number; overall: number; position: string }[] =
           await getRosterRows(season, {
             firstName: franchiseRostersTable.firstName,
             lastName:  franchiseRostersTable.lastName,
             devTrait:  franchiseRostersTable.devTrait,
             overall:   franchiseRostersTable.overall,
+            position:  franchiseRostersTable.position,
           });
         const q = focused.value.toLowerCase();
 
         const eligible = rows.filter(r => {
           if (sub === "dev_upgrade" && r.devTrait >= 3) return false;
+          // Filter by the position the user already selected
+          if (positionFilter && r.position.toUpperCase() !== positionFilter.toUpperCase()) return false;
           return true;
         });
 

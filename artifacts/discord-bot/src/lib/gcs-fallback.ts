@@ -385,10 +385,37 @@ export async function getArticleStandings(
     return standings.sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
   }
 
-  // ── 6. franchise_schedule is empty — last resort: userRecordsTable ────────────
-  // This only covers bot-registered users and stores H2H economy records, not
-  // full season records. It exists only as a safety net for a brand-new season
-  // before any MCA data has been imported.
+  // ── 6. franchise_schedule is empty — try franchise_mca_teams (populated by roster sync) ───
+  // The roster sync (run every week export) populates this table with all 32 teams.
+  // It has no W/L data (that comes from schedule), so records are 0-0 until the
+  // first game is completed — but at least all 32 teams show up correctly.
+  try {
+    const mcaTeamRows = await db.select({
+      teamId:    franchiseMcaTeamsTable.teamId,
+      fullName:  franchiseMcaTeamsTable.fullName,
+      discordId: franchiseMcaTeamsTable.discordId,
+    }).from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, seasonId));
+
+    if (mcaTeamRows.length > 0) {
+      const standings: ArticleStanding[] = mcaTeamRows.map(t => {
+        const nfl = lookupNflDivision(t.fullName);
+        return {
+          teamName:          t.fullName,
+          discordUsername:   t.discordId ? (discordByTeam.get(t.teamId) ?? null) : null,
+          wins:              0,
+          losses:            0,
+          pointDifferential: 0,
+          conference:        nfl?.conference ?? null,
+          division:          nfl?.division   ?? null,
+        };
+      });
+      return standings.sort((a, b) => (a.division ?? "").localeCompare(b.division ?? "") || a.teamName.localeCompare(b.teamName));
+    }
+  } catch { /* non-fatal */ }
+
+  // ── 7. Last resort: userRecordsTable (only registered users, no CPU teams) ────
+  // This exists only as a safety net before any roster/schedule data has been imported.
   type FallbackRow = { discordId: string; discordUsername: string; team: string | null; wins: number; losses: number; pointDifferential: number };
   const dbRows: FallbackRow[] = await db.select({
     discordId:         userRecordsTable.discordId,

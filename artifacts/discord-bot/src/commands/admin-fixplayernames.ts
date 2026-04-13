@@ -29,6 +29,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       firstName: franchiseRostersTable.firstName,
       lastName:  franchiseRostersTable.lastName,
       position:  franchiseRostersTable.position,
+      teamName:  franchiseRostersTable.teamName,
     })
     .from(franchiseRostersTable)
     .where(eq(franchiseRostersTable.seasonId, season.id));
@@ -50,6 +51,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       firstName: playerSeasonStatsTable.firstName,
       lastName:  playerSeasonStatsTable.lastName,
       position:  playerSeasonStatsTable.position,
+      teamName:  playerSeasonStatsTable.teamName,
     })
     .from(playerSeasonStatsTable)
     .where(eq(playerSeasonStatsTable.seasonId, season.id));
@@ -62,17 +64,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const roster = rosterMap.get(row.playerId);
     if (!roster) { skipped++; continue; }
 
-    // Only update if we have roster data and the stat row has missing info
+    // Update any field the stat row is missing — including teamName which was
+    // blank when stats were imported before the roster sync populated franchise_mca_teams
     const needsFirstName = !row.firstName && roster.firstName;
     const needsLastName  = !row.lastName  && roster.lastName;
     const needsPosition  = !row.position  && roster.position;
+    const needsTeamName  = !row.teamName  && roster.teamName && roster.teamName !== "Free Agents";
 
-    if (!needsFirstName && !needsLastName && !needsPosition) { skipped++; continue; }
+    if (!needsFirstName && !needsLastName && !needsPosition && !needsTeamName) { skipped++; continue; }
 
     const patch: Record<string, any> = {};
     if (needsFirstName) patch["firstName"] = roster.firstName;
     if (needsLastName)  patch["lastName"]  = roster.lastName;
     if (needsPosition)  patch["position"]  = roster.position;
+    if (needsTeamName)  patch["teamName"]  = roster.teamName;
 
     updateOps.push(
       db.update(playerSeasonStatsTable)
@@ -88,20 +93,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await Promise.all(updateOps);
 
   const embed = new EmbedBuilder()
-    .setTitle("✅ Player Names Backfilled")
+    .setTitle("✅ Player Data Backfilled")
     .setColor(Colors.Green)
     .addFields(
       { name: "📋 Stat Rows Found",    value: String(statRows.length),    inline: true },
       { name: "✅ Updated",            value: String(updated),             inline: true },
-      { name: "⏭️ Already Had Names", value: String(skipped),             inline: true },
+      { name: "⏭️ Already Complete",  value: String(skipped),             inline: true },
       { name: "🗃️ Roster Entries",    value: String(rosterRows.length),   inline: true },
     )
     .setDescription(
       updated > 0
-        ? `Fixed **${updated}** player stat rows with names from the roster.`
-        : "All stat rows already had player names — nothing to fix."
+        ? `Fixed **${updated}** player stat rows — names, positions, and team names filled from roster data.`
+        : "All stat rows already complete — nothing to fix."
     )
-    .setFooter({ text: `Season ${season.seasonNumber}` })
+    .setFooter({ text: `Season ${season.seasonNumber} • Tip: re-run /admin_ea_export week to re-import with correct team names going forward` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
