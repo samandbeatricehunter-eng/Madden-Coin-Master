@@ -12,22 +12,18 @@ import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
-// ── Real NFL conference membership (by full team name) ────────────────────────
-// Madden exports real team full names when teams aren't relocated, and custom
-// full names if they are. Un-recognised names fall to AFC by default so nothing
-// is silently lost — an admin can relocate "mystery" teams to the right group.
+// ── Conference detection ────────────────────────────────────────────────────
+// Primary: use the `conference` column stored from the MCA leagueteams export
+// ("AFC" | "NFC"). Fallback: hard-coded nick/full-name sets for teams imported
+// before the conference column existed (rows that still have conference = null).
+
 const NFC_FULL_NAMES = new Set([
-  // NFC East
   "Dallas Cowboys", "New York Giants", "Philadelphia Eagles", "Washington Commanders",
-  // NFC North
   "Chicago Bears", "Detroit Lions", "Green Bay Packers", "Minnesota Vikings",
-  // NFC South
   "Atlanta Falcons", "Carolina Panthers", "New Orleans Saints", "Tampa Bay Buccaneers",
-  // NFC West
   "Arizona Cardinals", "Los Angeles Rams", "San Francisco 49ers", "Seattle Seahawks",
 ]);
 
-// Also match by nickname as a fallback for standard teams
 const NFC_NICK_NAMES = new Set([
   "Giants", "Eagles", "Cowboys", "Commanders",
   "Bears", "Lions", "Packers", "Vikings",
@@ -35,7 +31,10 @@ const NFC_NICK_NAMES = new Set([
   "Cardinals", "Rams", "49ers", "Seahawks",
 ]);
 
-function isNfc(fullName: string, nickName: string): boolean {
+function isNfc(conference: string | null, fullName: string, nickName: string): boolean {
+  if (conference === "NFC") return true;
+  if (conference === "AFC") return false;
+  // Fallback for rows without conference data
   return NFC_FULL_NAMES.has(fullName) || NFC_NICK_NAMES.has(nickName);
 }
 
@@ -74,9 +73,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const allTeams = await db
     .select({
-      teamId:   franchiseMcaTeamsTable.teamId,
-      fullName: franchiseMcaTeamsTable.fullName,
-      nickName: franchiseMcaTeamsTable.nickName,
+      teamId:     franchiseMcaTeamsTable.teamId,
+      fullName:   franchiseMcaTeamsTable.fullName,
+      nickName:   franchiseMcaTeamsTable.nickName,
+      conference: franchiseMcaTeamsTable.conference,
     })
     .from(franchiseMcaTeamsTable)
     .where(eq(franchiseMcaTeamsTable.seasonId, season.id))
@@ -87,8 +87,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const nfcTeams = allTeams.filter(t => isNfc(t.fullName, t.nickName));
-  const afcTeams = allTeams.filter(t => !isNfc(t.fullName, t.nickName));
+  const nfcTeams = allTeams.filter(t => isNfc(t.conference, t.fullName, t.nickName));
+  const afcTeams = allTeams.filter(t => !isNfc(t.conference, t.fullName, t.nickName));
 
   const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
 

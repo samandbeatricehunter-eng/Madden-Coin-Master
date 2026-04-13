@@ -299,12 +299,22 @@ export async function processLeagueTeams(body: unknown): Promise<ProcessResult> 
       const isHuman  = userName !== "CPU" && userName !== "" && userName !== "0";
       const discordId = isHuman ? findDiscordId(fullName, nick) : null;
 
+      // Resolve conference from MCA data — prefer the string name, fall back to numeric id
+      let conference: string | null = null;
+      if (t?.conferenceName === "AFC" || t?.conferenceName === "NFC") {
+        conference = t.conferenceName as string;
+      } else {
+        const confId = Number(t?.conferenceId ?? t?.confId ?? -1);
+        if (confId === 0) conference = "AFC";
+        else if (confId === 1) conference = "NFC";
+      }
+
       ops.push(
         db.insert(franchiseMcaTeamsTable)
-          .values({ seasonId: season.id, teamId, fullName, nickName: nick, userName, isHuman, discordId, updatedAt: new Date() })
+          .values({ seasonId: season.id, teamId, fullName, nickName: nick, conference, userName, isHuman, discordId, updatedAt: new Date() })
           .onConflictDoUpdate({
             target: [franchiseMcaTeamsTable.seasonId, franchiseMcaTeamsTable.teamId],
-            set: { fullName, nickName: nick, userName, isHuman, discordId, updatedAt: new Date() },
+            set: { fullName, nickName: nick, conference, userName, isHuman, discordId, updatedAt: new Date() },
           })
       );
       upserted++;

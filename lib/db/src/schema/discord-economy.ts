@@ -652,15 +652,16 @@ export const completedTradesTable = pgTable("completed_trades", {
 // Gives us teamId → fullName, nickName, userName so we know who is human vs CPU
 // and which Discord user controls each team, without needing the ZIP file.
 export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
-  id:        serial("id").primaryKey(),
-  seasonId:  integer("season_id").notNull(),
-  teamId:    integer("team_id").notNull(),
-  fullName:  text("full_name").notNull(),      // "Las Vegas Raiders"
-  nickName:  text("nick_name").notNull(),       // "Raiders"
-  userName:  text("user_name").notNull(),       // Madden in-game username or "CPU"
-  isHuman:   boolean("is_human").notNull().default(false),
-  discordId: text("discord_id"),               // null if CPU team or no match
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  id:         serial("id").primaryKey(),
+  seasonId:   integer("season_id").notNull(),
+  teamId:     integer("team_id").notNull(),
+  fullName:   text("full_name").notNull(),      // "Las Vegas Raiders"
+  nickName:   text("nick_name").notNull(),       // "Raiders"
+  conference: text("conference"),               // "AFC" | "NFC" — from MCA conferenceName/conferenceId
+  userName:   text("user_name").notNull(),       // Madden in-game username or "CPU"
+  isHuman:    boolean("is_human").notNull().default(false),
+  discordId:  text("discord_id"),               // null if CPU team or no match
+  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),
 }));
