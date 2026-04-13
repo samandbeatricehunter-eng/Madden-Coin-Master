@@ -20,7 +20,7 @@ import { getServerSettings } from "../lib/server-settings.js";
 import * as purchaseCustomPlayer from "./purchasecustomplayer.js";
 import { startAttributeUp } from "./attribute-up-interactions.js";
 
-const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor" };
+const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
 
 export const data = new SlashCommandBuilder()
   .setName("purchase")
@@ -53,7 +53,7 @@ export const data = new SlashCommandBuilder()
   // ── Dev Upgrade ─────────────────────────────────────────────────────────────
   .addSubcommand(sub =>
     sub.setName("dev_upgrade")
-      .setDescription("Dev upgrade a player (Normal→Impact, Impact→Star, or Star→Superstar) — see /view store for price")
+      .setDescription("Upgrade a player's dev trait — Normal→Star, Star→Superstar, Superstar→X-Factor")
       .addStringOption(opt =>
         opt.setName("position")
           .setDescription("Player's position on the roster")
@@ -71,9 +71,9 @@ export const data = new SlashCommandBuilder()
           .setDescription("Target development tier")
           .setRequired(true)
           .addChoices(
-            { name: "Impact (from Normal)",      value: "Impact"    },
-            { name: "Star (from Impact)",         value: "Star"      },
-            { name: "Superstar (from Star)",      value: "Superstar" },
+            { name: "Star (from Normal)",          value: "Star"      },
+            { name: "Superstar (from Star)",       value: "Superstar" },
+            { name: "X-Factor (from Superstar)",   value: "X-Factor"  },
           )
       )
       .addUserOption(opt =>

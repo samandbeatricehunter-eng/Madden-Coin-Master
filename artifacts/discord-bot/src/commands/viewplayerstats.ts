@@ -40,7 +40,7 @@ function isNfc(fullName: string, nickName: string): boolean {
 }
 
 const DEV_LABEL: Record<number, string> = {
-  0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
+  0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor",
 };
 
 // Ordered position groups for a clean dropdown display
