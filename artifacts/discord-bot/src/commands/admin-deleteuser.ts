@@ -43,7 +43,7 @@ import {
   teamSeasonStatsTable,
   playerSeasonStatsTable,
 } from "@workspace/db";
-import { eq, or } from "drizzle-orm";
+import { eq, or, and, inArray } from "drizzle-orm";
 
 // ── Category labels shown in the preview / summary ─────────────────────────────
 const CATEGORY_LABELS: Record<string, string> = {
@@ -75,7 +75,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     custom_players: interaction.options.getBoolean("del_custom_players") ?? true,
   };
 
-  const discordId = targetUser.id;
+  const transferTo = interaction.options.getUser("transfer_to") ?? null;
+  const discordId  = targetUser.id;
 
   // ── Look up the user ────────────────────────────────────────────────────────
   const [existing] = await db

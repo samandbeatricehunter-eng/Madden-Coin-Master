@@ -9,6 +9,7 @@ import {
   loadEAConnection,
   fetchWeeklyStats,
   fetchAwardsData,
+  fetchScheduleForWeek,
   updateStoredToken,
   refreshTokenIfNeeded,
   type WeeklyExportData,
@@ -83,14 +84,34 @@ export const data = new SlashCommandBuilder()
           .setMinValue(1)
           .setMaxValue(18),
       ),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName("full-schedule")
+      .setDescription("Fetch all 18 weeks of matchups from EA and populate the full season schedule table")
+      .addIntegerOption((o) =>
+        o
+          .setName("weeks")
+          .setDescription("How many weeks to fetch (default: 18)")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(18),
+      ),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName("check-api")
+      .setDescription("Verify that the bot can reach the API server (use when MCA exports seem to fail silently)"),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand(true);
-  if (sub === "week")      return handleWeek(interaction);
-  if (sub === "playoffs")  return handlePlayoffs(interaction);
-  if (sub === "awards")    return handleAwards(interaction);
-  if (sub === "standings") return handleStandings(interaction);
+  if (sub === "week")          return handleWeek(interaction);
+  if (sub === "playoffs")      return handlePlayoffs(interaction);
+  if (sub === "awards")        return handleAwards(interaction);
+  if (sub === "standings")     return handleStandings(interaction);
+  if (sub === "full-schedule") return handleFullSchedule(interaction);
+  if (sub === "check-api")     return handleCheckApi(interaction);
 }
 
 // ── Build API base URL ────────────────────────────────────────────────────────
@@ -369,4 +390,123 @@ async function handleAwards(interaction: ChatInputCommandInteraction): Promise<v
     .setTimestamp();
 
   await interaction.editReply({ content: "", embeds: [embed] });
+}
+
+// ── /admin_ea_export full-schedule ────────────────────────────────────────────
+// Fetches schedule data for every regular-season week from EA and posts each one
+// to /week/reg/N/schedules. This populates the franchise_schedule table for the
+// whole season without needing an MCA "full export" from the companion app.
+async function handleFullSchedule(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const conn = await loadEAConnection();
+  if (!conn) {
+    await interaction.editReply({ content: "❌ **No EA connection.** Run `/admin_ea_connect start` first." });
+    return;
+  }
+
+  const { token, eaLeagueId } = conn;
+  const totalWeeks = interaction.options.getInteger("weeks") ?? 18;
+  const apiBase    = getApiBase();
+  const key        = getWebhookKey();
+  const platform   = token.platform;
+
+  await interaction.editReply({ content: `⏳ Fetching schedule for weeks 1–${totalWeeks} from EA...` });
+
+  const results: Array<{ week: number; ok: boolean; status: number }> = [];
+
+  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
+    try {
+      const scheduleData = await fetchScheduleForWeek(token, eaLeagueId, weekNum - 1, 1);
+      const weekUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${weekNum}/schedules`;
+      const res     = await postToApiServer(weekUrl, scheduleData);
+      results.push({ week: weekNum, ...res });
+    } catch (err: any) {
+      console.error(`[ea-export/full-schedule] Week ${weekNum} error:`, err);
+      results.push({ week: weekNum, ok: false, status: 0 });
+    }
+
+    // Update progress every 3 weeks so the admin can see it's working
+    if (weekNum % 3 === 0 || weekNum === totalWeeks) {
+      await interaction.editReply({ content: `⏳ Fetched ${weekNum}/${totalWeeks} weeks...` });
+    }
+  }
+
+  try {
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
+  } catch {}
+
+  const succeeded = results.filter(r => r.ok).length;
+  const failed    = results.filter(r => !r.ok);
+  const lines     = results.map(r =>
+    r.ok ? `✅ Week ${r.week}` : `❌ Week ${r.week} (HTTP ${r.status})`
+  );
+
+  const schedEmbed = new EmbedBuilder()
+    .setColor(failed.length === 0 ? Colors.Green : succeeded > 0 ? Colors.Yellow : Colors.Red)
+    .setTitle(`📅 Full Season Schedule — EA Export`)
+    .setDescription(lines.join("\n"))
+    .addFields({
+      name:  "Result",
+      value: failed.length === 0
+        ? `✅ All ${totalWeeks} weeks synced — run \`/seasonschedule\` to confirm`
+        : `⚠️ ${succeeded}/${totalWeeks} weeks succeeded`,
+    })
+    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()}` })
+    .setTimestamp();
+
+  await interaction.editReply({ content: "", embeds: [schedEmbed] });
+}
+
+// ── /admin_ea_export check-api ────────────────────────────────────────────────
+// POSTs a health check to the API server to verify the webhook key and URL are
+// correct. Shows the exact webhook base URL so you can verify it matches MCA.
+async function handleCheckApi(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  let apiBase: string;
+  let key: string;
+  try {
+    apiBase = getApiBase();
+    key     = getWebhookKey();
+  } catch (err: any) {
+    await interaction.editReply({ content: `❌ Config error: ${err.message}` });
+    return;
+  }
+
+  const healthUrl = `${apiBase}/health`;
+  let httpStatus  = 0;
+  let ok          = false;
+  try {
+    const res = await axios.get(healthUrl, { timeout: 10_000, validateStatus: () => true });
+    httpStatus = res.status;
+    ok         = res.status >= 200 && res.status < 300;
+  } catch (err: any) {
+    console.error("[ea-export/check-api] Health check error:", err?.message);
+  }
+
+  const conn     = await loadEAConnection();
+  const platform = conn?.token.platform ?? "<platform>";
+  const leagueId = conn?.eaLeagueId     ?? "<leagueId>";
+  const mcaBase  = `${apiBase}/madden/${key}/${platform}/${leagueId}`;
+
+  const lines = [
+    `**API health:** ${ok ? `✅ HTTP ${httpStatus}` : `❌ HTTP ${httpStatus || "no response"}`}`,
+    "",
+    "**Webhook base URL** (must match what's set in the MCA app):",
+    `\`${mcaBase}\``,
+    "",
+    ok
+      ? "The API server is reachable. If MCA exports still fail, verify the URL above matches your MCA app's webhook settings exactly."
+      : "❌ API server is not responding. Make sure the API Server workflow is running.",
+  ];
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(ok ? Colors.Green : Colors.Red)
+      .setTitle("🔌 API Connection Check")
+      .setDescription(lines.join("\n"))
+      .setTimestamp()],
+  });
 }

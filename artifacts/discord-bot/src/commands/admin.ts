@@ -264,6 +264,7 @@ export const data = new SlashCommandBuilder()
     .addBooleanOption(o => o.setName("del_interviews").setDescription("Delete interview requests (default: true)").setRequired(false))
     .addBooleanOption(o => o.setName("del_franchise_data").setDescription("Delete franchise MCA mapping, team stats & player stats (default: true)").setRequired(false))
     .addBooleanOption(o => o.setName("del_custom_players").setDescription("Delete custom player builds (default: true)").setRequired(false))
+    .addUserOption(o => o.setName("transfer_to").setDescription("Transfer legends & applied custom players to this user instead of deleting them").setRequired(false))
   );
 
 // ── Execute router ─────────────────────────────────────────────────────────────

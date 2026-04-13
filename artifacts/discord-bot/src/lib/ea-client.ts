@@ -468,6 +468,19 @@ export async function fetchAwardsData(
   return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.awards!, { leagueId: eaLeagueId });
 }
 
+// ── Fetch ONLY schedule data for a specific week (no stats) ───────────────────
+export async function fetchScheduleForWeek(
+  token:       TokenInfo,
+  eaLeagueId:  number,
+  weekIndex:   number,   // 0-based
+  stageIndex:  number,   // 0=preseason, 1=regular/playoffs
+): Promise<unknown> {
+  const refreshed = await refreshTokenIfNeeded(token);
+  const session   = await createBlazeSession(refreshed);
+  const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
+  return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!, body);
+}
+
 // ── DB operations ─────────────────────────────────────────────────────────────
 export async function saveEAConnection(opts: {
   eaLeagueId:  number;

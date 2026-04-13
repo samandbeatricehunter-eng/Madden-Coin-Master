@@ -133,7 +133,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const unlinked = allUsers.filter(u => !u.team);
 
     const linkedLines = linked.map(u =>
-      `🏈 **${u.team}** → <@${u.discordId}> (${u.discordUsername}) | ${u.allTimeH2HWins}W · tier ${u.milestoneTier}`
+      `🏈 **${u.team}** → <@${u.discordId}> (${u.discordUsername}) | ${u.allTimeH2HWins}W all-time · tier ${u.milestoneTier}`
     );
     const unlinkedLines = unlinked.map(u =>
       `❓ <@${u.discordId}> (${u.discordUsername}) — no team assigned`
