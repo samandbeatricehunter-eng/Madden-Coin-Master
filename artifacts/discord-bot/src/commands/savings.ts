@@ -35,10 +35,6 @@ export const data = new SlashCommandBuilder()
   .setName("savings")
   .setDescription("Manage your global savings account — accessible from any league server")
   .addSubcommand(sub =>
-    sub.setName("balance")
-      .setDescription("View your wallet and savings balances, plus the current interest rate")
-  )
-  .addSubcommand(sub =>
     sub.setName("deposit")
       .setDescription("Move coins from your league wallet into your global savings account")
       .addIntegerOption(o =>
@@ -93,7 +89,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  if (sub === "balance")  return handleBalance(interaction);
   if (sub === "deposit")  return handleDeposit(interaction);
   if (sub === "withdraw") return handleWithdraw(interaction);
 }

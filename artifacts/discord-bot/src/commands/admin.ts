@@ -20,6 +20,7 @@ import * as adminGotw                from "./admin-gotw.js";
 import * as adminPotw                from "./admin-potw.js";
 import * as adminServer              from "./adminserver.js";
 import * as adminDeleteUser         from "./admin-deleteuser.js";
+import { executeFranchiseLimit, executeFranchiseReset } from "./admin-season.js";
 import { PAYOUT_KEYS }               from "../lib/payout-config.js";
 import { STAT_CATEGORY_CHOICES }     from "../lib/stat-categories.js";
 import { ALL_POSITIONS }             from "../lib/custom-player-helpers.js";
@@ -228,6 +229,26 @@ export const data = new SlashCommandBuilder()
     .setName("server_bot_settings")
     .setDescription("Toggle server features on/off (coin economy, store items, wagers, trade block)")
   )
+  .addSubcommand(s => s
+    .setName("server_franchise_limit")
+    .setDescription("Set the maximum number of seasons allowed in this franchise (1–50)")
+    .addIntegerOption(o => o
+      .setName("limit")
+      .setDescription("Max seasons (1–50)")
+      .setRequired(true)
+      .setMinValue(1)
+      .setMaxValue(50)
+    )
+  )
+  .addSubcommand(s => s
+    .setName("server_franchise_reset")
+    .setDescription("⚠️ END-OF-FRANCHISE RESET: returns all legends to store, resets all coins, restarts at Season 1")
+    .addBooleanOption(o => o
+      .setName("confirm")
+      .setDescription("Set to True to confirm this irreversible action")
+      .setRequired(true)
+    )
+  )
 
   // ── user management ─────────────────────────────────────────────────────────
   .addSubcommand(s => s
@@ -275,6 +296,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "payout_gotw")              return adminGotw.execute(interaction);
   if (sub === "payout_potw")              return adminPotw.execute(interaction);
   if (sub === "server_bot_settings")      return adminServer.execute(interaction);
+  if (sub === "server_franchise_limit")   return executeFranchiseLimit(interaction);
+  if (sub === "server_franchise_reset")   return executeFranchiseReset(interaction);
   if (sub === "user_delete")              return adminDeleteUser.execute(interaction);
 
   await interaction.deferReply({ ephemeral: true });

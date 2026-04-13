@@ -31,7 +31,6 @@ import * as interviewrequest from "./commands/interviewrequest.js";
 import * as advanceweek      from "./commands/advanceweek.js";
 import * as statleaders      from "./commands/statleaders.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
-import * as purchasecustomplayer from "./commands/purchasecustomplayer.js";
 import * as viewFreeAgents   from "./commands/viewfreeagents.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
@@ -43,15 +42,12 @@ import * as adminCancelResendEos     from "./commands/admin-cancel-resend-eos.js
 import * as adminRebuildHistorical   from "./commands/admin-rebuild-historical.js";
 import * as draftPresence            from "./commands/draft-presence.js";
 import * as adminPlayoffs            from "./commands/admin-playoffs.js";
-import * as adminGotw                from "./commands/admin-gotw.js";
-import * as adminPotw                from "./commands/admin-potw.js";
 import * as adminResendArticle       from "./commands/admin-resendarticle.js";
 import * as adminCatchup             from "./commands/admin-catchup.js";
 import * as adminManualScore         from "./commands/admin-manualscore.js";
 import * as adminPostFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
 import * as adminRollbackFranchise   from "./commands/admin-rollback-franchise.js";
 import * as endofseasonpayout        from "./commands/endofseasonpayout.js";
-import * as adminTransactions        from "./commands/admin-transactions.js";
 import * as adminSetPayouts          from "./commands/admin-setpayouts.js";
 import * as adminSetStatTiers        from "./commands/admin-set-stat-tiers.js";
 import * as adminStatTiers           from "./commands/admin-stat-tiers.js";
@@ -85,14 +81,14 @@ const commands = [
   seasonschedule, nextschedule, nextopp, myRoster, savings, weeklyMatchups,
   standings, tradeBlock, h2hrecord, customarticle, webhookurl,
   viewPayoutTiers, interviewrequest,
-  advanceweek, statleaders, availableupgrades, purchasecustomplayer, viewFreeAgents,
+  advanceweek, statleaders, availableupgrades, viewFreeAgents,
 
   // Admin tools
   adminEosTestrun, adminStatReimport, adminEaConnect, adminEaExport,
   adminCancelResendEos, adminRebuildHistorical, draftPresence,
-  adminPlayoffs, adminGotw, adminPotw, adminResendArticle,
+  adminPlayoffs, adminResendArticle,
   adminCatchup, adminManualScore, adminPostFullSeasonSchedule, adminRollbackFranchise,
-  endofseasonpayout, adminTransactions, adminSetPayouts,
+  endofseasonpayout, adminSetPayouts,
   adminSetStatTiers, adminStatTiers, adminSetMilestoneTier,
   adminLegendVault, adminCustomArcetypes, adminCustomPlayerSettings, adminFixPlayerNames,
   adminEosReapprove, adminSeason,

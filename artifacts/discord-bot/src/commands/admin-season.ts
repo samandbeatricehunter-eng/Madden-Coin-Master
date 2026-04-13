@@ -152,17 +152,6 @@ export const data = new SlashCommandBuilder()
       )
   )
   .addSubcommand(sub =>
-    sub.setName("franchise-limit")
-      .setDescription("Set the maximum number of seasons allowed in this franchise (1–50)")
-      .addIntegerOption(opt =>
-        opt.setName("limit")
-          .setDescription("Max seasons (1–50)")
-          .setRequired(true)
-          .setMinValue(1)
-          .setMaxValue(50)
-      )
-  )
-  .addSubcommand(sub =>
     sub.setName("status")
       .setDescription("View the current season info")
   )
@@ -171,21 +160,6 @@ export const data = new SlashCommandBuilder()
       .setDescription("Add coins to a user's balance")
       .addUserOption(opt => opt.setName("user").setDescription("The user to give coins to").setRequired(true))
       .addIntegerOption(opt => opt.setName("amount").setDescription("Amount to add").setRequired(true).setMinValue(1))
-  )
-  .addSubcommand(sub =>
-    sub.setName("setbalance")
-      .setDescription("Set a user's coin balance")
-      .addUserOption(opt => opt.setName("user").setDescription("The user").setRequired(true))
-      .addIntegerOption(opt => opt.setName("amount").setDescription("New balance").setRequired(true).setMinValue(0))
-  )
-  .addSubcommand(sub =>
-    sub.setName("franchise-reset")
-      .setDescription("⚠️ END-OF-FRANCHISE RESET: returns all legends to store, resets all coins, restarts at Season 1")
-      .addBooleanOption(o =>
-        o.setName("confirm")
-          .setDescription("Set to True to confirm this irreversible action")
-          .setRequired(true)
-      )
   )
   .addSubcommand(sub =>
     sub.setName("set_limits")
@@ -406,123 +380,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return interaction.editReply({ embeds: [embed] });
   }
 
-  if (sub === "length") {
-    const limit = interaction.options.getInteger("limit", true);
-    const [settings] = await db.select().from(serverSettingsTable).limit(1);
-    if (settings) {
-      await db.update(serverSettingsTable)
-        .set({ maxSeasons: limit, updatedAt: new Date() })
-        .where(eq(serverSettingsTable.id, settings.id));
-    } else {
-      await db.insert(serverSettingsTable).values({ maxSeasons: limit });
-    }
-    const [current] = await db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1);
-    const currentNum = current?.seasonNumber ?? 0;
-    return interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Franchise Season Limit Updated")
-          .addFields(
-            { name: "Max Seasons",    value: `**${limit}**`,      inline: true },
-            { name: "Current Season", value: `**${currentNum}**`, inline: true },
-            { name: "Seasons Left",   value: `**${Math.max(0, limit - currentNum)}**`, inline: true },
-          )
-          .setTimestamp(),
-      ],
-    });
-  }
-
-  if (sub === "reset") {
-    const confirmed = interaction.options.getBoolean("confirm", true);
-    if (!confirmed) {
-      return interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(Colors.Red)
-            .setTitle("❌ Franchise Reset Cancelled")
-            .setDescription("You must set `confirm: True` to execute the franchise reset."),
-        ],
-      });
-    }
-
-    // 1. Return ALL owned legends to the store (preserve the legends catalog itself)
-    const allLegendItems = await db.select().from(inventoryTable)
-      .where(eq(inventoryTable.itemType, "legend"));
-
-    for (const item of allLegendItems) {
-      if (item.legendId) {
-        await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, item.legendId));
-      }
-    }
-
-    // 2. Clear all inventory (upgrades, legends, custom players)
-    await db.delete(inventoryTable);
-
-    // 3. Clear all season W/L records
-    await db.delete(userRecordsTable);
-
-    // 4. Clear all per-season upgrade purchase counts
-    await db.delete(seasonStatsTable);
-
-    // 5. Clear the game log (individual match history)
-    await db.delete(gameLogTable);
-
-    // 6. Reset user balances and season-specific fields
-    //    Preserve: allTimeH2HWins, allTimeH2HLosses, allTimeSuperbowlWins, milestoneTierAwarded
-    await db.update(usersTable).set({
-      balance: 0,
-      totalLegendPurchases: 0,
-      playoffSeed: null,
-      playoffConference: null,
-      updatedAt: new Date(),
-    });
-
-    // 7. Deactivate all seasons and restart at Season 1 (clear any overrides)
-    await db.update(seasonsTable).set({ isActive: false });
-    const existing1 = await db.select().from(seasonsTable).where(eq(seasonsTable.seasonNumber, 1)).limit(1);
-    if (existing1.length > 0) {
-      await db.update(seasonsTable).set({
-        isActive: true,
-        currentWeek: "1",
-        coreAttrCostOverride: null,
-        coreAttrCapOverride: null,
-        nonCoreAttrCostOverride: null,
-        nonCoreAttrCapOverride: null,
-        devUpsCapOverride: null,
-        devUpsCostOverride: null,
-        ageResetsCapOverride: null,
-        ageResetsCostOverride: null,
-        legendCostOverride: null,
-        customGoldCostOverride: null,
-        customSilverCostOverride: null,
-        customBronzeCostOverride: null,
-      }).where(eq(seasonsTable.seasonNumber, 1));
-    } else {
-      await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true });
-    }
-
-    return interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("🔄 Franchise Reset Complete")
-          .setDescription(
-            "The 5-year franchise cycle has ended and a new one has begun.\n\n" +
-            `• **All legends** returned to the store (catalog preserved)\n` +
-            `• **All coin balances** reset to 0\n` +
-            `• **All inventory** cleared\n` +
-            `• **All season W/L records** cleared\n` +
-            `• **All upgrade purchase counts** cleared\n` +
-            `• **Game log** cleared\n` +
-            `• **All-time records preserved** (H2H wins/losses, SB wins, milestones)\n` +
-            `• Season restarted at **Season 1**`
-          )
-          .setTimestamp(),
-      ],
-    });
-  }
-
   if (sub === "set") {
     const targetNumber = interaction.options.getInteger("number", true);
     const maxSeasons   = await getMaxSeasons();
@@ -603,30 +460,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .setColor(Colors.Green)
           .setTitle("✅ Coins Added")
           .setDescription(`Added **${amount.toLocaleString()} coins** to ${target.toString()}.`)
-          .setTimestamp(),
-      ],
-    });
-  }
-
-  if (sub === "setbalance") {
-    const target = interaction.options.getUser("user", true);
-    const newAmount = interaction.options.getInteger("amount", true);
-
-    const current = await db.select({ balance: usersTable.balance }).from(usersTable).where(eq(usersTable.discordId, target.id)).limit(1);
-    const delta = newAmount - (current[0]?.balance ?? 0);
-
-    await db.update(usersTable)
-      .set({ balance: newAmount, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, target.id));
-
-    await logTransaction(target.id, delta, "setbalance", `Balance set to ${newAmount.toLocaleString()} coins by commissioner`, interaction.user.id);
-
-    return interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Balance Set")
-          .setDescription(`Set ${target.toString()}'s balance to **${newAmount.toLocaleString()} coins**.`)
           .setTimestamp(),
       ],
     });
@@ -816,4 +649,127 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
     .slice(0, 25)
     .map(a => ({ name: a, value: a }));
   await interaction.respond(choices);
+}
+
+// ── Standalone handlers for /admin server_franchise_limit & server_franchise_reset ──
+
+export async function executeFranchiseLimit(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const limit = interaction.options.getInteger("limit", true);
+  const [settings] = await db.select().from(serverSettingsTable).limit(1);
+  if (settings) {
+    await db.update(serverSettingsTable)
+      .set({ maxSeasons: limit, updatedAt: new Date() })
+      .where(eq(serverSettingsTable.id, settings.id));
+  } else {
+    await db.insert(serverSettingsTable).values({ maxSeasons: limit });
+  }
+  const [current] = await db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(1);
+  const currentNum = current?.seasonNumber ?? 0;
+  return interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Franchise Season Limit Updated")
+        .addFields(
+          { name: "Max Seasons",    value: `**${limit}**`,                                   inline: true },
+          { name: "Current Season", value: `**${currentNum}**`,                              inline: true },
+          { name: "Seasons Left",   value: `**${Math.max(0, limit - currentNum)}**`,          inline: true },
+        )
+        .setTimestamp(),
+    ],
+  });
+}
+
+export async function executeFranchiseReset(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const confirmed = interaction.options.getBoolean("confirm", true);
+  if (!confirmed) {
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Franchise Reset Cancelled")
+          .setDescription("You must set `confirm: True` to execute the franchise reset."),
+      ],
+    });
+  }
+
+  // 1. Return ALL owned legends to the store (preserve the legends catalog itself)
+  const allLegendItems = await db.select().from(inventoryTable)
+    .where(eq(inventoryTable.itemType, "legend"));
+
+  for (const item of allLegendItems) {
+    if (item.legendId) {
+      await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, item.legendId));
+    }
+  }
+
+  // 2. Clear all inventory (upgrades, legends, custom players)
+  await db.delete(inventoryTable);
+
+  // 3. Clear all season W/L records
+  await db.delete(userRecordsTable);
+
+  // 4. Clear all per-season upgrade purchase counts
+  await db.delete(seasonStatsTable);
+
+  // 5. Clear the game log (individual match history)
+  await db.delete(gameLogTable);
+
+  // 6. Reset user balances and season-specific fields
+  //    Preserve: allTimeH2HWins, allTimeH2HLosses, allTimeSuperbowlWins, milestoneTierAwarded
+  await db.update(usersTable).set({
+    balance: 0,
+    totalLegendPurchases: 0,
+    playoffSeed: null,
+    playoffConference: null,
+    updatedAt: new Date(),
+  });
+
+  // 7. Deactivate all seasons and restart at Season 1 (clear any overrides)
+  await db.update(seasonsTable).set({ isActive: false });
+  const existing1 = await db.select().from(seasonsTable).where(eq(seasonsTable.seasonNumber, 1)).limit(1);
+  if (existing1.length > 0) {
+    await db.update(seasonsTable).set({
+      isActive: true,
+      currentWeek: "1",
+      coreAttrCostOverride: null,
+      coreAttrCapOverride: null,
+      nonCoreAttrCostOverride: null,
+      nonCoreAttrCapOverride: null,
+      devUpsCapOverride: null,
+      devUpsCostOverride: null,
+      ageResetsCapOverride: null,
+      ageResetsCostOverride: null,
+      legendCostOverride: null,
+      customGoldCostOverride: null,
+      customSilverCostOverride: null,
+      customBronzeCostOverride: null,
+    }).where(eq(seasonsTable.seasonNumber, 1));
+  } else {
+    await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true });
+  }
+
+  return interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("🔄 Franchise Reset Complete")
+        .setDescription(
+          "The franchise cycle has ended and a new one has begun.\n\n" +
+          `• **All legends** returned to the store (catalog preserved)\n` +
+          `• **All coin balances** reset to 0\n` +
+          `• **All inventory** cleared\n` +
+          `• **All season W/L records** cleared\n` +
+          `• **All upgrade purchase counts** cleared\n` +
+          `• **Game log** cleared\n` +
+          `• **All-time records preserved** (H2H wins/losses, SB wins, milestones)\n` +
+          `• Season restarted at **Season 1**`
+        )
+        .setTimestamp(),
+    ],
+  });
 }
