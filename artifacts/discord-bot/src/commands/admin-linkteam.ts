@@ -4,9 +4,10 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  usersTable, franchiseMcaTeamsTable, franchiseRostersTable, seasonsTable,
+  usersTable, franchiseMcaTeamsTable, franchiseRostersTable,
+  playerSeasonStatsTable, seasonsTable,
 } from "@workspace/db";
-import { eq, and, or, ilike, isNotNull } from "drizzle-orm";
+import { eq, and, or, ilike, isNotNull, sql } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
@@ -43,9 +44,13 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 }
 
 // ── Helper: cascade a single discordId to franchise_mca_teams + franchise_rosters ──
-async function cascadeDiscordId(seasonId: number, teamName: string, discordId: string): Promise<number> {
+// Falls back to franchise_rosters if the team has no MCA entry (e.g. was deleted
+// when a previous owner was kicked), and auto-creates the missing MCA row.
+async function cascadeDiscordId(seasonId: number, teamName: string, discordId: string): Promise<{ rosterRows: number; note?: string }> {
   const teamSearch = teamName.trim();
-  const mcaTeams = await db
+
+  // 1. Try MCA teams first (normal path)
+  let mcaTeamIds = await db
     .select({ teamId: franchiseMcaTeamsTable.teamId })
     .from(franchiseMcaTeamsTable)
     .where(and(
@@ -56,10 +61,41 @@ async function cascadeDiscordId(seasonId: number, teamName: string, discordId: s
       ),
     ));
 
-  if (mcaTeams.length === 0) return 0;
+  let note: string | undefined;
+
+  // 2. Fallback: search franchise_rosters by team_name if MCA has no entry.
+  //    This handles teams whose MCA row was wiped when a previous owner was removed.
+  if (mcaTeamIds.length === 0) {
+    const rosterTeams = await db
+      .selectDistinct({ teamId: franchiseRostersTable.teamId, teamName: franchiseRostersTable.teamName })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, seasonId),
+        or(
+          ilike(franchiseRostersTable.teamName, `%${teamSearch}%`),
+        ),
+      ));
+
+    if (rosterTeams.length > 0) {
+      // Auto-create the missing MCA entry so future imports work correctly
+      for (const { teamId, teamName: fullName } of rosterTeams) {
+        const nick = fullName.split(" ").pop() ?? fullName;
+        await db.insert(franchiseMcaTeamsTable)
+          .values({ seasonId, teamId, fullName, nickName: nick, userName: teamSearch, isHuman: true, discordId, updatedAt: new Date() })
+          .onConflictDoUpdate({
+            target: [franchiseMcaTeamsTable.seasonId, franchiseMcaTeamsTable.teamId],
+            set: { discordId, isHuman: true, updatedAt: new Date() },
+          });
+      }
+      mcaTeamIds = rosterTeams.map(r => ({ teamId: r.teamId }));
+      note = `Auto-created ${rosterTeams.length} missing MCA team entry(s) from roster data.`;
+    }
+  }
+
+  if (mcaTeamIds.length === 0) return { rosterRows: 0 };
 
   let rosterRowsUpdated = 0;
-  for (const { teamId } of mcaTeams) {
+  for (const { teamId } of mcaTeamIds) {
     await db.update(franchiseMcaTeamsTable)
       .set({ discordId, isHuman: true, updatedAt: new Date() })
       .where(and(
@@ -74,7 +110,7 @@ async function cascadeDiscordId(seasonId: number, teamName: string, discordId: s
       ));
     rosterRowsUpdated += (result as any).rowCount ?? 0;
   }
-  return rosterRowsUpdated;
+  return { rosterRows: rosterRowsUpdated, note };
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -183,13 +219,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     for (const { discordId, team } of usersWithTeams) {
       if (!team) continue;
-      const rosterRows = await cascadeDiscordId(season.id, team, discordId);
-      if (rosterRows > 0 || true) {
-        totalLinked++;
-        totalRosterRows += rosterRows;
-        results.push(`• **${team}** → <@${discordId}> (${rosterRows} roster rows updated)`);
-      }
+      const { rosterRows, note } = await cascadeDiscordId(season.id, team, discordId);
+      totalLinked++;
+      totalRosterRows += rosterRows;
+      const noteSuffix = note ? ` *(${note})*` : "";
+      results.push(`• **${team}** → <@${discordId}> (${rosterRows} roster rows)${noteSuffix}`);
     }
+
+    // ── Also cascade discord_ids into player_season_stats ────────────────────
+    // Stats are imported before carryforward runs, leaving discord_id = NULL.
+    // Fix that now by joining player_season_stats ↔ franchise_mca_teams on team_id.
+    const statFixResult = await db.execute(sql`
+      UPDATE player_season_stats pss
+      SET    discord_id = mca.discord_id
+      FROM   franchise_mca_teams mca
+      WHERE  pss.season_id  = ${season.id}
+        AND  pss.team_id    = mca.team_id
+        AND  mca.season_id  = ${season.id}
+        AND  mca.discord_id IS NOT NULL
+        AND  (pss.discord_id IS NULL OR pss.discord_id != mca.discord_id)
+    `);
+    const statRowsFixed = (statFixResult as any).rowCount ?? (statFixResult as any).length ?? 0;
 
     return interaction.editReply({
       embeds: [new EmbedBuilder()
@@ -197,11 +247,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setTitle("✅ Relink Complete")
         .setDescription(
           `Processed **${totalLinked}** team(s) for season ${season.id}.\n` +
-          `Updated **${totalRosterRows}** total roster rows.\n\n` +
+          `Updated **${totalRosterRows}** roster rows.\n` +
+          `Fixed **${statRowsFixed}** player stat row(s) with null discord_id.\n\n` +
           results.slice(0, 20).join("\n") +
           (results.length > 20 ? `\n…and ${results.length - 20} more` : "")
         )
-        .setFooter({ text: "If roster rows = 0, MCA rosters haven't been imported yet. Re-export from MCA." })
+        .setFooter({ text: "If roster rows = 0, run EA export now (carryforward must run first)." })
         .setTimestamp()],
     });
   }
@@ -262,9 +313,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   let rosterInfo = "";
   if (season) {
-    const rosterRows = await cascadeDiscordId(season.id, teamName, targetUser.id);
+    const { rosterRows, note } = await cascadeDiscordId(season.id, teamName, targetUser.id);
+    const notePart = note ? `\nℹ️ ${note}` : "";
     rosterInfo = rosterRows > 0
-      ? `\n✅ ${rosterRows} roster row(s) linked to this user.`
+      ? `\n✅ ${rosterRows} roster row(s) linked to this user.${notePart}`
       : "\n⚠️ No roster rows found — MCA rosters may not have been imported yet. Import /leagueteams and roster from MCA, or run `/admin-linkteam relink` after importing.";
   }
 

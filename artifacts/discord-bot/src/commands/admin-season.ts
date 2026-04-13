@@ -3,7 +3,7 @@ import {
   PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable, serverSettingsTable, customPlayersTable, franchiseMcaTeamsTable, franchiseRostersTable } from "@workspace/db";
+import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable, serverSettingsTable, customPlayersTable, franchiseMcaTeamsTable, franchiseRostersTable, playerStatWeekProcessedTable, playerSeasonStatsTable } from "@workspace/db";
 import { eq, and, sql, ne } from "drizzle-orm";
 import { logTransaction } from "../lib/db-helpers.js";
 import { ATTRIBUTES } from "../lib/constants.js";
@@ -269,6 +269,14 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub =>
     sub.setName("carryforward")
       .setDescription("Manually copy team links + roster data from the previous season into the current season"),
+  )
+  .addSubcommand(sub =>
+    sub.setName("resetweekstats")
+      .setDescription("Clear stat dedup records + player season stats so EA export can re-import them fresh")
+      .addBooleanOption(o => o
+        .setName("confirm")
+        .setDescription("Must be True to execute — this wipes all player season stats for the active season")
+        .setRequired(true)),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -731,6 +739,51 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             `All roster commands will now work. MCA will overwrite with fresh data on next import.`
           ),
       ],
+    });
+  }
+
+  // ── /season resetweekstats ────────────────────────────────────────────────
+  if (sub === "resetweekstats") {
+    const confirmed = interaction.options.getBoolean("confirm") ?? false;
+    if (!confirmed) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Orange)
+          .setTitle("⚠️ Confirm Reset")
+          .setDescription(
+            "This will **delete all player season stats** and **clear the weekly dedup records** for the active season.\n\n" +
+            "Run this when stats were imported before carryforward (causing all discord_ids to be NULL). " +
+            "After this, run a fresh EA export and then `/admin-linkteam relink`.\n\n" +
+            "Re-run with `confirm: True` to proceed."
+          )],
+      });
+    }
+
+    const [activeSeason] = await db.select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
+      .from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+    if (!activeSeason) return interaction.editReply({ content: "❌ No active season found." });
+
+    const [deletedStats] = await Promise.all([
+      db.delete(playerSeasonStatsTable)
+        .where(eq(playerSeasonStatsTable.seasonId, activeSeason.id))
+        .returning({ id: playerSeasonStatsTable.id }),
+      db.delete(playerStatWeekProcessedTable)
+        .where(eq(playerStatWeekProcessedTable.seasonId, activeSeason.id)),
+    ]);
+
+    return interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Player Stats Reset")
+        .setDescription(
+          `Season **${activeSeason.seasonNumber}** player stats cleared:\n\n` +
+          `• **${deletedStats.length}** player stat rows deleted\n` +
+          `• Weekly dedup records cleared\n\n` +
+          `**Next steps:**\n` +
+          `1. Run a full EA export from MCA\n` +
+          `2. Run \`/admin-linkteam relink\` to fix any remaining null discord_ids`
+        )
+        .setTimestamp()],
     });
   }
 

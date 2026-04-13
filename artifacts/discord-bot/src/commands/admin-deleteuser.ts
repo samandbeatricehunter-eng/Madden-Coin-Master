@@ -39,6 +39,7 @@ import {
   pendingChannelPayoutsTable,
   pendingEosPayoutsTable,
   franchiseMcaTeamsTable,
+  franchiseRostersTable,
   teamSeasonStatsTable,
   playerSeasonStatsTable,
 } from "@workspace/db";
@@ -184,7 +185,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   if (flags.franchise_data) {
-    await del("franchise_mca",     db.delete(franchiseMcaTeamsTable) .where(eq(franchiseMcaTeamsTable.discordId,  discordId)).returning({ id: franchiseMcaTeamsTable.id }));
+    // Clear the discord link on MCA teams (set to CPU) rather than deleting the row —
+    // the team still exists in Madden; we just unlink the owner.
+    const mcaRows = await db.update(franchiseMcaTeamsTable)
+      .set({ discordId: null, isHuman: false, updatedAt: new Date() })
+      .where(eq(franchiseMcaTeamsTable.discordId, discordId))
+      .returning({ id: franchiseMcaTeamsTable.id });
+    counts["franchise_mca"] = mcaRows.length;
+
+    // Null out discord_id on all roster rows owned by this player
+    const rosterResult = await db.update(franchiseRostersTable)
+      .set({ discordId: null })
+      .where(eq(franchiseRostersTable.discordId, discordId))
+      .returning({ id: franchiseRostersTable.id });
+    counts["franchise_rosters"] = rosterResult.length;
+
     await del("team_season_stats", db.delete(teamSeasonStatsTable)   .where(eq(teamSeasonStatsTable.discordId,    discordId)).returning({ id: teamSeasonStatsTable.id }));
     await del("player_stats",      db.delete(playerSeasonStatsTable) .where(eq(playerSeasonStatsTable.discordId, discordId)).returning({ id: playerSeasonStatsTable.id }));
   } else {
