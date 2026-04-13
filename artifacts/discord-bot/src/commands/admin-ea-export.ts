@@ -301,41 +301,56 @@ async function exportWeek(
   const schedRes = await postToApiServer(`${weekBase}/schedules`, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
 
-  // ── Week 1 of regular season: also push schedule to the full-season endpoint ──
-  // EA embeds a weekIndex field on every game in the payload. The full-season
-  // /schedules processor reads those weekIndex values, so if EA includes all 18
-  // weeks in the one response they will all be slotted correctly without extra
-  // calls. The per-week endpoint above only assigns everything to week 1.
+  // ── Week 1 of regular season: fetch all 18 weeks from EA and populate schedule ──
+  // EA's weekly export only returns the 16 games for the requested week (all with
+  // weekIndex=0 for week 1). To populate the full season we must call EA once per
+  // week (18 calls). Week 1 is already fetched above; weeks 2–18 are fetched here.
   let fullScheduleNote = "";
   if (weekNum === 1 && weekType === "reg") {
-    await interaction.editReply({ content: `⏳ Populating full season schedule from Week 1 export...` });
+    const TOTAL_WEEKS = 18;
+    await interaction.editReply({ content: `⏳ Fetching full season schedule from EA (18 weeks)...` });
 
-    const fullSchedUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/schedules`;
-    const fullSchedRes = await postToApiServer(fullSchedUrl, stats.schedules);
+    const schedResults: Array<{ week: number; ok: boolean; status: number }> = [];
 
-    if (fullSchedRes.ok) {
-      // Try to post the schedule embed to the schedule channel
+    for (let wk = 1; wk <= TOTAL_WEEKS; wk++) {
       try {
-        const season = await getOrCreateActiveSeason();
-        const postedWeeks = await postFullSeasonScheduleToChannel(
-          interaction.client,
-          season.id,
-          season.seasonNumber ?? season.id,
-        );
-        if (postedWeeks > 0) {
-          fullScheduleNote = `✅ Full season schedule parsed & posted to <#${SCHEDULE_CHANNEL_ID}> (${postedWeeks} weeks)`;
-        } else {
-          fullScheduleNote = `⚠️ Schedule synced to DB but no weeks found — run \`/postfullseasonschedule\` manually`;
-        }
+        const schedData = await fetchScheduleForWeek(token, eaLeagueId, wk - 1, 1);
+        const wkUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${wk}/schedules`;
+        const res   = await postToApiServer(wkUrl, schedData);
+        schedResults.push({ week: wk, ...res });
       } catch (err: any) {
-        console.error("[ea-export/week1] Schedule channel post error:", err);
-        fullScheduleNote = `⚠️ Schedule synced to DB but channel post failed — run \`/postfullseasonschedule\` manually`;
+        console.error(`[ea-export/week1-full-sched] Week ${wk} error:`, err);
+        schedResults.push({ week: wk, ok: false, status: 0 });
       }
-    } else {
-      fullScheduleNote = `⚠️ Full-season schedule sync failed (HTTP ${fullSchedRes.status}) — run \`/admin_ea_export full-schedule\` if weeks 2-18 are missing`;
+
+      // Progress update every 6 weeks
+      if (wk % 6 === 0) {
+        await interaction.editReply({ content: `⏳ Full season schedule: fetched ${wk}/${TOTAL_WEEKS} weeks...` });
+      }
     }
 
-    results.push({ name: "full-season schedules", ...fullSchedRes });
+    const schedOk     = schedResults.filter(r => r.ok).length;
+    const schedFailed = schedResults.filter(r => !r.ok).length;
+
+    results.push({ name: `full-season schedule (${schedOk}/${TOTAL_WEEKS} weeks)`, ok: schedFailed === 0, status: schedFailed === 0 ? 200 : 207 });
+
+    // Post the populated schedule to the channel
+    try {
+      const season = await getOrCreateActiveSeason();
+      const postedWeeks = await postFullSeasonScheduleToChannel(
+        interaction.client,
+        season.id,
+        season.seasonNumber ?? season.id,
+      );
+      if (postedWeeks > 0) {
+        fullScheduleNote = `✅ ${schedOk}/${TOTAL_WEEKS} weeks fetched from EA · posted to <#${SCHEDULE_CHANNEL_ID}>`;
+      } else {
+        fullScheduleNote = `⚠️ ${schedOk}/${TOTAL_WEEKS} weeks fetched from EA · channel post returned 0 weeks — run \`/postfullseasonschedule\` manually`;
+      }
+    } catch (err: any) {
+      console.error("[ea-export/week1] Schedule channel post error:", err);
+      fullScheduleNote = `⚠️ ${schedOk}/${TOTAL_WEEKS} weeks fetched from EA · channel post failed — run \`/postfullseasonschedule\` manually`;
+    }
   }
 
   // Build combined result embed
