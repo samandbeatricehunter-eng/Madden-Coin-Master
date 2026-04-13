@@ -3,258 +3,178 @@ import {
   ChatInputCommandInteraction,
   AutocompleteInteraction,
   EmbedBuilder,
-  Colors,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, asc, desc, ilike, or } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
-// ── Dev trait label ───────────────────────────────────────────────────────────
+// ── Portrait URL ───────────────────────────────────────────────────────────────
+// EA's Madden 26 player portrait CDN. Discord's proxy fetches these fine even
+// though direct server-side requests get 403'd by EA's CDN.
+function portraitUrl(playerId: number): string {
+  return `https://madden-assets-cdn.pulse.ea.com/madden26/portraits/64/${playerId}.png`;
+}
 
+// ── Dev trait label ────────────────────────────────────────────────────────────
 function devLabel(trait: number): string {
-  if (trait >= 3) return "⚡ X-Factor";
+  if (trait >= 4) return "⚡ X-Factor";
+  if (trait === 3) return "⚡ X-Factor";
   if (trait === 2) return "★★★ Superstar";
   if (trait === 1) return "★★ Star";
   return "Normal";
 }
 
-// ── Bio field helpers ─────────────────────────────────────────────────────────
-
+// ── Bio helpers ────────────────────────────────────────────────────────────────
 function fmtHeight(raw: unknown): string | null {
   const inches = Number(raw);
   if (!raw || isNaN(inches) || inches <= 0) return null;
   return `${Math.floor(inches / 12)}'${inches % 12}"`;
 }
-
 function fmtWeight(raw: unknown): string | null {
   const lbs = Number(raw);
   if (!raw || isNaN(lbs) || lbs <= 0) return null;
   return `${lbs} lbs`;
 }
 
-function fmtHand(raw: unknown): string | null {
-  if (raw == null) return null;
-  const s = String(raw).toLowerCase().trim();
-  if (s === "0" || s === "right" || s === "r") return "Right";
-  if (s === "1" || s === "left"  || s === "l") return "Left";
-  if (s === "" || s === "null" || s === "undefined") return null;
-  return String(raw); // pass through if export uses a different label
-}
-
-// ── All attribute label mappings (camelCase key → display name) ───────────────
-// Covers every standard Madden CFM *Rating field name variant we know of.
-
-const ATTR_LABELS: Record<string, string> = {
-  // ── Athletics (long-form + MCA short-form) ────────────────────────────────
-  speedRating:                "Speed",
-  accelerationRating:         "Acceleration",
-  accelRating:                "Acceleration",
-  agilityRating:              "Agility",
-  strengthRating:             "Strength",
-  awarenessRating:            "Awareness",
-  jumpingRating:              "Jumping",
-  jumpRating:                 "Jumping",
-  staminaRating:              "Stamina",
-  toughnessRating:            "Toughness",
-  toughRating:                "Toughness",
-  injuryRating:               "Injury",
-  changeOfDirectionRating:    "Change of Direction",
-  // ── Ball Carrier ─────────────────────────────────────────────────────────
-  carryingRating:             "Carrying",
-  carryRating:                "Carrying",
-  ballCarrierVisionRating:    "BC Vision",
-  bCVRating:                  "Ball-Carrier Vision",
-  breakTackleRating:          "Break Tackle",
-  truckingRating:             "Trucking",
-  truckRating:                "Trucking",
-  stiffArmRating:             "Stiff Arm",
-  spinMoveRating:             "Spin Move",
-  jukeMoveRating:             "Juke Move",
-  // ── Receiving ────────────────────────────────────────────────────────────
-  catchingRating:             "Catching",
-  catchRating:                "Catching",
-  catchInTrafficRating:       "Catch in Traffic",
-  cITRating:                  "Catching in Traffic",
-  specCatchRating:            "Spectacular Catch",
-  shortRouteRunningRating:    "Short Route Running",
-  routeRunShortRating:        "Short Route Running",
-  medRouteRunningRating:      "Medium Route Running",
-  routeRunMedRating:          "Medium Route Running",
-  deepRouteRunningRating:     "Deep Route Running",
-  routeRunDeepRating:         "Deep Route Running",
-  releaseRating:              "Release",
-  // ── Passing ──────────────────────────────────────────────────────────────
-  throwPowerRating:           "Throwing Power",
-  throwAccRating:             "Throw Accuracy",
-  throwAccuracyShortRating:   "Throw Accuracy - Short",
-  throwAccShortRating:        "Throw Accuracy - Short",
-  throwAccuracyMedRating:     "Throw Accuracy - Medium",
-  throwAccMidRating:          "Throw Accuracy - Medium",
-  throwAccuracyDeepRating:    "Throw Accuracy - Deep",
-  throwAccDeepRating:         "Throw Accuracy - Deep",
-  throwOnRunRating:           "Throw on the Run",
-  throwUnderPressureRating:   "Throw Under Pressure",
-  breakSackRating:            "Break Sack",
-  playActionRating:           "Play Action",
-  // ── Blocking ─────────────────────────────────────────────────────────────
-  passBlockRating:            "Pass Blocking",
-  passBlockPowerRating:       "Pass Block Power",
-  passBlockFinesseRating:     "Pass Block Finesse",
-  runBlockRating:             "Run Blocking",
-  runBlockPowerRating:        "Run Block Power",
-  runBlockFinesseRating:      "Run Block Finesse",
-  leadBlockRating:            "Lead Block",
-  impactBlockingRating:       "Impact Blocking",
-  impactBlockRating:          "Impact Blocking",
-  // ── Defense ──────────────────────────────────────────────────────────────
-  playRecognitionRating:      "Play Recognition",
-  playRecRating:              "Play Recognition",
-  tacklingRating:             "Tackling",
-  tackleRating:               "Tackling",
-  hitPowerRating:             "Hit Power",
-  blockSheddingRating:        "Block Shedding",
-  blockShedRating:            "Block Shedding",
-  finesseMovesRating:         "Finesse Moves",
-  powerMovesRating:           "Power Moves",
-  pursuitRating:              "Pursuit",
-  manCoverageRating:          "Man Coverage",
-  manCoverRating:             "Man Coverage",
-  zoneCoverageRating:         "Zone Coverage",
-  zoneCoverRating:            "Zone Coverage",
-  pressRating:                "Press",
-  // ── Special Teams ────────────────────────────────────────────────────────
-  kickReturnRating:           "Kick/Punt Return",
-  kickRetRating:              "Kick Return",
-  kickPowerRating:            "Kicking Power",
-  kickAccuracyRating:         "Kicking Accuracy",
-  kickAccRating:              "Kick Accuracy",
-  longSnapRating:             "Long Snap",
-  // ── Other (MCA misc fields that land in catch-all) ───────────────────────
-  awareRating:                "Awareness",
-  confRating:                 "Confidence",
+// ── Short attribute abbreviations (NeonSportz style) ──────────────────────────
+const SHORT: Record<string, string> = {
+  // Athletics
+  speedRating: "SPD", accelRating: "ACC", accelerationRating: "ACC",
+  agilityRating: "AGI", changeOfDirectionRating: "COD", strengthRating: "STR",
+  awarenessRating: "AWR", awareRating: "AWR", jumpingRating: "JMP", jumpRating: "JMP",
+  staminaRating: "STA", toughnessRating: "TGH", toughRating: "TGH", injuryRating: "INJ",
+  // Passing
+  throwPowerRating: "THP",
+  throwAccRating: "TAC",
+  throwAccuracyShortRating: "TAS", throwAccShortRating: "TAS",
+  throwAccuracyMedRating: "TAM",  throwAccMidRating: "TAM",
+  throwAccuracyDeepRating: "TAD", throwAccDeepRating: "TAD",
+  throwOnRunRating: "TOR", throwUnderPressureRating: "TUP",
+  breakSackRating: "BWS", playActionRating: "PAR",
+  // Ball carrier
+  carryingRating: "CAR", carryRating: "CAR",
+  bCVRating: "BCV", ballCarrierVisionRating: "BCV",
+  breakTackleRating: "BTK", truckingRating: "TRK", truckRating: "TRK",
+  stiffArmRating: "SAR", spinMoveRating: "SPM", jukeMoveRating: "JKM",
+  // Receiving
+  catchingRating: "CTH", catchRating: "CTH",
+  catchInTrafficRating: "CIT", cITRating: "CIT",
+  specCatchRating: "SPC",
+  shortRouteRunningRating: "SRR", routeRunShortRating: "SRR",
+  medRouteRunningRating: "MRR",  routeRunMedRating: "MRR",
+  deepRouteRunningRating: "DRR", routeRunDeepRating: "DRR",
+  releaseRating: "REL",
+  // Blocking
+  passBlockRating: "PBK", passBlockPowerRating: "PBP", passBlockFinesseRating: "PBF",
+  runBlockRating: "RBK", runBlockPowerRating: "RBP", runBlockFinesseRating: "RBF",
+  leadBlockRating: "LBK", impactBlockingRating: "IBK", impactBlockRating: "IBK",
+  // Defense
+  tacklingRating: "TAK", tackleRating: "TAK",
+  hitPowerRating: "HTP", pursuitRating: "PUR",
+  blockSheddingRating: "BSH", blockShedRating: "BSH",
+  finesseMovesRating: "FNM", powerMovesRating: "PWM",
+  playRecognitionRating: "PRC", playRecRating: "PRC",
+  manCoverageRating: "MCV", manCoverRating: "MCV",
+  zoneCoverageRating: "ZCV", zoneCoverRating: "ZCV",
+  pressRating: "PRS",
+  // Special teams
+  kickPowerRating: "KPW", kickAccuracyRating: "KAC", kickAccRating: "KAC",
+  kickReturnRating: "KTR", kickRetRating: "KTR",
+  longSnapRating: "LNS",
+  confRating: "CNF",
 };
 
-// ── Attribute display groups — order matches user's preferred layout ───────────
+// ── Position-specific key attribute groups ─────────────────────────────────────
+type AttrGroup = { label: string; keys: string[] };
 
-const ATTR_GROUPS: { emoji: string; label: string; keys: string[] }[] = [
-  {
-    emoji: "⚡",
-    label: "Athletics",
-    keys: [
-      "speedRating",
-      "accelerationRating", "accelRating",
-      "agilityRating",
-      "strengthRating",
-      "jumpingRating", "jumpRating",
-      "staminaRating",
-      "toughnessRating", "toughRating",
-      "injuryRating",
-      "changeOfDirectionRating",
-    ],
-  },
-  {
-    emoji: "🏃",
-    label: "Ball Carrier",
-    keys: [
-      "carryingRating", "carryRating",
-      "ballCarrierVisionRating", "bCVRating",
-      "breakTackleRating",
-      "truckingRating", "truckRating",
-      "stiffArmRating",
-      "spinMoveRating",
-      "jukeMoveRating",
-    ],
-  },
-  {
-    emoji: "🙌",
-    label: "Receiving",
-    keys: [
-      "catchingRating", "catchRating",
-      "catchInTrafficRating", "cITRating",
-      "specCatchRating",
-      "shortRouteRunningRating", "routeRunShortRating",
-      "medRouteRunningRating",   "routeRunMedRating",
-      "deepRouteRunningRating",  "routeRunDeepRating",
-      "releaseRating",
-    ],
-  },
-  {
-    emoji: "🏈",
-    label: "Passing",
-    keys: [
-      "throwPowerRating",
-      "throwAccRating",
-      "throwAccuracyShortRating", "throwAccShortRating",
-      "throwAccuracyMedRating",   "throwAccMidRating",
-      "throwAccuracyDeepRating",  "throwAccDeepRating",
-      "throwOnRunRating",
-      "throwUnderPressureRating",
-      "breakSackRating",
-      "playActionRating",
-    ],
-  },
-  {
-    emoji: "🛡️",
-    label: "Blocking",
-    keys: [
-      "passBlockRating", "passBlockPowerRating", "passBlockFinesseRating",
-      "runBlockRating",  "runBlockPowerRating",  "runBlockFinesseRating",
-      "leadBlockRating",
-      "impactBlockingRating", "impactBlockRating",
-    ],
-  },
-  {
-    emoji: "🔒",
-    label: "Defense",
-    keys: [
-      "playRecognitionRating", "playRecRating",
-      "tacklingRating", "tackleRating",
-      "hitPowerRating",
-      "blockSheddingRating", "blockShedRating",
-      "finesseMovesRating",
-      "powerMovesRating",
-      "pursuitRating",
-      "manCoverageRating", "manCoverRating",
-      "zoneCoverageRating", "zoneCoverRating",
-      "pressRating",
-    ],
-  },
-  {
-    emoji: "🎯",
-    label: "Special Teams",
-    keys: [
-      "kickReturnRating", "kickRetRating",
-      "kickPowerRating",
-      "kickAccuracyRating", "kickAccRating",
-      "longSnapRating",
-    ],
-  },
-];
+const ATH = ["speedRating","accelRating","accelerationRating","agilityRating","changeOfDirectionRating","strengthRating","awarenessRating","awareRating"];
 
-// All keys covered by the groups above — used by the catch-all below
-const GROUPED_KEYS = new Set(ATTR_GROUPS.flatMap(g => g.keys));
+const POSITION_GROUPS: Record<string, AttrGroup[]> = {
+  QB: [
+    { label: "Athletics",   keys: ATH },
+    { label: "Passing",     keys: ["throwPowerRating","throwAccShortRating","throwAccuracyShortRating","throwAccMidRating","throwAccuracyMedRating","throwAccDeepRating","throwAccuracyDeepRating"] },
+    { label: "Situational", keys: ["throwOnRunRating","throwUnderPressureRating","playActionRating","breakSackRating"] },
+  ],
+  HB: [
+    { label: "Athletics",    keys: ATH },
+    { label: "Ball Carrier", keys: ["carryingRating","carryRating","bCVRating","ballCarrierVisionRating","breakTackleRating","truckingRating","truckRating","stiffArmRating","spinMoveRating","jukeMoveRating"] },
+  ],
+  FB: [
+    { label: "Athletics",    keys: ATH },
+    { label: "Ball Carrier", keys: ["carryingRating","carryRating","breakTackleRating","truckingRating","truckRating","stiffArmRating"] },
+    { label: "Blocking",     keys: ["leadBlockRating","passBlockRating","runBlockRating","impactBlockingRating","impactBlockRating"] },
+  ],
+  WR: [
+    { label: "Athletics",  keys: ATH },
+    { label: "Receiving",  keys: ["catchingRating","catchRating","catchInTrafficRating","cITRating","specCatchRating","releaseRating"] },
+    { label: "Routes",     keys: ["shortRouteRunningRating","routeRunShortRating","medRouteRunningRating","routeRunMedRating","deepRouteRunningRating","routeRunDeepRating"] },
+  ],
+  TE: [
+    { label: "Athletics",  keys: ATH },
+    { label: "Receiving",  keys: ["catchingRating","catchRating","catchInTrafficRating","cITRating","specCatchRating","releaseRating"] },
+    { label: "Routes",     keys: ["shortRouteRunningRating","routeRunShortRating","medRouteRunningRating","routeRunMedRating","deepRouteRunningRating","routeRunDeepRating"] },
+    { label: "Blocking",   keys: ["passBlockRating","runBlockRating","leadBlockRating","impactBlockingRating","impactBlockRating"] },
+  ],
+  LT: olGroups(), LG: olGroups(), C: olGroups(), RG: olGroups(), RT: olGroups(),
+  DE: defGroups(), DT: defGroups(),
+  MLB: lbGroups(), LOLB: lbGroups(), ROLB: lbGroups(),
+  CB: dbGroups(), FS: dbGroups(), SS: dbGroups(),
+  K:  [{ label: "Kicking",   keys: ["kickPowerRating","kickAccuracyRating","kickAccRating"] }, { label: "Athletics", keys: ATH }],
+  P:  [{ label: "Punting",   keys: ["kickPowerRating","kickAccuracyRating","kickAccRating"] }, { label: "Athletics", keys: ATH }],
+};
 
-// ── Format a set of attribute keys as 3-per-row bold-value lines ─────────────
+function olGroups(): AttrGroup[] {
+  return [
+    { label: "Athletics",     keys: ATH },
+    { label: "Pass Blocking", keys: ["passBlockRating","passBlockPowerRating","passBlockFinesseRating"] },
+    { label: "Run Blocking",  keys: ["runBlockRating","runBlockPowerRating","runBlockFinesseRating","leadBlockRating","impactBlockingRating","impactBlockRating"] },
+  ];
+}
+function defGroups(): AttrGroup[] {
+  return [
+    { label: "Athletics",    keys: ATH },
+    { label: "Pass Rush",    keys: ["finesseMovesRating","powerMovesRating","blockSheddingRating","blockShedRating","hitPowerRating","pursuitRating"] },
+    { label: "Run Defense",  keys: ["tacklingRating","tackleRating","playRecognitionRating","playRecRating"] },
+  ];
+}
+function lbGroups(): AttrGroup[] {
+  return [
+    { label: "Athletics",  keys: ATH },
+    { label: "Defense",    keys: ["tacklingRating","tackleRating","hitPowerRating","pursuitRating","blockSheddingRating","blockShedRating"] },
+    { label: "Coverage",   keys: ["manCoverageRating","manCoverRating","zoneCoverageRating","zoneCoverRating","pressRating","playRecognitionRating","playRecRating"] },
+  ];
+}
+function dbGroups(): AttrGroup[] {
+  return [
+    { label: "Athletics",  keys: ATH },
+    { label: "Coverage",   keys: ["manCoverageRating","manCoverRating","zoneCoverageRating","zoneCoverRating","pressRating","playRecognitionRating","playRecRating"] },
+    { label: "Tackling",   keys: ["tacklingRating","tackleRating","hitPowerRating","pursuitRating"] },
+  ];
+}
 
-function formatAttrField(attrs: Record<string, unknown>, keys: string[]): string | null {
-  const pairs = keys
-    .filter(k => attrs[k] != null && Number(attrs[k]) > 0)
-    .map(k => {
-      const label = ATTR_LABELS[k] ?? k;
-      return `${label}: **${attrs[k]}**`;
-    });
-  if (pairs.length === 0) return null;
-
-  const lines: string[] = [];
-  for (let i = 0; i < pairs.length; i += 3) {
-    lines.push(pairs.slice(i, i + 3).join("  |  "));
+// ── Render a group of attributes as compact pipe-separated rows (4 per row) ───
+function renderGroup(attrs: Record<string, unknown>, keys: string[]): string | null {
+  // De-dupe: if two keys map to the same abbreviation, only show the first one with a value
+  const seen = new Set<string>();
+  const pairs: string[] = [];
+  for (const k of keys) {
+    const abbr = SHORT[k];
+    if (!abbr || seen.has(abbr)) continue;
+    const val = Number(attrs[k]);
+    if (!val || val <= 0) continue;
+    seen.add(abbr);
+    pairs.push(`${abbr}: ${val}`);
   }
-  return lines.join("\n");
+  if (pairs.length === 0) return null;
+  const rows: string[] = [];
+  for (let i = 0; i < pairs.length; i += 4) {
+    rows.push(pairs.slice(i, i + 4).join(" | "));
+  }
+  return rows.join("\n");
 }
 
 // ── Command definition ─────────────────────────────────────────────────────────
-
 export const data = new SlashCommandBuilder()
   .setName("viewplayerdetails")
   .setDescription("View full attribute breakdown for any player in the league or free agent pool")
@@ -276,8 +196,7 @@ export const data = new SlashCommandBuilder()
       .setRequired(false),
   );
 
-// ── Autocomplete ──────────────────────────────────────────────────────────────
-
+// ── Autocomplete ───────────────────────────────────────────────────────────────
 export async function autocomplete(interaction: AutocompleteInteraction) {
   const focused      = interaction.options.getFocused(true);
   const focusedValue = focused.value.toLowerCase();
@@ -302,10 +221,10 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
         ...names.filter(n => n === "Free Agents"),
         ...names.filter(n => n !== "Free Agents"),
       ];
-      const filtered = sorted
-        .filter(n => n.toLowerCase().includes(focusedValue))
-        .slice(0, 25);
-      await interaction.respond(filtered.map(n => ({ name: n, value: n })));
+      await interaction.respond(
+        sorted.filter(n => n.toLowerCase().includes(focusedValue)).slice(0, 25)
+          .map(n => ({ name: n, value: n })),
+      );
       return;
     }
 
@@ -346,7 +265,6 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 }
 
 // ── Execute ────────────────────────────────────────────────────────────────────
-
 export async function execute(interaction: ChatInputCommandInteraction) {
   const teamName    = interaction.options.getString("team",   true);
   const playerIdStr = interaction.options.getString("player", true);
@@ -389,66 +307,69 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const attrs = (player.attributes ?? {}) as Record<string, unknown>;
 
-  // ── Bio fields from stored attributes ─────────────────────────────────────
-  const handRaw   = attrs["handedness"] ?? attrs["throwingHand"] ?? attrs["playerHandedness"];
-  const heightRaw = attrs["height"]     ?? attrs["heightInches"];
+  // ── Bio ────────────────────────────────────────────────────────────────────
+  const heightRaw = attrs["height"] ?? attrs["heightInches"];
   const weightRaw = attrs["weight"];
-
-  const handStr   = fmtHand(handRaw);
   const heightStr = fmtHeight(heightRaw);
   const weightStr = fmtWeight(weightRaw);
+  const devStr    = devLabel(player.devTrait);
 
-  // ── Header lines ───────────────────────────────────────────────────────────
-  const teamStr      = teamName === "Free Agents" ? "🔓 Free Agent" : `🏟️ ${teamName}`;
-  const discordStr   = player.discordId ? `\nManager: <@${player.discordId}>` : "";
-  const devStr       = devLabel(player.devTrait);
-  const jerseyStr    = player.jerseyNum != null ? `#${player.jerseyNum}` : null;
-  const contractStr  = player.contractYearsLeft === 1
-    ? "📋 Contract Year"
-    : player.contractYearsLeft != null
-      ? `${player.contractYearsLeft} yrs left`
-      : null;
+  const isFreeAgent = teamName === "Free Agents";
+  const displayTeam = isFreeAgent ? "FA" : teamName;
 
-  const bioLine  = [jerseyStr, player.age != null ? `Age ${player.age}` : null, heightStr, weightStr, handStr ? `${handStr}-handed` : null]
-    .filter(Boolean).join("  |  ");
-  const infoLine = [contractStr].filter(Boolean).join("  |  ");
+  // ── Embed color: gold for free agents, dark teal for active roster ─────────
+  const embedColor = isFreeAgent ? 0xf0c040 : 0x1abc9c;
 
-  const description = [
-    `${teamStr}${discordStr}`,
-    `Overall: **${player.overall}**  |  Dev: **${devStr}**`,
-    bioLine  || null,
-    infoLine || null,
-  ].filter(Boolean).join("\n");
+  // ── Header description block ───────────────────────────────────────────────
+  // Line 1: player identity card
+  const bioLine = [
+    player.age     != null ? `AGE: ${player.age}` : null,
+    heightStr && weightStr ? `HT/WT: ${heightStr}, ${weightStr}` : (heightStr ?? weightStr),
+  ].filter(Boolean).join(" | ");
 
+  const devLine = `${devStr}${player.jerseyNum != null ? `  |  #${player.jerseyNum}` : ""}`;
+
+  const contractLine = player.contractYearsLeft != null
+    ? `📋 ${player.contractYearsLeft === 1 ? "**Contract Year**" : `${player.contractYearsLeft} yrs remaining`}`
+    : null;
+
+  const managerLine = player.discordId ? `Manager: <@${player.discordId}>` : null;
+
+  const descParts = [devLine, bioLine || null, contractLine, managerLine].filter(Boolean);
+
+  // ── Build embed ────────────────────────────────────────────────────────────
   const embed = new EmbedBuilder()
-    .setColor(teamName === "Free Agents" ? Colors.Gold : Colors.Green)
-    .setTitle(`${player.firstName} ${player.lastName} — ${player.position}`)
-    .setDescription(description)
+    .setColor(embedColor)
+    .setTitle(`REC League — Players [1 Result]`)
+    .setDescription(`**${player.position} ${player.firstName} ${player.lastName} — ${displayTeam} — ${player.overall} OVR**\n\n${descParts.join("\n")}`)
+    .setThumbnail(portraitUrl(player.playerId))
     .setFooter({ text: `Season ${season.seasonNumber} • Player ID ${player.playerId}` })
     .setTimestamp();
 
-  // ── Attribute groups ───────────────────────────────────────────────────────
-  let attrCount = 0;
-  const displayedKeys = new Set<string>();
+  // ── Position-specific key attribute groups ─────────────────────────────────
+  const groups = POSITION_GROUPS[player.position] ?? [
+    { label: "Athletics", keys: ATH },
+  ];
 
-  for (const group of ATTR_GROUPS) {
-    const presentKeys = group.keys.filter(k => attrs[k] != null && Number(attrs[k]) > 0);
-    if (presentKeys.length === 0) continue;
-    const fieldValue = formatAttrField(attrs, presentKeys);
-    if (!fieldValue) continue;
-    embed.addFields({ name: `${group.emoji} ${group.label}`, value: fieldValue, inline: false });
-    presentKeys.forEach(k => displayedKeys.add(k));
+  let attrCount = 0;
+  const coveredKeys = new Set<string>();
+
+  for (const group of groups) {
+    const val = renderGroup(attrs, group.keys);
+    if (!val) continue;
+    embed.addFields({ name: `**${group.label}**`, value: val, inline: false });
+    group.keys.forEach(k => coveredKeys.add(k));
     attrCount++;
   }
 
-  // ── Catch-all: any *Rating key in the stored data not covered above ────────
-  const remainingKeys = Object.keys(attrs).filter(
-    k => !GROUPED_KEYS.has(k) && k.endsWith("Rating") && Number(attrs[k]) > 0,
+  // ── Catch-all: any *Rating not covered by the position groups ──────────────
+  const remaining = Object.keys(attrs).filter(
+    k => !coveredKeys.has(k) && k.endsWith("Rating") && Number(attrs[k]) > 0 && SHORT[k],
   );
-  if (remainingKeys.length > 0) {
-    const fieldValue = formatAttrField(attrs, remainingKeys);
-    if (fieldValue) {
-      embed.addFields({ name: "📊 Other Attributes", value: fieldValue, inline: false });
+  if (remaining.length > 0) {
+    const val = renderGroup(attrs, remaining);
+    if (val) {
+      embed.addFields({ name: "**Other**", value: val, inline: false });
       attrCount++;
     }
   }
@@ -456,7 +377,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (attrCount === 0) {
     embed.addFields({
       name: "ℹ️ No Attribute Data",
-      value: "Detailed attributes aren't available yet. Re-export from MCA to populate them.",
+      value: "Re-export from MCA to populate detailed attributes.",
       inline: false,
     });
   }
