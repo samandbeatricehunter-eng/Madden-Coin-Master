@@ -32,6 +32,11 @@ const PLAYER_STAT_CATS: PlayerStatCat[] = [
   { key: "def_ints",        label: "Defensive INTs",          unit: "INTs",    emoji: "🫳", field: p => p.defInts      },
   { key: "def_tackles",     label: "Defensive Total Tackles", unit: "tackles", emoji: "🦺",
     field: p => p.totalTackles > 0 ? p.totalTackles : p.tackleSolo + p.tackleAssist },
+  { key: "kicking_fg",      label: "Field Goals Made",        unit: "FGM",     emoji: "🏟️", field: p => p.fgMade       },
+  { key: "punting_avg",     label: "Punting Average",         unit: "avg yds", emoji: "👟",
+    field: p => p.puntAtt > 0 ? Math.round((p.puntYds / p.puntAtt) * 10) / 10 : 0 },
+  { key: "kr_yards",        label: "Kick Return Yards",       unit: "yds",     emoji: "↩️", field: p => p.krYds        },
+  { key: "pr_yards",        label: "Punt Return Yards",       unit: "yds",     emoji: "↩️", field: p => p.prYds        },
 ];
 
 // ── Team stat category definitions ────────────────────────────────────────────
@@ -75,6 +80,10 @@ export const data = new SlashCommandBuilder()
         { name: "💥 Defensive Sacks",                     value: "def_sacks"        },
         { name: "🫳 Defensive INTs",                      value: "def_ints"         },
         { name: "🦺 Defensive Total Tackles",             value: "def_tackles"      },
+        { name: "🏟️ Field Goals Made (Kickers)",          value: "kicking_fg"       },
+        { name: "👟 Punting Average",                     value: "punting_avg"      },
+        { name: "↩️ Kick Return Yards",                   value: "kr_yards"         },
+        { name: "↩️ Punt Return Yards",                   value: "pr_yards"         },
         { name: "🏈 Total Offensive Yards (Team)",        value: "off_yds"          },
         { name: "🛡️ Def. Total Yards Allowed (Team)",     value: "def_yds"          },
         { name: "📈 Point Differential (Team)",           value: "point_diff"       },

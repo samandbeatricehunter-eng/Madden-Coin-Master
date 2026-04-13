@@ -140,6 +140,8 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 - `season_stat_tier_configs` — End-of-season stat bonus tier config (11 categories × 4 tiers × season); direction (higher/lower) is encoded in the stat category definition in code, not the DB
 - `franchise_mca_teams` — Team map populated by the MCA `/leagueteams` webhook; gives teamId → fullName, nickName, userName, isHuman, discordId per season; queried by the scores processor
 - `ea_connections` — Stores EA API tokens and league info for direct Madden franchise data imports (replaces MCA when active); one row per league; token auto-refreshes on each export
+- `player_season_stats` — Per-season stat accumulation per player: passing, rushing, receiving, defense, **kicking** (FG/XP), **punting**, **kick/punt returns**; new columns fgMade/fgAtt/fgLong/xpMade/xpAtt/puntAtt/puntYds/puntLong/puntIn20/puntTouchbacks/krAtt/krYds/krTDs/prAtt/prYds/prTDs
+- `roster_transactions` — Detected roster changes (team moves, OVR upgrades/downgrades, dev trait changes) written during each MCA roster import; posted to the DISCORD_TRANSACTIONS_CHANNEL_ID channel
 
 ## EA Direct Connect (Direct Madden API Integration)
 
@@ -176,6 +178,7 @@ Replaces manual MCA exports by fetching franchise data directly from EA's Madden
 - `DISCORD_CLIENT_ID` — Application ID
 - `DISCORD_GUILD_ID` — Server ID
 - `DISCORD_COMMISSIONER_CHANNEL_ID` — Commissioner-only notification channel
+- `DISCORD_TRANSACTIONS_CHANNEL_ID` — Channel where roster moves/upgrades are posted (optional; set to a #transactions channel ID)
 - `DATABASE_URL` — PostgreSQL connection string (auto-set by Replit)
 
 ## Development

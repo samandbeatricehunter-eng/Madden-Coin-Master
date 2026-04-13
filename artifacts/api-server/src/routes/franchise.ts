@@ -25,6 +25,7 @@ const router: IRouter = Router();
 const COMMISSIONER_CHANNEL_ID  = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 const GENERAL_CHANNEL_ID       = process.env["DISCORD_GENERAL_CHANNEL_ID"]      ?? "1476321282868908052";
 const VIOLATION_LOG_CHANNEL_ID = "1491529826060734524";
+const TRANSACTIONS_CHANNEL_ID  = process.env["DISCORD_TRANSACTIONS_CHANNEL_ID"] ?? "";
 
 // ── Per-violation commissioner posting (with Confirm/Deny buttons) ────────────
 async function postViolationMessages(
@@ -218,8 +219,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team
   console.log(`[mca/week${weekNum}/team] Result:`, result.message);
 });
 
-// ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → player stat upserts ──
-for (const statType of ["passing", "rushing", "receiving", "defense"] as const) {
+// ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense|kicking|punting|kickreturn|puntreturn} → player stat upserts ──
+for (const statType of ["passing", "rushing", "receiving", "defense", "kicking", "punting", "kickreturn", "puntreturn"] as const) {
   router.post(
     `/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/${statType}`,
     validateKey,
@@ -405,6 +406,45 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/draftpicks", va
   console.log(`[mca/team/${teamIdStr}/draftpicks]`, result.message);
 });
 
+// ── Transaction embed builder for roster changes ─────────────────────────────
+function buildTransactionEmbeds(transactions: any[]): { title: string; description: string; color: number }[] {
+  const teamChanges   = transactions.filter(t => t.transactionType === "team_change");
+  const overallChanges = transactions.filter(t => t.transactionType === "overall_change");
+  const devChanges    = transactions.filter(t => t.transactionType === "dev_change");
+
+  const embeds: { title: string; description: string; color: number }[] = [];
+
+  if (teamChanges.length > 0) {
+    const lines = teamChanges.map(t =>
+      `🔀 **${t.playerName}** (${t.position}) — ${t.fromTeam} → **${t.toTeam}**`
+    );
+    embeds.push({
+      title:       "📋 Roster Moves",
+      description: lines.join("\n"),
+      color:       0x1abc9c,
+    });
+  }
+
+  if (overallChanges.length > 0 || devChanges.length > 0) {
+    const lines: string[] = [];
+    for (const t of overallChanges) {
+      const diff  = Number(t.toValue) - Number(t.fromValue);
+      const arrow = diff > 0 ? "⬆️" : "⬇️";
+      lines.push(`${arrow} **${t.playerName}** (${t.position}, ${t.fromTeam}) OVR: ${t.fromValue} → **${t.toValue}**`);
+    }
+    for (const t of devChanges) {
+      lines.push(`🌟 **${t.playerName}** (${t.position}, ${t.fromTeam}) Dev: ${t.fromValue} → **${t.toValue}**`);
+    }
+    embeds.push({
+      title:       "📈 Player Development Updates",
+      description: lines.join("\n"),
+      color:       0xf0b132,
+    });
+  }
+
+  return embeds;
+}
+
 // ── /team/:teamId/roster — per-team active 53-man roster ─────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, async (req, res) => {
   const teamIdStr = String(req.params["teamId"] ?? "0");
@@ -415,8 +455,17 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
     console.warn(`[mca/team/${teamIdStr}/roster] Invalid teamId — skipping`);
     return;
   }
-  const result = await processTeamRoster(req.body, mcaTeamId).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processTeamRoster(req.body, mcaTeamId).catch(err => ({ ok: false, message: String(err), details: undefined }));
   console.log(`[mca/team/${teamIdStr}/roster] ${result.message}`);
+
+  // Post detected transactions to the transactions channel
+  const txList: any[] = result.details?.["transactions"] ?? [];
+  if (result.ok && TRANSACTIONS_CHANNEL_ID && txList.length > 0) {
+    const txEmbeds = buildTransactionEmbeds(txList);
+    for (const embed of txEmbeds) {
+      sendDiscordEmbed(TRANSACTIONS_CHANNEL_ID, embed).catch(() => {});
+    }
+  }
 });
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────

@@ -15,6 +15,7 @@ import {
   teamSeasonStatsTable,
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
+  rosterTransactionsTable,
   leagueNewsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -770,16 +771,16 @@ export async function processPlayoffSeedings(body: unknown): Promise<ProcessResu
   }
 }
 
-// ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense} → playerSeasonStatsTable ──
-export type WeekStatType = "passing" | "rushing" | "receiving" | "defense";
+// ── /week/:weekType/:weekNum/{passing|rushing|receiving|defense|kicking|punting|kickreturn|puntreturn} ──
+export type WeekStatType = "passing" | "rushing" | "receiving" | "defense" | "kicking" | "punting" | "kickreturn" | "kickreturning" | "puntreturn" | "puntreturning";
 
 // "playerStatInfoList" is included last for every type as a generic EA fallback —
 // some EA WAL endpoints wrap all player records under this key regardless of stat category.
 const STAT_LIST_KEYS: Record<WeekStatType, string[]> = {
-  passing:   ["playerPassingStatInfoList",   "playerPassStatInfoList",   "playerPassingStatsInfoList",   "passingStats",   "playerStatInfoList"],
-  rushing:   ["playerRushingStatInfoList",   "playerRushStatInfoList",   "playerRushingStatsInfoList",   "rushingStats",   "playerStatInfoList"],
-  receiving: ["playerReceivingStatInfoList", "playerRecStatInfoList",    "playerReceivingStatsInfoList",  "receivingStats", "playerStatInfoList"],
-  defense:   [
+  passing:       ["playerPassingStatInfoList",   "playerPassStatInfoList",   "playerPassingStatsInfoList",   "passingStats",   "playerStatInfoList"],
+  rushing:       ["playerRushingStatInfoList",   "playerRushStatInfoList",   "playerRushingStatsInfoList",   "rushingStats",   "playerStatInfoList"],
+  receiving:     ["playerReceivingStatInfoList", "playerRecStatInfoList",    "playerReceivingStatsInfoList",  "receivingStats", "playerStatInfoList"],
+  defense:       [
     "playerDefensiveStatInfoList",   // most common MCA / EA key
     "playerDefenseStatInfoList",     // alternate spelling
     "playerDefStatInfoList",         // short form
@@ -792,6 +793,12 @@ const STAT_LIST_KEYS: Record<WeekStatType, string[]> = {
     "defStatInfoList",               // short no-prefix
     "playerStatInfoList",            // generic EA WAL fallback
   ],
+  kicking:       ["playerKickingStatInfoList",   "playerKickStatInfoList",   "kickingStatInfoList",     "kickingStats",     "playerStatInfoList"],
+  punting:       ["playerPuntingStatInfoList",   "playerPuntStatInfoList",   "puntingStatInfoList",     "puntingStats",     "playerStatInfoList"],
+  kickreturn:    ["playerKickReturnStatInfoList","kickReturnStatInfoList",   "krStatInfoList",          "kickReturnStats",  "playerStatInfoList"],
+  kickreturning: ["playerKickReturnStatInfoList","kickReturnStatInfoList",   "krStatInfoList",          "kickReturnStats",  "playerStatInfoList"],
+  puntreturn:    ["playerPuntReturnStatInfoList","puntReturnStatInfoList",   "prStatInfoList",          "puntReturnStats",  "playerStatInfoList"],
+  puntreturning: ["playerPuntReturnStatInfoList","puntReturnStatInfoList",   "prStatInfoList",          "puntReturnStats",  "playerStatInfoList"],
 };
 
 export async function processPlayerWeekStats(
@@ -861,7 +868,7 @@ export async function processPlayerWeekStats(
     const ops: Promise<any>[] = [];
     let upserted = 0;
     let loggedSample = false;
-    const statViolations: string[] = [];
+    const statViolations: ViolationRecord[] = [];
     const wkLabel = weekType === "reg" ? `Week ${weekNum}` : `Playoff ${weekNum}`;
 
     for (const p of players) {
@@ -980,6 +987,54 @@ export async function processPlayerWeekStats(
           forcedFumbles:  sql`${playerSeasonStatsTable.forcedFumbles}  + ${forcedFumbles}`,
           tacklesForLoss: sql`${playerSeasonStatsTable.tacklesForLoss} + ${tacklesForLoss}`,
           defTDs:         sql`${playerSeasonStatsTable.defTDs}         + ${defTDs}`,
+        };
+      } else if (statType === "kicking") {
+        const fgMade = getN(p, "fgMade", "fgm",  "fieldGoalsMade",    "fg_made");
+        const fgAtt  = getN(p, "fgAtt",  "fga",  "fieldGoalAttempts", "fg_att", "fgAttempts");
+        const fgLong = getN(p, "fgLong", "fglg", "fgLng",             "fgLongestMade", "fg_long");
+        const xpMade = getN(p, "xpMade", "xpm",  "extraPointsMade",   "epMade", "xp_made");
+        const xpAtt  = getN(p, "xpAtt",  "xpa",  "extraPointAttempts","epAtt",  "xp_att", "xpAttempts");
+        insertFields = { fgMade, fgAtt, fgLong, xpMade, xpAtt };
+        accumSet     = {
+          fgMade: sql`${playerSeasonStatsTable.fgMade} + ${fgMade}`,
+          fgAtt:  sql`${playerSeasonStatsTable.fgAtt}  + ${fgAtt}`,
+          fgLong: sql`GREATEST(${playerSeasonStatsTable.fgLong}, ${fgLong})`,
+          xpMade: sql`${playerSeasonStatsTable.xpMade} + ${xpMade}`,
+          xpAtt:  sql`${playerSeasonStatsTable.xpAtt}  + ${xpAtt}`,
+        };
+      } else if (statType === "punting") {
+        const puntAtt        = getN(p, "puntAtt",       "punts",       "puntCount",      "puntAttempts", "punt_att");
+        const puntYds        = getN(p, "puntYds",       "puntingYds",  "puntYdsTotal",   "punt_yds");
+        const puntLong       = getN(p, "puntLong",      "puntLng",     "puntLongest",    "punt_long");
+        const puntIn20       = getN(p, "puntIn20",      "puntsIn20",   "puntInsideTwenty","punt_in_20");
+        const puntTouchbacks = getN(p, "puntTouchbacks","puntTBs",     "puntTouchback",  "punt_touchbacks");
+        insertFields = { puntAtt, puntYds, puntLong, puntIn20, puntTouchbacks };
+        accumSet     = {
+          puntAtt:        sql`${playerSeasonStatsTable.puntAtt}        + ${puntAtt}`,
+          puntYds:        sql`${playerSeasonStatsTable.puntYds}        + ${puntYds}`,
+          puntLong:       sql`GREATEST(${playerSeasonStatsTable.puntLong}, ${puntLong})`,
+          puntIn20:       sql`${playerSeasonStatsTable.puntIn20}       + ${puntIn20}`,
+          puntTouchbacks: sql`${playerSeasonStatsTable.puntTouchbacks} + ${puntTouchbacks}`,
+        };
+      } else if (statType === "kickreturn" || statType === "kickreturning") {
+        const krAtt = getN(p, "krAtt", "kickReturnAtt",  "krReturns",   "kickReturnAttempts", "kr_att");
+        const krYds = getN(p, "krYds", "kickReturnYds",  "kickRetYds",  "kr_yds");
+        const krTDs = getN(p, "krTDs", "kickReturnTDs",  "kickRetTDs",  "krTouchdowns", "kr_tds");
+        insertFields = { krAtt, krYds, krTDs };
+        accumSet     = {
+          krAtt: sql`${playerSeasonStatsTable.krAtt} + ${krAtt}`,
+          krYds: sql`${playerSeasonStatsTable.krYds} + ${krYds}`,
+          krTDs: sql`${playerSeasonStatsTable.krTDs} + ${krTDs}`,
+        };
+      } else if (statType === "puntreturn" || statType === "puntreturning") {
+        const prAtt = getN(p, "prAtt", "puntReturnAtt",  "prReturns",   "puntReturnAttempts", "pr_att");
+        const prYds = getN(p, "prYds", "puntReturnYds",  "puntRetYds",  "pr_yds");
+        const prTDs = getN(p, "prTDs", "puntReturnTDs",  "puntRetTDs",  "prTouchdowns", "pr_tds");
+        insertFields = { prAtt, prYds, prTDs };
+        accumSet     = {
+          prAtt: sql`${playerSeasonStatsTable.prAtt} + ${prAtt}`,
+          prYds: sql`${playerSeasonStatsTable.prYds} + ${prYds}`,
+          prTDs: sql`${playerSeasonStatsTable.prTDs} + ${prTDs}`,
         };
       }
 
@@ -1812,6 +1867,92 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
       return { ok: true, message: `No active players in payload for team ${mcaTeamId} (${teamEntry.fullName})` };
     }
 
+    // ── Detect roster transactions before overwriting ─────────────────────────
+    const playerIds = rows.map(r => r.playerId).filter((id): id is number => id != null && id > 0);
+    const existingRows = playerIds.length > 0
+      ? await db.select({
+          playerId: franchiseRostersTable.playerId,
+          teamId:   franchiseRostersTable.teamId,
+          teamName: franchiseRostersTable.teamName,
+          overall:  franchiseRostersTable.overall,
+          devTrait: franchiseRostersTable.devTrait,
+          firstName: franchiseRostersTable.firstName,
+          lastName:  franchiseRostersTable.lastName,
+          position:  franchiseRostersTable.position,
+        })
+        .from(franchiseRostersTable)
+        .where(and(
+          eq(franchiseRostersTable.seasonId, season.id),
+          inArray(franchiseRostersTable.playerId, playerIds),
+        ))
+      : [];
+
+    const existingMap = new Map(existingRows.map(r => [r.playerId, r]));
+    const DEV_LABELS: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
+    const transactions: Array<typeof rosterTransactionsTable.$inferInsert> = [];
+
+    for (const row of rows) {
+      if (row.playerId == null) continue;
+      const prev = existingMap.get(row.playerId);
+      const playerName = [row.firstName, row.lastName].filter(Boolean).join(" ") || `Player ${row.playerId}`;
+      const position   = row.position ?? "";
+
+      if (!prev) continue; // brand new to the league — no prior state to compare
+
+      // Team change: player was on a DIFFERENT team before this export
+      if (prev.teamId !== mcaTeamId) {
+        transactions.push({
+          seasonId:        season.id,
+          transactionType: "team_change",
+          playerId:        row.playerId,
+          playerName,
+          position,
+          fromTeam:  prev.teamName ?? String(prev.teamId),
+          toTeam:    teamEntry.fullName,
+          fromValue: null,
+          toValue:   null,
+        });
+      } else {
+        // Overall rating change (same team)
+        const prevOvr = prev.overall ?? 0;
+        const newOvr  = (row.overall as number | null) ?? 0;
+        if (prevOvr > 0 && newOvr > 0 && prevOvr !== newOvr) {
+          transactions.push({
+            seasonId:        season.id,
+            transactionType: "overall_change",
+            playerId:        row.playerId,
+            playerName,
+            position,
+            fromTeam:  teamEntry.fullName,
+            toTeam:    teamEntry.fullName,
+            fromValue: String(prevOvr),
+            toValue:   String(newOvr),
+          });
+        }
+
+        // Dev trait change (same team)
+        const prevDev = prev.devTrait ?? 0;
+        const newDev  = (row.devTrait as number | null) ?? 0;
+        if (prevDev !== newDev) {
+          transactions.push({
+            seasonId:        season.id,
+            transactionType: "dev_change",
+            playerId:        row.playerId,
+            playerName,
+            position,
+            fromTeam:  teamEntry.fullName,
+            toTeam:    teamEntry.fullName,
+            fromValue: DEV_LABELS[prevDev] ?? String(prevDev),
+            toValue:   DEV_LABELS[newDev]  ?? String(newDev),
+          });
+        }
+      }
+    }
+
+    if (transactions.length > 0) {
+      await db.insert(rosterTransactionsTable).values(transactions);
+    }
+
     // Replace the team's roster: delete old rows, insert fresh ones
     await db.delete(franchiseRostersTable).where(and(
       eq(franchiseRostersTable.seasonId, season.id),
@@ -1819,7 +1960,11 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
     ));
     await db.insert(franchiseRostersTable).values(rows);
 
-    return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (${teamEntry.fullName})` };
+    return {
+      ok: true,
+      message: `${rows.length} players imported for team ${mcaTeamId} (${teamEntry.fullName})`,
+      details: { transactions },
+    };
   } catch (err) {
     console.error(`[roster/team/${mcaTeamId}] Error:`, err);
     return { ok: false, message: String(err) };

@@ -464,6 +464,25 @@ export const playerSeasonStatsTable = pgTable("player_season_stats", {
   forcedFumbles:  integer("forced_fumbles").notNull().default(0),     // forced fumbles by this player
   tacklesForLoss: real("tackles_for_loss").notNull().default(0),      // real: shared TFLs are 0.5
   defTDs:         integer("def_tds_scored").notNull().default(0),     // defensive/ST TDs scored
+  // ── Kicking ──────────────────────────────────────────────────────────────────
+  fgMade:         integer("fg_made").notNull().default(0),
+  fgAtt:          integer("fg_att").notNull().default(0),
+  fgLong:         integer("fg_long").notNull().default(0),
+  xpMade:         integer("xp_made").notNull().default(0),
+  xpAtt:          integer("xp_att").notNull().default(0),
+  // ── Punting ──────────────────────────────────────────────────────────────────
+  puntAtt:        integer("punt_att").notNull().default(0),
+  puntYds:        integer("punt_yds").notNull().default(0),
+  puntLong:       integer("punt_long").notNull().default(0),
+  puntIn20:       integer("punt_in_20").notNull().default(0),
+  puntTouchbacks: integer("punt_touchbacks").notNull().default(0),
+  // ── Kick/Punt Returns ─────────────────────────────────────────────────────────
+  krAtt:          integer("kr_att").notNull().default(0),
+  krYds:          integer("kr_yds").notNull().default(0),
+  krTDs:          integer("kr_tds").notNull().default(0),
+  prAtt:          integer("pr_att").notNull().default(0),
+  prYds:          integer("pr_yds").notNull().default(0),
+  prTDs:          integer("pr_tds").notNull().default(0),
   updatedAt:      timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("player_season_stats_unique_idx").on(t.seasonId, t.playerId),
@@ -881,6 +900,26 @@ export const leagueNewsTable = pgTable("league_news", {
   category:  text("category"),                          // e.g. "GAME_RECAP", "PLAYER_NEWS" etc.
   weekIndex: integer("week_index"),                     // from EA if present, else null
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── Roster Transaction Log ────────────────────────────────────────────────────
+// Populated by processTeamRoster when player moves teams, overall changes, or
+// dev trait changes are detected relative to the previous roster snapshot.
+// Posted to the configured TRANSACTIONS_CHANNEL_ID on Discord.
+export const rosterTransactionsTable = pgTable("roster_transactions", {
+  id:              serial("id").primaryKey(),
+  seasonId:        integer("season_id").notNull(),
+  detectedAt:      timestamp("detected_at").notNull().defaultNow(),
+  weekNum:         integer("week_num"),
+  transactionType: text("transaction_type").notNull(),  // 'team_change' | 'overall_change' | 'dev_change'
+  playerId:        integer("player_id").notNull(),
+  playerName:      text("player_name").notNull(),
+  position:        text("position"),
+  fromTeam:        text("from_team"),
+  toTeam:          text("to_team"),
+  fromValue:       text("from_value"),
+  toValue:         text("to_value"),
+  postedToChannel: boolean("posted_to_channel").notNull().default(false),
 });
 
 // ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────

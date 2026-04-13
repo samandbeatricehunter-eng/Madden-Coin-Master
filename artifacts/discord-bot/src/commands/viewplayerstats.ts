@@ -327,9 +327,13 @@ export async function handlePlayerSelect(
   }
 
   // ── Season stats block ───────────────────────────────────────────────────
-  const isQB = roster.position === "QB";
+  const pos   = roster.position ?? "";
+  const isQB  = pos === "QB";
+  const isK   = pos === "K";
+  const isP   = pos === "P";
   const statLines: string[] = [];
   if (stats) {
+    // ── Passing ─────────────────────────────────────────────────────────────
     if (stats.passYds > 0 || stats.passAtt > 0) {
       const compPct = stats.passAtt > 0
         ? ` (${((stats.passComp / stats.passAtt) * 100).toFixed(1)}% comp)` : "";
@@ -342,6 +346,7 @@ export async function handlePlayerSelect(
         `\n   ${stats.passComp}/${stats.passAtt}${compPct}${ypa}${sacksStr}`,
       );
     }
+    // ── Rushing ──────────────────────────────────────────────────────────────
     if (stats.rushYds > 0 || stats.rushAtt > 0) {
       const ypc = stats.rushAtt > 0
         ? ` · ${(stats.rushYds / stats.rushAtt).toFixed(1)} YPC` : "";
@@ -354,6 +359,7 @@ export async function handlePlayerSelect(
     } else if (isQB && stats.fumbles > 0) {
       statLines.push(`💢 **Fumbles:** ${stats.fumbles}`);
     }
+    // ── Receiving ────────────────────────────────────────────────────────────
     if (stats.recYds > 0 || stats.recRec > 0) {
       const ypr = stats.recRec > 0
         ? ` · ${(stats.recYds / stats.recRec).toFixed(1)} YPR` : "";
@@ -362,7 +368,8 @@ export async function handlePlayerSelect(
         `\n   ${stats.recRec} rec${ypr}`,
       );
     }
-    if (!isQB && stats.fumbles > 0) statLines.push(`💢 **Fumbles:** ${stats.fumbles}`);
+    if (!isQB && !isK && !isP && stats.fumbles > 0) statLines.push(`💢 **Fumbles:** ${stats.fumbles}`);
+    // ── Defense ──────────────────────────────────────────────────────────────
     const tackles = stats.totalTackles > 0
       ? `${stats.totalTackles} total (${stats.tackleSolo} solo · ${stats.tackleAssist} ast)`
       : stats.tackleSolo + stats.tackleAssist > 0
@@ -374,6 +381,44 @@ export async function handlePlayerSelect(
     if (stats.forcedFumbles > 0)    statLines.push(`🏈 **Forced Fum:** ${stats.forcedFumbles}`);
     if (stats.defFumblesRec > 0)    statLines.push(`🤲 **Fum Rec:** ${stats.defFumblesRec}`);
     if (stats.defTDs > 0)           statLines.push(`🏆 **Def TDs:** ${stats.defTDs}`);
+    // ── Kicking ──────────────────────────────────────────────────────────────
+    if (isK && (stats.fgMade > 0 || stats.fgAtt > 0 || stats.xpMade > 0)) {
+      const fgPct = stats.fgAtt > 0
+        ? ` (${((stats.fgMade / stats.fgAtt) * 100).toFixed(1)}%)` : "";
+      const longStr = stats.fgLong > 0 ? ` · Long: ${stats.fgLong}` : "";
+      statLines.push(
+        `🏟️ **Field Goals:** ${stats.fgMade}/${stats.fgAtt}${fgPct}${longStr}`,
+      );
+      if (stats.xpAtt > 0) {
+        const xpPct = stats.xpAtt > 0
+          ? ` (${((stats.xpMade / stats.xpAtt) * 100).toFixed(1)}%)` : "";
+        statLines.push(`✅ **Extra Points:** ${stats.xpMade}/${stats.xpAtt}${xpPct}`);
+      }
+    }
+    // ── Punting ──────────────────────────────────────────────────────────────
+    if (isP && (stats.puntAtt > 0 || stats.puntYds > 0)) {
+      const avg = stats.puntAtt > 0
+        ? ` · Avg: ${(stats.puntYds / stats.puntAtt).toFixed(1)}` : "";
+      const longStr = stats.puntLong > 0 ? ` · Long: ${stats.puntLong}` : "";
+      const in20Str = stats.puntIn20 > 0 ? ` · In-20: ${stats.puntIn20}` : "";
+      const tbStr   = stats.puntTouchbacks > 0 ? ` · TB: ${stats.puntTouchbacks}` : "";
+      statLines.push(
+        `👟 **Punting:** ${stats.puntAtt} punts · ${stats.puntYds.toLocaleString()} yds${avg}${longStr}${in20Str}${tbStr}`,
+      );
+    }
+    // ── Returns ──────────────────────────────────────────────────────────────
+    if (stats.krAtt > 0 || stats.krYds > 0) {
+      const krAvg = stats.krAtt > 0
+        ? ` · ${(stats.krYds / stats.krAtt).toFixed(1)} avg` : "";
+      const krTDStr = stats.krTDs > 0 ? ` · ${stats.krTDs} TD` : "";
+      statLines.push(`↩️ **KR:** ${stats.krAtt} att · ${stats.krYds} yds${krAvg}${krTDStr}`);
+    }
+    if (stats.prAtt > 0 || stats.prYds > 0) {
+      const prAvg = stats.prAtt > 0
+        ? ` · ${(stats.prYds / stats.prAtt).toFixed(1)} avg` : "";
+      const prTDStr = stats.prTDs > 0 ? ` · ${stats.prTDs} TD` : "";
+      statLines.push(`↩️ **PR:** ${stats.prAtt} att · ${stats.prYds} yds${prAvg}${prTDStr}`);
+    }
   }
   if (statLines.length === 0) statLines.push("*(no recorded stats this season)*");
 
