@@ -431,6 +431,98 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     parts.push(`\nUPCOMING MATCHUPS — ${cm.weekLabel} (just posted):\n${cm.matchupsText}`);
   }
 
+  // ── Previous season context ─────────────────────────────────────────────────
+  // Gives the AI historical ammunition for comparisons, call-backs, and storylines.
+  // Only loaded when a prior season actually exists (seasonNumber > 1).
+  if (season.seasonNumber > 1) {
+    try {
+      // Look up the previous season row
+      const [prevSeason] = await db.select()
+        .from(seasonsTable)
+        .where(eq(seasonsTable.seasonNumber, season.seasonNumber - 1))
+        .limit(1);
+
+      if (prevSeason) {
+        const [prevTeamStats, prevPlayers, prevSuperBowl] = await Promise.all([
+          // Final regular-season standings
+          db.select({
+            teamName: teamSeasonStatsTable.teamName,
+            wins:     teamSeasonStatsTable.wins,
+            losses:   teamSeasonStatsTable.losses,
+          }).from(teamSeasonStatsTable)
+            .where(eq(teamSeasonStatsTable.seasonId, prevSeason.id)),
+
+          // Stat leaders
+          db.select().from(playerSeasonStatsTable)
+            .where(eq(playerSeasonStatsTable.seasonId, prevSeason.id)),
+
+          // Super Bowl result (weekIndex 1022 = Super Bowl in franchise export)
+          db.select({
+            homeTeamName: franchiseScheduleTable.homeTeamName,
+            awayTeamName: franchiseScheduleTable.awayTeamName,
+            homeScore:    franchiseScheduleTable.homeScore,
+            awayScore:    franchiseScheduleTable.awayScore,
+          }).from(franchiseScheduleTable)
+            .where(and(
+              eq(franchiseScheduleTable.seasonId, prevSeason.id),
+              eq(franchiseScheduleTable.weekIndex, 1022),
+              isNotNull(franchiseScheduleTable.homeScore),
+            ))
+            .limit(1),
+        ]);
+
+        const prevParts: string[] = [];
+
+        // Previous champion
+        const sb = prevSuperBowl[0];
+        if (sb && sb.homeScore !== null && sb.awayScore !== null) {
+          const winner = sb.homeScore > sb.awayScore ? sb.homeTeamName : sb.awayTeamName;
+          const loser  = sb.homeScore > sb.awayScore ? sb.awayTeamName : sb.homeTeamName;
+          const score  = sb.homeScore > sb.awayScore
+            ? `${sb.homeScore}–${sb.awayScore}`
+            : `${sb.awayScore}–${sb.homeScore}`;
+          prevParts.push(`  Champion: ${winner} defeated ${loser} ${score} in the Super Bowl`);
+        }
+
+        // Previous standings (sanity-checked same as current)
+        const prevStandings = prevTeamStats
+          .filter(t => t.wins + t.losses > 0 && t.wins <= 25 && t.losses <= 25)
+          .sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
+        if (prevStandings.length > 0) {
+          const lines = prevStandings.map(t => `  ${t.teamName}: ${t.wins}W-${t.losses}L`);
+          prevParts.push(`  Final standings:\n${lines.join("\n")}`);
+        }
+
+        // Previous stat leaders
+        const sanePrev = prevPlayers.filter(p =>
+          p.passYds <= 7000 && p.rushYds <= 2500 && p.recYds <= 2500 &&
+          p.passTDs <= 60   && p.rushTDs <= 30   && p.recTDs <= 25   && p.sacks <= 30
+        );
+        if (sanePrev.length > 0) {
+          const topQB   = [...sanePrev].filter(p => p.position === "QB" && p.passYds > 0).sort((a, b) => b.passYds - a.passYds)[0];
+          const topRB   = [...sanePrev].filter(p => p.position === "HB" && p.rushYds > 0).sort((a, b) => b.rushYds - a.rushYds)[0];
+          const topWR   = [...sanePrev].filter(p => ["WR","TE"].includes(p.position) && p.recYds > 0).sort((a, b) => b.recYds - a.recYds)[0];
+          const topSack = [...sanePrev].filter(p => p.sacks > 0).sort((a, b) => b.sacks - a.sacks)[0];
+          const statLines: string[] = [];
+          if (topQB)   statLines.push(`  Passing yards leader: ${topQB.firstName} ${topQB.lastName} (${topQB.teamName}) — ${topQB.passYds.toLocaleString()} yds, ${topQB.passTDs} TDs`);
+          if (topRB)   statLines.push(`  Rushing yards leader: ${topRB.firstName} ${topRB.lastName} (${topRB.teamName}) — ${topRB.rushYds.toLocaleString()} yds, ${topRB.rushTDs} TDs`);
+          if (topWR)   statLines.push(`  Receiving yards leader: ${topWR.firstName} ${topWR.lastName} (${topWR.teamName}, ${topWR.position}) — ${topWR.recYds.toLocaleString()} yds, ${topWR.recTDs} TDs`);
+          if (topSack) statLines.push(`  Sack leader: ${topSack.firstName} ${topSack.lastName} (${topSack.teamName}) — ${topSack.sacks} sacks`);
+          if (statLines.length > 0) prevParts.push(`  Individual stat leaders:\n${statLines.join("\n")}`);
+        }
+
+        if (prevParts.length > 0) {
+          parts.push(
+            `\nPREVIOUS SEASON (Season ${prevSeason.seasonNumber}) — use for comparisons, storylines, and context only. Do NOT confuse with current season data:\n` +
+            prevParts.join("\n")
+          );
+        }
+      }
+    } catch {
+      // Non-fatal — current season context still works fine without prior season
+    }
+  }
+
   return parts.join("\n");
 }
 
@@ -761,6 +853,86 @@ Rules:
 
 // ── Post a tweet to the channel ────────────────────────────────────────────────
 
+// ── Fan persona helpers ───────────────────────────────────────────────────────
+
+const FAN_ADJECTIVES = [
+  "Angry", "Bitter", "Salty", "Real", "Savage", "Unfiltered",
+  "Raw", "Furious", "Scorching", "Blunt", "Disgusted", "Ruthless",
+];
+const FAN_NOUNS = ["Fan", "Watcher", "Critic", "Nation", "Insider", "Truther", "Viewer"];
+
+function generateFanHandle(): string {
+  const adj  = FAN_ADJECTIVES[Math.floor(Math.random() * FAN_ADJECTIVES.length)]!;
+  const noun = FAN_NOUNS[Math.floor(Math.random() * FAN_NOUNS.length)]!;
+  const num  = Math.floor(Math.random() * 900) + 100;
+  return `@${adj}${noun}${num}`;
+}
+
+async function generateFanTweet(
+  context:        string,
+  targetDiscordId: string,
+  targetTeam:     string,
+): Promise<string> {
+  const system =
+`You are an anonymous, frustrated R.E.C. League fan on Twitter/X — loud, unfiltered, and mean.
+
+The R.E.C. League is a Madden CFM franchise-mode football league treated as a REAL professional league. Your target is the coach of ${targetTeam}. In Discord their mention is <@${targetDiscordId}>. Refer to them ONLY as "Coach <@${targetDiscordId}>" or "the coach of ${targetTeam}" — never use any name or username.
+
+RULES:
+- Be explicitly negative, insulting, or brutal — real angry fan energy
+- Bash the COACH and/or their PLAYERS (bad record, low OVR, turnovers, weak defense, overpaid roster, etc.)
+- Ground every criticism in actual data from the context — no invented stats
+- Raw, blunt, unfiltered language (can be profane)
+- Max 260 characters
+- No hashtags
+- Output ONLY the tweet text`;
+
+  const user =
+`LEAGUE CONTEXT:\n${context}\n\nTarget: Coach of ${targetTeam} (<@${targetDiscordId}>)\n\nWrite your brutal fan tweet:`;
+
+  const completion = await openai.chat.completions.create({
+    model:      "gpt-4.1-mini",
+    messages:   [{ role: "system", content: system }, { role: "user", content: user }],
+    max_tokens: 120,
+    temperature: 1.0,
+  });
+
+  return completion.choices[0]?.message?.content?.trim() ?? "";
+}
+
+/** Post a fan-persona tweet targeting a random human team's coach. */
+async function postOneFanTweet(
+  tc:         TextChannel,
+  context:    string,
+  seasonId:   number,
+  humanUsers: Array<{ discordId: string | null; team: string | null }>,
+): Promise<void> {
+  const eligible = humanUsers.filter(u => u.discordId && u.team);
+  if (eligible.length === 0) return;
+
+  const target = eligible[Math.floor(Math.random() * eligible.length)]!;
+  if (!target.discordId || !target.team) return;
+
+  const handle    = generateFanHandle();
+  const tweetText = await generateFanTweet(context, target.discordId, target.team);
+  if (!tweetText) return;
+
+  const header = `**${handle}** · *Verified NFL Fan*`;
+  const msg    = await tc.send(`@everyone\n${header}\n\n${tweetText}`);
+
+  await db.insert(leagueTwitterTable).values({
+    seasonId,
+    messageId:      msg.id,
+    reporterName:   handle,
+    reporterHandle: handle,
+    content:        tweetText,
+  });
+
+  console.log(`[league-twitter] Posted fan tweet from ${handle} targeting ${target.team}`);
+}
+
+// ── Named-reporter tweet poster ───────────────────────────────────────────────
+
 /** Post a single tweet from the given reporter and persist it to the DB. */
 async function postOneTweet(
   tc:            TextChannel,
@@ -774,7 +946,7 @@ async function postOneTweet(
   if (!tweetText) return;
 
   const header = `**${reporter.name}** ${reporter.handle} · *${reporter.outlet}*`;
-  const msg = await tc.send(`${header}\n\n${tweetText}`);
+  const msg    = await tc.send(`@everyone\n${header}\n\n${tweetText}`);
 
   await db.insert(leagueTwitterTable).values({
     seasonId,
@@ -802,11 +974,12 @@ export async function postLeagueTweet(client: Client): Promise<void> {
     if (!ch?.isTextBased()) return;
     const tc = ch as TextChannel;
 
-    // How many tweets this burst — max 2 to prevent topic clustering
-    const count = Math.random() < 0.55 ? 1 : 2;
+    // How many tweets this burst — 25% one, 50% two, 25% three
+    const burstRoll = Math.random();
+    const count = burstRoll < 0.25 ? 1 : burstRoll < 0.75 ? 2 : 3;
 
-    // ── Pull all known human-team names ────────────────────────────────────────
-    const userTeams = await db.select({ team: usersTable.team })
+    // ── Pull all human-team users (needed for fan tweets + spotlight avoidance) ─
+    const userTeams = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
       .from(usersTable)
       .where(isNotNull(usersTable.team));
 
@@ -859,20 +1032,25 @@ export async function postLeagueTweet(client: Client): Promise<void> {
     const burstSpotlights = new Set<string>();
 
     for (let i = 0; i < count; i++) {
-      // Pick a reporter not already used this burst (or last interval's last tweet)
-      const available = REPORTERS.filter(r => !usedReporters.has(r.name));
-      const reporter  = available.length > 0
-        ? available[Math.floor(Math.random() * available.length)]!
-        : REPORTERS[Math.floor(Math.random() * REPORTERS.length)]!;
+      // 25% chance this slot is a random fan trash-talk tweet instead of a named reporter
+      if (Math.random() < 0.25) {
+        await postOneFanTweet(tc, context, season.id, userTeams);
+      } else {
+        // Pick a reporter not already used this burst (or last interval's last tweet)
+        const available = REPORTERS.filter(r => !usedReporters.has(r.name));
+        const reporter  = available.length > 0
+          ? available[Math.floor(Math.random() * available.length)]!
+          : REPORTERS[Math.floor(Math.random() * REPORTERS.length)]!;
 
-      usedReporters.add(reporter.name);
+        usedReporters.add(reporter.name);
 
-      // Pick a spotlight team: avoid recently used AND already spotlighted this burst
-      const avoidForSpotlight = [...new Set([...recentlyUsedTeams, ...burstSpotlights])];
-      const spotlight = pickSpotlightTeam(knownTeams, avoidForSpotlight);
-      if (spotlight) burstSpotlights.add(spotlight);
+        // Pick a spotlight team: avoid recently used AND already spotlighted this burst
+        const avoidForSpotlight = [...new Set([...recentlyUsedTeams, ...burstSpotlights])];
+        const spotlight = pickSpotlightTeam(knownTeams, avoidForSpotlight);
+        if (spotlight) burstSpotlights.add(spotlight);
 
-      await postOneTweet(tc, reporter, context, season.id, recentlyUsedTeams, spotlight);
+        await postOneTweet(tc, reporter, context, season.id, recentlyUsedTeams, spotlight);
+      }
 
       // Short pause between tweets in the same burst
       if (i < count - 1) {
