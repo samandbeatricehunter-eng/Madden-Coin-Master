@@ -687,7 +687,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  if (sub === "set_core_attributes") {
+  if (sub === "core-attrs") {
     const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
     const season = seasons[0];
     if (!season) {
