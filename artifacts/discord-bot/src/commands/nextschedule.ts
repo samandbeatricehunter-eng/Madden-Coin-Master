@@ -42,16 +42,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const currentWeek = season.currentWeek ?? "1";
   const currentIdx  = WEEK_SEQUENCE.indexOf(currentWeek);
 
-  // Nothing to show if we're at offseason or off the sequence
-  if (currentWeek === "offseason" || currentIdx === -1) {
+  // Nothing to show if we're at offseason/training camp or off the sequence
+  if (currentWeek === "offseason" || currentWeek === "training_camp" || currentIdx === -1) {
+    const label = currentWeek === "training_camp" ? "Training Camp" : "off-season";
     await interaction.editReply({
-      content: "📭 The league is currently in the off-season. No upcoming schedule to show.",
+      content: `📭 The league is currently in ${label}. No upcoming schedule to show.`,
     });
     return;
   }
 
   const nextWeek = WEEK_SEQUENCE[currentIdx + 1];
-  if (!nextWeek || nextWeek === "offseason") {
+  if (!nextWeek || nextWeek === "offseason" || nextWeek === "training_camp") {
     await interaction.editReply({
       content: "📭 There are no more weeks after the current one. The season has concluded.",
     });

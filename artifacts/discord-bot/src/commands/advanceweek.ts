@@ -35,11 +35,12 @@ const OFFSEASON_WIPE_CHANNEL_IDS = [
 export const WEEK_SEQUENCE = [
   "1","2","3","4","5","6","7","8","9","10",
   "11","12","13","14","15","16","17","18",
-  "wildcard","divisional","conference","superbowl","offseason",
+  "wildcard","divisional","conference","superbowl","offseason","training_camp",
 ];
 
 export function weekLabel(week: string): string {
   if (/^\d+$/.test(week)) return `Week ${week}`;
+  if (week === "training_camp") return "Training Camp";
   return week.charAt(0).toUpperCase() + week.slice(1);
 }
 
@@ -85,7 +86,8 @@ export const data = new SlashCommandBuilder()
         { name: "Divisional",    value: "divisional"  },
         { name: "Conference",    value: "conference"  },
         { name: "Super Bowl",    value: "superbowl"   },
-        { name: "Offseason",     value: "offseason"   },
+        { name: "Offseason",       value: "offseason"     },
+        { name: "Training Camp",   value: "training_camp" },
       )
   );
 
@@ -553,8 +555,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     })();
   }
 
-  // ── New season — announce when advancing to Week 1 from offseason or a fresh season ──
-  if (newWeek === "1" && (!season.currentWeek || season.currentWeek === "offseason")) {
+  // ── Training Camp — post announcement ─────────────────────────────────────────
+  if (newWeek === "training_camp") {
+    (async () => {
+      try {
+        const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
+          ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
+        if (announceCh?.isTextBased()) {
+          await (announceCh as TextChannel).send({
+            content:
+              `@everyone\n` +
+              `🏕️ **Training Camp has begun!**\n\n` +
+              `The offseason is over — it's time to build your roster and get ready for the upcoming season.\n\n` +
+              `📋 All attribute upgrades, dev upgrades, and store purchases are now open for the new season. ` +
+              `Use your coins wisely before Week 1 kicks off!`,
+          });
+        }
+      } catch (err) {
+        console.error("[advanceweek] Training Camp announcement error:", err);
+      }
+    })();
+  }
+
+  // ── New season — announce when advancing to Week 1 from offseason, training camp, or a fresh season ──
+  if (newWeek === "1" && (!season.currentWeek || season.currentWeek === "offseason" || season.currentWeek === "training_camp")) {
     (async () => {
       try {
         const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
