@@ -92,7 +92,7 @@ const commands = [
   endofseasonpayout, adminSetPayouts,
   adminSetStatTiers, adminStatTiers, adminSetMilestoneTier,
   adminLegendVault, adminCustomArcetypes, adminCustomPlayerSettings, adminFixPlayerNames,
-  adminEosReapprove, adminSeason,
+  adminEosReapprove, adminSeason, adminLinkTeam,
 ].map(c => c.data.toJSON());
 
 commands.push(
