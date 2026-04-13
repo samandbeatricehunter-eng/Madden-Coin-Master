@@ -104,9 +104,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // When called directly via /statleaders, the option is "category".
   // When called via /view player_stats, the chosen value lives in "mode".
-  const category = interaction.options.getString("category")
+  // "watch" (from /view team_stats mode:watch) normalises to "teams".
+  const rawCategory = interaction.options.getString("category")
     ?? interaction.options.getString("mode")
     ?? "all";
+  const category = rawCategory === "watch" ? "teams" : rawCategory;
   const season   = await getOrCreateActiveSeason();
 
   // ── Load data ───────────────────────────────────────────────────────────────

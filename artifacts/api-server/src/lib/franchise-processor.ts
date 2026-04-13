@@ -1793,6 +1793,64 @@ function buildPlayerValues(p: any, seasonId: number, teamId: number, teamName: s
   };
 }
 
+// ── Attribute abbreviation map for transaction log ─────────────────────────────
+const ATTR_ABBREV: Record<string, string> = {
+  speedRating:                "SPD",
+  accelerationRating:         "ACC",
+  agilityRating:              "AGI",
+  jumpingRating:              "JMP",
+  strengthRating:             "STR",
+  throwPowerRating:           "THP",
+  throwAccuracyShortRating:   "TAS",
+  throwAccuracyMidRating:     "TAM",
+  throwAccuracyDeepRating:    "TAD",
+  throwOnRunRating:           "TOR",
+  throwUnderPressureRating:   "TUP",
+  breakSackRating:            "BSK",
+  playActionRating:           "PAC",
+  catchingRating:             "CTH",
+  catchInTrafficRating:       "CIT",
+  shortRouteRunningRating:    "SRR",
+  mediumRouteRunningRating:   "MRR",
+  deepRouteRunningRating:     "DRR",
+  spectacularCatchRating:     "SPC",
+  runBlockRating:             "RBK",
+  passBlockRating:            "PBK",
+  runBlockPowerRating:        "RBP",
+  runBlockFinesseRating:      "RBF",
+  passBlockPowerRating:       "PBP",
+  passBlockFinesseRating:     "PBF",
+  impactBlockRating:          "IBL",
+  carryingRating:             "CAR",
+  breakTackleRating:          "BTK",
+  trucksRating:               "TRK",
+  stiffArmRating:             "SFA",
+  spinMoveRating:             "SPN",
+  jukesMoveRating:            "JKM",
+  changeOfDirectionRating:    "COD",
+  tackleRating:               "TAK",
+  hitPowerRating:             "POW",
+  pursuitRating:              "PUR",
+  playRecognitionRating:      "PRC",
+  manCoverageRating:          "MCV",
+  zoneCoverageRating:         "ZCV",
+  pressRating:                "PRS",
+  kickPowerRating:            "KPW",
+  kickAccuracyRating:         "KAC",
+  kickReturnRating:           "KR",
+  awareRating:                "AWR",
+  staminaRating:              "STA",
+  injuryRating:               "INJ",
+  toughRating:                "TGH",
+  finesseMovesRating:         "FMV",
+  powerMovesRating:           "PMV",
+};
+
+function friendlyAttrName(key: string): string {
+  if (ATTR_ABBREV[key]) return ATTR_ABBREV[key]!;
+  return key.replace(/Rating$/, "").replace(/([A-Z])/g, " $1").trim().slice(0, 10);
+}
+
 // ── /team/:teamId/roster → upsert active 53-man roster for one team ───────────
 
 export async function processTeamRoster(body: unknown, mcaTeamId: number): Promise<ProcessResult> {
@@ -1868,17 +1926,35 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
     }
 
     // ── Detect roster transactions before overwriting ─────────────────────────
-    const playerIds = rows.map(r => r.playerId).filter((id): id is number => id != null && id > 0);
+    const FA_TEAM_ID  = 999;
+    const playerIds   = rows.map(r => r.playerId).filter((id): id is number => id != null && id > 0);
+    const incomingIdSet = new Set(playerIds);
+
+    // Load the FULL current roster for this team (released-player detection)
+    const currentTeamRoster = await db.select({
+      playerId:  franchiseRostersTable.playerId,
+      firstName: franchiseRostersTable.firstName,
+      lastName:  franchiseRostersTable.lastName,
+      position:  franchiseRostersTable.position,
+    })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.teamId,   mcaTeamId),
+      ));
+
+    // Load existing rows for incoming players across ALL teams (team/OVR/dev/attr change detection)
     const existingRows = playerIds.length > 0
       ? await db.select({
-          playerId: franchiseRostersTable.playerId,
-          teamId:   franchiseRostersTable.teamId,
-          teamName: franchiseRostersTable.teamName,
-          overall:  franchiseRostersTable.overall,
-          devTrait: franchiseRostersTable.devTrait,
-          firstName: franchiseRostersTable.firstName,
-          lastName:  franchiseRostersTable.lastName,
-          position:  franchiseRostersTable.position,
+          playerId:   franchiseRostersTable.playerId,
+          teamId:     franchiseRostersTable.teamId,
+          teamName:   franchiseRostersTable.teamName,
+          overall:    franchiseRostersTable.overall,
+          devTrait:   franchiseRostersTable.devTrait,
+          firstName:  franchiseRostersTable.firstName,
+          lastName:   franchiseRostersTable.lastName,
+          position:   franchiseRostersTable.position,
+          attributes: franchiseRostersTable.attributes,
         })
         .from(franchiseRostersTable)
         .where(and(
@@ -1888,64 +1964,118 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
       : [];
 
     const existingMap = new Map(existingRows.map(r => [r.playerId, r]));
-    const DEV_LABELS: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
+    const DEV_LABELS: Record<number, string> = {
+      0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
+    };
     const transactions: Array<typeof rosterTransactionsTable.$inferInsert> = [];
 
+    // ── Released-player detection ─────────────────────────────────────────────
+    // Only run if the team already had a roster (skip first-ever import for team)
+    if (currentTeamRoster.length > 0) {
+      for (const dbPlayer of currentTeamRoster) {
+        if (incomingIdSet.has(dbPlayer.playerId)) continue;
+        const releasedName = [dbPlayer.firstName, dbPlayer.lastName].filter(Boolean).join(" ") || `Player ${dbPlayer.playerId}`;
+        transactions.push({
+          seasonId:        season.id,
+          transactionType: "released",
+          playerId:        dbPlayer.playerId,
+          playerName:      releasedName,
+          position:        dbPlayer.position ?? "",
+          fromTeam:        teamEntry.fullName,
+          toTeam:          null,
+          fromValue:       null,
+          toValue:         null,
+        });
+      }
+    }
+
+    // ── Per-player change detection ────────────────────────────────────────────
     for (const row of rows) {
       if (row.playerId == null) continue;
-      const prev = existingMap.get(row.playerId);
+      const prev       = existingMap.get(row.playerId);
       const playerName = [row.firstName, row.lastName].filter(Boolean).join(" ") || `Player ${row.playerId}`;
       const position   = row.position ?? "";
 
-      if (!prev) continue; // brand new to the league — no prior state to compare
+      if (!prev) continue; // truly brand-new to the league — no prior state
 
-      // Team change: player was on a DIFFERENT team before this export
+      // ── Team move: player came from a different team ─────────────────────────
       if (prev.teamId !== mcaTeamId) {
+        const isFromFA = prev.teamId === FA_TEAM_ID;
         transactions.push({
           seasonId:        season.id,
-          transactionType: "team_change",
+          transactionType: isFromFA ? "signed" : "traded",
           playerId:        row.playerId,
           playerName,
           position,
-          fromTeam:  prev.teamName ?? String(prev.teamId),
-          toTeam:    teamEntry.fullName,
-          fromValue: null,
-          toValue:   null,
+          fromTeam:        prev.teamName ?? String(prev.teamId),
+          toTeam:          teamEntry.fullName,
+          fromValue:       null,
+          toValue:         null,
         });
-      } else {
-        // Overall rating change (same team)
-        const prevOvr = prev.overall ?? 0;
-        const newOvr  = (row.overall as number | null) ?? 0;
-        if (prevOvr > 0 && newOvr > 0 && prevOvr !== newOvr) {
-          transactions.push({
-            seasonId:        season.id,
-            transactionType: "overall_change",
-            playerId:        row.playerId,
-            playerName,
-            position,
-            fromTeam:  teamEntry.fullName,
-            toTeam:    teamEntry.fullName,
-            fromValue: String(prevOvr),
-            toValue:   String(newOvr),
-          });
-        }
+        continue; // no attribute/OVR/dev check when team just changed
+      }
 
-        // Dev trait change (same team)
-        const prevDev = prev.devTrait ?? 0;
-        const newDev  = (row.devTrait as number | null) ?? 0;
-        if (prevDev !== newDev) {
-          transactions.push({
-            seasonId:        season.id,
-            transactionType: "dev_change",
-            playerId:        row.playerId,
-            playerName,
-            position,
-            fromTeam:  teamEntry.fullName,
-            toTeam:    teamEntry.fullName,
-            fromValue: DEV_LABELS[prevDev] ?? String(prevDev),
-            toValue:   DEV_LABELS[newDev]  ?? String(newDev),
-          });
-        }
+      // ── Same team: OVR change ─────────────────────────────────────────────────
+      const prevOvr = prev.overall ?? 0;
+      const newOvr  = (row.overall as number | null) ?? 0;
+      if (prevOvr > 0 && newOvr > 0 && prevOvr !== newOvr) {
+        transactions.push({
+          seasonId:        season.id,
+          transactionType: "overall_change",
+          playerId:        row.playerId,
+          playerName,
+          position,
+          fromTeam:        teamEntry.fullName,
+          toTeam:          teamEntry.fullName,
+          fromValue:       String(prevOvr),
+          toValue:         String(newOvr),
+        });
+      }
+
+      // ── Same team: dev-trait change ───────────────────────────────────────────
+      const prevDev = prev.devTrait ?? 0;
+      const newDev  = (row.devTrait as number | null) ?? 0;
+      if (prevDev !== newDev) {
+        transactions.push({
+          seasonId:        season.id,
+          transactionType: "dev_change",
+          playerId:        row.playerId,
+          playerName,
+          position,
+          fromTeam:        teamEntry.fullName,
+          toTeam:          teamEntry.fullName,
+          fromValue:       DEV_LABELS[prevDev] ?? String(prevDev),
+          toValue:         DEV_LABELS[newDev]  ?? String(newDev),
+        });
+      }
+
+      // ── Same team: individual attribute changes ───────────────────────────────
+      const prevAttrs = (prev.attributes ?? {}) as Record<string, unknown>;
+      const newAttrs  = (row.attributes  ?? {}) as Record<string, unknown>;
+      const attrChanges: string[] = [];
+
+      for (const [key, newVal] of Object.entries(newAttrs)) {
+        if (!key.endsWith("Rating")) continue;
+        const oldVal = prevAttrs[key];
+        if (oldVal == null) continue; // attribute not previously tracked
+        const oldNum = Number(oldVal);
+        const newNum = Number(newVal);
+        if (isNaN(oldNum) || isNaN(newNum) || oldNum === newNum) continue;
+        attrChanges.push(`${friendlyAttrName(key)}: ${oldNum}→${newNum}`);
+      }
+
+      if (attrChanges.length > 0) {
+        transactions.push({
+          seasonId:        season.id,
+          transactionType: "attr_change",
+          playerId:        row.playerId,
+          playerName,
+          position,
+          fromTeam:        teamEntry.fullName,
+          toTeam:          teamEntry.fullName,
+          fromValue:       null,
+          toValue:         attrChanges.join(", "),
+        });
       }
     }
 
