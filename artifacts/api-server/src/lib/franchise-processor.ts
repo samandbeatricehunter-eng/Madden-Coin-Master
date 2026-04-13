@@ -1485,6 +1485,19 @@ export async function processWeekScores(
             await db.update(userRecordsTable)
               .set({ playoffLosses: sql`${userRecordsTable.playoffLosses} + 1` })
               .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+
+            // Super Bowl: also credit superbowlWins / superbowlLosses and all-time SB wins
+            if (weekIndexTarget === 1022) {
+              await db.update(userRecordsTable)
+                .set({ superbowlWins: sql`${userRecordsTable.superbowlWins} + 1` })
+                .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+              await db.update(userRecordsTable)
+                .set({ superbowlLosses: sql`${userRecordsTable.superbowlLosses} + 1` })
+                .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+              await db.update(usersTable)
+                .set({ allTimeSuperbowlWins: sql`${usersTable.allTimeSuperbowlWins} + 1`, updatedAt: new Date() })
+                .where(eq(usersTable.discordId, winnerId));
+            }
           }
 
           const winnerRow = await db.select({ allTimeH2HWins: usersTable.allTimeH2HWins, milestoneTierAwarded: usersTable.milestoneTierAwarded })
