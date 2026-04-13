@@ -155,6 +155,61 @@ async function postToApiServer(
   }
 }
 
+// ── Shared roster fetch + POST helper (no interaction needed) ─────────────────
+// Returns a condensed summary line and a flag indicating full success.
+async function runRosterSync(
+  token:      Parameters<typeof fetchLeagueTeamsAndRosters>[0],
+  eaLeagueId: number,
+): Promise<{ summaryLine: string; allOk: boolean }> {
+  const apiBase    = getApiBase();
+  const key        = getWebhookKey();
+  const platform   = token.platform;
+  const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+
+  let rosterData: RostersExportData;
+  try {
+    rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId);
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
+  } catch (err: any) {
+    console.error("[ea-export/rosters] Fetch error:", err);
+    return {
+      summaryLine: `❌ Roster sync failed — ${err?.message ?? String(err)}`,
+      allOk:       false,
+    };
+  }
+
+  const results: Array<{ name: string; ok: boolean; status: number }> = [];
+
+  // 1 — leagueTeams
+  const teamsRes = await postToApiServer(`${leagueBase}/leagueteams`, rosterData.leagueTeams);
+  results.push({ name: "leagueTeams", ...teamsRes });
+
+  // 2 — per-team rosters
+  for (const { teamId, data } of rosterData.teamRosters) {
+    const res = await postToApiServer(`${leagueBase}/team/${teamId}/roster`, data);
+    results.push({ name: `roster:${teamId}`, ...res });
+  }
+
+  // 3 — free agents
+  const faRes = await postToApiServer(`${leagueBase}/freeagents/roster`, rosterData.freeAgents);
+  results.push({ name: "freeAgents", ...faRes });
+
+  const failed       = results.filter(r => !r.ok);
+  const rosterSynced = results.filter(r => r.ok && (r.name.startsWith("roster:") || r.name === "freeAgents")).length;
+  const teamsOk      = !failed.find(r => r.name === "leagueTeams");
+
+  let summaryLine: string;
+  if (failed.length === 0) {
+    summaryLine = `✅ leagueTeams + ${rosterSynced} rosters + free agents synced`;
+  } else {
+    const rosterFails = failed.filter(r => r.name.startsWith("roster:") || r.name === "freeAgents").length;
+    summaryLine = `⚠️ Roster sync partial — ${failed.length} failed (leagueTeams:${teamsOk ? "ok" : "fail"}, rosters:${rosterFails} failed)`;
+  }
+
+  return { summaryLine, allOk: failed.length === 0 };
+}
+
 // ── Export a single week's worth of data ─────────────────────────────────────
 async function exportWeek(
   interaction:    ChatInputCommandInteraction,
@@ -211,7 +266,7 @@ async function exportWeek(
   const platform = token.platform;
   const weekBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/${weekType}/${weekNum}`;
 
-  await interaction.editReply({ content: `⏳ Sending **${weekLabel}** data to processor...` });
+  await interaction.editReply({ content: `⏳ Sending **${weekLabel}** stats to processor...` });
 
   const results: Array<{ name: string; ok: boolean; status: number }> = [];
 
@@ -237,27 +292,42 @@ async function exportWeek(
   const schedRes = await postToApiServer(`${weekBase}/schedules`, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
 
-  // Build result summary
-  const successCount = results.filter((r) => r.ok).length;
-  const failCount    = results.filter((r) => !r.ok).length;
+  // ── Now automatically sync rosters (league teams + all 32 rosters + free agents)
+  await interaction.editReply({ content: `⏳ **${weekLabel}** stats done — now syncing rosters (~60s)...` });
 
-  const lines = results.map((r) =>
-    r.ok
-      ? `✅ ${r.name}`
-      : `❌ ${r.name} (HTTP ${r.status})`,
+  const { summaryLine: rosterSummary, allOk: rostersAllOk } = await runRosterSync(token, eaLeagueId);
+
+  // Build combined result embed
+  const statsSuccessCount = results.filter((r) => r.ok).length;
+  const statsFailCount    = results.filter((r) => !r.ok).length;
+
+  const statsLines = results.map((r) =>
+    r.ok ? `✅ ${r.name}` : `❌ ${r.name} (HTTP ${r.status})`,
   );
 
+  const overallOk = statsFailCount === 0 && rostersAllOk;
+  const hasWarning = (statsFailCount > 0 || !rostersAllOk);
+
   const embed = new EmbedBuilder()
-    .setColor(failCount === 0 ? Colors.Green : failCount < results.length ? Colors.Yellow : Colors.Red)
+    .setColor(overallOk ? Colors.Green : hasWarning ? Colors.Yellow : Colors.Red)
     .setTitle(`📥 EA Export — ${weekLabel}`)
-    .setDescription(lines.join("\n"))
-    .addFields({
-      name:  "Result",
-      value: failCount === 0
-        ? `✅ All ${successCount} stat types processed successfully`
-        : `⚠️ ${successCount}/${results.length} succeeded, ${failCount} failed`,
-    })
-    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()}` })
+    .addFields(
+      {
+        name:  "📊 Weekly Stats",
+        value: statsLines.join("\n") || "none",
+      },
+      {
+        name:  "🏈 Roster Sync",
+        value: rosterSummary,
+      },
+      {
+        name:  "Result",
+        value: overallOk
+          ? `✅ Stats + rosters fully synced`
+          : `⚠️ ${statsSuccessCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "rosters had errors"}`,
+      },
+    )
+    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · Rosters auto-updated each week` })
     .setTimestamp();
 
   await interaction.editReply({ content: "", embeds: [embed] });
@@ -471,10 +541,9 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
 
 // ── /admin_ea_export rosters ──────────────────────────────────────────────────
 // Fetches: leagueTeams (all 32 teams' info + userName mapping) → per-team rosters
-// (one request per team using the same Blaze session) → free agents.
-// The snallabot source confirmed the command is CareerMode_GetTeamRostersExport
-// with { leagueId, listIndex: teamIndex, returnFreeAgents: false, teamId }.
-// All results are POSTed to the API server just as MCA would send them.
+// → free agents. Uses the shared runRosterSync helper.
+// Note: week exports also call runRosterSync automatically — this command is for
+// on-demand syncs after trades or when you need a standalone roster update.
 async function handleRosters(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
@@ -485,74 +554,23 @@ async function handleRosters(interaction: ChatInputCommandInteraction): Promise<
   }
 
   const { token, eaLeagueId } = conn;
-  const apiBase  = getApiBase();
-  const key      = getWebhookKey();
   const platform = token.platform;
-  const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
 
   await interaction.editReply({ content: "⏳ Fetching league teams + all rosters from EA (this takes ~60s)..." });
 
-  let rosterData: RostersExportData;
-  try {
-    rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId);
-    const refreshed = await refreshTokenIfNeeded(token);
-    if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
-  } catch (err: any) {
-    console.error("[ea-export/rosters] Fetch error:", err);
-    await interaction.editReply({
-      content:
-        `❌ Failed to fetch roster data from EA: ${err?.message ?? String(err)}\n\n` +
-        "If you see an auth error, run `/admin_ea_connect code` to refresh the connection.\n" +
-        "EA rate-limits Blaze sessions — if you see ERR_SYSTEM, wait 5–10 minutes and retry.",
-    });
-    return;
-  }
-
-  await interaction.editReply({ content: "⏳ Syncing league teams + rosters to the processor..." });
-
-  const results: Array<{ name: string; ok: boolean; status: number }> = [];
-
-  // 1 — leagueTeams (team OVR, name, userName assignment)
-  const teamsRes = await postToApiServer(`${leagueBase}/leagueteams`, rosterData.leagueTeams);
-  results.push({ name: "leagueTeams", ...teamsRes });
-
-  // 2 — per-team rosters
-  for (const { teamId, data } of rosterData.teamRosters) {
-    const res = await postToApiServer(`${leagueBase}/team/${teamId}/roster`, data);
-    results.push({ name: `roster:${teamId}`, ...res });
-  }
-
-  // 3 — free agents
-  const faRes = await postToApiServer(`${leagueBase}/freeagents/roster`, rosterData.freeAgents);
-  results.push({ name: "freeAgents", ...faRes });
-
-  const succeeded = results.filter(r => r.ok).length;
-  const failed    = results.filter(r => !r.ok);
-
-  // Summarise — show per-team failures but collapse successes to a count
-  const rostersFailed  = failed.filter(r => r.name.startsWith("roster:") || r.name === "freeAgents");
-  const rostersSynced  = results.filter(r => r.ok && (r.name.startsWith("roster:") || r.name === "freeAgents")).length;
-  const teamFailed     = failed.find(r => r.name === "leagueTeams");
-
-  const summaryLines: string[] = [
-    teamFailed ? `❌ leagueTeams (HTTP ${teamFailed.status})` : `✅ leagueTeams`,
-    rostersFailed.length === 0
-      ? `✅ ${rostersSynced} team rosters + free agents`
-      : `⚠️ ${rostersSynced}/${rosterData.teamRosters.length + 1} rosters synced — ${rostersFailed.length} failed`,
-    ...rostersFailed.map(r => `  ❌ ${r.name} (HTTP ${r.status})`),
-  ];
+  const { summaryLine, allOk } = await runRosterSync(token, eaLeagueId);
 
   const embed = new EmbedBuilder()
-    .setColor(failed.length === 0 ? Colors.Green : succeeded > 0 ? Colors.Yellow : Colors.Red)
+    .setColor(allOk ? Colors.Green : Colors.Yellow)
     .setTitle("🏈 EA Roster Sync")
-    .setDescription(summaryLines.join("\n"))
+    .setDescription(summaryLine)
     .addFields({
       name:  "Result",
-      value: failed.length === 0
-        ? `✅ All ${succeeded} endpoints synced — rosters are up to date`
-        : `⚠️ ${succeeded}/${results.length} synced (${failed.length} failed)`,
+      value: allOk
+        ? "✅ All endpoints synced — rosters + free agents are up to date"
+        : "⚠️ Some endpoints failed — check logs and retry",
     })
-    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · Run after every trade or start of week` })
+    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · Runs automatically with each week export` })
     .setTimestamp();
 
   await interaction.editReply({ content: "", embeds: [embed] });

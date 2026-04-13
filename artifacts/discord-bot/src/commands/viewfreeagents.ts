@@ -184,7 +184,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       minOvr > 0 ? `OVR ≥ ${minOvr}` : null,
     ].filter(Boolean).join(", ");
     await interaction.editReply({
-      content: `No free agents found${filterDesc ? ` matching ${filterDesc}` : ""}. The pool will populate after the next franchise ZIP upload.`,
+      content: `No free agents found${filterDesc ? ` matching ${filterDesc}` : ""}. The pool updates automatically with each week export — run \`/admin_ea_export week\` or \`/admin_ea_export rosters\` to sync.`,
     });
     return;
   }
