@@ -338,10 +338,11 @@ async function updateEmbedMessage(
 }
 
 /**
- * Delete ALL old panel messages → post fresh set at bottom → update DB.
- * Keeps toggle buttons always at the bottom of the feed.
+ * Edit button panel messages in-place so they never move in the feed.
+ * Only falls back to delete+repost if the number of panels changes
+ * (e.g. a new user was added via /draftpresence refresh).
  */
-async function repostButtonPanel(
+async function updateButtonPanels(
   client:   Client,
   session:  typeof draftSessionsTable.$inferSelect,
   isActive: boolean,
@@ -349,13 +350,15 @@ async function repostButtonPanel(
   const tc = await getChannel(client, session.channelId);
   if (!tc) return;
 
-  // Delete all old panel messages
   const oldIds = parsePanelIds(session);
-  for (const id of oldIds) {
-    await tc.messages.delete(id).catch(() => {});
-  }
 
-  if (!isActive) return; // no buttons needed after close
+  if (!isActive) {
+    // Draft ended — remove all button panels entirely
+    for (const id of oldIds) {
+      await tc.messages.delete(id).catch(() => {});
+    }
+    return;
+  }
 
   const presenceRows = await db.select()
     .from(draftPresenceTable)
@@ -363,9 +366,27 @@ async function repostButtonPanel(
 
   presenceRows.sort((a, b) => (a.teamName ?? "").localeCompare(b.teamName ?? ""));
 
-  const panels    = buildButtonPanels(presenceRows);
-  const newIds: string[] = [];
+  const panels = buildButtonPanels(presenceRows);
 
+  // Happy path: same number of panels → edit each one in-place, no channel noise
+  if (panels.length === oldIds.length && oldIds.length > 0) {
+    for (let i = 0; i < panels.length; i++) {
+      const msg = await tc.messages.fetch(oldIds[i]!).catch(() => null);
+      if (msg) {
+        await msg.edit({ components: panels[i]! }).catch(err =>
+          console.error("[draft-presence] panel edit failed:", err),
+        );
+      }
+    }
+    return;
+  }
+
+  // Panel count changed (refresh added/removed users) — delete old, post fresh
+  for (const id of oldIds) {
+    await tc.messages.delete(id).catch(() => {});
+  }
+
+  const newIds: string[] = [];
   for (const components of panels) {
     const msg = await tc.send({ components });
     newIds.push(msg.id);
@@ -375,8 +396,8 @@ async function repostButtonPanel(
 }
 
 /**
- * Full refresh: update embed in-place + repost all button panels at bottom.
- * Call this after every toggle.
+ * Full refresh: update embed in-place + update button panels in-place.
+ * Call this after every toggle. Neither message moves in the feed.
  */
 export async function refreshPresence(client: Client, sessionId: number): Promise<void> {
   const [session] = await db.select()
@@ -386,7 +407,7 @@ export async function refreshPresence(client: Client, sessionId: number): Promis
   if (!session) return;
 
   await updateEmbedMessage(client, session, session.isActive);
-  await repostButtonPanel(client, session, session.isActive);
+  await updateButtonPanels(client, session, session.isActive);
 }
 
 /** Post the initial embed + button panels when the draft starts. */
