@@ -32,7 +32,8 @@ export const usersTable = pgTable("economy_users", {
   balance: integer("balance").notNull().default(0),
   totalLegendPurchases: integer("total_legend_purchases").notNull().default(0),
   // All-time tracking for milestone payouts
-  allTimeSuperbowlWins: integer("all_time_superbowl_wins").notNull().default(0),
+  allTimeSuperbowlWins:   integer("all_time_superbowl_wins").notNull().default(0),
+  allTimeSuperbowlLosses: integer("all_time_superbowl_losses").notNull().default(0),
   allTimeH2HWins: integer("all_time_h2h_wins").notNull().default(0),
   allTimeH2HLosses: integer("all_time_h2h_losses").notNull().default(0),
   // Which win milestone has been awarded: 0=none, 1=5W, 2=12W, 3=25W, 4=50W

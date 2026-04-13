@@ -388,6 +388,7 @@ async function handleButton(interaction: ButtonInteraction) {
         discordId: userId!, seasonId: purchase.seasonId, purchaseId: purchase.id,
         itemType: "legend", legendId: purchase.legendId,
         legendName: purchase.playerName, playerPosition: purchase.playerPosition,
+        legendCategory: "current",
       });
       await db.update(legendsTable).set({ isAvailable: false }).where(eq(legendsTable.id, purchase.legendId));
     }

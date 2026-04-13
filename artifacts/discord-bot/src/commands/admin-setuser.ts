@@ -66,10 +66,16 @@ export const data = new SlashCommandBuilder()
   .addIntegerOption(opt =>
     opt.setName("superbowl_losses").setDescription("Set current season Super Bowl losses").setRequired(false).setMinValue(0)
   )
-  // ── All-time SB wins (for bonus tier tracking) ─────────────────────────────
+  // ── All-time SB wins/losses (for bonus tier tracking) ─────────────────────
   .addIntegerOption(opt =>
     opt.setName("all_time_sb_wins")
       .setDescription("Set all-time Super Bowl wins (for bonus tier tracking)")
+      .setRequired(false)
+      .setMinValue(0)
+  )
+  .addIntegerOption(opt =>
+    opt.setName("all_time_sb_losses")
+      .setDescription("Set all-time Super Bowl losses")
       .setRequired(false)
       .setMinValue(0)
   )
@@ -145,6 +151,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const superbowlWins    = interaction.options.getInteger("superbowl_wins");
   const superbowlLosses  = interaction.options.getInteger("superbowl_losses");
   const allTimeSbWins    = interaction.options.getInteger("all_time_sb_wins");
+  const allTimeSbLosses  = interaction.options.getInteger("all_time_sb_losses");
   const milestonesAlreadyPaid = interaction.options.getBoolean("milestones_already_paid");
   const coreAttrUsed     = interaction.options.getInteger("core_attr_used");
   const nonCoreAttrUsed  = interaction.options.getInteger("non_core_attr_used");
@@ -156,7 +163,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     wins === null && losses === null && pointDiff === null &&
     playoffWins === null && playoffLosses === null &&
     superbowlWins === null && superbowlLosses === null &&
-    allTimeSbWins === null &&
+    allTimeSbWins === null && allTimeSbLosses === null &&
     coreAttrUsed === null && nonCoreAttrUsed === null &&
     devUpsUsed === null && ageResetsUsed === null;
 
@@ -192,7 +199,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const userUpdates: Record<string, any> = { updatedAt: new Date() };
   if (coins !== null)       { userUpdates.balance = coins;                      changes.push(`💰 **Coins** → ${coins.toLocaleString()}`); }
   if (legendTotal !== null) { userUpdates.totalLegendPurchases = legendTotal;   changes.push(`🏆 **All-Time Legend Total** → ${legendTotal}`); }
-  if (allTimeSbWins !== null) { userUpdates.allTimeSuperbowlWins = allTimeSbWins; changes.push(`🏆 **All-Time SB Wins** → ${allTimeSbWins}`); }
+  if (allTimeSbWins   !== null) { userUpdates.allTimeSuperbowlWins   = allTimeSbWins;   changes.push(`🏆 **All-Time SB Wins** → ${allTimeSbWins}`); }
+  if (allTimeSbLosses !== null) { userUpdates.allTimeSuperbowlLosses = allTimeSbLosses; changes.push(`🏆 **All-Time SB Losses** → ${allTimeSbLosses}`); }
   if (Object.keys(userUpdates).length > 1) {
     await db.update(usersTable).set(userUpdates).where(eq(usersTable.discordId, discordId));
   }

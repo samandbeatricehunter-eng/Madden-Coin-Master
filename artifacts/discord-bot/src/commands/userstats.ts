@@ -94,12 +94,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs ─
   const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers, permanentLegendsFromVault] = await Promise.all([
-    // Current-season non-permanent items only (dev ups, age resets, attributes, this season's legends/customs)
+    // Current-season non-permanent items only (dev ups, age resets, attributes, this season's legends/customs).
+    // Use OR isNull to catch legend rows that pre-date the legendCategory column being set at approval time.
     db.select().from(inventoryTable)
       .where(and(
         eq(inventoryTable.discordId, target.id),
         eq(inventoryTable.seasonId, season.id),
-        sql`${inventoryTable.legendCategory} != 'permanent'`,
+        or(isNull(inventoryTable.legendCategory), sql`${inventoryTable.legendCategory} != 'permanent'`),
       )),
 
     db.select().from(seasonStatsTable)
@@ -156,12 +157,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         sql`${inventoryTable.legendCategory} = 'permanent'`,
       )),
 
-    // Permanent legends — by team (or discordId fallback), no season constraint
+    // Permanent legends — by team (or discordId fallback), no season constraint.
+    // Also picks up legend rows from prior seasons whose legendCategory is null (missed by old rollover logic).
     db.select().from(inventoryTable)
       .where(and(
         permOwnerWhere,
         eq(inventoryTable.itemType, "legend"),
-        sql`${inventoryTable.legendCategory} = 'permanent'`,
+        or(
+          sql`${inventoryTable.legendCategory} = 'permanent'`,
+          and(isNull(inventoryTable.legendCategory), sql`${inventoryTable.seasonId} != ${season.id}`),
+        ),
       )),
   ]);
 
@@ -213,7 +218,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const pd      = record?.pointDifferential ?? 0;
   const pWins   = record?.playoffWins ?? 0;
   const pLosses = record?.playoffLosses ?? 0;
-  const allTimeSB      = user.allTimeSuperbowlWins ?? 0;
+  const allTimeSB      = user.allTimeSuperbowlWins   ?? 0;
+  const allTimeSBL     = user.allTimeSuperbowlLosses ?? 0;
   const milestoneLabel = MILESTONE_LABELS[user.milestoneTierAwarded ?? 0] ?? "None";
 
   const playoffSeed = (user as any).playoffSeed;
@@ -243,7 +249,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       { name: "\u200b",                  value: "\u200b", inline: true },
       { name: "All-Time Playoff Wins",   value: `**${allTimePlayoffW}**`, inline: true },
       { name: "All-Time Playoff Losses", value: `**${allTimePlayoffL}**`, inline: true },
-      { name: "All-Time SB Wins",        value: `**${allTimeSB}**`, inline: true },
+      { name: "All-Time SB Wins",        value: `**${allTimeSB}**`,  inline: true },
+      { name: "All-Time SB Losses",      value: `**${allTimeSBL}**`, inline: true },
       { name: "Highest Win Milestone",   value: milestoneLabel, inline: true },
       { name: "Playoff Seed",            value: seedStr, inline: true },
     );
