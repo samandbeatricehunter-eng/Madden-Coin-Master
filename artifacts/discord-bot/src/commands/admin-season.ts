@@ -745,7 +745,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .setTimestamp(),
       ],
     });
+    return;
   }
+  return interaction.editReply({ content: "❌ Unknown subcommand." });
 }
 
 export async function autocomplete(interaction: AutocompleteInteraction) {

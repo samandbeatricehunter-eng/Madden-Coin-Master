@@ -62,6 +62,7 @@ import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js"
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
 import * as adminEosReapprove       from "./commands/admin-eos-reapprove.js";
+import * as adminSeason             from "./commands/admin-season.js";
 
 // ── Records / rankings ────────────────────────────────────────────────────────
 import { seasonPRData, allTimePRData } from "./commands/records.js";
@@ -95,7 +96,7 @@ const commands = [
   endofseasonpayout, adminTransactions, adminSetPayouts,
   adminSetStatTiers, adminStatTiers, adminSetMilestoneTier,
   adminLegendVault, adminCustomArcetypes, adminCustomPlayerSettings, adminFixPlayerNames,
-  adminEosReapprove,
+  adminEosReapprove, adminSeason,
 ].map(c => c.data.toJSON());
 
 commands.push(
