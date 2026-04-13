@@ -17,7 +17,7 @@ import {
   franchiseScheduleTable, franchiseRostersTable,
 } from "@workspace/db";
 import { eq, desc, and, gte, isNotNull, ne } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "./db-helpers.js";
+import { getOrCreateActiveSeason, getRosterSeasonId } from "./db-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -304,9 +304,12 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     if (statLines.length > 0) parts.push(`\nINDIVIDUAL STAT LEADERS THIS SEASON (use ONLY these exact numbers — do NOT invent or modify any statistic):\n${statLines.join("\n")}`);
   }
 
-  // ── Team rosters (top 5 players per human team by OVR) ─────────────────────
+  // ── Team rosters (top 7 players per human team by OVR) ─────────────────────
   // Included so the AI knows exactly who is on each roster. It must NEVER
   // reference a player as being on a team if they are not listed here.
+  // Uses getRosterSeasonId() so a fresh season without imported rosters yet
+  // transparently falls back to the most recent season that does have data.
+  const rosterSeasonId = await getRosterSeasonId();
   const rosterRows = await db.select({
     teamName:  franchiseRostersTable.teamName,
     firstName: franchiseRostersTable.firstName,
@@ -316,7 +319,7 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
   })
     .from(franchiseRostersTable)
     .where(and(
-      eq(franchiseRostersTable.seasonId, season.id),
+      eq(franchiseRostersTable.seasonId, rosterSeasonId),
       isNotNull(franchiseRostersTable.discordId),   // human-controlled teams only
     ))
     .orderBy(desc(franchiseRostersTable.overall));

@@ -403,7 +403,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 
   // ── Franchise articles — recap of completed week + preview of new week ───────
-  if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && guild) {
+  // Skip the recap when advancing TO Week 1 — there is nothing to recap at the
+  // start of a new season (no completed games in the current season yet).
+  if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && newWeek !== "1" && guild) {
     const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
       ?? await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
 
@@ -596,6 +598,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       } catch (err) {
         console.error("[advanceweek] New season announcement error:", err);
+      }
+
+      // Clear playoff seeds/conference from previous season — prevents stale
+      // Season 2 seeds from leaking into Season 3 Twitter context and standings.
+      try {
+        await db.update(usersTable).set({ playoffSeed: null, playoffConference: null });
+        console.log("[advanceweek] Cleared playoff seeds for new season");
+      } catch (err) {
+        console.error("[advanceweek] Failed to clear playoff seeds:", err);
       }
 
       // Auto-post full 18-week schedule to schedule channel
