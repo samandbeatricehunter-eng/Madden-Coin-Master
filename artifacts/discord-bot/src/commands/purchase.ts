@@ -6,9 +6,9 @@ import {
 import { db } from "@workspace/db";
 import {
   legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTable,
-  franchiseRostersTable,
+  franchiseRostersTable, franchiseMcaTeamsTable,
 } from "@workspace/db";
-import { eq, and, sql, asc } from "drizzle-orm";
+import { eq, and, sql, asc, ilike, or } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
@@ -195,51 +195,72 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       // getUser is not available in autocomplete context; always use the invoking user for roster lookup
       const targetUser = interaction.user;
 
-      if (focused.name === "position") {
-        // Autocomplete positions from this user's roster
-        const season = await getOrCreateActiveSeason();
-        const rows = await db
-          .select({ position: franchiseRostersTable.position })
-          .from(franchiseRostersTable)
+      // ── Resolve roster rows for this user ────────────────────────────────────
+      // Primary: by discordId stored on roster rows (fast path).
+      // Fallback: by the team name registered in the user's profile, matched
+      //           against franchise_mca_teams, then queried by teamId.
+      async function getRosterRows(season: { id: number }, fields: Record<string, any>) {
+        const baseWhere = and(eq(franchiseRostersTable.seasonId, season.id), eq(franchiseRostersTable.discordId, targetUser.id));
+        const rows = await (db.select(fields).from(franchiseRostersTable).where(baseWhere) as any);
+        if (rows.length > 0) return rows;
+
+        // Fallback: look up via economy_users.team → franchise_mca_teams teamId
+        const [userRow] = await db
+          .select({ team: usersTable.team })
+          .from(usersTable)
+          .where(eq(usersTable.discordId, targetUser.id))
+          .limit(1);
+        if (!userRow?.team) return [];
+
+        const teamSearch = userRow.team.trim();
+        const teamEntries = await db
+          .select({ teamId: franchiseMcaTeamsTable.teamId })
+          .from(franchiseMcaTeamsTable)
           .where(and(
-            eq(franchiseRostersTable.seasonId, season.id),
-            eq(franchiseRostersTable.discordId, targetUser.id),
+            eq(franchiseMcaTeamsTable.seasonId, season.id),
+            or(
+              ilike(franchiseMcaTeamsTable.fullName, `%${teamSearch}%`),
+              ilike(franchiseMcaTeamsTable.nickName, `%${teamSearch}%`),
+            ),
           ));
-        const positions = [...new Set(rows.map(r => r.position).filter(Boolean))].sort();
+        if (teamEntries.length === 0) return [];
+
+        const teamIds = teamEntries.map(t => t.teamId);
+        const fallbackRows = await (db.select(fields).from(franchiseRostersTable).where(and(
+          eq(franchiseRostersTable.seasonId, season.id),
+          teamIds.length === 1
+            ? eq(franchiseRostersTable.teamId, teamIds[0]!)
+            : sql`${franchiseRostersTable.teamId} = ANY(ARRAY[${sql.join(teamIds.map(id => sql`${id}`), sql`, `)}])`,
+        )) as any);
+        return fallbackRows;
+      }
+
+      if (focused.name === "position") {
+        const season = await getOrCreateActiveSeason();
+        const rows = await getRosterRows(season, { position: franchiseRostersTable.position });
+        const positions = [...new Set((rows as { position: string }[]).map(r => r.position).filter(Boolean))].sort();
         const q = focused.value.toLowerCase();
         const choices = positions
-          .filter(p => p.toLowerCase().startsWith(q))
+          .filter((p: string) => p.toLowerCase().startsWith(q))
           .slice(0, 25)
-          .map(p => ({ name: p, value: p }));
+          .map((p: string) => ({ name: p, value: p }));
         await interaction.respond(choices);
         return;
       }
 
       if (focused.name === "player") {
-        const position = interaction.options.getString("position");
-        const season   = await getOrCreateActiveSeason();
-        let query = db
-          .select({
+        const season = await getOrCreateActiveSeason();
+        const rows: { firstName: string; lastName: string; devTrait: number; overall: number }[] =
+          await getRosterRows(season, {
             firstName: franchiseRostersTable.firstName,
             lastName:  franchiseRostersTable.lastName,
             devTrait:  franchiseRostersTable.devTrait,
             overall:   franchiseRostersTable.overall,
-          })
-          .from(franchiseRostersTable)
-          .where(and(
-            eq(franchiseRostersTable.seasonId, season.id),
-            eq(franchiseRostersTable.discordId, targetUser.id),
-          ));
-
-        const rows = await query;
+          });
         const q = focused.value.toLowerCase();
 
-        // For devUp: exclude Superstar (3) and X-Factor (4)
         const eligible = rows.filter(r => {
           if (sub === "dev_upgrade" && r.devTrait >= 3) return false;
-          if (position && r.firstName) {
-            // position filter will be applied server-side since we can't WHERE on it easily
-          }
           return true;
         });
 

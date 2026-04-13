@@ -164,20 +164,52 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   let ownerMention: string | null = null;
 
   if (targetUser) {
-    // Look up via Discord user → usersTable.team, then confirm roster exists
-    const [linked] = await db.select({ team: usersTable.team })
-      .from(usersTable)
-      .where(eq(usersTable.discordId, targetUser.id))
+    // Primary: look up by discordId stored on roster rows (set after MCA import + linkteam)
+    const [byDiscord] = await db
+      .selectDistinct({ teamName: franchiseRostersTable.teamName })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.discordId, targetUser.id),
+      ))
       .limit(1);
 
-    if (!linked?.team) {
-      await interaction.editReply({
-        content: `❌ <@${targetUser.id}> is not registered or doesn't have a team assigned.`,
-      });
-      return;
+    if (byDiscord) {
+      resolvedTeamName = byDiscord.teamName;
+      ownerMention = `<@${targetUser.id}>`;
+    } else {
+      // Fallback: look up via usersTable.team → ilike match against roster teamName
+      const [linked] = await db.select({ team: usersTable.team })
+        .from(usersTable)
+        .where(eq(usersTable.discordId, targetUser.id))
+        .limit(1);
+
+      if (!linked?.team) {
+        await interaction.editReply({
+          content: `❌ <@${targetUser.id}> is not registered or doesn't have a team assigned. Rosters may also not be imported yet.`,
+        });
+        return;
+      }
+
+      const [rosterMatch] = await db
+        .selectDistinct({ teamName: franchiseRostersTable.teamName })
+        .from(franchiseRostersTable)
+        .where(and(
+          eq(franchiseRostersTable.seasonId, season.id),
+          ilike(franchiseRostersTable.teamName, `%${linked.team}%`),
+        ))
+        .limit(1);
+
+      if (!rosterMatch) {
+        await interaction.editReply({
+          content: `❌ No roster found for **${linked.team}** this season. Make sure MCA rosters have been imported and the team name matches.`,
+        });
+        return;
+      }
+
+      resolvedTeamName = rosterMatch.teamName;
+      ownerMention = `<@${targetUser.id}>`;
     }
-    resolvedTeamName = linked.team;
-    ownerMention = `<@${targetUser.id}>`;
   } else if (teamInput) {
     // Case-insensitive lookup to find the exact stored name
     const [match] = await db

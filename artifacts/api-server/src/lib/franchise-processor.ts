@@ -16,7 +16,7 @@ import {
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
 import {
   detectH2HBlowout,
   detectCpuScoreAnomaly,
@@ -309,6 +309,29 @@ export async function processLeagueTeams(body: unknown): Promise<ProcessResult> 
     }
     await Promise.all(ops);
     console.log(`[mca/leagueteams] Upserted ${upserted} teams for season ${season.id}`);
+
+    // ── Cascade discordId to any existing roster rows ─────────────────────────
+    // When /leagueteams is re-imported after rosters already exist, update the
+    // discordId on roster rows so autocomplete and viewroster commands work.
+    const linkedTeams = await db.select({ teamId: franchiseMcaTeamsTable.teamId, discordId: franchiseMcaTeamsTable.discordId })
+      .from(franchiseMcaTeamsTable)
+      .where(and(
+        eq(franchiseMcaTeamsTable.seasonId, season.id),
+        isNotNull(franchiseMcaTeamsTable.discordId),
+      ));
+    if (linkedTeams.length > 0) {
+      const cascadeOps = linkedTeams.map(({ teamId, discordId }) =>
+        db.update(franchiseRostersTable)
+          .set({ discordId })
+          .where(and(
+            eq(franchiseRostersTable.seasonId, season.id),
+            eq(franchiseRostersTable.teamId, teamId),
+          ))
+      );
+      await Promise.all(cascadeOps);
+      console.log(`[mca/leagueteams] Cascaded discordId to roster rows for ${linkedTeams.length} linked teams`);
+    }
+
     return { ok: true, message: `${upserted} teams imported`, details: { seasonId: season.id, teamCount: upserted } };
   } catch (err) {
     console.error("[mca/leagueteams] Error:", err);
@@ -1707,7 +1730,7 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
   try {
     const season = await getOrCreateActiveSeason();
 
-    const [teamEntry] = await db.select()
+    let [teamEntry] = await db.select()
       .from(franchiseMcaTeamsTable)
       .where(and(
         eq(franchiseMcaTeamsTable.seasonId, season.id),
@@ -1715,11 +1738,32 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
       ))
       .limit(1);
 
+    // ── Auto-create stub team entry so roster imports never silently fail ──────
     if (!teamEntry) {
-      return {
-        ok: false,
-        message: `Team ${mcaTeamId} not found for season ${season.id} — send /leagueteams first`,
-      };
+      console.warn(`[roster/team/${mcaTeamId}] Team not in franchise_mca_teams — auto-creating stub entry (re-import /leagueteams to populate full name & Discord linkage)`);
+      await db.insert(franchiseMcaTeamsTable)
+        .values({
+          seasonId:  season.id,
+          teamId:    mcaTeamId,
+          fullName:  `Team ${mcaTeamId}`,
+          nickName:  `Team ${mcaTeamId}`,
+          userName:  "CPU",
+          isHuman:   false,
+          discordId: null,
+          updatedAt: new Date(),
+        })
+        .onConflictDoNothing();
+      [teamEntry] = await db.select()
+        .from(franchiseMcaTeamsTable)
+        .where(and(
+          eq(franchiseMcaTeamsTable.seasonId, season.id),
+          eq(franchiseMcaTeamsTable.teamId,   mcaTeamId),
+        ))
+        .limit(1);
+    }
+
+    if (!teamEntry) {
+      return { ok: false, message: `Could not create stub team entry for teamId ${mcaTeamId}` };
     }
 
     // Always log body structure so we can debug key-name mismatches

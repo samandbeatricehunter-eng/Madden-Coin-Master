@@ -3,8 +3,10 @@ import {
   EmbedBuilder, Colors, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import {
+  usersTable, franchiseMcaTeamsTable, franchiseRostersTable, seasonsTable,
+} from "@workspace/db";
+import { eq, and, or, ilike, isNotNull } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
@@ -25,7 +27,10 @@ export const data = new SlashCommandBuilder()
       .setAutocomplete(true)))
   .addSubcommand(sub => sub
     .setName("view")
-    .setDescription("Show all current player → team assignments and any unlinked players"));
+    .setDescription("Show all current player → team assignments and any unlinked players"))
+  .addSubcommand(sub => sub
+    .setName("relink")
+    .setDescription("Re-cascade team assignments to MCA teams & roster rows (run after /leagueteams import)."));
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
   const focused = interaction.options.getFocused().toLowerCase();
@@ -37,13 +42,48 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
   );
 }
 
+// ── Helper: cascade a single discordId to franchise_mca_teams + franchise_rosters ──
+async function cascadeDiscordId(seasonId: number, teamName: string, discordId: string): Promise<number> {
+  const teamSearch = teamName.trim();
+  const mcaTeams = await db
+    .select({ teamId: franchiseMcaTeamsTable.teamId })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      or(
+        ilike(franchiseMcaTeamsTable.fullName, `%${teamSearch}%`),
+        ilike(franchiseMcaTeamsTable.nickName, `%${teamSearch}%`),
+      ),
+    ));
+
+  if (mcaTeams.length === 0) return 0;
+
+  let rosterRowsUpdated = 0;
+  for (const { teamId } of mcaTeams) {
+    await db.update(franchiseMcaTeamsTable)
+      .set({ discordId, isHuman: true, updatedAt: new Date() })
+      .where(and(
+        eq(franchiseMcaTeamsTable.seasonId, seasonId),
+        eq(franchiseMcaTeamsTable.teamId, teamId),
+      ));
+    const result = await db.update(franchiseRostersTable)
+      .set({ discordId })
+      .where(and(
+        eq(franchiseRostersTable.seasonId, seasonId),
+        eq(franchiseRostersTable.teamId, teamId),
+      ));
+    rosterRowsUpdated += (result as any).rowCount ?? 0;
+  }
+  return rosterRowsUpdated;
+}
+
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const sub = interaction.options.getSubcommand();
 
-  // ── VIEW ──────────────────────────────────────────────────────────────────
-  if (sub === "view_all_user_teams") {
+  // ── VIEW ────────────────────────────────────────────────────────────────────
+  if (sub === "view") {
     const allUsers = await db.select({
       discordId:       usersTable.discordId,
       discordUsername: usersTable.discordUsername,
@@ -63,7 +103,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `❓ <@${u.discordId}> (${u.discordUsername}) — no team assigned`
     );
 
-    // Split an array of lines into chunks that each fit within Discord's 1024-char field limit
     function chunkLines(lines: string[], limit = 1020): string[] {
       const chunks: string[] = [];
       let current = "";
@@ -101,7 +140,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const isLast = i === chunks.length - 1;
         embed.addFields({
           name: i === 0 ? `⚠️ Unlinked Players (${unlinked.length})` : `⚠️ Unlinked Players (cont.)`,
-          value: chunk + (isLast ? "\n\nUse `/admin set_user_team` to assign their teams." : ""),
+          value: chunk + (isLast ? "\n\nUse `/admin-linkteam set` to assign their teams." : ""),
         });
       });
     }
@@ -113,7 +152,61 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return interaction.editReply({ embeds: [embed] });
   }
 
-  // ── SET ───────────────────────────────────────────────────────────────────
+  // ── RELINK ──────────────────────────────────────────────────────────────────
+  if (sub === "relink") {
+    const [season] = await db.select({ id: seasonsTable.id })
+      .from(seasonsTable)
+      .where(eq(seasonsTable.isActive, true))
+      .limit(1);
+
+    if (!season) {
+      return interaction.editReply({ content: "❌ No active season found." });
+    }
+
+    const usersWithTeams = await db.select({
+      discordId: usersTable.discordId,
+      team:      usersTable.team,
+    }).from(usersTable).where(isNotNull(usersTable.team));
+
+    if (usersWithTeams.length === 0) {
+      return interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Orange)
+          .setTitle("⚠️ No Teams Registered")
+          .setDescription("No users have a team assigned yet. Use `/admin-linkteam set` first.")],
+      });
+    }
+
+    let totalLinked = 0;
+    let totalRosterRows = 0;
+    const results: string[] = [];
+
+    for (const { discordId, team } of usersWithTeams) {
+      if (!team) continue;
+      const rosterRows = await cascadeDiscordId(season.id, team, discordId);
+      if (rosterRows > 0 || true) {
+        totalLinked++;
+        totalRosterRows += rosterRows;
+        results.push(`• **${team}** → <@${discordId}> (${rosterRows} roster rows updated)`);
+      }
+    }
+
+    return interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Relink Complete")
+        .setDescription(
+          `Processed **${totalLinked}** team(s) for season ${season.id}.\n` +
+          `Updated **${totalRosterRows}** total roster rows.\n\n` +
+          results.slice(0, 20).join("\n") +
+          (results.length > 20 ? `\n…and ${results.length - 20} more` : "")
+        )
+        .setFooter({ text: "If roster rows = 0, MCA rosters haven't been imported yet. Re-export from MCA." })
+        .setTimestamp()],
+    });
+  }
+
+  // ── SET ─────────────────────────────────────────────────────────────────────
   const targetUser = interaction.options.getUser("user", true);
   const teamName   = interaction.options.getString("team", true).trim();
 
@@ -125,7 +218,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  // Check if another player is already linked to this team
   const existingOwner = await db.select({
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
@@ -138,43 +230,57 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setTitle("❌ Team Already Taken")
         .setDescription(
           `**${teamName}** is already linked to <@${existingOwner[0]!.discordId}> (${existingOwner[0]!.discordUsername}).\n\n` +
-          `Use \`/admin-linkteam set\` on that user first to re-assign, or use \`/deletemember\` to fully remove them.`
+          `Use \`/admin-linkteam set\` on that user first to re-assign.`
         )],
     });
   }
 
-  // Fetch or create the target user row
   const existing = await db.select().from(usersTable)
     .where(eq(usersTable.discordId, targetUser.id)).limit(1);
 
+  const oldTeam = existing[0]?.team ?? null;
+
   if (existing.length === 0) {
     await db.insert(usersTable).values({
-      discordId:        targetUser.id,
-      discordUsername:  targetUser.username,
-      team:             teamName,
-      balance:          0,
+      discordId:            targetUser.id,
+      discordUsername:      targetUser.username,
+      team:                 teamName,
+      balance:              0,
       totalLegendPurchases: 0,
     });
   } else {
-    const oldTeam = existing[0]!.team;
     await db.update(usersTable)
       .set({ team: teamName, discordUsername: targetUser.username, updatedAt: new Date() })
       .where(eq(usersTable.discordId, targetUser.id));
+  }
 
-    if (oldTeam && oldTeam !== teamName) {
-      return interaction.editReply({
-        embeds: [new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Team Reassigned")
-          .addFields(
-            { name: "Player",    value: `<@${targetUser.id}>`, inline: true },
-            { name: "Old team",  value: oldTeam,               inline: true },
-            { name: "New team",  value: teamName,              inline: true },
-          )
-          .setDescription("Balance, records, and inventory are untouched.")
-          .setTimestamp()],
-      });
-    }
+  // ── Cascade discordId to franchise_mca_teams + franchise_rosters ────────────
+  const [season] = await db.select({ id: seasonsTable.id })
+    .from(seasonsTable)
+    .where(eq(seasonsTable.isActive, true))
+    .limit(1);
+
+  let rosterInfo = "";
+  if (season) {
+    const rosterRows = await cascadeDiscordId(season.id, teamName, targetUser.id);
+    rosterInfo = rosterRows > 0
+      ? `\n✅ ${rosterRows} roster row(s) linked to this user.`
+      : "\n⚠️ No roster rows found — MCA rosters may not have been imported yet. Import /leagueteams and roster from MCA, or run `/admin-linkteam relink` after importing.";
+  }
+
+  if (oldTeam && oldTeam !== teamName) {
+    return interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Team Reassigned")
+        .addFields(
+          { name: "Player",    value: `<@${targetUser.id}>`, inline: true },
+          { name: "Old team",  value: oldTeam,               inline: true },
+          { name: "New team",  value: teamName,              inline: true },
+        )
+        .setDescription(`Balance, records, and inventory are untouched.${rosterInfo}`)
+        .setTimestamp()],
+    });
   }
 
   return interaction.editReply({
@@ -185,7 +291,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         { name: "Player", value: `<@${targetUser.id}> (${targetUser.username})`, inline: true },
         { name: "Team",   value: teamName,                                         inline: true },
       )
-      .setDescription("Balance, records, and inventory are untouched.")
+      .setDescription(`Balance, records, and inventory are untouched.${rosterInfo}`)
       .setTimestamp()],
   });
 }
