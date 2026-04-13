@@ -61,6 +61,7 @@ import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
 import * as adminEosReapprove        from "./commands/admin-eos-reapprove.js";
 import * as adminSeason             from "./commands/admin-season.js";
 import * as adminLinkTeam           from "./commands/admin-linkteam.js";
+import * as adminInventory          from "./commands/admin-inventory.js";
 
 // ── Records / rankings (standalone) ──────────────────────────────────────────
 import {
@@ -171,6 +172,7 @@ if (!isProduction && !devBotEnabled) {
     adminEosReapprove,
     adminSeason,
     adminLinkTeam,
+    adminInventory,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },
