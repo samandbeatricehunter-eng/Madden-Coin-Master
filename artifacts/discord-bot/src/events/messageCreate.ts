@@ -12,8 +12,9 @@ import {
 } from "@workspace/db";
 import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
-  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules,
+  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules,
 } from "../lib/db-helpers.js";
+import { COSTS, LIMITS } from "../lib/constants.js";
 import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
 import { handleTwitterReply } from "../lib/league-twitter.js";
@@ -734,12 +735,7 @@ There is no payout for CPU losses.
 /availableupgrades — See which upgrades are still available to you this season based on your remaining limits.
 
 ── STORE PRICING & LIMITS (commissioners may adjust — use /viewstore for live prices) ──
-Legends: 1,000 coins · max 4 legends in inventory · max 4 all-time
-Custom Players: Gold 300 / Silver 200 / Bronze 100 coins · Legends + Custom combined max 4/season
-Core Attribute Upgrade: 25 coins/point · max 16 points/season
-Non-Core Attribute Upgrade: 10 coins/point · max 32 points/season · Speed capped at 5 pts/season
-Dev Upgrade: 250 coins · max 2/season
-Age Reset: 250 coins · max 2/season
+{{SEASON_PRICING}}
 
 ── RULES ──
 /rules — Lists all rule sections in the league rulebook.
@@ -857,6 +853,30 @@ The full rulebook is accessible via /rules. Ask me about any specific rule or se
 
 type MentionedUser = { displayName: string; stats: UserStats };
 
+// ── Dynamic pricing block — built from live season rules so the AI always quotes
+// whatever the commish has set this season, not the hardcoded defaults. ──────────
+type SeasonRulesShape = {
+  coreAttrCost: number;
+  coreAttrCap: number;
+  nonCoreAttrCost: number;
+  nonCoreAttrCap: number;
+  devUpsCap: number;
+  devUpsCost: number;
+  ageResetsCap: number;
+  ageResetCost: number;
+};
+
+function buildPricingBlock(rules: SeasonRulesShape): string {
+  return [
+    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.maxLegendsInInventory} legends in inventory · max ${LIMITS.legendsAllTime} all-time`,
+    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · Legends + Custom combined max ${LIMITS.maxLegendsPlusCustomPlayers}/season`,
+    `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season`,
+    `Non-Core Attribute Upgrade: ${rules.nonCoreAttrCost} coins/point · max ${rules.nonCoreAttrCap} points/season`,
+    `Dev Upgrade: ${rules.devUpsCost} coins · max ${rules.devUpsCap}/season`,
+    `Age Reset: ${rules.ageResetCost} coins · max ${rules.ageResetsCap}/season`,
+  ].join("\n");
+}
+
 function buildSystemPrompt(
   rulesText: string,
   adminIds: string[],
@@ -869,6 +889,7 @@ function buildSystemPrompt(
   leagueContext: string = "",
   isCoCommissioner: boolean = false,
   eosContext: string = "",
+  pricingBlock: string = "",
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -1145,7 +1166,7 @@ ARTICLES:
 - The franchise article system uses full league context (standings, stats, recent results) to produce a journalistic recap.
 
 COMMAND GUIDE
-${HELP_TEXT}
+${HELP_TEXT.replace("{{SEASON_PRICING}}", pricingBlock)}
 
 LEAGUE RULES
 ${rulesText}${isCommissioner ? `
@@ -1700,6 +1721,20 @@ export async function execute(message: Message): Promise<void> {
     })),
   ]);
 
+  // Fetch live season rules so the AI always quotes commish-configured caps
+  const activeSeason  = await getOrCreateActiveSeason().catch(() => null);
+  const seasonRules   = activeSeason ? await getSeasonRules(activeSeason).catch(() => null) : null;
+  const pricingBlock  = buildPricingBlock(seasonRules ?? {
+    coreAttrCost:    COSTS.core_attribute,
+    coreAttrCap:     LIMITS.coreAttrPerSeason,
+    nonCoreAttrCost: COSTS.non_core_attribute,
+    nonCoreAttrCap:  LIMITS.nonCoreAttrPerSeason,
+    devUpsCap:       LIMITS.devUpsPerSeason,
+    devUpsCost:      COSTS.dev_up,
+    ageResetsCap:    LIMITS.ageResetsPerSeason,
+    ageResetCost:    COSTS.age_reset,
+  });
+
   // Build the system prompt with current escalation level for this user
   const escalationLevel    = isAdmin ? 0 : await getEscalationLevel(message.author.id).catch(() => 0);
   const promptIsCommissioner = isCommissioner || isAdmin;
@@ -1708,6 +1743,7 @@ export async function execute(message: Message): Promise<void> {
     promptIsCommissioner, channelContext, leagueContext,
     isCoComm && !isAdmin,
     eosContext,
+    pricingBlock,
   );
 
   // Call the model (include per-user conversation history for context)

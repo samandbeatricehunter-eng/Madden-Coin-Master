@@ -10,10 +10,10 @@ export const COSTS = {
 } as const;
 
 export const LIMITS = {
-  coreAttrPerSeason: 16,
-  nonCoreAttrPerSeason: 32,
-  devUpsPerSeason: 2,      // permanent default (season 3+)
-  ageResetsPerSeason: 2,   // permanent default (season 3+)
+  coreAttrPerSeason: 5,
+  nonCoreAttrPerSeason: 15,
+  devUpsPerSeason: 2,
+  ageResetsPerSeason: 2,
   legendsAllTime: 4,
   maxLegendsInInventory: 4,
   maxLegendsPlusCustomPlayers: 4,
