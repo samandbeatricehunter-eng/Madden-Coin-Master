@@ -10,6 +10,7 @@ import { usersTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, ilike, asc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
+import { getRosterSeasonId } from "../lib/db-helpers.js";
 
 // ── Position grouping (mirrors my-roster.ts) ─────────────────────────────────
 
@@ -105,18 +106,13 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
   const focused = interaction.options.getFocused().toLowerCase();
 
   try {
-    const [season] = await db.select({ id: seasonsTable.id })
-      .from(seasonsTable)
-      .where(eq(seasonsTable.isActive, true))
-      .limit(1);
+    const rosterSeasonId = await getRosterSeasonId();
 
-    if (!season) { await interaction.respond([]); return; }
-
-    // Distinct team names in this season, ordered alphabetically
+    // Distinct team names in this season (or fallback season), ordered alphabetically
     const rows = await db
       .selectDistinct({ teamName: franchiseRostersTable.teamName })
       .from(franchiseRostersTable)
-      .where(eq(franchiseRostersTable.seasonId, season.id))
+      .where(eq(franchiseRostersTable.seasonId, rosterSeasonId))
       .orderBy(asc(franchiseRostersTable.teamName));
 
     const filtered = rows
@@ -148,14 +144,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: !isPublic });
   if (!await requireMcaEnabled(interaction)) return;
 
-  // ── Find the active season ─────────────────────────────────────────────────
-  const [season] = await db.select()
+  // ── Find the active season and the season that has roster data ────────────
+  const [activeSeason] = await db.select()
     .from(seasonsTable)
     .where(eq(seasonsTable.isActive, true))
     .limit(1);
 
-  if (!season) {
+  if (!activeSeason) {
     await interaction.editReply({ content: "❌ No active season found." });
+    return;
+  }
+
+  // If the active season has no roster data yet, fall back to the most recent
+  // season that does (e.g. right after a new season starts before MCA import).
+  const rosterSeasonId = await getRosterSeasonId();
+  const [season] = rosterSeasonId === activeSeason.id
+    ? [activeSeason]
+    : await db.select().from(seasonsTable).where(eq(seasonsTable.id, rosterSeasonId)).limit(1);
+  if (!season) {
+    await interaction.editReply({ content: "❌ No roster data found for any season." });
     return;
   }
 

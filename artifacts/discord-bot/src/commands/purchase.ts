@@ -12,7 +12,7 @@ import { eq, and, sql, asc, ilike, or } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
-  getCoreAttributes,
+  getCoreAttributes, getRosterSeasonId,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
@@ -236,8 +236,8 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       }
 
       if (focused.name === "position") {
-        const season = await getOrCreateActiveSeason();
-        const rows = await getRosterRows(season, { position: franchiseRostersTable.position });
+        const rosterSeasonId = await getRosterSeasonId();
+        const rows = await getRosterRows({ id: rosterSeasonId }, { position: franchiseRostersTable.position });
         const positions = [...new Set((rows as { position: string }[]).map(r => r.position).filter(Boolean))].sort();
         const q = focused.value.toLowerCase();
         const choices = positions
@@ -249,7 +249,8 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       }
 
       if (focused.name === "player") {
-        const season = await getOrCreateActiveSeason();
+        const rosterSeasonId = await getRosterSeasonId();
+        const season = { id: rosterSeasonId };
         const rows: { firstName: string; lastName: string; devTrait: number; overall: number }[] =
           await getRosterRows(season, {
             firstName: franchiseRostersTable.firstName,
@@ -401,12 +402,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
 
-    // Find the player on the roster (for their position)
+    // Find the player on the roster (for their position) — use roster season in case new season not yet imported
+    const rosterSeasonId = await getRosterSeasonId();
     const rosterRows = await db
       .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
       .from(franchiseRostersTable)
       .where(and(
-        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.seasonId, rosterSeasonId),
         eq(franchiseRostersTable.discordId, targetUser.id),
       ));
     const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
@@ -473,12 +475,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (user.balance < costPer) return insufficientFunds(interaction, costPer, user.balance);
 
-    // Find position from roster
+    // Find position from roster — use roster season in case new season not yet imported
+    const rosterSeasonIdForAge = await getRosterSeasonId();
     const rosterRows = await db
       .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
       .from(franchiseRostersTable)
       .where(and(
-        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.seasonId, rosterSeasonIdForAge),
         eq(franchiseRostersTable.discordId, targetUser.id),
       ));
     const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());

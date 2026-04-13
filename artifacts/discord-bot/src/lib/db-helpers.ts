@@ -2,7 +2,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
   inventoryTable, legendsTable, coinTransactionsTable, rulesTable, rulesSectionsTable,
-  userRecordsTable, gameLogTable, customPlayersTable,
+  userRecordsTable, gameLogTable, customPlayersTable, franchiseRostersTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
 import { eq, and, sql, desc, ne } from "drizzle-orm";
@@ -151,6 +151,32 @@ export async function getOrCreateActiveSeason(): Promise<Season> {
   if (existing) return existing;
   const [season] = await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true }).returning();
   return season!;
+}
+
+/**
+ * Returns the season ID to use for roster-dependent queries.
+ * Uses the active season if it has roster rows; otherwise falls back to the
+ * most recent season that does. This handles the common case where a new
+ * season has been created but rosters haven't been re-imported from MCA yet.
+ */
+export async function getRosterSeasonId(): Promise<number> {
+  const season = await getOrCreateActiveSeason();
+
+  // Check if the active season has any roster rows
+  const [check] = await db
+    .select({ n: sql<number>`COUNT(*)::int` })
+    .from(franchiseRostersTable)
+    .where(eq(franchiseRostersTable.seasonId, season.id))
+    .limit(1);
+  if ((check?.n ?? 0) > 0) return season.id;
+
+  // Fall back to the most recent season that has roster data
+  const [fallback] = await db
+    .select({ seasonId: franchiseRostersTable.seasonId })
+    .from(franchiseRostersTable)
+    .orderBy(desc(franchiseRostersTable.seasonId))
+    .limit(1);
+  return fallback?.seasonId ?? season.id;
 }
 
 export async function getSeasonStats(discordId: string, seasonId: number): Promise<SeasonStats> {

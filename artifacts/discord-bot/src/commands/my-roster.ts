@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { usersTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
+import { getRosterSeasonId } from "../lib/db-helpers.js";
 
 // ── Position grouping ─────────────────────────────────────────────────────────
 const OFFENSE_GROUPS: { label: string; positions: string[] }[] = [
@@ -101,22 +102,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Get active season ──────────────────────────────────────────────────────
-  const [season] = await db.select()
-    .from(seasonsTable)
-    .where(eq(seasonsTable.isActive, true))
-    .limit(1);
+  // ── Get the season that has roster data (falls back if new season not yet imported) ──
+  const rosterSeasonId = await getRosterSeasonId();
+  const [season] = await db.select().from(seasonsTable).where(eq(seasonsTable.id, rosterSeasonId)).limit(1);
 
-  if (!season) {
-    await interaction.editReply({ content: "❌ No active season found. A commissioner needs to start a season first." });
-    return;
-  }
-
-  // ── Fetch roster for this user's team in the active season ────────────────
+  // ── Fetch roster for this user's team ────────────────────────────────────
   const players = await db.select()
     .from(franchiseRostersTable)
     .where(and(
-      eq(franchiseRostersTable.seasonId,  season.id),
+      eq(franchiseRostersTable.seasonId,  rosterSeasonId),
       eq(franchiseRostersTable.discordId, interaction.user.id),
     ))
     .orderBy(desc(franchiseRostersTable.overall));
