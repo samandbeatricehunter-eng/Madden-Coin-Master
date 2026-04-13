@@ -752,7 +752,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
   const sub = interaction.options.getSubcommand(false);
-  if (sub !== "set_core_attributes") return;
+  if (sub !== "core-attrs") return;
 
   const focused = interaction.options.getFocused().toLowerCase();
   const choices = ATTRIBUTES
