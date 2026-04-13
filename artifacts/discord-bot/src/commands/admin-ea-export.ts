@@ -10,7 +10,7 @@ import {
   fetchWeeklyStats,
   fetchAwardsData,
   fetchNewsData,
-  fetchScheduleForWeek,
+  fetchAllWeekSchedules,
   fetchLeagueTeamsAndRosters,
   updateStoredToken,
   refreshTokenIfNeeded,
@@ -319,58 +319,6 @@ async function exportWeek(
     console.warn("[ea-export] News fetch failed (non-fatal):", newsErr?.message ?? newsErr);
   }
 
-  // ── Week 1 of regular season: fetch all 18 weeks from EA and populate schedule ──
-  // EA's weekly export only returns the 16 games for the requested week (all with
-  // weekIndex=0 for week 1). To populate the full season we must call EA once per
-  // week (18 calls). Week 1 is already fetched above; weeks 2–18 are fetched here.
-  let fullScheduleNote = "";
-  if (weekNum === 1 && weekType === "reg") {
-    const TOTAL_WEEKS = 18;
-    await interaction.editReply({ content: `⏳ Fetching full season schedule from EA (18 weeks)...` });
-
-    const schedResults: Array<{ week: number; ok: boolean; status: number }> = [];
-
-    for (let wk = 1; wk <= TOTAL_WEEKS; wk++) {
-      try {
-        const schedData = await fetchScheduleForWeek(token, eaLeagueId, wk - 1, 1);
-        const wkUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${wk}/schedules`;
-        const res   = await postToApiServer(wkUrl, schedData);
-        schedResults.push({ week: wk, ...res });
-      } catch (err: any) {
-        console.error(`[ea-export/week1-full-sched] Week ${wk} error:`, err);
-        schedResults.push({ week: wk, ok: false, status: 0 });
-      }
-
-      // Progress update every 6 weeks
-      if (wk % 6 === 0) {
-        await interaction.editReply({ content: `⏳ Full season schedule: fetched ${wk}/${TOTAL_WEEKS} weeks...` });
-      }
-    }
-
-    const schedOk     = schedResults.filter(r => r.ok).length;
-    const schedFailed = schedResults.filter(r => !r.ok).length;
-
-    results.push({ name: `full-season schedule (${schedOk}/${TOTAL_WEEKS} weeks)`, ok: schedFailed === 0, status: schedFailed === 0 ? 200 : 207 });
-
-    // Post the populated schedule to the channel
-    try {
-      const season = await getOrCreateActiveSeason();
-      const postedWeeks = await postFullSeasonScheduleToChannel(
-        interaction.client,
-        season.id,
-        season.seasonNumber ?? season.id,
-      );
-      if (postedWeeks > 0) {
-        fullScheduleNote = `✅ ${schedOk}/${TOTAL_WEEKS} weeks fetched from EA · posted to <#${SCHEDULE_CHANNEL_ID}>`;
-      } else {
-        fullScheduleNote = `⚠️ ${schedOk}/${TOTAL_WEEKS} weeks fetched from EA · channel post returned 0 weeks — run \`/postfullseasonschedule\` manually`;
-      }
-    } catch (err: any) {
-      console.error("[ea-export/week1] Schedule channel post error:", err);
-      fullScheduleNote = `⚠️ ${schedOk}/${TOTAL_WEEKS} weeks fetched from EA · channel post failed — run \`/postfullseasonschedule\` manually`;
-    }
-  }
-
   // Build combined result embed
   const statsSuccessCount = results.filter((r) => r.ok).length;
   const statsFailCount    = results.filter((r) => !r.ok).length;
@@ -398,10 +346,6 @@ async function exportWeek(
         : `⚠️ ${statsSuccessCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "rosters had errors"}`,
     },
   ];
-
-  if (fullScheduleNote) {
-    fields.push({ name: "📅 Season Schedule", value: fullScheduleNote });
-  }
 
   const embed = new EmbedBuilder()
     .setColor(overallOk ? Colors.Green : hasWarning ? Colors.Yellow : Colors.Red)
@@ -553,9 +497,9 @@ async function handleAwards(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 // ── /admin_ea_export full-schedule ────────────────────────────────────────────
-// Fetches schedule data for every regular-season week from EA and posts each one
-// to /week/reg/N/schedules. This populates the franchise_schedule table for the
-// whole season without needing an MCA "full export" from the companion app.
+// Opens ONE Blaze session and pulls all 18 weeks' schedules from EA in sequence,
+// then posts each to the API server and (on full success) posts to the schedule
+// channel. This is the snallabot-style "export allweeks" equivalent.
 async function handleFullSchedule(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
@@ -569,51 +513,85 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
   const totalWeeks = interaction.options.getInteger("weeks") ?? 18;
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
-  const platform   = token.platform;
 
-  await interaction.editReply({ content: `⏳ Fetching schedule for weeks 1–${totalWeeks} from EA...` });
+  await interaction.editReply({ content: `⏳ Opening EA session and pulling all ${totalWeeks} weeks…` });
 
-  const results: Array<{ week: number; ok: boolean; status: number }> = [];
+  // ── Single session fetch ──────────────────────────────────────────────────
+  let weekResults: Array<{ weekNum: number; data: unknown }>;
+  let freshToken:  typeof token;
+  try {
+    const out = await fetchAllWeekSchedules(token, eaLeagueId, totalWeeks);
+    weekResults = out.weekResults;
+    freshToken  = out.token;
+  } catch (err: any) {
+    console.error("[ea-export/full-schedule] EA fetch error:", err);
+    await interaction.editReply({
+      content:
+        `❌ Failed to fetch schedules from EA: ${err?.message ?? String(err)}\n\n` +
+        "If you see an auth error, run `/admin_ea_connect code` to refresh the connection.",
+    });
+    return;
+  }
 
-  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
-    try {
-      const scheduleData = await fetchScheduleForWeek(token, eaLeagueId, weekNum - 1, 1);
-      const weekUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${weekNum}/schedules`;
-      const res     = await postToApiServer(weekUrl, scheduleData);
-      results.push({ week: weekNum, ...res });
-    } catch (err: any) {
-      console.error(`[ea-export/full-schedule] Week ${weekNum} error:`, err);
-      results.push({ week: weekNum, ok: false, status: 0 });
-    }
+  if (freshToken.accessToken !== token.accessToken) {
+    await updateStoredToken(eaLeagueId, freshToken).catch(() => {});
+  }
 
-    // Update progress every 3 weeks so the admin can see it's working
-    if (weekNum % 3 === 0 || weekNum === totalWeeks) {
-      await interaction.editReply({ content: `⏳ Fetched ${weekNum}/${totalWeeks} weeks...` });
+  const platform = freshToken.platform;
+
+  // ── Post each week to the API server ─────────────────────────────────────
+  await interaction.editReply({ content: `⏳ Sending ${totalWeeks} weeks to processor…` });
+
+  const apiResults: Array<{ week: number; ok: boolean; status: number }> = [];
+  for (const { weekNum, data } of weekResults) {
+    const weekUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${weekNum}/schedules`;
+    const res     = await postToApiServer(weekUrl, data);
+    apiResults.push({ week: weekNum, ...res });
+
+    if (weekNum % 6 === 0 || weekNum === totalWeeks) {
+      await interaction.editReply({ content: `⏳ Sent ${weekNum}/${totalWeeks} weeks to processor…` });
     }
   }
 
-  try {
-    const refreshed = await refreshTokenIfNeeded(token);
-    if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
-  } catch {}
-
-  const succeeded = results.filter(r => r.ok).length;
-  const failed    = results.filter(r => !r.ok);
-  const lines     = results.map(r =>
-    r.ok ? `✅ Week ${r.week}` : `❌ Week ${r.week} (HTTP ${r.status})`
+  const succeeded = apiResults.filter(r => r.ok).length;
+  const failed    = apiResults.filter(r => !r.ok);
+  const lines     = apiResults.map(r =>
+    r.ok ? `✅ Week ${r.week}` : `❌ Week ${r.week} (HTTP ${r.status})`,
   );
+
+  // ── Post to schedule channel if all weeks succeeded ───────────────────────
+  let channelNote = "";
+  if (failed.length === 0) {
+    try {
+      const season      = await getOrCreateActiveSeason();
+      const postedWeeks = await postFullSeasonScheduleToChannel(
+        interaction.client,
+        season.id,
+        season.seasonNumber ?? season.id,
+      );
+      channelNote = postedWeeks > 0
+        ? `✅ Season schedule posted to <#${SCHEDULE_CHANNEL_ID}>`
+        : `⚠️ All weeks saved but channel post returned 0 — run \`/postfullseasonschedule\` manually`;
+    } catch (err: any) {
+      console.error("[ea-export/full-schedule] Channel post error:", err);
+      channelNote = `⚠️ All weeks saved but channel post failed — run \`/postfullseasonschedule\` manually`;
+    }
+  }
 
   const schedEmbed = new EmbedBuilder()
     .setColor(failed.length === 0 ? Colors.Green : succeeded > 0 ? Colors.Yellow : Colors.Red)
     .setTitle(`📅 Full Season Schedule — EA Export`)
     .setDescription(lines.join("\n"))
-    .addFields({
-      name:  "Result",
-      value: failed.length === 0
-        ? `✅ All ${totalWeeks} weeks synced — run \`/seasonschedule\` to confirm`
-        : `⚠️ ${succeeded}/${totalWeeks} weeks succeeded`,
-    })
-    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()}` })
+    .addFields(
+      {
+        name:  "Result",
+        value: failed.length === 0
+          ? `✅ All ${totalWeeks} weeks synced`
+          : `⚠️ ${succeeded}/${totalWeeks} weeks succeeded`,
+      },
+      ...(channelNote ? [{ name: "📣 Schedule Channel", value: channelNote }] : []),
+    )
+    .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · 1 EA session used` })
     .setTimestamp();
 
   await interaction.editReply({ content: "", embeds: [schedEmbed] });

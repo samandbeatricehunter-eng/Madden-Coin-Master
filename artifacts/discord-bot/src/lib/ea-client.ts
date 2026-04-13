@@ -497,17 +497,26 @@ export async function fetchNewsData(
   }
 }
 
-// ── Fetch ONLY schedule data for a specific week (no stats) ───────────────────
-export async function fetchScheduleForWeek(
+// ── Fetch schedule data for ALL weeks in one Blaze session ────────────────────
+// Snallabot-style: open ONE session, loop through every weekIndex, close once.
+// Much faster than the old approach (18 sessions → 1 session).
+export async function fetchAllWeekSchedules(
   token:       TokenInfo,
   eaLeagueId:  number,
-  weekIndex:   number,   // 0-based
-  stageIndex:  number,   // 0=preseason, 1=regular/playoffs
-): Promise<unknown> {
+  totalWeeks:  number = 18,
+  stageIndex:  number = 1,   // 1 = regular season
+): Promise<{ weekResults: Array<{ weekNum: number; data: unknown }>; token: TokenInfo }> {
   const refreshed = await refreshTokenIfNeeded(token);
   const session   = await createBlazeSession(refreshed);
-  const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
-  return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!, body);
+
+  const weekResults: Array<{ weekNum: number; data: unknown }> = [];
+  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
+    const body = { leagueId: eaLeagueId, stageIndex, weekIndex: weekNum - 1 };
+    const data = await fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!, body);
+    weekResults.push({ weekNum, data });
+  }
+
+  return { weekResults, token: refreshed };
 }
 
 // ── Fetch league teams (season-level, no week needed) ─────────────────────────

@@ -424,7 +424,7 @@ export async function postInitialMessages(client: Client, sessionId: number, cha
     .from(draftSessionsTable)
     .where(eq(draftSessionsTable.id, sessionId))
     .limit(1);
-  if (session) await repostButtonPanel(client, session, true);
+  if (session) await updateButtonPanels(client, session, true);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
