@@ -1124,6 +1124,41 @@ export interface WeekScoresResult {
 }
 
 /**
+ * Normalizes a (weekType, weekNum) pair from MCA into the canonical playoff
+ * weekIndex used throughout the app (1018/1019/1020/1022).
+ *
+ * MCA may send playoff data in two formats:
+ *   Format A — weekType="reg",  weekNum=19-23  (continuous numbering)
+ *     Wild Card=19→1018, Divisional=20→1019, Conference=21→1020, SB=23→1022
+ *   Format B — weekType="post", weekNum=1-5   (post-season numbering)
+ *     Wild Card=1→1018, Divisional=2→1019, Conference=3→1020, Pro Bowl=4→1021, SB=5→1022
+ *
+ * Returns null for regular-season weeks (should not call for weekType=reg and weekNum<19).
+ */
+export function resolvePlayoffWeekIndex(weekType: string, weekNum: number): number {
+  if (weekType === "reg") {
+    // Format A: weekNum is a continuous 1-based count (19 = Wild Card, etc.)
+    return 1000 + weekNum - 1;
+  }
+  // Format B: weekType is "post" (or any non-"reg") with 1-based post-season numbering
+  const POST_MAP: Record<number, number> = {
+    1: 1018,  // Wild Card
+    2: 1019,  // Divisional
+    3: 1020,  // Conference Championship
+    4: 1021,  // Pro Bowl (skipped in most CFM leagues; harmless if present)
+    5: 1022,  // Super Bowl
+  };
+  return POST_MAP[weekNum] ?? (1000 + weekNum - 1);
+}
+
+const PLAYOFF_ROUND_LABELS: Record<number, string> = {
+  1018: "Wild Card",
+  1019: "Divisional Round",
+  1020: "Conference Championship",
+  1022: "Super Bowl",
+};
+
+/**
  * Syncs completed game scores from a /week/N/schedules MCA payload into
  * franchiseScheduleTable. Called before processWeekScores so that results
  * appear in /seasonschedule immediately, regardless of the order in which
@@ -1143,11 +1178,11 @@ export async function syncWeekScoresToSchedule(
   try {
     const season = await getOrCreateActiveSeason();
 
-    // EA sends all data (including playoffs) as weekType="reg" using EA's stageIndex=1.
-    // Weeks >= 19 within the "reg" stage are actually playoff rounds; apply the 1000-offset
-    // so they land at the correct playoff weekIndex (wildcard=1018, divisional=1019, etc.).
+    // MCA may send playoff rounds as weekType="reg" weekNum>=19 (Format A) OR
+    // weekType="post" weekNum=1-5 (Format B). resolvePlayoffWeekIndex normalises
+    // both into the canonical 1018/1019/1020/1022 values used throughout the app.
     const isPlayoff = weekType !== "reg" || weekNum >= 19;
-    const weekIndex = isPlayoff ? 1000 + weekNum - 1 : weekNum - 1;
+    const weekIndex = isPlayoff ? resolvePlayoffWeekIndex(weekType, weekNum) : weekNum - 1;
 
     const games = extractList(body, "gameScheduleInfoList", "scheduleInfoList", "games");
 
@@ -1247,10 +1282,11 @@ export async function processWeekScores(
       .from(franchiseProcessedGamesTable);
     const processedSet = new Set(allProcessed.map(r => r.gameId));
 
-    // Playoff weeks use a 1000+ offset so they never collide with reg-season rows.
-    // e.g. Wild Card (weekType=post, weekNum=1) → weekIndex 1000
-    const isPlayoff       = weekType !== "reg";
-    const weekIndexTarget = isPlayoff ? 1000 + weekNum - 1 : weekNum - 1;
+    // MCA may send playoff rounds as weekType="reg" weekNum>=19 (Format A) OR
+    // weekType="post" weekNum=1-5 (Format B). resolvePlayoffWeekIndex normalises
+    // both into the canonical 1018/1019/1020/1022 values used throughout the app.
+    const isPlayoff       = weekType !== "reg" || weekNum >= 19;
+    const weekIndexTarget = isPlayoff ? resolvePlayoffWeekIndex(weekType, weekNum) : weekNum - 1;
 
     let gamesProcessed    = 0;
     let gamesDuplicate    = 0;
@@ -1263,7 +1299,7 @@ export async function processWeekScores(
     const violations:        ViolationRecord[] = [];
     const seenKeys = new Set<string>();
     const roundLabel = isPlayoff
-      ? (({ 1: "Wild Card", 2: "Divisional Round", 3: "Conference Championship", 4: "Super Bowl" } as Record<number, string>)[weekNum] ?? `Playoff Round ${weekNum}`)
+      ? (PLAYOFF_ROUND_LABELS[weekIndexTarget] ?? `Playoff Round ${weekNum}`)
       : `Week ${weekNum}`;
 
     for (const g of games) {

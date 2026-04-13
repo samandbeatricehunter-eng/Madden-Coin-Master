@@ -14,24 +14,29 @@ const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Playoff week metadata ──────────────────────────────────────────────────────
-// weekIndex: processSchedules offsets playoff games by +1000 (weekType !== 1 → 1000 + rawWeekIdx).
-// syncWeekScoresToSchedule does the same: non-reg → 1000 + weekNum - 1.
-// Madden sends a continuous weekIndex (0-based across the full season), so:
-//   wildcard   rawWeekIdx=18  → stored as 1018  (weekNum 19, 1000+19-1=1018)
-//   divisional rawWeekIdx=19  → stored as 1019  (weekNum 20, 1000+20-1=1019)
-//   conference rawWeekIdx=20  → stored as 1020  (weekNum 21, 1000+21-1=1020)
-//   superbowl  rawWeekIdx=22  → stored as 1022  (weekNum 23, 1000+23-1=1022)
-// fallbackWeekIndex: the pre-1000-offset value, tried if primary lookup returns 0 rows.
+// MCA may send playoff data in two formats:
+//   Format A — weekType="reg",  weekNum=19-23  (canonical, continuous-season numbering)
+//     Wild Card=19→1018, Divisional=20→1019, Conference=21→1020, SB=23→1022
+//   Format B — weekType="post", weekNum=1-5   (alternate post-season numbering)
+//     Wild Card=1→1018, Divisional=2→1019, Conference=3→1020, Pro Bowl=4→1021, SB=5→1022
+//
+// resolvePlayoffWeekIndex() in franchise-processor.ts normalises both formats to
+// the canonical values (1018/1019/1020/1022) for new data.
+//
+// altWeekIndices: legacy weekIndex values that may have been stored by older code
+// (before the fix) using the raw "post" format offset (1000 + weekNum - 1).
+// These are tried in order if the primary and fallback queries return 0 rows.
 export const PLAYOFF_WEEK_META: Record<string, {
   weekIndex:         number;
   fallbackWeekIndex: number;
+  altWeekIndices:    number[];  // legacy "post"-format indices, tried last
   weekNum:           number;
   label:             string;
 }> = {
-  wildcard:   { weekIndex: 1018, fallbackWeekIndex: 18, weekNum: 19, label: "Wild Card"               },
-  divisional: { weekIndex: 1019, fallbackWeekIndex: 19, weekNum: 20, label: "Divisional"              },
-  conference: { weekIndex: 1020, fallbackWeekIndex: 20, weekNum: 21, label: "Conference Championship" },
-  superbowl:  { weekIndex: 1022, fallbackWeekIndex: 22, weekNum: 23, label: "Super Bowl"              },
+  wildcard:   { weekIndex: 1018, fallbackWeekIndex: 18, altWeekIndices: [1000],       weekNum: 19, label: "Wild Card"               },
+  divisional: { weekIndex: 1019, fallbackWeekIndex: 19, altWeekIndices: [1001],       weekNum: 20, label: "Divisional"              },
+  conference: { weekIndex: 1020, fallbackWeekIndex: 20, altWeekIndices: [1002],       weekNum: 21, label: "Conference Championship" },
+  superbowl:  { weekIndex: 1022, fallbackWeekIndex: 22, altWeekIndices: [1003, 1004], weekNum: 23, label: "Super Bowl"              },
 };
 
 function toKey(name: string): string {
@@ -75,14 +80,13 @@ export async function runPlayoffMatchupsFlow(
   const meta = PLAYOFF_WEEK_META[weekKey];
   if (!meta) return `❌ Unknown playoff week: ${weekKey}`;
 
-  const { weekIndex, fallbackWeekIndex, label } = meta;
+  const { weekIndex, fallbackWeekIndex, altWeekIndices, label } = meta;
 
   const teamToDiscord = await buildTeamMap(season.id);
 
   // 1. Fetch schedule for this playoff week.
-  // Primary lookup uses the 1000-offset weekIndex (e.g. 1018 for wildcard).
-  // Fallback tries the non-offset value (e.g. 18) in case the MCA export stored
-  // playoff games with weekType=1 (no offset applied by processSchedules).
+  // Try primary (canonical 1018/1019/…), then raw-offset fallback (18/19/…),
+  // then altWeekIndices (legacy "post" format values 1000/1001/…).
   let games = await db.select()
     .from(franchiseScheduleTable)
     .where(and(
@@ -97,6 +101,17 @@ export async function runPlayoffMatchupsFlow(
       .where(and(
         eq(franchiseScheduleTable.seasonId,  season.id),
         eq(franchiseScheduleTable.weekIndex, fallbackWeekIndex),
+      ));
+  }
+
+  for (const alt of altWeekIndices) {
+    if (games.length > 0) break;
+    console.log(`[playoff-runner] No games at fallback ${fallbackWeekIndex}, trying alt ${alt}...`);
+    games = await db.select()
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId,  season.id),
+        eq(franchiseScheduleTable.weekIndex, alt),
       ));
   }
 
@@ -252,7 +267,7 @@ export async function payoutPlayoffRoundResults(
   const meta = PLAYOFF_WEEK_META[weekKey];
   if (!meta) return `❌ Unknown playoff week: ${weekKey}`;
 
-  const { weekIndex, fallbackWeekIndex, label } = meta;
+  const { weekIndex, fallbackWeekIndex, altWeekIndices, label } = meta;
 
   // ── Load already-processed playoff game IDs ─────────────────────────────
   const allProcessed = await db.select({ gameId: franchiseProcessedGamesTable.gameId })
@@ -263,6 +278,7 @@ export async function payoutPlayoffRoundResults(
   const teamToDiscord = await buildTeamMap(season.id);
 
   // ── Fetch completed games for this playoff round ─────────────────────────
+  // Try canonical weekIndex first, then raw fallback, then legacy alt values.
   let games = await db.select()
     .from(franchiseScheduleTable)
     .where(and(
@@ -271,11 +287,23 @@ export async function payoutPlayoffRoundResults(
     ));
 
   if (games.length === 0) {
+    console.log(`[payout-runner] No games at weekIndex ${weekIndex}, trying fallback ${fallbackWeekIndex}...`);
     games = await db.select()
       .from(franchiseScheduleTable)
       .where(and(
         eq(franchiseScheduleTable.seasonId,  season.id),
         eq(franchiseScheduleTable.weekIndex, fallbackWeekIndex),
+      ));
+  }
+
+  for (const alt of altWeekIndices) {
+    if (games.length > 0) break;
+    console.log(`[payout-runner] No games at fallback ${fallbackWeekIndex}, trying alt ${alt}...`);
+    games = await db.select()
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId,  season.id),
+        eq(franchiseScheduleTable.weekIndex, alt),
       ));
   }
 
