@@ -462,7 +462,9 @@ async function fetchExportDataSoft(
     return await fetchExportData(token, session, exportType, body);
   } catch (err: any) {
     const status = err?.response?.status ?? err?.status ?? 0;
-    if (status === 404 || status === 400) {
+    // Treat any auth/not-found/server error as "endpoint unavailable" — do not
+    // let a missing special-teams endpoint crash the whole weekly export.
+    if (status === 400 || status === 401 || status === 403 || status === 404 || status === 500) {
       console.warn(`[ea-client] ${exportType} not available (HTTP ${status}) — skipping`);
       return null;
     }
