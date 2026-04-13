@@ -8,7 +8,7 @@ import {
   seasonStatsTable, userSavingsTable,
   customPlayersTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, ne, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, ne, inArray, or, isNull } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
 import { weekLabel } from "./advanceweek.js";
@@ -81,10 +81,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     computeStreak(target.id, true),
   ]);
 
+  // Build the team-aware WHERE clause for permanent vault items.
+  // Permanent items are stamped with the franchise team name so they survive user changes.
+  // Rows that pre-date the team column fall back to discordId matching.
+  const teamName = user.team ?? null;
+  const permOwnerWhere = teamName
+    ? or(
+        eq(inventoryTable.team, teamName),
+        and(isNull(inventoryTable.team), eq(inventoryTable.discordId, target.id)),
+      )
+    : eq(inventoryTable.discordId, target.id);
+
   // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs ─
-  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers] = await Promise.all([
+  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers, permanentLegendsFromVault] = await Promise.all([
+    // Current-season non-permanent items only (dev ups, age resets, attributes, this season's legends/customs)
     db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.discordId, target.id), eq(inventoryTable.seasonId, season.id))),
+      .where(and(
+        eq(inventoryTable.discordId, target.id),
+        eq(inventoryTable.seasonId, season.id),
+        sql`${inventoryTable.legendCategory} != 'permanent'`,
+      )),
 
     db.select().from(seasonStatsTable)
       .where(and(eq(seasonStatsTable.discordId, target.id), eq(seasonStatsTable.seasonId, season.id)))
@@ -126,7 +142,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ))
       .orderBy(desc(customPlayersTable.createdAt)),
 
-    // Permanent custom players rolled over from past seasons
+    // Permanent custom players — by team (or discordId fallback), no season constraint
     db.select({
       id:             inventoryTable.id,
       playerName:     inventoryTable.playerName,
@@ -135,8 +151,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       itemType:       inventoryTable.itemType,
     }).from(inventoryTable)
       .where(and(
-        eq(inventoryTable.discordId, target.id),
+        permOwnerWhere,
         inArray(inventoryTable.itemType, ["custom_player_gold", "custom_player_silver", "custom_player_bronze"]),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      )),
+
+    // Permanent legends — by team (or discordId fallback), no season constraint
+    db.select().from(inventoryTable)
+      .where(and(
+        permOwnerWhere,
+        eq(inventoryTable.itemType, "legend"),
         sql`${inventoryTable.legendCategory} = 'permanent'`,
       )),
   ]);
@@ -149,8 +173,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const allTimePlayoffW = parseInt(allTimeRows[0]?.totalPlayoffWins ?? "0", 10);
   const allTimePlayoffL = parseInt(allTimeRows[0]?.totalPlayoffLosses ?? "0", 10);
 
-  const currentLegends   = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "current");
-  const permanentLegends = inventory.filter(i => i.itemType === "legend" && i.legendCategory === "permanent");
+  // inventory only contains non-permanent items now — all legend rows here are current-season
+  const currentLegends   = inventory.filter(i => i.itemType === "legend");
+  const permanentLegends = permanentLegendsFromVault;
 
   // Custom players for this season (season inventory)
   const activeCustoms = (customPlayers ?? []).filter(cp => cp.status !== "refunded");
