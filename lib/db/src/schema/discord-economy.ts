@@ -868,6 +868,20 @@ export const leagueTwitterMatchupCacheTable = pgTable("league_twitter_matchup_ca
   postedAt:     timestamp("posted_at").notNull().defaultNow(),
 });
 
+// ── League Twitter — in-game EA news cache ───────────────────────────────────
+// Populated by /admin_ea_export week (and news-only refresh).
+// Each row is one news item from Madden's in-game CFM news feed.
+export const leagueNewsTable = pgTable("league_news", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  eaNewsId:  text("ea_news_id"),                       // EA's own ID — used for upsert dedup
+  headline:  text("headline").notNull(),
+  body:      text("body"),
+  category:  text("category"),                          // e.g. "GAME_RECAP", "PLAYER_NEWS" etc.
+  weekIndex: integer("week_index"),                     // from EA if present, else null
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────
 export const leagueTwitterTable = pgTable("league_twitter_tweets", {
   id:           serial("id").primaryKey(),

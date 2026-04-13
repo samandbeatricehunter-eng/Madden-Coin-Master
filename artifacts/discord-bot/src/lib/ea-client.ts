@@ -409,6 +409,7 @@ const EXPORT_ENDPOINTS: Record<string, string> = {
   // League-level (no week/stage params needed)
   leagueTeams: "CareerMode_GetLeagueTeamsExport",
   standings:   "CareerMode_GetStandingsExport",
+  news:        "CareerMode_GetNewsExport",
   // Roster (uses leagueId + teamId + listIndex + returnFreeAgents)
   teamRoster:  "CareerMode_GetTeamRostersExport",
 };
@@ -471,6 +472,29 @@ export async function fetchAwardsData(
   const refreshed = await refreshTokenIfNeeded(token);
   const session   = await createBlazeSession(refreshed);
   return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.awards!, { leagueId: eaLeagueId });
+}
+
+// ── Fetch in-game CFM news (league-level, no week/stage needed) ──────────────
+// EA's news endpoint returns a list of in-game news items (headlines, body text,
+// category). These are the same articles you see in the Franchise news feed.
+// Returns null if the endpoint doesn't exist for this EA version.
+export async function fetchNewsData(
+  token:      TokenInfo,
+  eaLeagueId: number,
+): Promise<unknown | null> {
+  try {
+    const refreshed = await refreshTokenIfNeeded(token);
+    const session   = await createBlazeSession(refreshed);
+    return await fetchExportData(refreshed, session, EXPORT_ENDPOINTS.news!, { leagueId: eaLeagueId });
+  } catch (err: any) {
+    // Treat 404 / unknown endpoint gracefully — some Madden versions may not expose this
+    const status = err?.response?.status ?? err?.status ?? 0;
+    if (status === 404 || status === 400) {
+      console.warn(`[ea-client] News endpoint not available (HTTP ${status}) — skipping`);
+      return null;
+    }
+    throw err;
+  }
 }
 
 // ── Fetch ONLY schedule data for a specific week (no stats) ───────────────────

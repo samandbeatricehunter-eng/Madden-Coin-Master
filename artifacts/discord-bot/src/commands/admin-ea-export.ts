@@ -9,6 +9,7 @@ import {
   loadEAConnection,
   fetchWeeklyStats,
   fetchAwardsData,
+  fetchNewsData,
   fetchScheduleForWeek,
   fetchLeagueTeamsAndRosters,
   updateStoredToken,
@@ -300,6 +301,23 @@ async function exportWeek(
   // Schedules / scores (always included)
   const schedRes = await postToApiServer(`${weekBase}/schedules`, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
+
+  // ── In-game news feed (league-level — fetch once per week export) ─────────────
+  // This populates the news context the League Twitter bot uses for tweet topics.
+  // Runs silently — a 404 or unavailable endpoint is logged but not shown as an error.
+  try {
+    const newsData = await fetchNewsData(token, eaLeagueId);
+    if (newsData != null) {
+      const newsUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/news`;
+      const newsRes = await postToApiServer(newsUrl, newsData);
+      results.push({ name: "in-game news", ...newsRes });
+      console.log(`[ea-export] News fetch: HTTP ${newsRes.status}`);
+    } else {
+      console.log("[ea-export] News endpoint unavailable for this EA version — skipped");
+    }
+  } catch (newsErr: any) {
+    console.warn("[ea-export] News fetch failed (non-fatal):", newsErr?.message ?? newsErr);
+  }
 
   // ── Week 1 of regular season: fetch all 18 weeks from EA and populate schedule ──
   // EA's weekly export only returns the 16 games for the requested week (all with

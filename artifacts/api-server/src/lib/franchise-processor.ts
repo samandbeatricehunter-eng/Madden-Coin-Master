@@ -15,6 +15,7 @@ import {
   teamSeasonStatsTable,
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
+  leagueNewsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
 import {
@@ -2001,6 +2002,100 @@ export async function processFreeAgentRoster(body: unknown): Promise<ProcessResu
     return { ok: true, message: `${rows.length} free agents imported` };
   } catch (err) {
     console.error("[roster/freeagents] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── /news → import EA in-game CFM news feed ──────────────────────────────────
+// EA returns a list of news items (headlines, body text, category).
+// We upsert by eaNewsId so re-importing the same week never creates duplicates.
+// The Twitter bot reads these to inform tweet topics and context.
+export async function processLeagueNews(body: unknown): Promise<ProcessResult> {
+  try {
+    const season = await getOrCreateActiveSeason();
+
+    if (!body || typeof body !== "object") {
+      return { ok: true, message: "League news payload empty or invalid" };
+    }
+
+    // EA wraps news in various keys depending on version — try them all.
+    const b = body as Record<string, unknown>;
+    const bodyKeys = Object.keys(b);
+    let rawItems: unknown[] = [];
+
+    for (const key of ["newsItemList", "newsItems", "news", "leagueNews", "items"]) {
+      if (Array.isArray(b[key])) { rawItems = b[key] as unknown[]; break; }
+    }
+    // Fallback: find largest array under any key
+    if (rawItems.length === 0) {
+      for (const v of Object.values(b)) {
+        if (Array.isArray(v) && v.length > rawItems.length) rawItems = v;
+      }
+    }
+
+    console.log(`[mca/news] Body keys: [${bodyKeys.join(", ")}]  |  item count: ${rawItems.length}`);
+    if (rawItems.length > 0) {
+      console.log(`[mca/news] Sample item keys: ${Object.keys(rawItems[0] as Record<string, unknown>).join(", ")}`);
+      console.log(`[mca/news] Sample item[0]: ${JSON.stringify(rawItems[0]).slice(0, 400)}`);
+    }
+
+    if (rawItems.length === 0) {
+      return { ok: true, message: `News payload empty — body keys were: [${bodyKeys.join(", ")}]` };
+    }
+
+    let upserted = 0;
+    for (const item of rawItems) {
+      if (!item || typeof item !== "object") continue;
+      const n = item as Record<string, unknown>;
+
+      // Field names vary across Madden versions — try common patterns
+      const headline = String(
+        n["headline"] ?? n["title"] ?? n["newsHeadline"] ?? n["header"] ?? ""
+      ).trim();
+      if (!headline) continue;
+
+      const bodyText = String(
+        n["body"] ?? n["description"] ?? n["newsBody"] ?? n["content"] ?? ""
+      ).trim() || null;
+
+      const category = String(
+        n["newsType"] ?? n["category"] ?? n["type"] ?? n["newsCategory"] ?? ""
+      ).trim() || null;
+
+      const eaNewsId = String(
+        n["newsId"] ?? n["id"] ?? n["newsItemId"] ?? ""
+      ).trim() || null;
+
+      // weekIndex: EA sometimes includes a weekIndex or stageWeek
+      const rawWeek = n["weekIndex"] ?? n["week"] ?? n["stageWeek"];
+      const weekIndex = rawWeek != null ? Number(rawWeek) : null;
+
+      if (eaNewsId) {
+        // Upsert by eaNewsId + seasonId to avoid duplicates
+        await db.insert(leagueNewsTable)
+          .values({ seasonId: season.id, eaNewsId, headline, body: bodyText, category, weekIndex })
+          .onConflictDoNothing();
+      } else {
+        // No external ID — use headline as soft dedup key (insert only if not seen this season)
+        const existing = await db.select({ id: leagueNewsTable.id })
+          .from(leagueNewsTable)
+          .where(and(
+            eq(leagueNewsTable.seasonId, season.id),
+            eq(leagueNewsTable.headline, headline),
+          ))
+          .limit(1);
+        if (existing.length === 0) {
+          await db.insert(leagueNewsTable)
+            .values({ seasonId: season.id, eaNewsId, headline, body: bodyText, category, weekIndex });
+        }
+      }
+      upserted++;
+    }
+
+    console.log(`[mca/news] Stored ${upserted} news items for season ${season.id}`);
+    return { ok: true, message: `${upserted} news items imported`, details: { seasonId: season.id, count: upserted } };
+  } catch (err) {
+    console.error("[mca/news] Error:", err);
     return { ok: false, message: String(err) };
   }
 }

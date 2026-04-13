@@ -12,6 +12,7 @@ import {
   processDraftPicks,
   processPlayoffSeedings,
   processStandingsSeedings,
+  processLeagueNews,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload } from "../lib/mcaStorage.js";
@@ -525,6 +526,19 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       }).catch(() => {});
     }
   }
+});
+
+// ── /news — EA in-game CFM news feed ─────────────────────────────────────────
+// Called by the bot after each weekly EA export (and the rosters subcommand).
+// Stores in-game news headlines + body so the League Twitter bot can reference them.
+router.post("/madden/:leagueKey/:platform/:leagueId/news", validateKey, async (req, res) => {
+  saveMcaPayload("mca/news.json", req.body);
+  const body = req.body as Record<string, unknown>;
+  const keys = Object.keys(body ?? {});
+  console.log("[mca/news] Received. Top-level keys:", keys.join(", "));
+  const result = await processLeagueNews(req.body);
+  console.log("[mca/news]", result.message);
+  res.status(result.ok ? 200 : 500).json({ status: result.ok ? "ok" : "error", message: result.message });
 });
 
 // ── /awards — season award winners (sent by MCA at end of regular season) ─────

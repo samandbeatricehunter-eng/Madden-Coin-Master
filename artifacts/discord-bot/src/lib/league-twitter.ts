@@ -15,6 +15,7 @@ import {
   usersTable, seasonsTable,
   teamSeasonStatsTable, playerSeasonStatsTable,
   franchiseScheduleTable, franchiseRostersTable,
+  leagueNewsTable,
 } from "@workspace/db";
 import { eq, desc, and, gte, isNotNull, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason, getRosterSeasonId } from "./db-helpers.js";
@@ -431,6 +432,33 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     parts.push(`\nUPCOMING MATCHUPS — ${cm.weekLabel} (just posted):\n${cm.matchupsText}`);
   }
 
+  // ── In-game EA news feed (most recent 15 items for this season) ─────────────
+  // Headlines from Madden's CFM news tab — game recaps, player news, transactions.
+  // These give the AI real in-game story angles to tweet about.
+  const recentNews = await db.select({
+    headline:  leagueNewsTable.headline,
+    body:      leagueNewsTable.body,
+    category:  leagueNewsTable.category,
+    weekIndex: leagueNewsTable.weekIndex,
+    createdAt: leagueNewsTable.createdAt,
+  })
+    .from(leagueNewsTable)
+    .where(eq(leagueNewsTable.seasonId, season.id))
+    .orderBy(desc(leagueNewsTable.createdAt))
+    .limit(15);
+
+  if (recentNews.length > 0) {
+    const newsLines = recentNews.map(n => {
+      const label = n.category ? `[${n.category}] ` : "";
+      const detail = n.body ? ` — ${n.body.slice(0, 120)}${n.body.length > 120 ? "…" : ""}` : "";
+      return `  ${label}${n.headline}${detail}`;
+    });
+    parts.push(
+      `\nIN-GAME LEAGUE NEWS (from Madden's CFM news feed — use as tweet topic inspiration):\n` +
+      newsLines.join("\n"),
+    );
+  }
+
   // ── Previous season context ─────────────────────────────────────────────────
   // Gives the AI historical ammunition for comparisons, call-backs, and storylines.
   // Only loaded when a prior season actually exists (seasonNumber > 1).
@@ -635,6 +663,13 @@ const TOPIC_PROMPTS = [
   "Discuss whether this season belongs to the passing game or rushing game based on the stat leaders in context.",
   "Write a hot take about the biggest surprise — best or worst — team in the league using only context data.",
   "Compare the SPOTLIGHT TEAM to the top team in the standings and explain what separates them.",
+
+  // In-game news stories (only used when IN-GAME LEAGUE NEWS is present in context)
+  "If IN-GAME LEAGUE NEWS is listed, pick one headline and react to it like a beat reporter — add your read on what it means for the team or player involved.",
+  "If IN-GAME LEAGUE NEWS includes a game recap headline, break it down: who won, what was the story, and what does it mean for the standings?",
+  "If IN-GAME LEAGUE NEWS includes a player-related item (injury, award, contract, trade), react to it. What's the impact on that team's season?",
+  "Find the most interesting or surprising item from IN-GAME LEAGUE NEWS and write a reaction tweet from a reporter's perspective.",
+  "Use a headline from IN-GAME LEAGUE NEWS as a jumping-off point to analyze the SPOTLIGHT TEAM's current trajectory.",
 ];
 
 // ── Topic rotation queue ────────────────────────────────────────────────────────
