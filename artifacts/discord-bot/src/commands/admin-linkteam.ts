@@ -241,7 +241,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     `);
     const statRowsFixed = (statFixResult as any).rowCount ?? (statFixResult as any).length ?? 0;
 
-    return interaction.editReply({
+    // Split results into pages of 20 to avoid embed character limits
+    const PAGE = 20;
+    const pages: string[][] = [];
+    for (let i = 0; i < results.length; i += PAGE) pages.push(results.slice(i, i + PAGE));
+
+    await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(Colors.Green)
         .setTitle("✅ Relink Complete")
@@ -249,12 +254,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           `Processed **${totalLinked}** team(s) for season ${season.id}.\n` +
           `Updated **${totalRosterRows}** roster rows.\n` +
           `Fixed **${statRowsFixed}** player stat row(s) with null discord_id.\n\n` +
-          results.slice(0, 20).join("\n") +
-          (results.length > 20 ? `\n…and ${results.length - 20} more` : "")
+          (pages[0]?.join("\n") ?? "No teams processed.")
         )
-        .setFooter({ text: "If roster rows = 0, run EA export now (carryforward must run first)." })
+        .setFooter({ text: pages.length > 1 ? `Page 1/${pages.length} — continuing below…` : "If roster rows = 0, run EA export now (carryforward must run first)." })
         .setTimestamp()],
     });
+
+    for (let p = 1; p < pages.length; p++) {
+      await interaction.followUp({
+        ephemeral: true,
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle(`Relink Results (page ${p + 1}/${pages.length})`)
+          .setDescription(pages[p]!.join("\n"))
+          .setFooter({ text: p === pages.length - 1 ? "If roster rows = 0, run EA export now (carryforward must run first)." : `Continued on next page…` })],
+      });
+    }
+
+    return;
   }
 
   // ── SET ─────────────────────────────────────────────────────────────────────
