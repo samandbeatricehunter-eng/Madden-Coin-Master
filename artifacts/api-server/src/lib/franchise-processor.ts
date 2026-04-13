@@ -437,6 +437,12 @@ export async function processTeamWeekStats(
   weekType: string,
   weekNum: number,
 ): Promise<ProcessResult> {
+  // Preseason stats don't count toward season totals
+  if (weekType === "pre") {
+    console.log(`[mca/week${weekNum}/team] Skipping preseason team stats — not accumulated into season totals`);
+    return { ok: true, message: `Preseason Week ${weekNum} team stats — skipped (preseason stats not tracked)` };
+  }
+
   try {
     const season = await getOrCreateActiveSeason();
     const stats  = extractList(body, "teamStatInfoList", "teamStatsInfoList", "teamStats");
@@ -770,6 +776,12 @@ export async function processPlayerWeekStats(
   weekType: string,
   weekNum: number,
 ): Promise<ProcessResult> {
+  // Preseason stats don't count toward season totals
+  if (weekType === "pre") {
+    console.log(`[mca/week${weekNum}/${statType}] Skipping preseason data — not accumulated into season stats`);
+    return { ok: true, message: `Preseason Week ${weekNum} ${statType} — skipped (preseason stats not tracked)` };
+  }
+
   try {
     const season  = await getOrCreateActiveSeason();
     const listKeys = STAT_LIST_KEYS[statType];
@@ -1122,6 +1134,12 @@ export async function syncWeekScoresToSchedule(
   weekNum: number,
   weekType = "reg",
 ): Promise<void> {
+  // Preseason games don't count toward records or schedule display
+  if (weekType === "pre") {
+    console.log(`[syncWeekScores] Skipping preseason week ${weekNum} — preseason games not tracked`);
+    return;
+  }
+
   try {
     const season = await getOrCreateActiveSeason();
 
@@ -1205,6 +1223,12 @@ export async function processWeekScores(
     resultLines: [], unregisteredLines: [],
     weekNum, seasonId: 0, catchupMode: false, violations: [],
   };
+
+  // Preseason games don't count for records, payouts, or coin rewards
+  if (weekType === "pre") {
+    console.log(`[processWeekScores] Skipping preseason week ${weekNum} — preseason games not tracked`);
+    return { ...zero, ok: true, message: `Preseason Week ${weekNum} — skipped (preseason games do not count for records or payouts)` };
+  }
 
   try {
     const season = await getOrCreateActiveSeason();

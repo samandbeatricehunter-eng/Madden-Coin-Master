@@ -250,6 +250,7 @@ for (const statType of ["passing", "rushing", "receiving", "defense"] as const) 
 // ── Playoff round label helper ─────────────────────────────────────────────────
 function weekLabel(weekType: string, weekNum: number): string {
   if (weekType === "reg") return `Week ${weekNum}`;
+  if (weekType === "pre") return `Preseason Week ${weekNum}`;
   const ROUNDS: Record<number, string> = {
     1: "Wild Card", 2: "Divisional Round", 3: "Conference Championship", 4: "Super Bowl",
   };
