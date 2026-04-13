@@ -278,18 +278,27 @@ async function exportWeek(
 
   await interaction.editReply({ content: `⏳ Sending **${weekLabel}** stats to processor...` });
 
-  const results: Array<{ name: string; ok: boolean; status: number }> = [];
+  const results: Array<{ name: string; ok: boolean; status: number; skipped?: boolean }> = [];
 
   if (!schedulesOnly) {
     // Player stats
     for (const [statType, urlSuffix] of [
-      ["passing",   "passing"],
-      ["rushing",   "rushing"],
-      ["receiving", "receiving"],
-      ["defense",   "defense"],
+      ["passing",    "passing"],
+      ["rushing",    "rushing"],
+      ["receiving",  "receiving"],
+      ["defense",    "defense"],
+      ["kicking",    "kicking"],
+      ["punting",    "punting"],
+      ["kickReturn", "kickreturn"],
+      ["puntReturn", "puntreturn"],
     ] as const) {
       const payload = stats[statType as keyof WeeklyExportData];
-      const res     = await postToApiServer(`${weekBase}/${urlSuffix}`, payload);
+      // null means EA didn't expose this endpoint (special teams on some versions)
+      if (payload == null) {
+        results.push({ name: statType, ok: true, status: 0, skipped: true });
+        continue;
+      }
+      const res = await postToApiServer(`${weekBase}/${urlSuffix}`, payload);
       results.push({ name: statType, ...res });
     }
 
@@ -324,10 +333,12 @@ async function exportWeek(
   const statsFailCount    = results.filter((r) => !r.ok).length;
 
   const statsLines = results.map((r) =>
-    r.ok ? `✅ ${r.name}` : `❌ ${r.name} (HTTP ${r.status})`,
+    r.skipped      ? `⏭ ${r.name} (not available)` :
+    r.ok           ? `✅ ${r.name}` :
+                     `❌ ${r.name} (HTTP ${r.status})`,
   );
 
-  const overallOk = statsFailCount === 0 && rostersAllOk;
+  const overallOk  = statsFailCount === 0 && rostersAllOk;
   const hasWarning = (statsFailCount > 0 || !rostersAllOk);
 
   const fields: { name: string; value: string }[] = [

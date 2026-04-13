@@ -403,6 +403,10 @@ const EXPORT_ENDPOINTS: Record<string, string> = {
   rushing:    "CareerMode_GetWeeklyRushingStatsExport",
   receiving:  "CareerMode_GetWeeklyReceivingStatsExport",
   defense:    "CareerMode_GetWeeklyDefensiveStatsExport",
+  kicking:    "CareerMode_GetWeeklyKickingStatsExport",
+  punting:    "CareerMode_GetWeeklyPuntingStatsExport",
+  kickReturn: "CareerMode_GetWeeklyKickReturnStatsExport",
+  puntReturn: "CareerMode_GetWeeklyPuntReturnStatsExport",
   teamStats:  "CareerMode_GetWeeklyTeamStatsExport",
   schedules:  "CareerMode_GetWeeklySchedulesExport",
   awards:     "CareerMode_GetAwardsExport",
@@ -434,13 +438,37 @@ async function fetchExportData(
 }
 
 export type WeeklyExportData = {
-  passing:   unknown;
-  rushing:   unknown;
-  receiving: unknown;
-  defense:   unknown;
-  teamStats: unknown;
-  schedules: unknown;
+  passing:    unknown;
+  rushing:    unknown;
+  receiving:  unknown;
+  defense:    unknown;
+  kicking:    unknown;
+  punting:    unknown;
+  kickReturn: unknown;
+  puntReturn: unknown;
+  teamStats:  unknown;
+  schedules:  unknown;
 };
+
+// Fetch a single export endpoint, returning null on 404/400 so special-teams
+// endpoints that don't exist for a given EA version degrade gracefully.
+async function fetchExportDataSoft(
+  token:      TokenInfo,
+  session:    BlazeSession,
+  exportType: string,
+  body:       Record<string, unknown>,
+): Promise<unknown> {
+  try {
+    return await fetchExportData(token, session, exportType, body);
+  } catch (err: any) {
+    const status = err?.response?.status ?? err?.status ?? 0;
+    if (status === 404 || status === 400) {
+      console.warn(`[ea-client] ${exportType} not available (HTTP ${status}) — skipping`);
+      return null;
+    }
+    throw err;
+  }
+}
 
 export async function fetchWeeklyStats(
   token:       TokenInfo,
@@ -452,16 +480,20 @@ export async function fetchWeeklyStats(
   const session   = await createBlazeSession(refreshed);
   const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
 
-  const [passing, rushing, receiving, defense, teamStats, schedules] = await Promise.all([
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.passing!,   body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.rushing!,   body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.receiving!, body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.defense!,   body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.teamStats!, body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!, body),
+  const [passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, schedules] = await Promise.all([
+    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.passing!,        body),
+    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.rushing!,        body),
+    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.receiving!,      body),
+    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.defense!,        body),
+    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.kicking!,    body),
+    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.punting!,    body),
+    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.kickReturn!, body),
+    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.puntReturn!, body),
+    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.teamStats!,      body),
+    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!,      body),
   ]);
 
-  return { passing, rushing, receiving, defense, teamStats, schedules };
+  return { passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, schedules };
 }
 
 // ── Awards export (season-level, no weekIndex needed) ─────────────────────────
