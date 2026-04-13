@@ -34,8 +34,9 @@ export interface RunWeeklyMatchupsOpts {
  * Indexes by BOTH fullName and nickName so schedule team names match correctly.
  * Falls back to the most recent season with roster data if the active season
  * has no MCA team entries yet (e.g. right after a new-season advance).
+ * Exported so the GOTW decline handler can use the same map-building logic.
  */
-async function buildTeamToDiscord(): Promise<Map<string, string>> {
+export async function buildTeamToDiscord(): Promise<Map<string, string>> {
   const rosterSeasonId = await getRosterSeasonId();
   const mcaTeams = await db
     .select({

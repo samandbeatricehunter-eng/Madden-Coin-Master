@@ -55,6 +55,7 @@ import {
 import {
   scoreH2HMatchups, postGotwToChannel, GOTW_CHANNEL_ID,
 } from "../lib/gotw-helpers.js";
+import { buildTeamToDiscord } from "../lib/weekly-matchups-runner.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { logTradeEvent } from "../lib/league-twitter.js";
 
@@ -1826,13 +1827,8 @@ async function handleButton(interaction: ButtonInteraction) {
           ))
       : [];
 
-    // Build team → Discord ID map
-    const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable);
-    const teamToDiscord = new Map<string, string>();
-    for (const u of allUsers) {
-      if (u.team) teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
-    }
+    // Build team → Discord ID map using full MCA names (same logic as /weeklymatchups)
+    const teamToDiscord = await buildTeamToDiscord();
 
     const scored = await scoreH2HMatchups(seasonId, weekIndex, games, teamToDiscord);
 
