@@ -34,6 +34,7 @@ import * as advanceweek      from "./commands/advanceweek.js";
 import * as statleaders      from "./commands/statleaders.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
 import * as viewFreeAgents   from "./commands/viewfreeagents.js";
+import * as viewXp            from "./commands/viewxp.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
@@ -145,6 +146,7 @@ if (!isProduction && !devBotEnabled) {
     statleaders,
     availableupgrades,
     viewFreeAgents,
+    viewXp,
 
     // Admin tools
     adminEosTestrun,

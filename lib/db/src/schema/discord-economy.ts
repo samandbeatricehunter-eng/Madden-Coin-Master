@@ -390,6 +390,7 @@ export const franchiseRostersTable = pgTable("franchise_rosters", {
   jerseyNum:          integer("jersey_num"),
   contractYearsLeft:  integer("contract_years_left"),   // null = unknown; 1 = final year (contract year)
   archetypeAbbrev:    text("archetype_abbrev"),          // EA's archetype abbreviation e.g. "FIELD_GENERAL", "SPEED_BACK"
+  xpTotal:            integer("xp_total"),               // EA experiencePoints — total accumulated XP (used to compute weekly delta)
   attributes:         json("attributes"),               // Record<string, number> — all *Rating fields from MCA export
   importedAt: timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
@@ -961,6 +962,29 @@ export const rosterTransactionsTable = pgTable("roster_transactions", {
   toValue:         text("to_value"),
   postedToChannel: boolean("posted_to_channel").notNull().default(false),
 });
+
+// ── Player XP Log — weekly XP delta per player derived from EA experiencePoints ─
+// Each row records how much XP a player earned between the previous roster export
+// and the current one. weekNum/weekType are inferred from the schedule table.
+export const playerXpLogTable = pgTable("player_xp_log", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  guildId:   text("guild_id"),
+  weekNum:   integer("week_num"),          // null if week can't be inferred
+  weekType:  text("week_type"),            // 'pre' | 'reg' | 'post'
+  playerId:  integer("player_id").notNull(),
+  firstName: text("first_name").notNull().default(""),
+  lastName:  text("last_name").notNull().default(""),
+  position:  text("position").notNull().default(""),
+  teamId:    integer("team_id").notNull(),
+  teamName:  text("team_name").notNull().default(""),
+  discordId: text("discord_id"),
+  xpEarned:  integer("xp_earned").notNull(),  // delta vs previous export
+  xpTotal:   integer("xp_total").notNull(),   // total after this export
+  loggedAt:  timestamp("logged_at").notNull().defaultNow(),
+}, (t) => ({
+  playerWeek: uniqueIndex("player_xp_log_player_week_idx").on(t.seasonId, t.playerId, t.weekNum, t.weekType),
+}));
 
 // ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────
 export const leagueTwitterTable = pgTable("league_twitter_tweets", {

@@ -16,9 +16,10 @@ import {
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
   rosterTransactionsTable,
+  playerXpLogTable,
   leagueNewsTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
+import { eq, and, sql, inArray, isNotNull, desc } from "drizzle-orm";
 import {
   detectH2HBlowout,
   detectCpuScoreAnomaly,
@@ -1811,6 +1812,7 @@ function buildPlayerValues(p: any, seasonId: number, teamId: number, teamName: s
       ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber) : null,
     contractYearsLeft: resolveContractYearsLeftProc(p),
     archetypeAbbrev:   resolveArchetypeAbbrev(p),
+    xpTotal:           p.experiencePoints != null ? Number(p.experiencePoints) : null,
     attributes:        Object.keys(attributes).length > 0 ? attributes : null,
     importedAt:        new Date(),
   };
@@ -1957,7 +1959,13 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
       if (isNaN(playerId) || playerId <= 0) continue;
 
       const row = buildPlayerValues(p, season.id, mcaTeamId, teamEntry.fullName, teamEntry.discordId ?? null);
-      console.log(`[roster/archetype] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) → EA raw: ${row.archetypeAbbrev ?? "null"}`);
+      // Capture any XP-related fields EA may send so we know the exact key names
+      const xpFields: Record<string, unknown> = {};
+      for (const k of Object.keys(p as Record<string, unknown>)) {
+        if (/xp|experience|award|points/i.test(k)) xpFields[k] = (p as Record<string, unknown>)[k];
+      }
+      const xpStr = Object.keys(xpFields).length > 0 ? JSON.stringify(xpFields) : "none";
+      console.log(`[roster/player] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) archetype=${row.archetypeAbbrev ?? "null"} xp_fields=${xpStr}`);
       rows.push(row);
     }
 
@@ -1995,6 +2003,7 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
           lastName:   franchiseRostersTable.lastName,
           position:   franchiseRostersTable.position,
           attributes: franchiseRostersTable.attributes,
+          xpTotal:    franchiseRostersTable.xpTotal,
         })
         .from(franchiseRostersTable)
         .where(and(
@@ -2121,6 +2130,48 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
 
     if (transactions.length > 0) {
       await db.insert(rosterTransactionsTable).values(transactions);
+    }
+
+    // ── XP delta computation ──────────────────────────────────────────────────
+    // Infer the most recently completed week from the schedule table
+    const latestWeekRow = await db
+      .select({ weekIndex: franchiseScheduleTable.weekIndex })
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId, season.id),
+        isNotNull(franchiseScheduleTable.homeScore),
+      ))
+      .orderBy(desc(franchiseScheduleTable.weekIndex))
+      .limit(1);
+    const inferredWeekNum = latestWeekRow[0]?.weekIndex ?? null;
+
+    const xpInserts: Array<typeof playerXpLogTable.$inferInsert> = [];
+    for (const row of rows) {
+      if (row.playerId == null || row.xpTotal == null) continue;
+      const prev = existingMap.get(row.playerId);
+      const prevXp = prev?.xpTotal ?? null;
+      // Only log if we have a previous baseline and XP increased
+      if (prevXp == null || row.xpTotal <= prevXp) continue;
+      const xpEarned = row.xpTotal - prevXp;
+      xpInserts.push({
+        seasonId:  season.id,
+        guildId:   teamEntry.discordId ?? null,
+        weekNum:   inferredWeekNum,
+        weekType:  "reg",
+        playerId:  row.playerId,
+        firstName: row.firstName ?? "",
+        lastName:  row.lastName  ?? "",
+        position:  row.position  ?? "",
+        teamId:    mcaTeamId,
+        teamName:  teamEntry.fullName,
+        discordId: teamEntry.discordId ?? null,
+        xpEarned,
+        xpTotal:   row.xpTotal,
+      });
+    }
+    if (xpInserts.length > 0) {
+      await db.insert(playerXpLogTable).values(xpInserts).onConflictDoNothing();
+      console.log(`[roster/xp] Team ${mcaTeamId} (${teamEntry.fullName}): logged XP for ${xpInserts.length} players (week ${inferredWeekNum ?? "?"})`);
     }
 
     // Replace the team's roster: delete old rows, insert fresh ones
