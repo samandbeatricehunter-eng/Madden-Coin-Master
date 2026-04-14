@@ -23,52 +23,50 @@ function devLabel(trait: number): string {
 }
 
 // ── Archetype display map ──────────────────────────────────────────────────────
-// Maps EA's uppercase-underscore abbreviation to a full human-readable name.
+// Verified Madden 26 CFM in-game archetypes (full display names for detail embed).
+// Keys are EA export abbreviations (SCREAMING_SNAKE_CASE).
+// Fallback: unknown keys are auto-converted from SNAKE_CASE → Title Case.
 const ARCHETYPE_NAMES: Record<string, string> = {
-  // QB
-  FIELD_GENERAL: "Field General",   STRONG_ARM: "Strong Arm",
-  WEST_COAST: "West Coast",         SCRAMBLER: "Scrambler",
-  IMPROVISER: "Improviser",
-  // HB
-  ELUSIVE_BACK: "Elusive Back",     POWER_BACK: "Power Back",
-  RECEIVING_BACK: "Receiving Back", SPEED_BACK: "Speed Back",
-  // FB
-  BLOCKING_FB: "Blocking Fullback", BLOCKING_FULLBACK: "Blocking Fullback",
+  // QB — Field General | Scrambler | Strong Arm | Improviser
+  FIELD_GENERAL: "Field General",     SCRAMBLER: "Scrambler",
+  STRONG_ARM: "Strong Arm",           IMPROVISER: "Improviser",
+  // HB — Elusive Back | Power Back | Receiving Back | Balanced Back
+  ELUSIVE_BACK: "Elusive Back",       POWER_BACK: "Power Back",
+  RECEIVING_BACK: "Receiving Back",   BALANCED_BACK: "Balanced Back",
+  SPEED_BACK: "Speed Back",           // legacy alias
+  // FB — Blocking Fullback | Receiving Fullback
+  BLOCKING_FB: "Blocking Fullback",   BLOCKING_FULLBACK: "Blocking Fullback",
   RECEIVING_FB: "Receiving Fullback", RECEIVING_FULLBACK: "Receiving Fullback",
-  // WR
-  DEEP_THREAT: "Deep Threat",       PHYSICAL: "Physical WR",
-  PHYSICAL_WR: "Physical WR",       POSSESSION: "Possession WR",
-  POSSESSION_WR: "Possession WR",   RED_ZONE_THREAT: "Red Zone Threat",
-  REDZONE_THREAT: "Red Zone Threat", ROUTE_RUNNER: "Route Runner",
-  SLOT: "Slot WR",                  SLOT_WR: "Slot WR",
-  // TE
-  BLOCKING_TE: "Blocking TE",       HYBRID_TE: "Hybrid TE",
-  HYBRID: "Hybrid",                 PASS_CATCHING_TE: "Pass Catching TE",
-  PASS_CATCHING: "Pass Catching TE", VERTICAL_THREAT_TE: "Vertical Threat TE",
-  VERTICAL_THREAT: "Vertical Threat TE",
-  // OL (LT/LG/C/RG/RT all share these)
-  PASS_BLOCKER: "Pass Blocker",     RUN_BLOCKER: "Run Blocker",
-  // DE / EDGE
-  POWER_RUSHER: "Power Rusher",     FINESSE_RUSHER: "Finesse Rusher",
-  SPEED_RUSHER: "Speed Rusher",
-  // DT
-  NOSE_TACKLE: "Nose Tackle",       PASS_RUSHER: "Pass Rusher",
-  RUN_STOPPER: "Run Stopper",
-  // LB
-  COVERAGE: "Coverage LB",          COVERAGE_LB: "Coverage LB",
-  FIELD_GENERAL_LB: "Field General",
-  // CB
-  MAN_TO_MAN: "Man to Man",         MAN_COVERAGE: "Man to Man",
-  SLOT_CORNER: "Slot Corner",       ZONE_CORNER: "Zone Corner",
-  ZONE_COVERAGE: "Zone Corner",
-  // S
-  CENTER_FIELD: "Center Field",     HYBRID_SAFETY: "Hybrid Safety",
-  RUN_SUPPORT: "Run Support",       ZONE_SAFETY: "Zone Safety",
-  ZONE: "Zone Safety",
-  // K / P
-  ACCURATE: "Accurate",             ACCURATE_KICKER: "Accurate",
-  ACCURATE_PUNTER: "Accurate",      POWER: "Power",
-  POWER_KICKER: "Power",            POWER_PUNTER: "Power",
+  // WR — Deep Threat | Route Runner | Physical WR | Slot Receiver | Possession WR
+  DEEP_THREAT: "Deep Threat",         ROUTE_RUNNER: "Route Runner",
+  PHYSICAL: "Physical WR",            PHYSICAL_WR: "Physical WR",
+  SLOT: "Slot Receiver",              SLOT_WR: "Slot Receiver",  SLOT_RECEIVER: "Slot Receiver",
+  POSSESSION: "Possession WR",        POSSESSION_WR: "Possession WR",
+  // TE — Vertical Threat | Blocking TE | Receiving TE | Hybrid TE
+  VERTICAL_THREAT: "Vertical Threat", VERTICAL_THREAT_TE: "Vertical Threat",
+  BLOCKING_TE: "Blocking TE",
+  RECEIVING_TE: "Receiving TE",       PASS_CATCHING_TE: "Receiving TE",  PASS_CATCHING: "Receiving TE",
+  HYBRID_TE: "Hybrid TE",             HYBRID: "Hybrid",
+  // OL — Pass Protector | Run Blocker | Balanced
+  PASS_PROTECTOR: "Pass Protector",   PASS_BLOCKER: "Pass Protector",
+  RUN_BLOCKER: "Run Blocker",         BALANCED: "Balanced",
+  // DE — Speed Rusher | Power Rusher | Run Stopper | Hybrid
+  SPEED_RUSHER: "Speed Rusher",       POWER_RUSHER: "Power Rusher",
+  RUN_STOPPER: "Run Stopper",         FINESSE_RUSHER: "Finesse Rusher", // legacy alias
+  // DT — Run Stopper | Pass Rusher | Balanced  (shares keys above)
+  PASS_RUSHER: "Pass Rusher",         NOSE_TACKLE: "Nose Tackle", // legacy alias
+  // LB (MLB + OLB) — Field General | Pass Coverage | Pass Rusher | Run Stopper
+  COVERAGE: "Coverage LB",            COVERAGE_LB: "Coverage LB",  PASS_COVERAGE: "Coverage LB",
+  // CB — Man Coverage | Zone Coverage | Slot Corner | Physical Corner
+  MAN_COVERAGE: "Man Coverage",       MAN_TO_MAN: "Man Coverage",
+  ZONE_COVERAGE: "Zone Coverage",     ZONE_CORNER: "Zone Coverage",
+  SLOT_CORNER: "Slot Corner",         PHYSICAL_CORNER: "Physical Corner",
+  // S (FS + SS) — Zone Coverage | Run Support | Man Coverage | Hybrid
+  ZONE_SAFETY: "Zone Coverage",       ZONE: "Zone Coverage",
+  RUN_SUPPORT: "Run Support",         HYBRID_SAFETY: "Hybrid",
+  // K / P — Power | Accurate
+  ACCURATE: "Accurate",               ACCURATE_KICKER: "Accurate",  ACCURATE_PUNTER: "Accurate",
+  POWER: "Power",                     POWER_KICKER: "Power",        POWER_PUNTER: "Power",
 };
 
 function archetypeLabel(abbrev: string | null): string | null {
