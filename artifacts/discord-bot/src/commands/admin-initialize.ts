@@ -1,17 +1,9 @@
 /**
  * /initialize-server — One-time server setup wizard for new REC League servers.
  *
- * Phase 1 (automatic):
- *   - Creates Commissioner + Co-Commissioner roles (if missing)
- *   - Creates the full category/channel structure mirroring the primary server
- *   - Sets channel permissions (info channels read-only, commissioner channel private)
- *   - Creates Season 1 in the DB for this guild if no season exists yet
- *
- * Phase 2 (interactive buttons embedded in the summary):
- *   - Feature settings toggle
- *   - Team linking guide
- *   - EA Direct Connect instructions
- *   - Payout config pointer
+ * Creates the exact category/channel structure matching the primary REC League
+ * server, assigns permissions, registers channel IDs in the DB, and creates
+ * Season 1 for the new guild.
  */
 
 import {
@@ -27,114 +19,128 @@ import { eq } from "drizzle-orm";
 import { isAdminUser, setGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 
-// ── Channel name → DB key mapping ────────────────────────────────────────────
+// ── Channel name → DB key mapping ─────────────────────────────────────────────
+// Must exactly match the `name` fields in SERVER_BLUEPRINT below.
 const CHANNEL_KEY_MAP: Record<string, string> = {
-  "season-schedule":   CHANNEL_KEYS.SCHEDULE,
-  "general":           CHANNEL_KEYS.GENERAL,
-  "transactions":      CHANNEL_KEYS.TRANSACTIONS,
-  "matchups":          CHANNEL_KEYS.MATCHUPS,
-  "gotw-voting":       CHANNEL_KEYS.GOTW,
-  "league-twitter":    CHANNEL_KEYS.LEAGUE_TWITTER,
-  "headlines":         CHANNEL_KEYS.HEADLINES,
-  "draft-tracker":     CHANNEL_KEYS.DRAFT_TRACKER,
-  "payouts":           CHANNEL_KEYS.PAYOUTS,
-  "goty-candidates":   CHANNEL_KEYS.GOTY,
-  "commissioner-chat": CHANNEL_KEYS.COMMISSIONER,
-  "violation-log":     CHANNEL_KEYS.VIOLATION_LOG,
+  "general-discussion":    CHANNEL_KEYS.GENERAL,
+  "season-schedule":       CHANNEL_KEYS.SCHEDULE,
+  "weekly-matchups":       CHANNEL_KEYS.MATCHUPS,
+  "weekly-gotw-scores":    CHANNEL_KEYS.GOTW,
+  "league-twitter":        CHANNEL_KEYS.LEAGUE_TWITTER,
+  "league-headlines":      CHANNEL_KEYS.HEADLINES,
+  "h2h-goty-candidates":   CHANNEL_KEYS.GOTY,
+  "position-changes":      CHANNEL_KEYS.DRAFT_TRACKER,
+  "commissioner-chat":     CHANNEL_KEYS.COMMISSIONER,
+  "violation-log":         CHANNEL_KEYS.VIOLATION_LOG,
+  "transactions-log":      CHANNEL_KEYS.TRANSACTIONS,
+  "end-of-season-payouts": CHANNEL_KEYS.PAYOUTS,
 };
 
-// ── Channel blueprint ────────────────────────────────────────────────────────
-// Mirrors the primary REC League Discord server structure.
-// readOnly: @everyone can read but not send messages
-// private:  @everyone has no access — Commissioner role only
+// ── Type definitions ───────────────────────────────────────────────────────────
+type ChannelKind = "text" | "voice";
 
 interface ChannelDef {
   name: string;
+  kind?: ChannelKind;   // defaults to "text"
   topic?: string;
-  readOnly?: boolean;
-  private?: boolean;
+  readOnly?: boolean;   // @everyone can read, cannot send
+  private?: boolean;    // @everyone cannot see at all
 }
 
 interface CategoryDef {
   name: string;
-  private?: boolean;
+  private?: boolean;    // entire category hidden from @everyone
   channels: ChannelDef[];
 }
 
+// ── Standalone channels (no category parent) ───────────────────────────────────
+// Created first so they appear at the top of the channel list.
+const STANDALONE_CHANNELS: ChannelDef[] = [
+  {
+    name:     "welcome",
+    topic:    "Welcome to the league — read the rules and introduce yourself!",
+    readOnly: true,
+  },
+];
+
+// ── Categories and their channels ─────────────────────────────────────────────
+// Mirrors the primary REC League Discord server structure exactly.
 const SERVER_BLUEPRINT: CategoryDef[] = [
   {
-    name: "📢 INFORMATION",
+    name: "🔒 MEMBERS ONLY",
     channels: [
-      { name: "rules",           topic: "League rules — use /rules to view sections",          readOnly: true  },
-      { name: "announcements",   topic: "Commissioner announcements",                          readOnly: true  },
-      { name: "season-schedule", topic: "Full season schedule — posted by bot each new season", readOnly: true  },
-      { name: "standings",       topic: "Live league standings",                               readOnly: true  },
+      { name: "general-discussion",  topic: "General league discussion"                                        },
+      { name: "member-league-chat",  topic: "Member-only league chat"                                         },
+      { name: "league-announcements",topic: "Commissioner announcements", readOnly: true                       },
     ],
   },
   {
-    name: "🏈 LEAGUE HUB",
+    // Voice channel in its own category so it stays in order
+    name: "🎙️ VOICE",
     channels: [
-      { name: "general",      topic: "General league discussion"       },
-      { name: "transactions", topic: "Trades, signings, and releases — bot-posted", readOnly: true },
-      { name: "trade-block",  topic: "Use /tradeblock to list or browse trades"     },
-      { name: "trash-talk",   topic: "Trash talk goes here — keep it friendly"      },
+      { name: "Trash Talk", kind: "voice" },
     ],
   },
   {
-    name: "🎮 GAME WEEK",
+    name: "🏈 GAMEDAY CENTER",
     channels: [
-      { name: "matchups",      topic: "Weekly matchup embeds — posted by bot",          readOnly: true },
-      { name: "gotw-voting",   topic: "Game of the Week poll — highest-stakes matchup"               },
-      { name: "league-twitter", topic: "AI-generated league news feed — League Twitter", readOnly: true },
+      { name: "season-schedule",   topic: "Full season schedule — posted by bot each new season", readOnly: true },
+      { name: "weekly-matchups",   topic: "Weekly matchup embeds — posted by bot",                readOnly: true },
+      { name: "weekly-gotw-scores",topic: "Game of the Week poll and scores",                                   },
     ],
   },
   {
-    name: "📊 STATS & AWARDS",
+    name: "📰 R.E.C. LEAGUE MEDIA",
     channels: [
-      { name: "stat-leaders",  topic: "Top performers each week — use /view player_stats", readOnly: true },
-      { name: "headlines",     topic: "Season recap headlines posted by bot",              readOnly: true },
-      { name: "draft-tracker", topic: "Legend and custom player draft tracker",            readOnly: true },
+      { name: "league-twitter",      topic: "AI-generated league news feed",                    readOnly: true },
+      { name: "league-headlines",    topic: "Season recap headlines posted by bot",             readOnly: true },
+      { name: "highlights",          topic: "Share your best plays and highlights"                             },
+      { name: "streams",             topic: "Post your stream links here"                                      },
+      { name: "h2h-goty-candidates", topic: "Game of the Year candidates — voted on during playoffs"          },
     ],
   },
   {
-    name: "💰 ECONOMY",
-    channels: [
-      { name: "store",   topic: "Use /view store to see available legends & upgrades" },
-      { name: "payouts", topic: "End-of-season payouts posted here by bot"            },
-      { name: "savings", topic: "Use /savings to check your coin savings progress"    },
-    ],
-  },
-  {
-    name: "🏆 SEASON AWARDS",
-    channels: [
-      { name: "goty-candidates", topic: "Game of the Year candidates — voted on during playoffs" },
-    ],
-  },
-  {
-    name: "🔒 COMMISSIONER",
+    name: "🏢 FRONT OFFICE",
     private: true,
     channels: [
-      { name: "commissioner-chat", topic: "Private commissioner coordination channel", private: true },
-      { name: "violation-log",     topic: "Stat padding violations & rule infractions", private: true },
+      { name: "position-changes",  topic: "Legend and custom player position change tracker",  readOnly: true, private: true },
+      { name: "commissioner-chat", topic: "Private commissioner coordination channel",                         private: true },
+      { name: "commissioner-notes",topic: "Commissioner rulings and decisions",                                private: true },
+      { name: "referral-log",      topic: "Member referral tracking",                                         private: true },
+      { name: "violation-log",     topic: "Stat padding violations and rule infractions",                     private: true },
+      { name: "transactions-log",  topic: "All transactions — trades, signings, and releases", readOnly: true, private: true },
+    ],
+  },
+  {
+    name: "🏆 THE HALL OF FAME",
+    channels: [
+      { name: "the-quit-list",            topic: "Members who have left the league",            readOnly: true },
+      { name: "historical-records-season",topic: "Season-by-season historical records",          readOnly: true },
+      { name: "historical-records-alltime",topic: "All-time league records",                     readOnly: true },
+    ],
+  },
+  {
+    name: "🎊 END OF SEASON PAYOUTS",
+    channels: [
+      { name: "end-of-season-payouts", topic: "End-of-season coin payouts posted by bot", readOnly: true },
     ],
   },
 ];
 
-// ── Friendly names for the setup checklist embed ────────────────────────────
+// ── Setup checklist shown in the summary embed ─────────────────────────────────
 const SETUP_STEPS = [
-  { step: "1", icon: "✅", label: "Channels & roles created", done: true },
-  { step: "2", icon: "⚙️", label: "Configure feature settings (Economy, Wagers, MCA, etc.)" },
-  { step: "3", icon: "👥", label: "Link each manager to their NFL team (`/admin-linkteam set`)" },
-  { step: "4", icon: "🔗", label: "Connect to EA for automatic data imports (`/admin_ea_connect start`)" },
-  { step: "5", icon: "📤", label: "Or set up MCA webhook URL if using manual export (`/webhookurl`)" },
-  { step: "6", icon: "💰", label: "Configure end-of-season payout tiers (`/admin-setpayouts`)" },
-  { step: "7", icon: "🏈", label: "Import league teams + rosters from EA (`/admin_ea_export` or MCA)" },
-  { step: "8", icon: "📋", label: "Customize league rules for your league (`/rules` → section editor)" },
-  { step: "9", icon: "🏆", label: "Post opening week schedule (`/admin-postfullseasonschedule`)" },
+  { step: "1", icon: "✅", label: "Channels & roles created",                                                          done: true },
+  { step: "2", icon: "⚙️", label: "Configure feature settings (Economy, Wagers, MCA, etc.)"                                       },
+  { step: "3", icon: "👥", label: "Link each manager to their NFL team (`/admin-linkteam set`)"                                    },
+  { step: "4", icon: "🔗", label: "Connect to EA for automatic data imports (`/admin_ea_connect start`)"                           },
+  { step: "5", icon: "📤", label: "Or set up MCA webhook URL if using manual export (`/webhookurl`)"                               },
+  { step: "6", icon: "💰", label: "Configure end-of-season payout tiers (`/admin-setpayouts`)"                                    },
+  { step: "7", icon: "🏈", label: "Import league teams + rosters from EA (`/admin_ea_export` or MCA)"                             },
+  { step: "8", icon: "📋", label: "Customize league rules for your league (`/rules` → section editor)"                            },
+  { step: "9", icon: "🏆", label: "Post opening week schedule (`/admin-postfullseasonschedule`)"                                  },
 ];
 
-// ── Command definition ───────────────────────────────────────────────────────
-
+// ── Command definition ─────────────────────────────────────────────────────────
 export const data = new SlashCommandBuilder()
   .setName("initialize-server")
   .setDescription("First-time server setup: creates channels, roles, and walks through configuration")
@@ -145,8 +151,7 @@ export const data = new SlashCommandBuilder()
       .setRequired(true),
   );
 
-// ── Execute ──────────────────────────────────────────────────────────────────
-
+// ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const confirm = interaction.options.getBoolean("confirm", true);
   if (!confirm) {
@@ -159,7 +164,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  // Permission check: Discord admin OR DB admin
   await interaction.deferReply({ ephemeral: true });
 
   const member = interaction.guild?.members.cache.get(interaction.user.id)
@@ -180,20 +184,40 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   await interaction.editReply({ content: "⏳ Starting server initialization… this may take 15–30 seconds." });
 
-  const guildId = interaction.guildId!;
-  const log: string[] = [];
+  const guildId           = interaction.guildId!;
+  const log: string[]                    = [];
   const channelMentions: Record<string, string> = {};
-  const channelIds: Record<string, string> = {};
+  const channelIds: Record<string, string>      = {};
 
   try {
-    // ── Step 1: Create roles ────────────────────────────────────────────────
-    const commRole    = await ensureRole(guild, "Commissioner",    0xFFD700); // gold
-    const coCommRole  = await ensureRole(guild, "Co-Commissioner", 0x4FC3F7); // light blue
+    // ── Step 1: Roles ──────────────────────────────────────────────────────────
+    const commRole   = await ensureRole(guild, "Commissioner",    0xFFD700);
+    const coCommRole = await ensureRole(guild, "Co-Commissioner", 0x4FC3F7);
     log.push(`Roles: **Commissioner** <@&${commRole.id}> · **Co-Commissioner** <@&${coCommRole.id}>`);
 
-    // ── Step 2: Create categories and channels ──────────────────────────────
+    // ── Step 2: Standalone channels (no category) ──────────────────────────────
+    for (const chDef of STANDALONE_CHANNELS) {
+      const existing = guild.channels.cache.find(
+        c => c.type === ChannelType.GuildText && c.name === chDef.name && !c.parentId,
+      );
+      if (existing) {
+        channelMentions[chDef.name] = `<#${existing.id}>`;
+        channelIds[chDef.name]      = existing.id;
+        continue;
+      }
+      const perms = buildPerms(guild, commRole, coCommRole, chDef, false);
+      const created = await guild.channels.create({
+        name:                chDef.name,
+        type:                ChannelType.GuildText,
+        topic:               chDef.topic,
+        permissionOverwrites: perms,
+      });
+      channelMentions[chDef.name] = `<#${created.id}>`;
+      channelIds[chDef.name]      = created.id;
+    }
+
+    // ── Step 3: Categories and their channels ──────────────────────────────────
     for (const catDef of SERVER_BLUEPRINT) {
-      // Reuse existing category if name matches, otherwise create
       const existingCat = guild.channels.cache.find(
         c => c.type === ChannelType.GuildCategory && c.name === catDef.name,
       ) as CategoryChannel | undefined;
@@ -201,11 +225,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       let category: CategoryChannel;
       if (existingCat) {
         category = existingCat;
-        log.push(`↩️ Reused existing category: ${catDef.name}`);
+        log.push(`↩️ Reused category: ${catDef.name}`);
       } else {
-        const permOverwrites = catDef.private
+        const catPerms: OverwriteResolvable[] = catDef.private
           ? [
-              { id: guild.roles.everyone, deny: [PermissionFlagsBits.ViewChannel] },
+              { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
               { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
               { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
             ]
@@ -214,122 +238,107 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         category = await guild.channels.create({
           name:                catDef.name,
           type:                ChannelType.GuildCategory,
-          permissionOverwrites: permOverwrites,
+          permissionOverwrites: catPerms,
         });
         log.push(`✅ Created category: ${catDef.name}`);
       }
 
-      // Create channels within the category
       for (const chDef of catDef.channels) {
-        const existing = guild.channels.cache.find(
-          c => c.type === ChannelType.GuildText && c.name === chDef.name && c.parentId === category.id,
+        const isVoice   = chDef.kind === "voice";
+        const chType    = isVoice ? ChannelType.GuildVoice : ChannelType.GuildText;
+        const existing  = guild.channels.cache.find(
+          c => c.type === chType && c.name === chDef.name && c.parentId === category.id,
         );
         if (existing) {
-          channelMentions[chDef.name] = `<#${existing.id}>`;
-          channelIds[chDef.name] = existing.id;
+          if (!isVoice) {
+            channelMentions[chDef.name] = `<#${existing.id}>`;
+            channelIds[chDef.name]      = existing.id;
+          }
           continue;
         }
 
-        let permOverwrites: OverwriteResolvable[];
-        if (chDef.private || catDef.private) {
-          // Private: only Commissioner + Co-Commissioner roles can see
-          permOverwrites = [
-            { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
-            { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
-            { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-          ];
-        } else if (chDef.readOnly) {
-          // Read-only: everyone can view, only Commissioner/Co-Comm can post
-          permOverwrites = [
-            { id: guild.roles.everyone, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
-            { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
-            { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-          ];
-        } else {
-          // Normal public channel — inherits category permissions
-          permOverwrites = [];
-        }
+        const perms = buildPerms(guild, commRole, coCommRole, chDef, catDef.private ?? false);
 
-        const created = await guild.channels.create({
-          name:                 chDef.name,
-          type:                 ChannelType.GuildText,
-          parent:               category.id,
-          topic:                chDef.topic,
-          permissionOverwrites: permOverwrites,
-        });
-        channelMentions[chDef.name] = `<#${created.id}>`;
-        channelIds[chDef.name] = created.id;
+        if (isVoice) {
+          await guild.channels.create({
+            name:                chDef.name,
+            type:                ChannelType.GuildVoice,
+            parent:              category.id,
+            permissionOverwrites: perms,
+          });
+        } else {
+          const created = await guild.channels.create({
+            name:                chDef.name,
+            type:                ChannelType.GuildText,
+            parent:              category.id,
+            topic:               chDef.topic,
+            permissionOverwrites: perms,
+          });
+          channelMentions[chDef.name] = `<#${created.id}>`;
+          channelIds[chDef.name]      = created.id;
+        }
       }
     }
 
-    // ── Step 2b: Save channel IDs to DB so the bot knows where to post ──────
-    const savePromises: Promise<void>[] = [];
-    for (const [channelName, channelId] of Object.entries(channelIds)) {
-      const key = CHANNEL_KEY_MAP[channelName];
-      if (key) savePromises.push(setGuildChannel(guildId, key, channelId));
+    // ── Step 4: Save channel IDs to DB ─────────────────────────────────────────
+    const saves: Promise<void>[] = [];
+    for (const [name, id] of Object.entries(channelIds)) {
+      const key = CHANNEL_KEY_MAP[name];
+      if (key) saves.push(setGuildChannel(guildId, key, id));
     }
-    await Promise.all(savePromises);
-    log.push(`💾 Saved ${savePromises.length} channel IDs to database`);
+    await Promise.all(saves);
+    log.push(`💾 Saved ${saves.length} channel IDs to database`);
 
-    // ── Step 3: Ensure Season 1 exists for this guild ───────────────────────
-    const existingSeason = await db
+    // ── Step 5: Season 1 ───────────────────────────────────────────────────────
+    const existing = await db
       .select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
       .from(seasonsTable)
       .where(eq(seasonsTable.guildId, guildId))
       .limit(1);
 
     let seasonNote: string;
-    if (existingSeason.length > 0) {
-      seasonNote = `Season ${existingSeason[0]!.seasonNumber} already exists — no new season created.`;
+    if (existing.length > 0) {
+      seasonNote = `Season ${existing[0]!.seasonNumber} already exists — no new season created.`;
     } else {
-      await db.insert(seasonsTable).values({
-        guildId:      guildId,
-        seasonNumber: 1,
-        isActive:     true,
-      });
+      await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true });
       seasonNote = "Season 1 created and set as active.";
     }
     log.push(`🗓️ ${seasonNote}`);
 
-    // ── Step 4: Ensure server settings row exists ──────────────────────────
+    // ── Step 6: Server settings row ────────────────────────────────────────────
     await getServerSettings();
 
   } catch (err: any) {
     console.error("[initialize-server] Error during setup:", err);
     await interaction.editReply({
-      content: `❌ An error occurred during initialization:\n\`\`\`${err?.message ?? String(err)}\`\`\`\nPartial setup may have completed — check the log above.`,
+      content: `❌ An error occurred during initialization:\n\`\`\`${err?.message ?? String(err)}\`\`\`\nPartial setup may have completed — check above.`,
     });
     return;
   }
 
-  // ── Build the summary embed ─────────────────────────────────────────────
+  // ── Build summary embed ────────────────────────────────────────────────────
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("🏈 Server Initialized — REC League Bot Setup")
     .setDescription(
       "Your server structure has been created. Work through the checklist below to finish setup.\n\n" +
-      SETUP_STEPS.map(s =>
-        `**Step ${s.step}** ${s.icon} ${s.label}`,
-      ).join("\n"),
+      SETUP_STEPS.map(s => `**Step ${s.step}** ${s.icon} ${s.label}`).join("\n"),
     )
     .setTimestamp();
 
-  // Channel reference card
   const channelCard = [
-    `📢 ${channelMentions["announcements"] ?? "#announcements"} — Announcements`,
-    `📋 ${channelMentions["rules"] ?? "#rules"} — League Rules`,
-    `📅 ${channelMentions["season-schedule"] ?? "#season-schedule"} — Schedule`,
-    `📊 ${channelMentions["standings"] ?? "#standings"} — Standings`,
-    `💬 ${channelMentions["general"] ?? "#general"} — General`,
-    `↔️ ${channelMentions["transactions"] ?? "#transactions"} — Transactions`,
-    `🏟️ ${channelMentions["matchups"] ?? "#matchups"} — Matchups`,
-    `🗳️ ${channelMentions["gotw-voting"] ?? "#gotw-voting"} — GOTW Voting`,
-    `📰 ${channelMentions["league-twitter"] ?? "#league-twitter"} — League Twitter`,
-    `📈 ${channelMentions["stat-leaders"] ?? "#stat-leaders"} — Stat Leaders`,
-    `💰 ${channelMentions["store"] ?? "#store"} — Store`,
-    `💵 ${channelMentions["payouts"] ?? "#payouts"} — Payouts`,
-    `🔒 ${channelMentions["commissioner-chat"] ?? "#commissioner-chat"} — Commissioner (private)`,
-    `⚠️ ${channelMentions["violation-log"] ?? "#violation-log"} — Violations (private)`,
+    `💬 ${channelMentions["general-discussion"]     ?? "#general-discussion"}     — General`,
+    `📅 ${channelMentions["season-schedule"]         ?? "#season-schedule"}         — Schedule`,
+    `🏟️ ${channelMentions["weekly-matchups"]         ?? "#weekly-matchups"}         — Matchups`,
+    `🗳️ ${channelMentions["weekly-gotw-scores"]      ?? "#weekly-gotw-scores"}      — GOTW`,
+    `🐦 ${channelMentions["league-twitter"]          ?? "#league-twitter"}          — League Twitter`,
+    `📰 ${channelMentions["league-headlines"]        ?? "#league-headlines"}        — Headlines`,
+    `🆚 ${channelMentions["h2h-goty-candidates"]     ?? "#h2h-goty-candidates"}     — GOTY`,
+    `📊 ${channelMentions["position-changes"]        ?? "#position-changes"}        — Position Changes`,
+    `🔒 ${channelMentions["commissioner-chat"]       ?? "#commissioner-chat"}       — Commissioner (private)`,
+    `⚠️ ${channelMentions["violation-log"]           ?? "#violation-log"}           — Violations (private)`,
+    `💱 ${channelMentions["transactions-log"]        ?? "#transactions-log"}        — Transactions (private)`,
+    `🎊 ${channelMentions["end-of-season-payouts"]   ?? "#end-of-season-payouts"}   — EOS Payouts`,
   ].join("\n");
 
   embed.addFields(
@@ -351,32 +360,44 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   embed.setFooter({ text: `Initialized by ${interaction.user.tag} • Guild ${interaction.guildId}` });
 
-  // ── Interactive buttons ────────────────────────────────────────────────────
-  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("init_settings")
-      .setLabel("⚙️ Configure Features")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("init_teamguide")
-      .setLabel("👥 Team Linking Guide")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("init_ea")
-      .setLabel("🔗 Connect EA")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("init_payouts")
-      .setLabel("💰 Payout Guide")
-      .setStyle(ButtonStyle.Secondary),
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("init_settings") .setLabel("⚙️ Configure Features").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("init_teamguide").setLabel("👥 Team Linking Guide") .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("init_ea")       .setLabel("🔗 Connect EA")         .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("init_payouts")  .setLabel("💰 Payout Guide")       .setStyle(ButtonStyle.Secondary),
   );
 
-  await interaction.editReply({ content: null, embeds: [embed], components: [row1] });
+  await interaction.editReply({ content: null, embeds: [embed], components: [row] });
 }
 
-// ── Role helper ───────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 async function ensureRole(guild: Guild, name: string, color: number): Promise<Role> {
   const existing = guild.roles.cache.find(r => r.name === name);
   if (existing) return existing;
   return guild.roles.create({ name, color, reason: "REC League bot initialization" });
+}
+
+function buildPerms(
+  guild:      Guild,
+  commRole:   Role,
+  coCommRole: Role,
+  chDef:      ChannelDef,
+  catPrivate: boolean,
+): OverwriteResolvable[] {
+  const isPrivate = chDef.private || catPrivate;
+  if (isPrivate) {
+    return [
+      { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+    ];
+  }
+  if (chDef.readOnly) {
+    return [
+      { id: guild.roles.everyone, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+    ];
+  }
+  return [];
 }
