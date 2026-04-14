@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { eq, and, or, ilike, isNotNull, sql } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
+import { assignRosterLegends, formatLegendAssignResult } from "../lib/roster-legend-assign.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-linkteam")
@@ -328,13 +329,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .where(eq(seasonsTable.isActive, true))
     .limit(1);
 
-  let rosterInfo = "";
+  let rosterInfo    = "";
+  let legendSummary = "";
+
   if (season) {
     const { rosterRows, note } = await cascadeDiscordId(season.id, teamName, targetUser.id);
     const notePart = note ? `\nℹ️ ${note}` : "";
     rosterInfo = rosterRows > 0
       ? `\n✅ ${rosterRows} roster row(s) linked to this user.${notePart}`
       : "\n⚠️ No roster rows found — MCA rosters may not have been imported yet. Import /leagueteams and roster from MCA, or run `/admin-linkteam relink` after importing.";
+
+    const legendResult = await assignRosterLegends(targetUser.id, interaction.guildId!, teamName, season.id);
+    legendSummary = formatLegendAssignResult(legendResult, teamName);
   }
 
   if (oldTeam && oldTeam !== teamName) {
@@ -346,6 +352,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           { name: "Player",    value: `<@${targetUser.id}>`, inline: true },
           { name: "Old team",  value: oldTeam,               inline: true },
           { name: "New team",  value: teamName,              inline: true },
+          ...(legendSummary ? [{ name: "🏅 Roster Legends", value: legendSummary }] : []),
         )
         .setDescription(`Balance, records, and inventory are untouched.${rosterInfo}`)
         .setTimestamp()],
@@ -359,6 +366,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .addFields(
         { name: "Player", value: `<@${targetUser.id}> (${targetUser.username})`, inline: true },
         { name: "Team",   value: teamName,                                         inline: true },
+        ...(legendSummary ? [{ name: "🏅 Roster Legends", value: legendSummary }] : []),
       )
       .setDescription(`Balance, records, and inventory are untouched.${rosterInfo}`)
       .setTimestamp()],

@@ -55,6 +55,7 @@ import * as adminFixPlayerNames     from "../commands/admin-fixplayernames.js";
 import * as adminEosReapprove       from "../commands/admin-eos-reapprove.js";
 import * as adminSeason             from "../commands/admin-season.js";
 import * as adminLinkTeam           from "../commands/admin-linkteam.js";
+import * as adminRosterLegends      from "../commands/admin-roster-legends.js";
 import * as adminInventory          from "../commands/admin-inventory.js";
 import * as adminInitialize         from "../commands/admin-initialize.js";
 import { seasonPRData, allTimePRData } from "../commands/records.js";
@@ -116,8 +117,9 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminRollbackFranchise, true],
     [adminEosReapprove,  true],
     [adminSeason,        true],
-    [adminLinkTeam,      true],
-    [adminInventory,     true],
+    [adminLinkTeam,         true],
+    [adminRosterLegends,    true],
+    [adminInventory,        true],
     [adminInitialize,    true],
     [adminSetStatTiers,  true],
     [adminStatTiers,     true],
