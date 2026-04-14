@@ -5,9 +5,8 @@ import {
 import { db } from "@workspace/db";
 import { pendingEosPayoutsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { addBalance, logTransaction } from "../lib/db-helpers.js";
+import { addBalance, logTransaction, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
-const PAYOUTS_CHANNEL_ID = process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-eos-reapprove")
@@ -104,7 +103,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const teamLabel = payout.teamName ? ` (${payout.teamName})` : "";
 
   try {
-    const ch = await interaction.client.channels.fetch(PAYOUTS_CHANNEL_ID).catch(() => null);
+    const reapprovePayoutsChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS) ?? process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
+    const ch = await interaction.client.channels.fetch(reapprovePayoutsChannelId).catch(() => null);
     if (ch?.isTextBased()) {
       const publicEmbed = new EmbedBuilder()
         .setColor(Colors.Gold)

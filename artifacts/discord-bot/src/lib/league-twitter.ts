@@ -19,11 +19,7 @@ import {
   leagueNewsTable,
 } from "@workspace/db";
 import { eq, desc, and, gte, lt, isNotNull, ne } from "drizzle-orm";
-import { getOrCreateActiveSeason, getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
-
-// ── Constants ──────────────────────────────────────────────────────────────────
-
-export const LEAGUE_TWITTER_CHANNEL_ID = "1492213174697726033";
+import { getOrCreateActiveSeason, getRosterSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 const FOUR_HOURS_MS  = 4 * 60 * 60 * 1000;
 
@@ -1038,13 +1034,15 @@ async function postOneTweet(
  * The count is randomly selected; reporters are always different within a burst
  * and won't repeat the last reporter from the previous interval.
  */
-export async function postLeagueTweet(client: Client): Promise<void> {
+export async function postLeagueTweet(client: Client, guildId: string = PRIMARY_GUILD_ID): Promise<void> {
   try {
-    const season  = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
+    const season  = await getOrCreateActiveSeason(guildId);
     const context = await buildLeagueContext(season);
 
-    const ch = client.channels.cache.get(LEAGUE_TWITTER_CHANNEL_ID)
-      ?? await client.channels.fetch(LEAGUE_TWITTER_CHANNEL_ID).catch(() => null);
+    const twitterChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.LEAGUE_TWITTER);
+    const ch = twitterChannelId
+      ? (client.channels.cache.get(twitterChannelId) ?? await client.channels.fetch(twitterChannelId).catch(() => null))
+      : null;
     if (!ch?.isTextBased()) return;
     const tc = ch as TextChannel;
 
@@ -1142,7 +1140,8 @@ export async function handleTwitterReply(client: Client, message: import("discor
   try {
     if (!message.reference?.messageId) return;
 
-    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID).catch(() => null);
+    const twitterGuildId = message.guildId ?? PRIMARY_GUILD_ID;
+    const season = await getOrCreateActiveSeason(twitterGuildId).catch(() => null);
     if (!season) return;
 
     const [tweetRow] = await db.select()
@@ -1171,14 +1170,17 @@ export async function handleTwitterReply(client: Client, message: import("discor
 export async function wipeLeagueTwitterSeason(
   client: Client,
   seasonId: number,
+  guildId: string = PRIMARY_GUILD_ID,
 ): Promise<void> {
   try {
     // Purge DB records for this season
     await db.delete(leagueTwitterTable).where(eq(leagueTwitterTable.seasonId, seasonId));
 
     // Purge Discord channel messages
-    const ch = client.channels.cache.get(LEAGUE_TWITTER_CHANNEL_ID)
-      ?? await client.channels.fetch(LEAGUE_TWITTER_CHANNEL_ID).catch(() => null);
+    const twitterChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.LEAGUE_TWITTER);
+    const ch = twitterChannelId
+      ? (client.channels.cache.get(twitterChannelId) ?? await client.channels.fetch(twitterChannelId).catch(() => null))
+      : null;
     if (!ch?.isTextBased()) return;
     const tc = ch as TextChannel;
 
@@ -1205,8 +1207,8 @@ export async function wipeLeagueTwitterSeason(
 // burst fires immediately when new context (scores, upcoming matchups) is fresh.
 // Runs fire-and-forget — the interaction response is never blocked.
 
-export function triggerWeekAdvanceTweets(client: Client): void {
-  postLeagueTweet(client).catch(err =>
+export function triggerWeekAdvanceTweets(client: Client, guildId?: string): void {
+  postLeagueTweet(client, guildId ?? PRIMARY_GUILD_ID).catch(err =>
     console.error("[league-twitter] Week-advance tweet burst error:", err),
   );
 }

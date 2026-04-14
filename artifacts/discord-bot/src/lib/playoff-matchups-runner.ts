@@ -6,11 +6,9 @@ import {
   playoffGotwPollsTable, type Season,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql } from "drizzle-orm";
-import { purgeChannel, purgeGotwChannel, GOTW_CHANNEL_ID } from "./gotw-helpers.js";
-import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
+import { purgeChannel, purgeGotwChannel } from "./gotw-helpers.js";
+import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
-
-const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Playoff week metadata ──────────────────────────────────────────────────────
@@ -76,6 +74,7 @@ export async function runPlayoffMatchupsFlow(
   client:  Client,
   season:  Season,
   weekKey: string,  // "wildcard" | "divisional" | "conference" | "superbowl"
+  guildId: string = PRIMARY_GUILD_ID,
 ): Promise<string> {
   const meta = PLAYOFF_WEEK_META[weekKey];
   if (!meta) return `❌ Unknown playoff week: ${weekKey}`;
@@ -123,13 +122,15 @@ export async function runPlayoffMatchupsFlow(
   );
 
   // 2. Clear GOTW channel
-  await purgeGotwChannel(client).catch(err =>
+  await purgeGotwChannel(client, guildId).catch(err =>
     console.error("[playoff-runner] GOTW purge error:", err),
   );
 
   // 3. Clear & post matchup embed to matchups channel
-  const matchupsCh = (client.channels.cache.get(MATCHUPS_CHANNEL_ID)
-    ?? await client.channels.fetch(MATCHUPS_CHANNEL_ID).catch(() => null)) as TextChannel | null;
+  const matchupsChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.MATCHUPS);
+  const matchupsCh = (matchupsChannelId
+    ? (client.channels.cache.get(matchupsChannelId) ?? await client.channels.fetch(matchupsChannelId).catch(() => null))
+    : null) as TextChannel | null;
 
   if (matchupsCh?.isTextBased()) {
     try { await purgeChannel(matchupsCh as TextChannel); } catch (_) {}
@@ -179,8 +180,10 @@ export async function runPlayoffMatchupsFlow(
   }
 
   // 4. Post "Who will win?" poll for each H2H matchup in GOTW channel
-  const gotwCh = (client.channels.cache.get(GOTW_CHANNEL_ID)
-    ?? await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null)) as TextChannel | null;
+  const gotwChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+  const gotwCh = (gotwChannelId
+    ? (client.channels.cache.get(gotwChannelId) ?? await client.channels.fetch(gotwChannelId).catch(() => null))
+    : null) as TextChannel | null;
 
   if (!gotwCh?.isTextBased()) {
     return `⚠️ ${label} matchups posted, but cannot access GOTW channel for polls.`;
@@ -245,8 +248,8 @@ export async function runPlayoffMatchupsFlow(
   }
 
   return (
-    `✅ **${label}** — ${pollsPosted}/${h2hGames.length} polls created in <#${GOTW_CHANNEL_ID}>.\n` +
-    `Matchups posted to <#${MATCHUPS_CHANNEL_ID}>. Payouts issue automatically on next advance.`
+    `✅ **${label}** — ${pollsPosted}/${h2hGames.length} polls created${gotwChannelId ? ` in <#${gotwChannelId}>` : ""}.\n` +
+    `Matchups posted${matchupsChannelId ? ` to <#${matchupsChannelId}>` : ""}. Payouts issue automatically on next advance.`
   );
 }
 

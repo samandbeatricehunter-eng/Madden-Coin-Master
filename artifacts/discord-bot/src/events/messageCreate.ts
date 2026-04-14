@@ -13,6 +13,7 @@ import {
 import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules, PRIMARY_GUILD_ID,
+  getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
 import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -1217,15 +1218,14 @@ If the commissioner is NOT giving an admin action order (just chatting), use the
 
 const STREAM_CHANNEL_ID        = "1486369417309978644";
 const HIGHLIGHTS_CHANNEL_ID    = "1485643704206229638";
-const LEAGUE_TWITTER_CHANNEL_ID = "1492213174697726033";
 // Matches any twitch.tv URL (including clips.twitch.tv, www.twitch.tv, etc.)
 const TWITCH_URL_RE         = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
 
 async function handleStreamPost(message: Message): Promise<void> {
   if (!TWITCH_URL_RE.test(message.content)) return;
 
-  const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
-  if (!commChannelId) { console.error("DISCORD_COMMISSIONER_CHANNEL_ID not set"); return; }
+  const commChannelId = await getGuildChannel(message.guildId ?? PRIMARY_GUILD_ID, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+  if (!commChannelId) { console.error("Commissioner channel not configured"); return; }
 
   // Fetch commissioner channel FIRST — if unreachable, fail before touching the DB
   const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
@@ -1477,8 +1477,8 @@ async function handleHighlightPost(message: Message): Promise<void> {
   );
   if (videoAttachments.length === 0) return;
 
-  const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
-  if (!commChannelId) { console.error("DISCORD_COMMISSIONER_CHANNEL_ID not set"); return; }
+  const commChannelId = await getGuildChannel(message.guildId ?? PRIMARY_GUILD_ID, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+  if (!commChannelId) { console.error("Commissioner channel not configured"); return; }
 
   // Fetch commissioner channel FIRST — if unreachable, fail before touching the DB
   const commChannel = await message.client.channels.fetch(commChannelId).catch(() => null);
@@ -1632,11 +1632,15 @@ export async function execute(message: Message): Promise<void> {
   if (message.author.bot) return;
 
   // ── League Twitter reply handler ───────────────────────────────────────────
-  if (message.channelId === LEAGUE_TWITTER_CHANNEL_ID && message.reference?.messageId) {
-    handleTwitterReply(message.client, message).catch(err =>
-      console.error("[messageCreate] league twitter reply error:", err),
-    );
-    return;
+  // Only do the DB channel lookup when there's a message reference (reply)
+  if (message.reference?.messageId) {
+    const twitterChannelId = await getGuildChannel(message.guildId ?? PRIMARY_GUILD_ID, CHANNEL_KEYS.LEAGUE_TWITTER).catch(() => null);
+    if (twitterChannelId && message.channelId === twitterChannelId) {
+      handleTwitterReply(message.client, message).catch(err =>
+        console.error("[messageCreate] league twitter reply error:", err),
+      );
+      return;
+    }
   }
 
   // ── Channel-based payout monitors (run before @mention guard) ─────────────
@@ -1823,7 +1827,7 @@ export async function execute(message: Message): Promise<void> {
           };
           pendingCoCommActions.set(actionId, pending);
 
-          const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+          const commChannelId = await getGuildChannel(message.guildId ?? PRIMARY_GUILD_ID, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
           if (commChannelId) {
             try {
               const commCh = await message.client.channels.fetch(commChannelId).catch(() => null) as TextChannel | null;

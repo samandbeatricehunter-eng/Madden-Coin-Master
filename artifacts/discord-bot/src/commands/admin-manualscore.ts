@@ -5,10 +5,9 @@ import {
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, gameLogTable, h2hMatchupRecordsTable, coinTransactionsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { addBalance, logTransaction, getOrCreateActiveSeason, isAdminUser } from "../lib/db-helpers.js";
+import { addBalance, logTransaction, getOrCreateActiveSeason, isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
-const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-manualscore")
@@ -251,9 +250,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 
   // ── Post to commissioner log ──────────────────────────────────────────────
-  if (COMMISSIONER_CHANNEL_ID) {
+  const manualScoreCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+  if (manualScoreCommChannelId) {
     try {
-      const ch = await interaction.client.channels.fetch(COMMISSIONER_CHANNEL_ID);
+      const ch = await interaction.client.channels.fetch(manualScoreCommChannelId);
       if (ch?.isTextBased()) {
         const logEmbed = new EmbedBuilder()
           .setColor(Colors.Orange)

@@ -2,11 +2,10 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   PermissionFlagsBits, TextChannel,
 } from "discord.js";
-import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 
-const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-resendarticle")
@@ -88,14 +87,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Post to headlines channel ─────────────────────────────────────────────
-  const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
-    ?? await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+  const headlinesChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.HEADLINES);
+  const headlinesChannel = headlinesChannelId
+    ? (interaction.client.channels.cache.get(headlinesChannelId) ?? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null))
+    : null;
 
   if (!headlinesChannel?.isTextBased()) {
     await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(Colors.Red)
-        .setDescription("❌ Could not find the headlines channel. Check the channel ID.")],
+        .setDescription("❌ Could not find the headlines channel. Run `/initialize-server` to configure channels.")],
     });
     return;
   }
@@ -124,14 +125,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const confirmFields = mode === "preview"
     ? [
         { name: "Mode",           value: "📋 Preview",                                      inline: true },
-        { name: "Posted to",      value: `<#${HEADLINES_CHANNEL_ID}>`,                      inline: true },
+        { name: "Posted to",      value: headlinesChannelId ? `<#${headlinesChannelId}>` : "headlines", inline: true },
         { name: "@everyone",      value: pingEveryone ? "Yes" : "No",                       inline: true },
         { name: "Season",         value: `Season ${season.seasonNumber}`,                   inline: true },
         { name: "Article length", value: `${article.length.toLocaleString()} chars`,        inline: true },
       ]
     : [
         { name: "Mode",           value: "📰 Recap",                                        inline: true },
-        { name: "Posted to",      value: `<#${HEADLINES_CHANNEL_ID}>`,                      inline: true },
+        { name: "Posted to",      value: headlinesChannelId ? `<#${headlinesChannelId}>` : "headlines", inline: true },
         { name: "Looking ahead",  value: upcomingLabel,                                     inline: true },
         { name: "@everyone",      value: pingEveryone ? "Yes" : "No",                       inline: true },
         { name: "Season",         value: `Season ${season.seasonNumber}`,                   inline: true },

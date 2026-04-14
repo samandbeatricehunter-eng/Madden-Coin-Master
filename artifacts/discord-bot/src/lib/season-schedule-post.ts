@@ -7,9 +7,7 @@ import { Client, EmbedBuilder, Colors, TextChannel } from "discord.js";
 import { db } from "@workspace/db";
 import { franchiseScheduleTable, franchiseMcaTeamsTable, usersTable } from "@workspace/db";
 import { eq, and, asc, isNotNull } from "drizzle-orm";
-import { getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
-
-const SCHEDULE_CHANNEL_ID = "1478947361014288445";
+import { getRosterSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 /**
  * Build a map of team name (lower) → Discord mention string.
@@ -64,15 +62,18 @@ export async function postFullSeasonScheduleToChannel(
   client: Client,
   seasonId: number,
   seasonNumber: number,
-  options?: { clearChannel?: boolean },
+  options?: { clearChannel?: boolean; guildId?: string },
 ): Promise<number> {
   const clearChannel = options?.clearChannel ?? true;
+  const guildId = options?.guildId ?? PRIMARY_GUILD_ID;
 
-  const targetCh = client.channels.cache.get(SCHEDULE_CHANNEL_ID)
-    ?? await client.channels.fetch(SCHEDULE_CHANNEL_ID).catch(() => null);
+  const scheduleChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.SCHEDULE);
+  const targetCh = scheduleChannelId
+    ? (client.channels.cache.get(scheduleChannelId) ?? await client.channels.fetch(scheduleChannelId).catch(() => null))
+    : null;
 
   if (!targetCh?.isTextBased()) {
-    throw new Error(`Cannot find or access schedule channel (${SCHEDULE_CHANNEL_ID})`);
+    throw new Error(`Cannot find or access schedule channel (${scheduleChannelId ?? "not configured"})`);
   }
 
   const ch = targetCh as TextChannel;
@@ -181,4 +182,3 @@ export async function postFullSeasonScheduleToChannel(
   return postedWeeks;
 }
 
-export { SCHEDULE_CHANNEL_ID };

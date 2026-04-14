@@ -5,10 +5,9 @@ import {
   franchiseScheduleTable, playoffGotwPollsTable,
 } from "@workspace/db";
 import { eq, and, gte, lt } from "drizzle-orm";
-import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
+import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 
-export const GOTW_CHANNEL_ID    = "1485290029294289037";
 export const GOTW_COOLDOWN_WEEKS = 4;
 
 export type ScoredH2HGame = {
@@ -51,8 +50,10 @@ export async function purgeChannel(tc: TextChannel): Promise<number> {
 }
 
 // ── Purge the entire GOTW channel ─────────────────────────────────────────────
-export async function purgeGotwChannel(client: Client): Promise<void> {
-  const ch = await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null);
+export async function purgeGotwChannel(client: Client, guildId: string = PRIMARY_GUILD_ID): Promise<void> {
+  const gotwId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+  if (!gotwId) return;
+  const ch = await client.channels.fetch(gotwId).catch(() => null);
   if (!ch?.isTextBased()) return;
   await purgeChannel(ch as TextChannel).catch(err =>
     console.error("[gotw-helpers] GOTW channel purge error:", err),
@@ -155,9 +156,11 @@ export async function postGotwToChannel(
   awayDiscordId: string,
   homeDiscordId: string,
   combinedScore: number,
+  guildId:       string = PRIMARY_GUILD_ID,
 ): Promise<{ announcementId: string; pollId: string } | null> {
   try {
-    const channel = await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null);
+    const gotwId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+    const channel = gotwId ? await client.channels.fetch(gotwId).catch(() => null) : null;
     if (!channel?.isTextBased()) return null;
     const tc = channel as TextChannel;
 
@@ -216,6 +219,7 @@ export async function deleteGotwMessages(
   client:    Client,
   seasonId:  number,
   weekIndex: number,
+  guildId:   string = PRIMARY_GUILD_ID,
 ): Promise<void> {
   try {
     const [row] = await db.select()
@@ -228,7 +232,8 @@ export async function deleteGotwMessages(
 
     if (!row) return;
 
-    const channel = await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null);
+    const gotwId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+    const channel = gotwId ? await client.channels.fetch(gotwId).catch(() => null) : null;
     if (channel?.isTextBased()) {
       const tc = channel as TextChannel;
       if (row.announcementMessageId) await tc.messages.delete(row.announcementMessageId).catch(() => {});
@@ -342,7 +347,8 @@ export async function autoPayoutGotwVoters(
   }
 
   // 3. Fetch the poll message
-  const ch = await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null);
+  const _gotwId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+  const ch = _gotwId ? await client.channels.fetch(_gotwId).catch(() => null) : null;
   if (!ch?.isTextBased()) {
     return `❌ Cannot access GOTW channel — use \`/admin-gotw\` to pay manually.`;
   }
@@ -431,7 +437,8 @@ export async function autoPayoutPlayoffGotw(
     return `⚠️ No playoff polls found for ${weekLabel} — skipping GOTW payout.`;
   }
 
-  const ch = await client.channels.fetch(GOTW_CHANNEL_ID).catch(() => null);
+  const _gotwId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+  const ch = _gotwId ? await client.channels.fetch(_gotwId).catch(() => null) : null;
   if (!ch?.isTextBased()) {
     return `❌ Cannot access GOTW channel for ${weekLabel} poll payouts.`;
   }

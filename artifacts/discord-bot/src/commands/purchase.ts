@@ -12,7 +12,7 @@ import { eq, and, sql, asc, ilike, or } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
-  getCoreAttributes, getRosterSeasonId,
+  getCoreAttributes, getRosterSeasonId, getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, ATTRIBUTES, NFL_POSITIONS } from "../lib/constants.js";
@@ -553,7 +553,7 @@ async function sendCommissionerNotification(
   details: Record<string, string | number | undefined>,
 ) {
   try {
-    const channelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    const channelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
     const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
     if (!channel || !channel.isTextBased()) return;
 

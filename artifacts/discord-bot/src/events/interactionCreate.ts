@@ -40,6 +40,7 @@ import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
+  getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { buildPageResponse } from "../commands/viewtradeblock.js";
 import { formatPickInfo, getMyTeam, sendOfferState, buildSendOfferPage } from "../commands/tradeblock.js";
@@ -54,17 +55,12 @@ import {
   getActiveSession, togglePresence, refreshPresence, endDraftSession,
 } from "../lib/draft-presence-manager.js";
 import {
-  scoreH2HMatchups, postGotwToChannel, GOTW_CHANNEL_ID,
+  scoreH2HMatchups, postGotwToChannel,
 } from "../lib/gotw-helpers.js";
 import { buildTeamToDiscord } from "../lib/weekly-matchups-runner.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { logTradeEvent } from "../lib/league-twitter.js";
 
-const HEADLINES_CHANNEL_ID     = "1477717664804896899";
-const DRAFT_TRACKER_CHANNEL_ID = "1485399096075358299";
-const GENERAL_CHANNEL_ID        = "1476321282868908052";
-const VIOLATION_LOG_CHANNEL_ID  = "1491529826060734524";
-const GOTY_CHANNEL_ID           = "1485394206863392848";
 
 // ── Send-offer in-memory player selection store ────────────────────────────────
 // Key: `${senderDiscordId}:${targetDiscordId}`  Value: selected player option values
@@ -440,7 +436,8 @@ async function handleButton(interaction: ButtonInteraction) {
     // ── Draft tracker post (legend + custom player only) ──────────────────────
     if (purchaseType === "legend" || purchaseType?.startsWith("custom_player")) {
       try {
-        const draftChannel = await interaction.client.channels.fetch(DRAFT_TRACKER_CHANNEL_ID);
+        const draftTrackerChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.DRAFT_TRACKER);
+        const draftChannel = draftTrackerChannelId ? await interaction.client.channels.fetch(draftTrackerChannelId).catch(() => null) : null;
         if (draftChannel?.isTextBased()) {
           const tierLabel = purchaseType?.startsWith("custom_player")
             ? ` (${purchaseType.replace("custom_player_", "").toUpperCase()} tier)`
@@ -478,7 +475,8 @@ async function handleButton(interaction: ButtonInteraction) {
       // ── General channel announcement (legend only) ──────────────────────────
       if (purchaseType === "legend") {
         try {
-          const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID);
+          const generalChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GENERAL);
+          const generalChannel = generalChannelId ? await interaction.client.channels.fetch(generalChannelId).catch(() => null) : null;
           if (generalChannel?.isTextBased()) {
             const announceEmbed = new EmbedBuilder()
               .setColor(Colors.Gold)
@@ -637,7 +635,8 @@ async function handleButton(interaction: ButtonInteraction) {
     });
 
     try {
-      const headlinesChannel = await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+      const headlinesChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.HEADLINES);
+      const headlinesChannel = headlinesChannelId ? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null) : null;
       if (headlinesChannel?.isTextBased()) {
         const interviewUser = await db.select({ team: usersTable.team }).from(usersTable)
           .where(eq(usersTable.discordId, interview.discordId)).limit(1);
@@ -767,7 +766,7 @@ async function handleButton(interaction: ButtonInteraction) {
     await interaction.editReply({ embeds: [activeEmbed], components: [] });
 
     // Post to commissioner channel with winner buttons
-    const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
     const commEmbed = new EmbedBuilder()
       .setColor(Colors.Gold)
       .setTitle("⚔️ Wager — Declare Winner")
@@ -1713,7 +1712,8 @@ async function handleButton(interaction: ButtonInteraction) {
       .setTimestamp();
 
     try {
-      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID);
+      const tradeGeneralChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GENERAL);
+      const generalChannel = tradeGeneralChannelId ? await interaction.client.channels.fetch(tradeGeneralChannelId).catch(() => null) : null;
       if (generalChannel?.isTextBased()) {
         await (generalChannel as TextChannel).send({
           content: `@everyone${coinNote}`,
@@ -1789,16 +1789,22 @@ async function handleButton(interaction: ButtonInteraction) {
     const result = await postGotwToChannel(
       interaction.client, seasonId, weekIndex, weekNum,
       awayTeam, homeTeam, awayDiscordId!, homeDiscordId!, 0,
+      interaction.guildId!,
     );
 
+    const gotwChanId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GOTW);
     if (result) {
       await interaction.editReply({
-        content: `✅ GOTW posted to <#${GOTW_CHANNEL_ID}>!\n**${awayTeam} vs ${homeTeam}**`,
+        content: gotwChanId
+          ? `✅ GOTW posted to <#${gotwChanId}>!\n**${awayTeam} vs ${homeTeam}**`
+          : `✅ GOTW posted!\n**${awayTeam} vs ${homeTeam}**`,
         components: [],
       });
     } else {
       await interaction.editReply({
-        content: `❌ Failed to post GOTW. Check that the bot has access to <#${GOTW_CHANNEL_ID}>.`,
+        content: gotwChanId
+          ? `❌ Failed to post GOTW. Check that the bot has access to <#${gotwChanId}>.`
+          : `❌ Failed to post GOTW.`,
         components: [],
       });
     }
@@ -2106,7 +2112,7 @@ async function handleButton(interaction: ButtonInteraction) {
     });
 
     // ── Post to public payouts channel ─────────────────────────────────────────
-    const PAYOUTS_CHANNEL_ID = process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
+    const PAYOUTS_CHANNEL_ID = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS) ?? process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
     try {
       const payoutsCh = await interaction.client.channels.fetch(PAYOUTS_CHANNEL_ID);
       if (payoutsCh?.isTextBased()) {
@@ -2245,7 +2251,8 @@ async function handleButton(interaction: ButtonInteraction) {
       .setTimestamp();
 
     try {
-      const vlChannel = await interaction.client.channels.fetch(VIOLATION_LOG_CHANNEL_ID);
+      const violationLogChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.VIOLATION_LOG);
+      const vlChannel = violationLogChannelId ? await interaction.client.channels.fetch(violationLogChannelId).catch(() => null) : null;
       if (vlChannel?.isTextBased()) {
         await (vlChannel as TextChannel).send({ embeds: [violationLogEmbed] });
       }
@@ -2304,9 +2311,8 @@ async function handleButton(interaction: ButtonInteraction) {
           `Use \`/admin-reverse-transaction\` or the game settings to apply the OVR reduction.`,
         );
 
-        const commChannel = await interaction.client.channels.fetch(
-          process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!,
-        ).catch(() => null);
+        const repeatViolCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+        const commChannel = repeatViolCommChannelId ? await interaction.client.channels.fetch(repeatViolCommChannelId).catch(() => null) : null;
 
         if (commChannel?.isTextBased()) {
           const penaltyEmbed = new EmbedBuilder()
@@ -2475,7 +2481,8 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     const gotyEach    = gotyCount === 1 ? "The winner receives" : "Each winner receives";
 
     try {
-      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
+      const gotyGeneralChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GENERAL);
+      const generalChannel = gotyGeneralChannelId ? await interaction.client.channels.fetch(gotyGeneralChannelId).catch(() => null) : null;
       if (generalChannel?.isTextBased()) {
         const announceEmbed = new EmbedBuilder()
           .setTitle(`🎮 GAME OF THE YEAR AWARD ${gotyNoun.toUpperCase()}!`)
@@ -2493,7 +2500,8 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
 
     // Clear the GOTY channel to prepare it for next season
     try {
-      const gotyChannel = await interaction.client.channels.fetch(GOTY_CHANNEL_ID).catch(() => null);
+      const gotyChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GOTY);
+      const gotyChannel = gotyChannelId ? await interaction.client.channels.fetch(gotyChannelId).catch(() => null) : null;
       if (gotyChannel?.isTextBased()) {
         const tc = gotyChannel as TextChannel;
         const msgs = await tc.messages.fetch({ limit: 100 });
@@ -2543,16 +2551,22 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     const result = await postGotwToChannel(
       interaction.client, seasonId, weekIndex, weekNum,
       awayTeam, homeTeam, awayDiscordId!, homeDiscordId!, 0,
+      interaction.guildId!,
     );
 
+    const gotwChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GOTW);
     if (result) {
       await interaction.editReply({
-        content: `✅ GOTW posted to <#${GOTW_CHANNEL_ID}>!\n**${awayTeam} vs ${homeTeam}**`,
+        content: gotwChannelId
+          ? `✅ GOTW posted to <#${gotwChannelId}>!\n**${awayTeam} vs ${homeTeam}**`
+          : `✅ GOTW posted!\n**${awayTeam} vs ${homeTeam}**`,
         components: [],
       });
     } else {
       await interaction.editReply({
-        content: `❌ Failed to post GOTW. Check that the bot has access to <#${GOTW_CHANNEL_ID}>.`,
+        content: gotwChannelId
+          ? `❌ Failed to post GOTW. Check that the bot has access to <#${gotwChannelId}>.`
+          : `❌ Failed to post GOTW.`,
         components: [],
       });
     }
@@ -2596,7 +2610,8 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     } catch (_) {}
 
     try {
-      const commChannel = await interaction.client.channels.fetch(process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!);
+      const interviewDenialCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
+      const commChannel = interviewDenialCommChannelId ? await interaction.client.channels.fetch(interviewDenialCommChannelId).catch(() => null) : null;
       if (commChannel?.isTextBased() && interview.discordMessageId) {
         const msg = await (commChannel as any).messages.fetch(interview.discordMessageId);
         const deniedEmbed = new EmbedBuilder()
@@ -2635,7 +2650,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const season        = await getOrCreateActiveSeason(interaction.guildId!);
     const currentWeek   = (season as any).currentWeek ?? "1";
     const weekDisplay   = weekLabel(currentWeek);
-    const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
 
     // Re-check: only one interview per week
     const existingInterview = await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
@@ -2948,7 +2963,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     // Update the commissioner message buttons with new amount
     if (payout.commissionerMessageId) {
       try {
-        const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+        const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
         const ch = await interaction.client.channels.fetch(commChannelId);
         if (ch?.isTextBased()) {
           const msg = await (ch as TextChannel).messages.fetch(payout.commissionerMessageId).catch(() => null);
@@ -3152,7 +3167,8 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     // Post to general channel with @everyone
     try {
-      const generalChannel = await interaction.client.channels.fetch(GENERAL_CHANNEL_ID);
+      const tbDealGeneralChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GENERAL);
+      const generalChannel = tbDealGeneralChannelId ? await interaction.client.channels.fetch(tbDealGeneralChannelId).catch(() => null) : null;
       if (generalChannel?.isTextBased()) {
         await (generalChannel as TextChannel).send({
           content: "@everyone",

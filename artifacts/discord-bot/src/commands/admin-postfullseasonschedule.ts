@@ -5,7 +5,8 @@ import {
 import { db } from "@workspace/db";
 import { seasonsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { postFullSeasonScheduleToChannel, SCHEDULE_CHANNEL_ID } from "../lib/season-schedule-post.js";
+import { postFullSeasonScheduleToChannel } from "../lib/season-schedule-post.js";
+import { getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("postfullseasonschedule")
@@ -40,7 +41,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     } else {
       await interaction.editReply({
-        content: `✅ Posted **${postedWeeks} weeks** of schedule to <#${SCHEDULE_CHANNEL_ID}>.`,
+        content: `✅ Posted **${postedWeeks} weeks** of schedule.`,
       });
     }
   } catch (err) {

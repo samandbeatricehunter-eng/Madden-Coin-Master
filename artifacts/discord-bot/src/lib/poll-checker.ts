@@ -13,10 +13,9 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { pendingPollsTable } from "@workspace/db";
+import { pendingPollsTable, seasonsTable } from "@workspace/db";
 import { eq, and, lte } from "drizzle-orm";
-
-const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 export function startPollChecker(client: Client): void {
   // Run immediately on startup then every 30 minutes
@@ -61,8 +60,16 @@ async function handleGotyPollExpiry(
   client: Client,
   poll: typeof pendingPollsTable.$inferSelect,
 ): Promise<void> {
-  if (!COMMISSIONER_CHANNEL_ID) {
-    console.warn("[pollChecker] COMMISSIONER_CHANNEL_ID not set — cannot post GOTY results");
+  // Resolve guild ID from the poll's season
+  const [seasonRow] = await db.select({ guildId: seasonsTable.guildId })
+    .from(seasonsTable)
+    .where(eq(seasonsTable.id, poll.seasonId))
+    .limit(1);
+  const guildId = seasonRow?.guildId ?? PRIMARY_GUILD_ID;
+
+  const commChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+  if (!commChannelId) {
+    console.warn("[pollChecker] Commissioner channel not configured — cannot post GOTY results");
     return;
   }
 
@@ -86,7 +93,7 @@ async function handleGotyPollExpiry(
     console.warn("[pollChecker] Could not fetch poll message for vote counts:", err);
   }
 
-  const commChannel = await client.channels.fetch(COMMISSIONER_CHANNEL_ID).catch(() => null);
+  const commChannel = await client.channels.fetch(commChannelId).catch(() => null);
   if (!commChannel?.isTextBased()) return;
 
   const embed = new EmbedBuilder()

@@ -26,14 +26,12 @@ import {
 } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
-import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
+import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { postSeasonRecap } from "./season-recap.js";
 
-// ── Channel / category IDs ─────────────────────────────────────────────────────
+// ── Category ID (not a user-facing channel — stays hardcoded for primary guild) ─
 const HISTORICAL_CATEGORY_ID = "1480912009120841841";
-const GOTY_CANDIDATE_CHANNEL_ID = "1485394206863392848";
-const GENERAL_CHANNEL_ID = "1476321282868908052";
 
 // ── Award key mapping (Madden 25 CFM) ─────────────────────────────────────────
 // conferenceId: 0=AFC, 1=NFC, 2 or 3 = League-wide (varies by Madden version)
@@ -222,8 +220,10 @@ export async function runWildcardAutomation(
     // Notify admins but continue — historical channel failure should not block
     // the wildcard announcement, payouts, bracket, or polls.
     try {
-      const generalCh = resolvedGuild.channels.cache.get(GENERAL_CHANNEL_ID)
-        ?? await resolvedGuild.channels.fetch(GENERAL_CHANNEL_ID).catch(() => null);
+      const generalId = await getGuildChannel(resolvedGuild.id, CHANNEL_KEYS.GENERAL);
+      const generalCh = generalId
+        ? (resolvedGuild.channels.cache.get(generalId) ?? await resolvedGuild.channels.fetch(generalId).catch(() => null))
+        : null;
       if (generalCh?.isTextBased()) {
         await (generalCh as TextChannel).send({
           content: `⚠️ **Historical records channel could not be created** for Season ${seasonNumber}. Check bot permissions in the Historical Records category. Error: \`${err}\``,
@@ -235,7 +235,7 @@ export async function runWildcardAutomation(
 
   // ── 2. AI season recap (headlines + historical channel) ──────────────────────
   try {
-    await postSeasonRecap(client, seasonId, seasonNumber, historicalChannel);
+    await postSeasonRecap(client, seasonId, seasonNumber, historicalChannel, false, resolvedGuild.id);
   } catch (err) {
     console.error("[wildcard] Season recap failed:", err);
   }
@@ -258,7 +258,7 @@ export async function runWildcardAutomation(
 
     // ── 4. Create GOTY poll ─────────────────────────────────────────────────────
     try {
-      await createGotyPoll(client, historicalChannel, seasonId);
+      await createGotyPoll(client, historicalChannel, seasonId, resolvedGuild.id);
     } catch (err) {
       console.error("[wildcard] GOTY poll failed:", err);
     }
@@ -545,11 +545,14 @@ async function createGotyPoll(
   client: Client,
   historicalChannel: TextChannel,
   seasonId: number,
+  guildId: string = PRIMARY_GUILD_ID,
 ): Promise<void> {
   // Fetch the GOTY candidate channel
+  const gotyChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTY);
   let gotyChannel: TextChannel | null = null;
   try {
-    const ch = await client.channels.fetch(GOTY_CANDIDATE_CHANNEL_ID);
+    if (!gotyChannelId) return;
+    const ch = await client.channels.fetch(gotyChannelId);
     if (ch?.isTextBased()) gotyChannel = ch as TextChannel;
   } catch { return; }
 
@@ -605,7 +608,7 @@ async function createGotyPoll(
   for (const msg of pollMessages) {
     await db.insert(pendingPollsTable).values({
       messageId:           msg.id,
-      channelId:           GOTY_CANDIDATE_CHANNEL_ID,
+      channelId:           gotyChannelId ?? gotyChannel.id,
       pollType:            "goty",
       seasonId,
       expiresAt,
@@ -774,9 +777,8 @@ async function countSeasonMessages(
   maxPerChannel = 400,
 ): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
-  const EXCLUDED_IDS = new Set([
-    process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "",
-  ].filter(Boolean));
+  const commId = await getGuildChannel(guild.id, CHANNEL_KEYS.COMMISSIONER).catch(() => null);
+  const EXCLUDED_IDS = new Set([commId ?? ""].filter(Boolean));
 
   const textChannels = [...guild.channels.cache.values()].filter(c => {
     if (c.type !== ChannelType.GuildText) return false;
@@ -935,7 +937,7 @@ export async function rebuildHistoricalChannel(
   // ── Season recap (historical channel only — no headlines @everyone) ───────────
   try {
     const { postSeasonRecap } = await import("./season-recap.js");
-    await postSeasonRecap(client, seasonId, seasonNumber, newChannel, /* skipHeadlines */ true);
+    await postSeasonRecap(client, seasonId, seasonNumber, newChannel, /* skipHeadlines */ true, guild.id);
   } catch (err) {
     console.error("[rebuild] Season recap failed:", err);
   }

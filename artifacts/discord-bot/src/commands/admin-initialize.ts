@@ -24,8 +24,24 @@ import {
 import { db } from "@workspace/db";
 import { seasonsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { isAdminUser, setGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
+
+// ── Channel name → DB key mapping ────────────────────────────────────────────
+const CHANNEL_KEY_MAP: Record<string, string> = {
+  "season-schedule":   CHANNEL_KEYS.SCHEDULE,
+  "general":           CHANNEL_KEYS.GENERAL,
+  "transactions":      CHANNEL_KEYS.TRANSACTIONS,
+  "matchups":          CHANNEL_KEYS.MATCHUPS,
+  "gotw-voting":       CHANNEL_KEYS.GOTW,
+  "league-twitter":    CHANNEL_KEYS.LEAGUE_TWITTER,
+  "headlines":         CHANNEL_KEYS.HEADLINES,
+  "draft-tracker":     CHANNEL_KEYS.DRAFT_TRACKER,
+  "payouts":           CHANNEL_KEYS.PAYOUTS,
+  "goty-candidates":   CHANNEL_KEYS.GOTY,
+  "commissioner-chat": CHANNEL_KEYS.COMMISSIONER,
+  "violation-log":     CHANNEL_KEYS.VIOLATION_LOG,
+};
 
 // ── Channel blueprint ────────────────────────────────────────────────────────
 // Mirrors the primary REC League Discord server structure.
@@ -164,8 +180,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   await interaction.editReply({ content: "⏳ Starting server initialization… this may take 15–30 seconds." });
 
+  const guildId = interaction.guildId!;
   const log: string[] = [];
   const channelMentions: Record<string, string> = {};
+  const channelIds: Record<string, string> = {};
 
   try {
     // ── Step 1: Create roles ────────────────────────────────────────────────
@@ -208,6 +226,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         );
         if (existing) {
           channelMentions[chDef.name] = `<#${existing.id}>`;
+          channelIds[chDef.name] = existing.id;
           continue;
         }
 
@@ -239,11 +258,20 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           permissionOverwrites: permOverwrites,
         });
         channelMentions[chDef.name] = `<#${created.id}>`;
+        channelIds[chDef.name] = created.id;
       }
     }
 
+    // ── Step 2b: Save channel IDs to DB so the bot knows where to post ──────
+    const savePromises: Promise<void>[] = [];
+    for (const [channelName, channelId] of Object.entries(channelIds)) {
+      const key = CHANNEL_KEY_MAP[channelName];
+      if (key) savePromises.push(setGuildChannel(guildId, key, channelId));
+    }
+    await Promise.all(savePromises);
+    log.push(`💾 Saved ${savePromises.length} channel IDs to database`);
+
     // ── Step 3: Ensure Season 1 exists for this guild ───────────────────────
-    const guildId = interaction.guildId!;
     const existingSeason = await db
       .select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
       .from(seasonsTable)
@@ -306,15 +334,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   embed.addFields(
     { name: "📌 Key Channels", value: channelCard, inline: false },
-    {
-      name: "⚠️ Important: Channel IDs",
-      value:
-        "The bot currently uses channel IDs from the primary server for automated posts " +
-        "(matchups, schedule, payouts, GOTW). For full multi-server support, run each feature " +
-        "command once in this server to allow the bot to auto-detect the correct channels, " +
-        "or reach out to your bot admin to update the server's environment configuration.",
-      inline: false,
-    },
     {
       name: "📖 After Setup — Key Commands",
       value: [

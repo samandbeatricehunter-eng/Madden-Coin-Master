@@ -8,9 +8,8 @@ import {
   h2hMatchupRecordsTable, franchiseProcessedGamesTable,
 } from "@workspace/db";
 import { eq, and, sql, or } from "drizzle-orm";
-import { logTransaction, getOrCreateActiveSeason, isAdminUser } from "../lib/db-helpers.js";
+import { logTransaction, getOrCreateActiveSeason, isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
-const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 
 const PLAYOFF_LABELS: Record<number, string> = {
   1018: "Wild Card",
@@ -445,9 +444,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 
   // ── Commissioner channel log ──────────────────────────────────────────────────
-  if (COMMISSIONER_CHANNEL_ID) {
+  const reverseGameCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+  if (reverseGameCommChannelId) {
     try {
-      const ch = await interaction.client.channels.fetch(COMMISSIONER_CHANNEL_ID);
+      const ch = await interaction.client.channels.fetch(reverseGameCommChannelId);
       if (ch?.isTextBased()) {
         const logEmbed = new EmbedBuilder()
           .setColor(Colors.Red)

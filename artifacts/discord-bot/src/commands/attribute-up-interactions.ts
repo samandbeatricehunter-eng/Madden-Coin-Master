@@ -16,6 +16,7 @@ import { eq, and, sql } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getCoreAttributes, getSeasonRules, deductBalance, logTransaction,
+  getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { ATTRIBUTES } from "../lib/constants.js";
 import { errorEmbed, pendingEmbed } from "../lib/embeds.js";
@@ -601,7 +602,7 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
 
     // Commissioner notification
     try {
-      const channelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+      const channelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
       const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
       if (channel?.isTextBased()) {
         const category = isCore ? "Core ⭐" : "Non-core";

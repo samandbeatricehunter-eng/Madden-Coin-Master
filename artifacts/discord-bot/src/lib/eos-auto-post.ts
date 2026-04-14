@@ -11,12 +11,11 @@ import {
 import { eq, and, desc, isNotNull } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
+import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 // Positions considered QB or RB for YPA / YPC calculations
 const QB_POSITIONS = new Set(["QB"]);
 const RB_POSITIONS = new Set(["HB", "RB", "FB"]);
-
-const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 
 type BreakdownRow = { label: string; statValue: number; unit: string; tier: number; coins: number };
 
@@ -33,6 +32,7 @@ type BreakdownRow = { label: string; statValue: number; unit: string; tier: numb
 export async function runEosAutoPost(
   client: Client,
   seasonId: number,
+  guildId: string = PRIMARY_GUILD_ID,
 ): Promise<{ posted: number; skipped: number; errors: number }> {
 
   // ── 1. Load all registered users ──────────────────────────────────────────────
@@ -118,9 +118,10 @@ export async function runEosAutoPost(
 
   // ── 5. Get commissioner channel ───────────────────────────────────────────────
   let commChannel: TextChannel | null = null;
-  if (COMMISSIONER_CHANNEL_ID) {
+  const commChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+  if (commChannelId) {
     try {
-      const ch = await client.channels.fetch(COMMISSIONER_CHANNEL_ID);
+      const ch = await client.channels.fetch(commChannelId);
       if (ch?.isTextBased()) commChannel = ch as TextChannel;
     } catch (err) {
       console.error("[eos-auto-post] Failed to fetch commissioner channel:", err);

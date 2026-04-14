@@ -31,9 +31,7 @@ import {
   buildArchetypeNavRows, buildAttrPageNavRow, attrPageCount, formatArchetypeEmbed,
   THROWING_MOTIONS, throwingMotionStyleRow,
 } from "./custom-player-helpers.js";
-import { addBalance, logTransaction, getOrCreateUser } from "./db-helpers.js";
-
-const COMMISSIONER_CHANNEL_ID = process.env.DISCORD_COMMISSIONER_CHANNEL_ID!;
+import { addBalance, logTransaction, getOrCreateUser, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 // ── Expired session helper ─────────────────────────────────────────────────────
 async function sessionExpired(interaction: ButtonInteraction | StringSelectMenuInteraction) {
@@ -763,7 +761,8 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
   let commMsgId: string | undefined;
   let commChanId: string | undefined;
   try {
-    const ch = await interaction.client.channels.fetch(COMMISSIONER_CHANNEL_ID).catch(() => null);
+    const commId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
+    const ch = commId ? await interaction.client.channels.fetch(commId).catch(() => null) : null;
     if (ch?.isTextBased()) {
       const tc        = ch as TextChannel;
       const commEmbed = buildCommissionerEmbed(playerId, session);

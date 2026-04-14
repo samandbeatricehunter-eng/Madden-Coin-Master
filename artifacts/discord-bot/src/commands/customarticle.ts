@@ -5,10 +5,9 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import OpenAI from "openai";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 
-const HEADLINES_CHANNEL_ID = "1477717664804896899";
 
 const openai = new OpenAI({
   baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
@@ -89,12 +88,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       : raw;
 
     // ── Post to headlines channel ─────────────────────────────────────────────
-    const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
-      ?? await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+    const headlinesChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.HEADLINES);
+    const headlinesChannel = headlinesChannelId
+      ? (interaction.client.channels.cache.get(headlinesChannelId) ?? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null))
+      : null;
 
     if (!headlinesChannel || !headlinesChannel.isTextBased()) {
       return interaction.editReply({
-        content: "❌ Could not reach the headlines channel. Check the channel ID.",
+        content: "❌ Could not reach the headlines channel. Run `/initialize-server` to configure channels.",
       });
     }
 
@@ -106,7 +107,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await sendArticleChunked(tc, header, article);
 
     return interaction.editReply({
-      content: `✅ Article posted to <#${HEADLINES_CHANNEL_ID}>.`,
+      content: headlinesChannelId ? `✅ Article posted to <#${headlinesChannelId}>.` : `✅ Article posted.`,
     });
   } catch (err) {
     console.error("[/customarticle] Error:", err);

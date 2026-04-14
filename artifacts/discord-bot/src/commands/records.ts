@@ -2,7 +2,7 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction,
   EmbedBuilder, Colors, TextChannel,
 } from "discord.js";
-import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getSeasonRecords, getAllTimeRecords } from "../lib/gcs-fallback.js";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
@@ -27,9 +27,9 @@ function displayName(username: string, team: string | null | undefined): string 
 
 // ── General channel announcement helper (used by seasonpr/alltimepr for SB announcements) ──
 async function announceInGeneral(interaction: ChatInputCommandInteraction, embed: EmbedBuilder) {
-  const channelId = process.env["DISCORD_GENERAL_CHANNEL_ID"];
+  const channelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GENERAL) ?? process.env["DISCORD_GENERAL_CHANNEL_ID"];
   if (!channelId) {
-    console.warn("⚠️  DISCORD_GENERAL_CHANNEL_ID not set — skipping announcement");
+    console.warn("⚠️  No general channel configured — skipping announcement");
     return;
   }
   const channel = await interaction.client.channels.fetch(channelId).catch(() => null);

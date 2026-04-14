@@ -3,13 +3,77 @@ import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
   inventoryTable, legendsTable, coinTransactionsTable, rulesTable, rulesSectionsTable,
   userRecordsTable, gameLogTable, customPlayersTable, franchiseRostersTable,
-  globalUserRecordsTable,
+  globalUserRecordsTable, guildChannelsTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
 import { eq, and, sql, desc, ne } from "drizzle-orm";
 
 // ── Primary guild ID for the original server (legacy / default) ──────────────
 export const PRIMARY_GUILD_ID = "1476251181524189438";
+
+// ── Channel keys used across the bot ─────────────────────────────────────────
+export const CHANNEL_KEYS = {
+  GENERAL:        "general",
+  COMMISSIONER:   "commissioner",
+  MATCHUPS:       "matchups",
+  SCHEDULE:       "schedule",
+  GOTW:           "gotw",
+  LEAGUE_TWITTER: "league_twitter",
+  HEADLINES:      "headlines",
+  DRAFT_TRACKER:  "draft_tracker",
+  PAYOUTS:        "payouts",
+  VIOLATION_LOG:  "violation_log",
+  GOTY:           "goty",
+  TRANSACTIONS:   "transactions",
+} as const;
+
+// Hardcoded fallback IDs for the primary guild (backward compatibility).
+// New guilds will always have their IDs stored by /initialize-server instead.
+const PRIMARY_CHANNEL_FALLBACKS: Record<string, string> = {
+  general:        "1476321282868908052",
+  commissioner:   process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "",
+  matchups:       "1478777175128932463",
+  schedule:       "1478947361014288445",
+  gotw:           "1485290029294289037",
+  league_twitter: "1492213174697726033",
+  headlines:      "1477717664804896899",
+  draft_tracker:  "1485399096075358299",
+  payouts:        "1486034589808853114",
+  violation_log:  "1491529826060734524",
+  goty:           "1485394206863392848",
+  transactions:   "1493360346382209224",
+};
+
+/**
+ * Look up a per-guild channel ID by key.
+ * Checks the guild_channels table first; falls back to PRIMARY_CHANNEL_FALLBACKS
+ * for any guild that hasn't been initialized yet (e.g. the original server).
+ */
+export async function getGuildChannel(guildId: string, key: string): Promise<string | null> {
+  try {
+    const [row] = await db
+      .select({ channelId: guildChannelsTable.channelId })
+      .from(guildChannelsTable)
+      .where(and(eq(guildChannelsTable.guildId, guildId), eq(guildChannelsTable.channelKey, key)))
+      .limit(1);
+    if (row) return row.channelId;
+  } catch {
+    // DB unavailable — fall through to hardcoded fallback
+  }
+  return PRIMARY_CHANNEL_FALLBACKS[key] ?? null;
+}
+
+/**
+ * Upsert a per-guild channel ID (called by /initialize-server after creating channels).
+ */
+export async function setGuildChannel(guildId: string, key: string, channelId: string): Promise<void> {
+  await db.insert(guildChannelsTable)
+    .values({ guildId, channelKey: key, channelId })
+    .onConflictDoUpdate({
+      target: [guildChannelsTable.guildId, guildChannelsTable.channelKey],
+      set: { channelId, updatedAt: new Date() },
+    });
+}
 
 // ── Default rules (seeds the DB if a section has never been set) ───────────────
 export const SECTION_META: Record<string, { title: string; color: number }> = {

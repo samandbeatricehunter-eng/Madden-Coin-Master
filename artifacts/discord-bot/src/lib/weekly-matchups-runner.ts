@@ -9,9 +9,7 @@ import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "./gotw-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
-import { getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
-
-const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
+import { getRosterSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 const MIN_COMPLETED_STATUS = 2;
 
 export type MatchupsReplyFn = (opts: {
@@ -27,6 +25,7 @@ export interface RunWeeklyMatchupsOpts {
   displayWeekNum:  number;
   payoutWeekIndex: number | null;
   replyFn:         MatchupsReplyFn;
+  guildId?:        string;
 }
 
 /**
@@ -130,6 +129,7 @@ export async function runGotwPrompt(opts: {
 
 export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promise<void> {
   const { client, guild, season, displayWeekNum, payoutWeekIndex, replyFn } = opts;
+  const resolvedGuildId = opts.guildId ?? PRIMARY_GUILD_ID;
 
   const displayWeekIndex = displayWeekNum - 1;
   const isPlayoff        = false;
@@ -145,7 +145,7 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
             return `❌ GOTW auto-payout failed`;
           })
       : Promise.resolve(""),
-    purgeGotwChannel(client).catch((err: unknown) =>
+    purgeGotwChannel(client, resolvedGuildId).catch((err: unknown) =>
       console.error("[weekly-runner] GOTW purge error:", err),
     ),
   ]);
@@ -210,11 +210,13 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
     .setTimestamp();
 
   // ── Clear & post to matchups channel ──────────────────────────────────────
-  const targetCh = client.channels.cache.get(MATCHUPS_CHANNEL_ID)
-    ?? await client.channels.fetch(MATCHUPS_CHANNEL_ID).catch(() => null);
+  const matchupsId = await getGuildChannel(resolvedGuildId, CHANNEL_KEYS.MATCHUPS);
+  const targetCh = matchupsId
+    ? (client.channels.cache.get(matchupsId) ?? await client.channels.fetch(matchupsId).catch(() => null))
+    : null;
 
   if (!targetCh?.isTextBased()) {
-    await replyFn({ content: `❌ Cannot find matchups channel (\`${MATCHUPS_CHANNEL_ID}\`).` });
+    await replyFn({ content: `❌ Cannot find matchups channel. Run \`/initialize-server\` or configure this server's channel IDs.` });
     return;
   }
 
@@ -236,7 +238,7 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
 
   // ── Build reply base + send GOTW prompt ───────────────────────────────────
   let baseContent =
-    `✅ Week ${displayWeekNum} matchups posted to <#${MATCHUPS_CHANNEL_ID}>.\n` +
+    `✅ Week ${displayWeekNum} matchups posted${matchupsId ? ` to <#${matchupsId}>` : ""}.\n` +
     `GOTW channel cleared.`;
   if (payoutSummary) {
     baseContent += `\n\n**Previous Week GOTW Payout:**\n${payoutSummary}`;

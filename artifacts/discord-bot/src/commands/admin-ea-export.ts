@@ -17,8 +17,8 @@ import {
   type WeeklyExportData,
   type RostersExportData,
 } from "../lib/ea-client.js";
-import { postFullSeasonScheduleToChannel, SCHEDULE_CHANNEL_ID } from "../lib/season-schedule-post.js";
-import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { postFullSeasonScheduleToChannel } from "../lib/season-schedule-post.js";
+import { getOrCreateActiveSeason, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import axios from "axios";
 
 export const data = new SlashCommandBuilder()
@@ -594,7 +594,7 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
         season.seasonNumber ?? season.id,
       );
       channelNote = postedWeeks > 0
-        ? `✅ Season schedule posted to <#${SCHEDULE_CHANNEL_ID}>`
+        ? `✅ Season schedule posted.`
         : `⚠️ All weeks saved but channel post returned 0 — run \`/postfullseasonschedule\` manually`;
     } catch (err: any) {
       console.error("[ea-export/full-schedule] Channel post error:", err);

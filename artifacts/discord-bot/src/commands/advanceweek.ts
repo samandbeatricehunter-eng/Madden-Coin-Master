@@ -5,19 +5,18 @@ import {
 import { db } from "@workspace/db";
 import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../lib/wildcard-automation.js";
 import { runEosAutoPost } from "../lib/eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { sendArticleChunked } from "../lib/send-article.js";
 import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
-import { postFullSeasonScheduleToChannel, SCHEDULE_CHANNEL_ID } from "../lib/season-schedule-post.js";
+import { postFullSeasonScheduleToChannel } from "../lib/season-schedule-post.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
 import { triggerWeekAdvanceTweets } from "../lib/league-twitter.js";
 
-const HEADLINES_CHANNEL_ID = "1477717664804896899";
 const MATCHUP_CATEGORY_ID  = "1478427821666861272";
 const ANNOUNCE_CHANNEL_ID  = "1484689142515368188"; // general announcements / rule-change channel
 
@@ -405,14 +404,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── League Twitter burst — fires on every week advance, never on a timer ──────
   // Runs fully async so the interaction reply is never delayed.
-  triggerWeekAdvanceTweets(interaction.client);
+  triggerWeekAdvanceTweets(interaction.client, interaction.guildId!);
 
   // ── Franchise articles — recap of completed week + preview of new week ───────
   // Skip the recap when advancing TO Week 1 — there is nothing to recap at the
   // start of a new season (no completed games in the current season yet).
   if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && newWeek !== "1" && guild) {
-    const headlinesChannel = interaction.client.channels.cache.get(HEADLINES_CHANNEL_ID)
-      ?? await interaction.client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+    const headlinesChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.HEADLINES);
+    const headlinesChannel = headlinesChannelId
+      ? (interaction.client.channels.cache.get(headlinesChannelId) ?? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null))
+      : null;
 
     if (headlinesChannel && headlinesChannel.isTextBased()) {
       // Fire both articles async — recap first, then preview. Don't block the interaction reply.
@@ -623,7 +624,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         );
         if (postedWeeks > 0) {
           await interaction.followUp({
-            content: `📅 Full Season ${season.seasonNumber} schedule (${postedWeeks} weeks) posted to <#${SCHEDULE_CHANNEL_ID}>.`,
+            content: `📅 Full Season ${season.seasonNumber} schedule (${postedWeeks} weeks) posted.`,
             ephemeral: true,
           }).catch(() => {});
         } else {
@@ -686,6 +687,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           interaction.client,
           season,
           newWeek,
+          interaction.guildId!,
         );
         await interaction.followUp({ content: summary, ephemeral: true }).catch(() => {});
       } catch (err) {

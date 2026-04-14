@@ -23,13 +23,12 @@ import {
 } from "@workspace/db";
 import { eq, desc, and, gt, asc } from "drizzle-orm";
 import { Client, TextChannel, EmbedBuilder, Colors } from "discord.js";
+import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 const openai = new OpenAI({
   baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
   apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "dummy",
 });
-
-const HEADLINES_CHANNEL_ID = "1477717664804896899";
 const MAX_EMBED_DESC = 4000;
 
 // ── Build comprehensive season context for the AI ─────────────────────────────
@@ -394,6 +393,7 @@ export async function postSeasonRecap(
   seasonNumber: number,
   historicalChannel: TextChannel | null,
   skipHeadlines = false,
+  guildId: string = PRIMARY_GUILD_ID,
 ): Promise<void> {
   console.log(`[seasonRecap] Generating Season ${seasonNumber} recap article...`);
 
@@ -434,7 +434,8 @@ export async function postSeasonRecap(
   // Post to headlines channel (skipped on rebuilds to avoid duplicate @everyone pings)
   if (!skipHeadlines) {
     try {
-      const headlinesCh = await client.channels.fetch(HEADLINES_CHANNEL_ID).catch(() => null);
+      const headlinesId = await getGuildChannel(guildId, CHANNEL_KEYS.HEADLINES);
+      const headlinesCh = headlinesId ? await client.channels.fetch(headlinesId).catch(() => null) : null;
       if (headlinesCh?.isTextBased()) {
         for (let i = 0; i < embedBatches.length; i++) {
           await (headlinesCh as TextChannel).send({

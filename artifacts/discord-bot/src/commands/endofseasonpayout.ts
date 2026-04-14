@@ -7,11 +7,10 @@ import {
   seasonStatTierConfigsTable, pendingEosPayoutsTable,
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { getOrCreateActiveSeason, getUserByDiscordId } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason, getUserByDiscordId, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { STAT_CATEGORIES, evaluateTier } from "../lib/stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
-const COMMISSIONER_CHANNEL_ID = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
 
 export const data = new SlashCommandBuilder()
   .setName("endofseasonpayout")
@@ -257,9 +256,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Post to commissioner channel ──────────────────────────────────────────────
   let commMessageId: string | null = null;
-  if (COMMISSIONER_CHANNEL_ID) {
+  const eosCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+  if (eosCommChannelId) {
     try {
-      const ch = await interaction.client.channels.fetch(COMMISSIONER_CHANNEL_ID);
+      const ch = await interaction.client.channels.fetch(eosCommChannelId);
       if (ch?.isTextBased()) {
         const msg = await (ch as TextChannel).send({
           embeds: [commEmbed],

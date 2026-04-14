@@ -994,6 +994,20 @@ export const playerXpLogTable = pgTable("player_xp_log", {
   playerWeek: uniqueIndex("player_xp_log_player_week_idx").on(t.seasonId, t.playerId, t.weekNum, t.weekType),
 }));
 
+// ── Per-guild channel ID registry ────────────────────────────────────────────
+// Populated by /initialize-server; read by getGuildChannel() in db-helpers.
+// Channel keys: general, matchups, gotw, schedule, league_twitter, headlines,
+//               draft_tracker, payouts, violation_log, commissioner, goty, transactions
+export const guildChannelsTable = pgTable("guild_channels", {
+  id:         serial("id").primaryKey(),
+  guildId:    text("guild_id").notNull(),
+  channelKey: text("channel_key").notNull(),
+  channelId:  text("channel_id").notNull(),
+  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniq: uniqueIndex("guild_channels_guild_key_idx").on(t.guildId, t.channelKey),
+}));
+
 // ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────
 export const leagueTwitterTable = pgTable("league_twitter_tweets", {
   id:           serial("id").primaryKey(),
