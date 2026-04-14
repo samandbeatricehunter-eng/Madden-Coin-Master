@@ -1810,9 +1810,25 @@ function buildPlayerValues(p: any, seasonId: number, teamId: number, teamName: s
     jerseyNum:         (p.jerseyNum ?? p.jersey ?? p.uniformNumber) != null
       ? Number(p.jerseyNum ?? p.jersey ?? p.uniformNumber) : null,
     contractYearsLeft: resolveContractYearsLeftProc(p),
+    archetypeAbbrev:   resolveArchetypeAbbrev(p),
     attributes:        Object.keys(attributes).length > 0 ? attributes : null,
     importedAt:        new Date(),
   };
+}
+
+// ── Resolve archetype abbreviation from any known EA field name ───────────────
+function resolveArchetypeAbbrev(p: any): string | null {
+  const raw =
+    p.archetypeAbbrev          ??
+    p.primaryArchetypeAbbrev   ??
+    p.playerArchetypeAbbrev    ??
+    p.playerArchetype          ??
+    p.archetype                ??
+    p.archetypeId              ??
+    null;
+  if (raw == null) return null;
+  const s = String(raw).trim().toUpperCase();
+  return s.length > 0 ? s : null;
 }
 
 // ── Attribute abbreviation map for transaction log ─────────────────────────────

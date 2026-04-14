@@ -12,6 +12,58 @@ import { sql } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 import { getRosterSeasonId } from "../lib/db-helpers.js";
 
+// ── Archetype display map ─────────────────────────────────────────────────────
+// Maps EA's uppercase-underscore abbreviation to a compact human-readable label.
+// Fallback: snake_case → Title Case automatically.
+const ARCHETYPE_NAMES: Record<string, string> = {
+  // QB
+  FIELD_GENERAL: "Field General", STRONG_ARM: "Strong Arm", WEST_COAST: "West Coast",
+  SCRAMBLER: "Scrambler", IMPROVISER: "Improviser",
+  // HB
+  ELUSIVE_BACK: "Elusive Back", POWER_BACK: "Power Back",
+  RECEIVING_BACK: "Rcv Back", SPEED_BACK: "Speed Back",
+  // FB
+  BLOCKING_FB: "Blocking FB", BLOCKING_FULLBACK: "Blocking FB",
+  RECEIVING_FB: "Rcv FB", RECEIVING_FULLBACK: "Rcv FB",
+  // WR
+  DEEP_THREAT: "Deep Threat", PHYSICAL: "Physical", PHYSICAL_WR: "Physical",
+  POSSESSION: "Possession", POSSESSION_WR: "Possession",
+  RED_ZONE_THREAT: "Red Zone", REDZONE_THREAT: "Red Zone",
+  ROUTE_RUNNER: "Route Runner", SLOT: "Slot WR", SLOT_WR: "Slot WR",
+  // TE
+  BLOCKING_TE: "Blocking TE", HYBRID_TE: "Hybrid TE", HYBRID: "Hybrid",
+  PASS_CATCHING_TE: "Pass Catching", PASS_CATCHING: "Pass Catching",
+  VERTICAL_THREAT_TE: "Vertical Threat", VERTICAL_THREAT: "Vert Threat",
+  // OL
+  PASS_BLOCKER: "Pass Blocker", RUN_BLOCKER: "Run Blocker",
+  // DE / EDGE
+  POWER_RUSHER: "Power Rusher", FINESSE_RUSHER: "Finesse Rusher", SPEED_RUSHER: "Speed Rusher",
+  // DT
+  NOSE_TACKLE: "Nose Tackle", PASS_RUSHER: "Pass Rusher", RUN_STOPPER: "Run Stopper",
+  // LB
+  COVERAGE: "Coverage LB", COVERAGE_LB: "Coverage LB",
+  FIELD_GENERAL_LB: "Field General",
+  // CB
+  MAN_TO_MAN: "Man to Man", MAN_COVERAGE: "Man to Man",
+  SLOT_CORNER: "Slot Corner", ZONE_CORNER: "Zone Corner", ZONE_COVERAGE: "Zone Corner",
+  // S
+  CENTER_FIELD: "Center Field", HYBRID_SAFETY: "Hybrid Safety",
+  RUN_SUPPORT: "Run Support", ZONE_SAFETY: "Zone Safety", ZONE: "Zone Safety",
+  // K / P
+  ACCURATE: "Accurate", ACCURATE_KICKER: "Accurate", ACCURATE_PUNTER: "Accurate",
+  POWER: "Power", POWER_KICKER: "Power", POWER_PUNTER: "Power",
+};
+
+export function archetypeLabel(abbrev: string | null): string | null {
+  if (!abbrev) return null;
+  const key = abbrev.trim().toUpperCase();
+  if (ARCHETYPE_NAMES[key]) return ARCHETYPE_NAMES[key]!;
+  return key
+    .split("_")
+    .map(w => w.charAt(0) + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
 // ── Position grouping (mirrors my-roster.ts) ─────────────────────────────────
 
 const OFFENSE_GROUPS: { label: string; positions: string[] }[] = [
@@ -49,11 +101,14 @@ function formatPlayerLine(p: {
   position: string; overall: number; devTrait: number;
   jerseyNum: number | null; age: number | null;
   contractYearsLeft: number | null;
+  archetypeAbbrev: string | null;
 }): string {
-  const num = p.jerseyNum != null ? `#${p.jerseyNum} ` : "";
-  const agePart = p.age != null ? ` | Age ${p.age}` : "";
+  const num          = p.jerseyNum != null ? `#${p.jerseyNum} ` : "";
+  const agePart      = p.age != null ? ` | Age ${p.age}` : "";
   const contractFlag = p.contractYearsLeft === 1 ? " 📋" : "";
-  return `${num}**${p.firstName} ${p.lastName}** (${p.position}) — OVR ${p.overall}${agePart}${devBadge(p.devTrait)}${contractFlag}`;
+  const arch         = archetypeLabel(p.archetypeAbbrev);
+  const archPart     = arch ? ` • ${arch}` : "";
+  return `${num}**${p.firstName} ${p.lastName}** (${p.position}) — OVR ${p.overall}${archPart}${agePart}${devBadge(p.devTrait)}${contractFlag}`;
 }
 
 function fieldChunks(label: string, lines: string[]): { name: string; value: string }[] {
@@ -108,7 +163,6 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
   try {
     const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
 
-    // Distinct team names in this season (or fallback season), ordered alphabetically
     const rows = await db
       .selectDistinct({ teamName: franchiseRostersTable.teamName })
       .from(franchiseRostersTable)
@@ -128,7 +182,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
 // ── Command handler ────────────────────────────────────────────────────────────
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const teamInput  = interaction.options.getString("team")?.trim() ?? null;
   const targetUser = interaction.options.getUser("user");
   const isPublic   = interaction.options.getBoolean("public") ?? false;
@@ -155,8 +209,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // If the active season has no roster data yet, fall back to the most recent
-  // season that does (e.g. right after a new season starts before MCA import).
   const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
   const [season] = rosterSeasonId === activeSeason.id
     ? [activeSeason]
@@ -171,7 +223,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   let ownerMention: string | null = null;
 
   if (targetUser) {
-    // Primary: look up by discordId stored on roster rows (set after MCA import + linkteam)
     const [byDiscord] = await db
       .selectDistinct({ teamName: franchiseRostersTable.teamName })
       .from(franchiseRostersTable)
@@ -185,7 +236,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       resolvedTeamName = byDiscord.teamName;
       ownerMention = `<@${targetUser.id}>`;
     } else {
-      // Fallback: look up via usersTable.team → ilike match against roster teamName
       const [linked] = await db.select({ team: usersTable.team })
         .from(usersTable)
         .where(eq(usersTable.discordId, targetUser.id))
@@ -218,7 +268,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ownerMention = `<@${targetUser.id}>`;
     }
   } else if (teamInput) {
-    // Case-insensitive lookup to find the exact stored name
     const [match] = await db
       .selectDistinct({ teamName: franchiseRostersTable.teamName })
       .from(franchiseRostersTable)
@@ -236,7 +285,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
     resolvedTeamName = match.teamName;
 
-    // Try to find the manager for this team (may be CPU — no Discord user)
     const rosterSample = await db.select({ discordId: franchiseRostersTable.discordId })
       .from(franchiseRostersTable)
       .where(and(
@@ -280,10 +328,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const fields: { name: string; value: string; inline?: boolean }[] = [];
 
-  // Build lines for a position group, sub-grouped by individual position.
-  // A bold **POS** label is inserted between sub-groups when the group has
-  // multiple distinct positions with players. Within each position, players
-  // are sorted by overall descending.
   function buildGroupLines(positions: string[]): string[] {
     const filled = positions.filter(pos => (byPos.get(pos)?.length ?? 0) > 0);
     const showLabel = filled.length > 1;

@@ -10,19 +10,75 @@ import { eq, and, asc, desc, ilike, or } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 
 // ── Portrait URL ───────────────────────────────────────────────────────────────
-// EA's Madden 26 player portrait CDN. Discord's proxy fetches these fine even
-// though direct server-side requests get 403'd by EA's CDN.
 function portraitUrl(playerId: number): string {
   return `https://madden-assets-cdn.pulse.ea.com/madden26/portraits/64/${playerId}.png`;
 }
 
 // ── Dev trait label ────────────────────────────────────────────────────────────
 function devLabel(trait: number): string {
-  if (trait >= 4) return "⚡ X-Factor";
-  if (trait === 3) return "⚡ X-Factor";
+  if (trait >= 3) return "⚡ X-Factor";
   if (trait === 2) return "★★★ Superstar";
   if (trait === 1) return "★★ Star";
   return "Normal";
+}
+
+// ── Archetype display map ──────────────────────────────────────────────────────
+// Maps EA's uppercase-underscore abbreviation to a full human-readable name.
+const ARCHETYPE_NAMES: Record<string, string> = {
+  // QB
+  FIELD_GENERAL: "Field General",   STRONG_ARM: "Strong Arm",
+  WEST_COAST: "West Coast",         SCRAMBLER: "Scrambler",
+  IMPROVISER: "Improviser",
+  // HB
+  ELUSIVE_BACK: "Elusive Back",     POWER_BACK: "Power Back",
+  RECEIVING_BACK: "Receiving Back", SPEED_BACK: "Speed Back",
+  // FB
+  BLOCKING_FB: "Blocking Fullback", BLOCKING_FULLBACK: "Blocking Fullback",
+  RECEIVING_FB: "Receiving Fullback", RECEIVING_FULLBACK: "Receiving Fullback",
+  // WR
+  DEEP_THREAT: "Deep Threat",       PHYSICAL: "Physical WR",
+  PHYSICAL_WR: "Physical WR",       POSSESSION: "Possession WR",
+  POSSESSION_WR: "Possession WR",   RED_ZONE_THREAT: "Red Zone Threat",
+  REDZONE_THREAT: "Red Zone Threat", ROUTE_RUNNER: "Route Runner",
+  SLOT: "Slot WR",                  SLOT_WR: "Slot WR",
+  // TE
+  BLOCKING_TE: "Blocking TE",       HYBRID_TE: "Hybrid TE",
+  HYBRID: "Hybrid",                 PASS_CATCHING_TE: "Pass Catching TE",
+  PASS_CATCHING: "Pass Catching TE", VERTICAL_THREAT_TE: "Vertical Threat TE",
+  VERTICAL_THREAT: "Vertical Threat TE",
+  // OL (LT/LG/C/RG/RT all share these)
+  PASS_BLOCKER: "Pass Blocker",     RUN_BLOCKER: "Run Blocker",
+  // DE / EDGE
+  POWER_RUSHER: "Power Rusher",     FINESSE_RUSHER: "Finesse Rusher",
+  SPEED_RUSHER: "Speed Rusher",
+  // DT
+  NOSE_TACKLE: "Nose Tackle",       PASS_RUSHER: "Pass Rusher",
+  RUN_STOPPER: "Run Stopper",
+  // LB
+  COVERAGE: "Coverage LB",          COVERAGE_LB: "Coverage LB",
+  FIELD_GENERAL_LB: "Field General",
+  // CB
+  MAN_TO_MAN: "Man to Man",         MAN_COVERAGE: "Man to Man",
+  SLOT_CORNER: "Slot Corner",       ZONE_CORNER: "Zone Corner",
+  ZONE_COVERAGE: "Zone Corner",
+  // S
+  CENTER_FIELD: "Center Field",     HYBRID_SAFETY: "Hybrid Safety",
+  RUN_SUPPORT: "Run Support",       ZONE_SAFETY: "Zone Safety",
+  ZONE: "Zone Safety",
+  // K / P
+  ACCURATE: "Accurate",             ACCURATE_KICKER: "Accurate",
+  ACCURATE_PUNTER: "Accurate",      POWER: "Power",
+  POWER_KICKER: "Power",            POWER_PUNTER: "Power",
+};
+
+function archetypeLabel(abbrev: string | null): string | null {
+  if (!abbrev) return null;
+  const key = abbrev.trim().toUpperCase();
+  if (ARCHETYPE_NAMES[key]) return ARCHETYPE_NAMES[key]!;
+  return key
+    .split("_")
+    .map(w => w.charAt(0) + w.slice(1).toLowerCase())
+    .join(" ");
 }
 
 // ── Bio helpers ────────────────────────────────────────────────────────────────
@@ -37,14 +93,12 @@ function fmtWeight(raw: unknown): string | null {
   return `${lbs} lbs`;
 }
 
-// ── Short attribute abbreviations (NeonSportz style) ──────────────────────────
+// ── Short attribute abbreviations ──────────────────────────────────────────────
 const SHORT: Record<string, string> = {
-  // Athletics
   speedRating: "SPD", accelRating: "ACC", accelerationRating: "ACC",
   agilityRating: "AGI", changeOfDirectionRating: "COD", strengthRating: "STR",
   awarenessRating: "AWR", awareRating: "AWR", jumpingRating: "JMP", jumpRating: "JMP",
   staminaRating: "STA", toughnessRating: "TGH", toughRating: "TGH", injuryRating: "INJ",
-  // Passing
   throwPowerRating: "THP",
   throwAccRating: "TAC",
   throwAccuracyShortRating: "TAS", throwAccShortRating: "TAS",
@@ -52,12 +106,10 @@ const SHORT: Record<string, string> = {
   throwAccuracyDeepRating: "TAD", throwAccDeepRating: "TAD",
   throwOnRunRating: "TOR", throwUnderPressureRating: "TUP",
   breakSackRating: "BWS", playActionRating: "PAR",
-  // Ball carrier
   carryingRating: "CAR", carryRating: "CAR",
   bCVRating: "BCV", ballCarrierVisionRating: "BCV",
   breakTackleRating: "BTK", truckingRating: "TRK", truckRating: "TRK",
   stiffArmRating: "SAR", spinMoveRating: "SPM", jukeMoveRating: "JKM",
-  // Receiving
   catchingRating: "CTH", catchRating: "CTH",
   catchInTrafficRating: "CIT", cITRating: "CIT",
   specCatchRating: "SPC",
@@ -65,11 +117,9 @@ const SHORT: Record<string, string> = {
   medRouteRunningRating: "MRR",  routeRunMedRating: "MRR",
   deepRouteRunningRating: "DRR", routeRunDeepRating: "DRR",
   releaseRating: "REL",
-  // Blocking
   passBlockRating: "PBK", passBlockPowerRating: "PBP", passBlockFinesseRating: "PBF",
   runBlockRating: "RBK", runBlockPowerRating: "RBP", runBlockFinesseRating: "RBF",
   leadBlockRating: "LBK", impactBlockingRating: "IBK", impactBlockRating: "IBK",
-  // Defense
   tacklingRating: "TAK", tackleRating: "TAK",
   hitPowerRating: "HTP", pursuitRating: "PUR",
   blockSheddingRating: "BSH", blockShedRating: "BSH",
@@ -78,7 +128,6 @@ const SHORT: Record<string, string> = {
   manCoverageRating: "MCV", manCoverRating: "MCV",
   zoneCoverageRating: "ZCV", zoneCoverRating: "ZCV",
   pressRating: "PRS",
-  // Special teams
   kickPowerRating: "KPW", kickAccuracyRating: "KAC", kickAccRating: "KAC",
   kickReturnRating: "KTR", kickRetRating: "KTR",
   longSnapRating: "LNS",
@@ -155,7 +204,6 @@ function dbGroups(): AttrGroup[] {
 
 // ── Render a group of attributes as compact pipe-separated rows (4 per row) ───
 function renderGroup(attrs: Record<string, unknown>, keys: string[]): string | null {
-  // De-dupe: if two keys map to the same abbreviation, only show the first one with a value
   const seen = new Set<string>();
   const pairs: string[] = [];
   for (const k of keys) {
@@ -233,11 +281,12 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       if (!teamName) { await interaction.respond([]); return; }
 
       const rows = await db.select({
-        playerId:  franchiseRostersTable.playerId,
-        firstName: franchiseRostersTable.firstName,
-        lastName:  franchiseRostersTable.lastName,
-        position:  franchiseRostersTable.position,
-        overall:   franchiseRostersTable.overall,
+        playerId:       franchiseRostersTable.playerId,
+        firstName:      franchiseRostersTable.firstName,
+        lastName:       franchiseRostersTable.lastName,
+        position:       franchiseRostersTable.position,
+        overall:        franchiseRostersTable.overall,
+        archetypeAbbrev: franchiseRostersTable.archetypeAbbrev,
       })
         .from(franchiseRostersTable)
         .where(and(
@@ -251,10 +300,14 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
         .orderBy(desc(franchiseRostersTable.overall))
         .limit(25);
 
-      await interaction.respond(rows.map(p => ({
-        name:  `${p.firstName} ${p.lastName} (${p.position}) — OVR ${p.overall}`,
-        value: String(p.playerId),
-      })));
+      await interaction.respond(rows.map(p => {
+        const arch = archetypeLabel(p.archetypeAbbrev);
+        const archSuffix = arch ? ` [${arch}]` : "";
+        return {
+          name:  `${p.firstName} ${p.lastName} (${p.position}${archSuffix}) — OVR ${p.overall}`,
+          value: String(p.playerId),
+        };
+      }));
       return;
     }
 
@@ -265,7 +318,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 }
 
 // ── Execute ────────────────────────────────────────────────────────────────────
-export async function execute(interaction: ChatInputCommandInteraction) {
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const teamName    = interaction.options.getString("team",   true);
   const playerIdStr = interaction.options.getString("player", true);
   const isPublic    = interaction.options.getBoolean("public") ?? false;
@@ -316,34 +369,36 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const isFreeAgent = teamName === "Free Agents";
   const displayTeam = isFreeAgent ? "FA" : teamName;
+  const embedColor  = isFreeAgent ? 0xf0c040 : 0x1abc9c;
 
-  // ── Embed color: gold for free agents, dark teal for active roster ─────────
-  const embedColor = isFreeAgent ? 0xf0c040 : 0x1abc9c;
+  // ── Archetype ──────────────────────────────────────────────────────────────
+  const archName = archetypeLabel(player.archetypeAbbrev);
 
   // ── Header description block ───────────────────────────────────────────────
-  // Line 1: player identity card
   const bioLine = [
     player.age     != null ? `AGE: ${player.age}` : null,
     heightStr && weightStr ? `HT/WT: ${heightStr}, ${weightStr}` : (heightStr ?? weightStr),
   ].filter(Boolean).join(" | ");
 
-  const devLine = `${devStr}${player.jerseyNum != null ? `  |  #${player.jerseyNum}` : ""}`;
-
+  const archLine    = archName ? `🎯 Archetype: **${archName}**` : null;
+  const devLine     = `${devStr}${player.jerseyNum != null ? `  |  #${player.jerseyNum}` : ""}`;
   const contractLine = player.contractYearsLeft != null
     ? `📋 ${player.contractYearsLeft === 1 ? "**Contract Year**" : `${player.contractYearsLeft} yrs remaining`}`
     : null;
+  const managerLine  = player.discordId ? `Manager: <@${player.discordId}>` : null;
 
-  const managerLine = player.discordId ? `Manager: <@${player.discordId}>` : null;
-
-  const descParts = [devLine, bioLine || null, contractLine, managerLine].filter(Boolean);
+  const descParts = [archLine, devLine, bioLine || null, contractLine, managerLine].filter(Boolean);
 
   // ── Build embed ────────────────────────────────────────────────────────────
   const embed = new EmbedBuilder()
     .setColor(embedColor)
     .setTitle(`REC League — Players [1 Result]`)
-    .setDescription(`**${player.position} ${player.firstName} ${player.lastName} — ${displayTeam} — ${player.overall} OVR**\n\n${descParts.join("\n")}`)
+    .setDescription(
+      `**${player.position} ${player.firstName} ${player.lastName} — ${displayTeam} — ${player.overall} OVR**\n\n` +
+      descParts.join("\n"),
+    )
     .setThumbnail(portraitUrl(player.playerId))
-    .setFooter({ text: `Season ${season.seasonNumber} • Player ID ${player.playerId}` })
+    .setFooter({ text: `Season ${season.seasonNumber} • Player ID ${player.playerId}${player.archetypeAbbrev ? ` • EA: ${player.archetypeAbbrev}` : ""}` })
     .setTimestamp();
 
   // ── Position-specific key attribute groups ─────────────────────────────────
@@ -362,7 +417,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     attrCount++;
   }
 
-  // ── Catch-all: any *Rating not covered by the position groups ──────────────
   const remaining = Object.keys(attrs).filter(
     k => !coveredKeys.has(k) && k.endsWith("Rating") && Number(attrs[k]) > 0 && SHORT[k],
   );
