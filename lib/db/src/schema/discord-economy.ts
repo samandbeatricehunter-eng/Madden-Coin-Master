@@ -193,24 +193,28 @@ export const h2hMatchupRecordsTable = pgTable("h2h_matchup_records", {
   uniquePair: uniqueIndex("h2h_matchup_pair_idx").on(t.guildId, t.discordId1, t.discordId2),
 }));
 
+// NOTE: section is the PK to match existing production schema (no guild_id in prod yet).
+// guild_id is added as a column; unique index handles per-guild scoping.
 export const rulesTable = pgTable("rules", {
-  guildId:  text("guild_id").notNull().default("1476251181524189438"),
-  section:  text("section").notNull(),
-  rules:    json("rules").notNull().$type<string[]>(),
+  section:   text("section").primaryKey(),
+  guildId:   text("guild_id").notNull().default("1476251181524189438"),
+  rules:     json("rules").notNull().$type<string[]>(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   updatedBy: text("updated_by"),
 }, (t) => ({
-  pk: primaryKey({ columns: [t.guildId, t.section] }),
+  uniq: uniqueIndex("rules_guild_section_uniq").on(t.guildId, t.section),
 }));
 
+// NOTE: key is the PK to match existing production schema (no guild_id in prod yet).
+// guild_id is added as a column; unique index handles per-guild scoping.
 export const rulesSectionsTable = pgTable("rules_sections", {
+  key:       text("key").primaryKey(),
   guildId:   text("guild_id").notNull().default("1476251181524189438"),
-  key:       text("key").notNull(),
   title:     text("title").notNull(),
   color:     integer("color").notNull().default(0x3498db),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
-  pk: primaryKey({ columns: [t.guildId, t.key] }),
+  uniq: uniqueIndex("rules_sections_guild_key_uniq").on(t.guildId, t.key),
 }));
 
 export const payoutRequestsTable = pgTable("payout_requests", {
