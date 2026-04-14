@@ -1,8 +1,9 @@
 /**
- * League Twitter — AI-generated "reporter" tweets posted every 3 hours.
+ * League Twitter — AI-generated "reporter" tweets posted on each /advanceweek.
  *
  * Reporters are fictional but inspired by real NFL media personalities.
  * The GPT model is given rich league context so tweets feel grounded.
+ * Each week advance fires a burst of 3–5 tweets with fresh game context.
  * When a Discord user replies to a tweet in the channel, the bot responds
  * as the reporter who posted it.
  */
@@ -24,7 +25,6 @@ import { getOrCreateActiveSeason, getRosterSeasonId } from "./db-helpers.js";
 
 export const LEAGUE_TWITTER_CHANNEL_ID = "1492213174697726033";
 
-const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const FOUR_HOURS_MS  = 4 * 60 * 60 * 1000;
 
 // ── OpenAI client (same proxy used by messageCreate) ──────────────────────────
@@ -1012,9 +1012,9 @@ export async function postLeagueTweet(client: Client): Promise<void> {
     if (!ch?.isTextBased()) return;
     const tc = ch as TextChannel;
 
-    // How many tweets this burst — 25% one, 50% two, 25% three
+    // How many tweets this burst — 25% three, 50% four, 25% five
     const burstRoll = Math.random();
-    const count = burstRoll < 0.25 ? 1 : burstRoll < 0.75 ? 2 : 3;
+    const count = burstRoll < 0.25 ? 3 : burstRoll < 0.75 ? 4 : 5;
 
     // ── Pull all human-team users (needed for fan tweets + spotlight avoidance) ─
     const userTeams = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
@@ -1164,17 +1164,18 @@ export async function wipeLeagueTwitterSeason(
   }
 }
 
-// ── Scheduler ──────────────────────────────────────────────────────────────────
+// ── Week-advance trigger ────────────────────────────────────────────────────────
+// Tweets are no longer timer-driven. Call this after each /advanceweek so the
+// burst fires immediately when new context (scores, upcoming matchups) is fresh.
+// Runs fire-and-forget — the interaction response is never blocked.
 
-export function startLeagueTwitterScheduler(client: Client): void {
-  // Post immediately on startup (small delay so the client is ready), then every 3 hours
-  setTimeout(() => {
-    postLeagueTweet(client).catch(err => console.error("[league-twitter] Startup tweet error:", err));
-  }, 15_000); // 15-second delay after startup
+export function triggerWeekAdvanceTweets(client: Client): void {
+  postLeagueTweet(client).catch(err =>
+    console.error("[league-twitter] Week-advance tweet burst error:", err),
+  );
+}
 
-  setInterval(() => {
-    postLeagueTweet(client).catch(err => console.error("[league-twitter] Scheduled tweet error:", err));
-  }, THREE_HOURS_MS);
-
-  console.log("✅ League Twitter scheduler started (every 3 hours)");
+// Legacy export kept so any existing imports don't break — routes to the same function.
+export function startLeagueTwitterScheduler(_client: Client): void {
+  console.log("✅ League Twitter ready (tweets fire on /advanceweek, not on a timer)");
 }

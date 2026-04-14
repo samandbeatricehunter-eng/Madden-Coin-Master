@@ -15,6 +15,7 @@ import { runWeeklyMatchupsFlow } from "../lib/weekly-matchups-runner.js";
 import { postFullSeasonScheduleToChannel, SCHEDULE_CHANNEL_ID } from "../lib/season-schedule-post.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
+import { triggerWeekAdvanceTweets } from "../lib/league-twitter.js";
 
 const HEADLINES_CHANNEL_ID = "1477717664804896899";
 const MATCHUP_CATEGORY_ID  = "1478427821666861272";
@@ -401,6 +402,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.editReply({ embeds: [embed] });
+
+  // ── League Twitter burst — fires on every week advance, never on a timer ──────
+  // Runs fully async so the interaction reply is never delayed.
+  triggerWeekAdvanceTweets(interaction.client);
 
   // ── Franchise articles — recap of completed week + preview of new week ───────
   // Skip the recap when advancing TO Week 1 — there is nothing to recap at the
