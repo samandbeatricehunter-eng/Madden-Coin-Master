@@ -1960,12 +1960,14 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
 
       const row = buildPlayerValues(p, season.id, mcaTeamId, teamEntry.fullName, teamEntry.discordId ?? null);
       // Capture any XP-related fields EA may send so we know the exact key names
-      const xpFields: Record<string, unknown> = {};
-      for (const k of Object.keys(p as Record<string, unknown>)) {
-        if (/xp|experience|award|points/i.test(k)) xpFields[k] = (p as Record<string, unknown>)[k];
+      if (process.env.DEBUG_XP === "1") {
+        const xpFields: Record<string, unknown> = {};
+        for (const k of Object.keys(p as Record<string, unknown>)) {
+          if (/xp|experience|award|points/i.test(k)) xpFields[k] = (p as Record<string, unknown>)[k];
+        }
+        const xpStr = Object.keys(xpFields).length > 0 ? JSON.stringify(xpFields) : "none";
+        console.log(`[roster/player] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) archetype=${row.archetypeAbbrev ?? "null"} xp_fields=${xpStr}`);
       }
-      const xpStr = Object.keys(xpFields).length > 0 ? JSON.stringify(xpFields) : "none";
-      console.log(`[roster/player] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) archetype=${row.archetypeAbbrev ?? "null"} xp_fields=${xpStr}`);
       rows.push(row);
     }
 
