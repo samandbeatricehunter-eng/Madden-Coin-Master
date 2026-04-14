@@ -48,6 +48,7 @@ import {
   getServerSettings, toggleFeature, buildSettingsEmbed, buildSettingsRows,
   FEATURE_LABELS,
 } from "../lib/server-settings.js";
+import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import {
@@ -1983,9 +1984,16 @@ async function handleButton(interaction: ButtonInteraction) {
       components: buildSettingsRows(updated),
     });
     await interaction.followUp({
-      content: `**${label}** toggled → ${state}`,
+      content: `**${label}** toggled → ${state}\n⏳ Updating slash commands for this server…`,
       ephemeral: true,
     });
+
+    // Re-register commands for this guild so the command list reflects the new settings
+    if (interaction.guildId) {
+      registerCommandsForGuild(interaction.guildId).catch(err =>
+        console.error("[settings_toggle] Failed to re-register commands:", err),
+      );
+    }
     return;
   }
 

@@ -1,3 +1,5 @@
+import type { ServerSettings } from "@workspace/db";
+
 import * as admin              from "../commands/admin.js";
 import * as view               from "../commands/view.js";
 import * as help               from "../commands/help.js";
@@ -57,26 +59,97 @@ import * as adminInventory          from "../commands/admin-inventory.js";
 import * as adminInitialize         from "../commands/admin-initialize.js";
 import { seasonPRData, allTimePRData } from "../commands/records.js";
 
-export function buildCommandJSON(): object[] {
-  const modules = [
-    admin, view,
-    help, balance, sendcoins, purchase, inventory,
-    recentH2H, wager, teamlist, openteams,
-    seasonschedule, nextschedule, nextopp, myRoster, savings, weeklyMatchups,
-    standings, tradeBlock, h2hrecord, customarticle, webhookurl,
-    viewpayouttiers, interviewrequest, advanceweek, statleaders,
-    availableupgrades, viewFreeAgents, viewXp,
-    adminEosTestrun, adminStatReimport, adminEaConnect, adminEaExport,
-    adminCancelResendEos, adminRebuildHistorical, draftPresence,
-    adminPlayoffs, adminResendArticle, adminCatchup, adminManualScore,
-    adminReverseGame, adminPostFullSeasonSchedule, adminRollbackFranchise,
-    endofseasonpayout, adminSetPayouts, adminSetStatTiers, adminStatTiers,
-    adminSetMilestoneTier, adminLegendVault, adminCustomArcetypes,
-    adminCustomPlayerSettings, adminFixPlayerNames, adminEosReapprove,
-    adminSeason, adminLinkTeam, adminInventory, adminInitialize,
+/**
+ * Builds the list of slash command JSON payloads to register with Discord.
+ * Pass `settings` to filter out commands for disabled features so they
+ * disappear from the command picker automatically.
+ * Pass `null` (default) to include every command regardless of settings.
+ */
+export function buildCommandJSON(settings: ServerSettings | null = null): object[] {
+  // Feature flags — default to true when no settings provided
+  const economy    = !settings || settings.coinEconomy;
+  const legends    = economy  && (!settings || settings.legendsEnabled);
+  const custom     = economy  && (!settings || settings.customSuperstarsEnabled);
+  const anyUpgrade = economy  && (!settings || (
+    settings.attributeUpgradesEnabled ||
+    settings.devUpgradesEnabled       ||
+    settings.ageResetsEnabled
+  ));
+  const wagersOn     = economy && (!settings || settings.wagerEnabled);
+  const tradeBlockOn = economy && (!settings || settings.tradeBlockEnabled);
+
+  // [module, include?]
+  const entries: [{ data: { toJSON(): object } }, boolean][] = [
+    // ── Always visible ──────────────────────────────────────────────────────
+    [admin,              true],
+    [view,               true],
+    [help,               true],
+    [teamlist,           true],
+    [openteams,          true],
+    [seasonschedule,     true],
+    [nextschedule,       true],
+    [nextopp,            true],
+    [myRoster,           true],
+    [weeklyMatchups,     true],
+    [standings,          true],
+    [h2hrecord,          true],
+    [recentH2H,          true],
+    [customarticle,      true],
+    [webhookurl,         true],
+    [interviewrequest,   true],
+    [advanceweek,        true],
+    [statleaders,        true],
+    [viewFreeAgents,     true],
+    [adminEosTestrun,    true],
+    [adminStatReimport,  true],
+    [adminEaConnect,     true],
+    [adminEaExport,      true],
+    [adminCancelResendEos,   true],
+    [adminRebuildHistorical, true],
+    [draftPresence,      true],
+    [adminPlayoffs,      true],
+    [adminResendArticle, true],
+    [adminCatchup,       true],
+    [adminManualScore,   true],
+    [adminReverseGame,   true],
+    [adminPostFullSeasonSchedule, true],
+    [adminRollbackFranchise, true],
+    [adminEosReapprove,  true],
+    [adminSeason,        true],
+    [adminLinkTeam,      true],
+    [adminInventory,     true],
+    [adminInitialize,    true],
+    [adminSetStatTiers,  true],
+    [adminStatTiers,     true],
+
+    // ── Economy — hidden when coinEconomy is off ─────────────────────────────
+    [balance,         economy],
+    [sendcoins,       economy],
+    [purchase,        economy],
+    [inventory,       economy],
+    [savings,         economy],
+    [viewpayouttiers, economy],
+    [viewXp,          economy],
+    [endofseasonpayout,   economy],
+    [adminSetPayouts,     economy],
+    [adminSetMilestoneTier, economy],
+
+    // ── Feature-specific ─────────────────────────────────────────────────────
+    [availableupgrades,          anyUpgrade],
+    [wager,                      wagersOn],
+    [tradeBlock,                 tradeBlockOn],
+    [adminLegendVault,           legends],
+    [adminCustomArcetypes,       custom],
+    [adminCustomPlayerSettings,  custom],
+    [adminFixPlayerNames,        custom],
   ];
 
-  const commands = modules.map(m => m.data.toJSON());
+  const commands = entries
+    .filter(([, include]) => include)
+    .map(([m]) => m.data.toJSON());
+
+  // Records commands are named exports, not modules
   commands.push(seasonPRData.toJSON(), allTimePRData.toJSON());
+
   return commands;
 }
