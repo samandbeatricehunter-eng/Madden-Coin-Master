@@ -53,7 +53,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member         = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
 
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.editReply({ content: "❌ You don't have permission to use this command." });
@@ -67,7 +67,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const weekNum  = interaction.options.getInteger("week", true);
     const weekIndex = weekNum - 1;
 
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
 
     // Fetch schedule games for the requested week
     const games = await db
@@ -86,7 +86,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // Build team→discordId from franchise_mca_teams (fullName + nickName)
-    const rosterSeasonId = await getRosterSeasonId();
+    const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
     const mcaTeams = await db
       .select({
         fullName:  franchiseMcaTeamsTable.fullName,
@@ -125,7 +125,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── /admin-gotw payout ────────────────────────────────────────────────────
   if (sub === "payout") {
-    const season      = await getOrCreateActiveSeason();
+    const season      = await getOrCreateActiveSeason(interaction.guildId!);
     const currentWeek = (season as any).currentWeek ?? "1";
     const weekDisplay = weekLabel(currentWeek);
     const isPlayoff   = PLAYOFF_WEEKS.includes(currentWeek);
@@ -148,8 +148,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const lines: string[] = [];
     for (const user of users) {
-      await addBalance(user.id, bonus);
-      await logTransaction(user.id, bonus, "addcoins", `GOTW correct guess bonus — ${weekDisplay}`, interaction.user.id);
+      await addBalance(user.id, bonus, interaction.guildId!);
+      await logTransaction(user.id, bonus, "addcoins", `GOTW correct guess bonus — ${weekDisplay}`, interaction.guildId!, interaction.user.id);
       lines.push(`✅ <@${user.id}> → +**${bonus} coins**`);
       try {
         const discordUser = await interaction.client.users.fetch(user.id);

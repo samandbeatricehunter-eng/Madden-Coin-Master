@@ -36,7 +36,7 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // ── Determine next week ─────────────────────────────────────────────────────
   const currentWeek = season.currentWeek ?? "1";

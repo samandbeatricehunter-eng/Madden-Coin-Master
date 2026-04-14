@@ -1,6 +1,6 @@
 import { Client, Collection, GatewayIntentBits } from "discord.js";
 import { createServer } from "http";
-import { getOrCreateActiveSeason, normalizeDefensivePositions } from "./lib/db-helpers.js";
+import { getOrCreateActiveSeason, normalizeDefensivePositions, PRIMARY_GUILD_ID } from "./lib/db-helpers.js";
 
 // ── Unified admin + view commands ────────────────────────────────────────────
 import * as admin         from "./commands/admin.js";
@@ -198,7 +198,7 @@ if (!isProduction && !devBotEnabled) {
   }).listen(statusPort, () => console.log(`✅ Status server on :${statusPort}`));
 
   async function init() {
-    await getOrCreateActiveSeason();
+    await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
     await normalizeDefensivePositions();
     console.log("✅ Database initialized");
   }

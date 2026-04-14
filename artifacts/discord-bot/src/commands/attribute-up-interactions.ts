@@ -270,7 +270,7 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
   const presetAttr     = interaction.options.getString("attribute") ?? null;
   const presetQuantity = interaction.options.getInteger("quantity") ?? 1;
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // Fetch the player from the franchise roster
   const [playerRow] = await db
@@ -340,7 +340,7 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     session.isCore       = isCore;
     session.quantity     = qty;
 
-    const invoker   = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const invoker   = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
     const canAfford = invoker.balance >= total;
     const category  = isCore ? "Core ⭐" : "Non-core";
 
@@ -399,7 +399,7 @@ export async function handleAupPageNav(interaction: ButtonInteraction, direction
     ? Math.max(0, session.page - 1)
     : Math.min(totalPages - 1, session.page + 1);
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const rules  = await getSeasonRules(season);
 
   await interaction.update({
@@ -420,7 +420,7 @@ export async function handleAupSel(interaction: StringSelectMenuInteraction): Pr
   const attrName   = interaction.values[0]!;
   const current    = lookupAttrValue(session.attributes, attrName);
 
-  const season     = await getOrCreateActiveSeason();
+  const season     = await getOrCreateActiveSeason(interaction.guildId!);
   const rules      = await getSeasonRules(season);
   const coreSet    = getCoreAttributes(season);
   const isCore     = coreSet.has(attrName as any);
@@ -439,7 +439,7 @@ export async function handleAupSel(interaction: StringSelectMenuInteraction): Pr
   session.isCore        = isCore;
 
   // Show confirmation
-  const invoker = await getOrCreateUser(interaction.user.id, interaction.user.username);
+  const invoker = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
   const canAfford = invoker.balance >= cost;
   const category  = isCore ? "Core" : "Non-core";
 
@@ -486,7 +486,7 @@ export async function handleAupBack(interaction: ButtonInteraction): Promise<voi
     return;
   }
   session.selectedAttr = undefined;
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const rules  = await getSeasonRules(season);
   await interaction.update({
     embeds: [buildAttrPage(session, rules)],
@@ -521,10 +521,10 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
   await interaction.deferUpdate();
 
   try {
-    const season  = await getOrCreateActiveSeason();
+    const season  = await getOrCreateActiveSeason(interaction.guildId!);
     const stats   = await getSeasonStats(interaction.user.id, season.id);
     const rules   = await getSeasonRules(season);
-    const user    = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const user    = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
     const cost    = session.scaledCost;
     const qty     = session.quantity ?? 1;
     const isCore  = session.isCore ?? false;
@@ -552,10 +552,11 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
     }
 
     // Deduct coins
-    await deductBalance(interaction.user.id, cost);
+    await deductBalance(interaction.user.id, cost, interaction.guildId!);
     await logTransaction(
       interaction.user.id, -cost, "purchase",
-      `Attribute upgrade ×${qty} — ${session.selectedAttr} (${session.isCore ? "Core" : "Non-core"}) for ${session.playerName} (${session.playerPosition})`
+      `Attribute upgrade ×${qty} — ${session.selectedAttr} (${session.isCore ? "Core" : "Non-core"}) for ${session.playerName} (${session.playerPosition})`,
+      interaction.guildId!,
     );
 
     // Update season stats (increment by qty, not just 1)

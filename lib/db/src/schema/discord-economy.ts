@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json, uniqueIndex, real } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json, uniqueIndex, real, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -26,12 +26,13 @@ export const customPlayerTierEnum = pgEnum("custom_player_tier", [
 
 export const usersTable = pgTable("economy_users", {
   id: serial("id").primaryKey(),
-  discordId: text("discord_id").notNull().unique(),
+  discordId: text("discord_id").notNull(),
+  guildId:   text("guild_id").notNull().default("1476251181524189438"),
   discordUsername: text("discord_username").notNull(),
-  team: text("team").unique(),
+  team: text("team"),
   balance: integer("balance").notNull().default(0),
   totalLegendPurchases: integer("total_legend_purchases").notNull().default(0),
-  // All-time tracking for milestone payouts
+  // All-time tracking for milestone payouts (per-guild)
   allTimeSuperbowlWins:   integer("all_time_superbowl_wins").notNull().default(0),
   allTimeSuperbowlLosses: integer("all_time_superbowl_losses").notNull().default(0),
   allTimeH2HWins: integer("all_time_h2h_wins").notNull().default(0),
@@ -45,11 +46,15 @@ export const usersTable = pgTable("economy_users", {
   botEscalationLevel: integer("bot_escalation_level").notNull().default(0), // persistent rudeness memory
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  uniqDiscordGuild: uniqueIndex("economy_users_discord_guild_idx").on(t.discordId, t.guildId),
+  uniqTeamGuild:    uniqueIndex("economy_users_team_guild_idx").on(t.team, t.guildId),
+}));
 
 export const seasonsTable = pgTable("seasons", {
   id: serial("id").primaryKey(),
-  seasonNumber: integer("season_number").notNull().unique(),
+  guildId:      text("guild_id").notNull().default("1476251181524189438"),
+  seasonNumber: integer("season_number").notNull(),
   isActive: boolean("is_active").notNull().default(true),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   // Per-season overrides — null means use the default from constants.ts
@@ -70,10 +75,13 @@ export const seasonsTable = pgTable("seasons", {
   coreAttributesOverride: text("core_attributes_override"),
   // When true: MCA exports accumulate stats only — no payouts, no Discord notifications
   catchupMode: boolean("catchup_mode").notNull().default(false),
-});
+}, (t) => ({
+  uniqGuildSeason: uniqueIndex("seasons_guild_season_idx").on(t.guildId, t.seasonNumber),
+}));
 
 export const legendsTable = pgTable("legends", {
   id: serial("id").primaryKey(),
+  guildId:     text("guild_id").notNull().default("1476251181524189438"),
   name: text("name").notNull(),
   position: text("position").notNull(),
   description: text("description"),
@@ -159,6 +167,7 @@ export const userRecordsTable = pgTable("user_records", {
 // Individual game log for /recentH2H
 export const gameLogTable = pgTable("game_log", {
   id: serial("id").primaryKey(),
+  guildId:  text("guild_id").notNull().default("1476251181524189438"),
   discordId: text("discord_id").notNull(),
   seasonId: integer("season_id").notNull(),
   result: text("result").notNull(), // "win" | "loss"
@@ -169,33 +178,40 @@ export const gameLogTable = pgTable("game_log", {
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
-// ── All-time per-opponent H2H records ──────────────────────────────────────────
+// ── All-time per-opponent H2H records (per-guild) ─────────────────────────────
 // Pair stored in canonical order: discordId1 < discordId2 (lexicographic).
 // wins1 = wins for discordId1; wins2 = wins for discordId2.
 export const h2hMatchupRecordsTable = pgTable("h2h_matchup_records", {
   id:         serial("id").primaryKey(),
+  guildId:    text("guild_id").notNull().default("1476251181524189438"),
   discordId1: text("discord_id_1").notNull(),
   discordId2: text("discord_id_2").notNull(),
   wins1:      integer("wins_1").notNull().default(0),
   wins2:      integer("wins_2").notNull().default(0),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
-  uniquePair: uniqueIndex("h2h_matchup_pair_idx").on(t.discordId1, t.discordId2),
+  uniquePair: uniqueIndex("h2h_matchup_pair_idx").on(t.guildId, t.discordId1, t.discordId2),
 }));
 
 export const rulesTable = pgTable("rules", {
-  section: text("section").primaryKey(),
-  rules: json("rules").notNull().$type<string[]>(),
+  guildId:  text("guild_id").notNull().default("1476251181524189438"),
+  section:  text("section").notNull(),
+  rules:    json("rules").notNull().$type<string[]>(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   updatedBy: text("updated_by"),
-});
+}, (t) => ({
+  pk: primaryKey({ columns: [t.guildId, t.section] }),
+}));
 
 export const rulesSectionsTable = pgTable("rules_sections", {
-  key: text("key").primaryKey(),
-  title: text("title").notNull(),
-  color: integer("color").notNull().default(0x3498db),
+  guildId:   text("guild_id").notNull().default("1476251181524189438"),
+  key:       text("key").notNull(),
+  title:     text("title").notNull(),
+  color:     integer("color").notNull().default(0x3498db),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  pk: primaryKey({ columns: [t.guildId, t.key] }),
+}));
 
 export const payoutRequestsTable = pgTable("payout_requests", {
   id: serial("id").primaryKey(),
@@ -251,6 +267,7 @@ export const txTypeEnum = pgEnum("tx_type", [
 
 export const coinTransactionsTable = pgTable("coin_transactions", {
   id: serial("id").primaryKey(),
+  guildId:  text("guild_id").notNull().default("1476251181524189438"),
   discordId: text("discord_id").notNull(),
   amount: integer("amount").notNull(),
   type: txTypeEnum("type").notNull(),
@@ -269,8 +286,21 @@ export const userSavingsTable = pgTable("user_savings", {
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ── Global cross-server W/L/tie record ────────────────────────────────────────
+// Updated whenever a game result is recorded in ANY guild. Only two stats are
+// global: this W/L/tie record and user_savings.balance. Everything else
+// (balances, milestones, legends, seasons) is per-guild.
+export const globalUserRecordsTable = pgTable("global_user_records", {
+  discordId: text("discord_id").primaryKey(),
+  wins:      integer("wins").notNull().default(0),
+  losses:    integer("losses").notNull().default(0),
+  ties:      integer("ties").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const wagersTable = pgTable("wagers", {
   id: serial("id").primaryKey(),
+  guildId:  text("guild_id").notNull().default("1476251181524189438"),
   challengerId: text("challenger_id").notNull(),
   challengerUsername: text("challenger_username").notNull(),
   opponentId: text("opponent_id").notNull(),
@@ -291,7 +321,8 @@ export const wagersTable = pgTable("wagers", {
 
 // Tracks Madden franchise game IDs that have already been processed (dedup)
 export const franchiseProcessedGamesTable = pgTable("franchise_processed_games", {
-  gameId:           text("game_id").primaryKey(),
+  gameId:           text("game_id").primaryKey(),  // still per-EA-franchise unique; guildId for filtering
+  guildId:          text("guild_id").notNull().default("1476251181524189438"),
   processedAt:      timestamp("processed_at").notNull().defaultNow(),
   // Payout metadata — populated by franchise-update, used by admin-correctpayout for precise reversal
   payoutType:       text("payout_type"),       // "h2h" | "cpu" | "none" | null (legacy rows)
@@ -666,14 +697,17 @@ export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
   uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),
 }));
 
-// ── Configurable payout amounts (key → integer coin value) ───────────────────
+// ── Configurable payout amounts (key → integer coin value, per-guild) ────────
 export const payoutConfigTable = pgTable("payout_config", {
-  key:         text("key").primaryKey(),
+  guildId:     text("guild_id").notNull().default("1476251181524189438"),
+  key:         text("key").notNull(),
   value:       integer("value").notNull(),
   description: text("description").notNull().default(""),
   updatedAt:   timestamp("updated_at").notNull().defaultNow(),
   updatedBy:   text("updated_by"),
-});
+}, (t) => ({
+  pk: primaryKey({ columns: [t.guildId, t.key] }),
+}));
 
 // ── Pending polls awaiting expiry + result processing ─────────────────────────
 export const pendingPollsTable = pgTable("pending_polls", {
@@ -750,6 +784,7 @@ export type Purchase = typeof purchasesTable.$inferSelect;
 export type Inventory = typeof inventoryTable.$inferSelect;
 export type SeasonStats = typeof seasonStatsTable.$inferSelect;
 export type Season = typeof seasonsTable.$inferSelect;
+export type GlobalUserRecord = typeof globalUserRecordsTable.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertLegend = z.infer<typeof insertLegendSchema>;
 export type InsertPurchase = z.infer<typeof insertPurchaseSchema>;
@@ -798,6 +833,7 @@ export const statPaddingViolationsTable = pgTable("stat_padding_violations", {
 // ── Custom Archetypes ─────────────────────────────────────────────────────────
 export const customArchetypesTable = pgTable("custom_archetypes", {
   id:         serial("id").primaryKey(),
+  guildId:    text("guild_id").notNull().default("1476251181524189438"),
   position:   text("position").notNull(),          // "QB", "RB", etc.
   name:       text("name").notNull(),              // archetype name
   attributes: json("attributes").notNull().$type<Record<string, number>>(),
@@ -809,6 +845,7 @@ export const customArchetypesTable = pgTable("custom_archetypes", {
 // ── Custom Player Settings (Bronze/Silver/Gold points & costs) ────────────────
 export const customPlayerSettingsTable = pgTable("custom_player_settings", {
   id:           serial("id").primaryKey(),
+  guildId:      text("guild_id").notNull().default("1476251181524189438"),
   bronzePoints: integer("bronze_points").notNull().default(35),
   silverPoints: integer("silver_points").notNull().default(70),
   goldPoints:   integer("gold_points").notNull().default(100),
@@ -855,6 +892,7 @@ export const customPlayersTable = pgTable("custom_players", {
 // ── EA API direct connection (replaces MCA manual imports) ─────────────────────
 export const eaConnectionsTable = pgTable("ea_connections", {
   id:           serial("id").primaryKey(),
+  guildId:      text("guild_id").notNull().default("1476251181524189438"),
   eaLeagueId:   integer("ea_league_id").notNull().unique(),
   leagueName:   text("league_name").notNull().default(""),
   blazeId:      text("blaze_id").notNull(),

@@ -99,14 +99,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member        = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
 
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.editReply({ content: "❌ You don't have permission to use this command." });
     return;
   }
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const chosenWeek = interaction.options.getString("week");
 
   let newWeek: string;
@@ -157,11 +157,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         // Only award if status = 3 (H2H user-played — not CPU-simmed)
         if (gotwGame && gotwGame.status === 3) {
           const GOTW_BONUS = 10;
-          await addBalance(gotwRow.discordId1, GOTW_BONUS);
+          await addBalance(gotwRow.discordId1, GOTW_BONUS, interaction.guildId!);
           await logTransaction(gotwRow.discordId1, GOTW_BONUS, "addcoins",
             `GOTW participant bonus — Week ${oldWeekNum}`, "system");
 
-          await addBalance(gotwRow.discordId2, GOTW_BONUS);
+          await addBalance(gotwRow.discordId2, GOTW_BONUS, interaction.guildId!);
           await logTransaction(gotwRow.discordId2, GOTW_BONUS, "addcoins",
             `GOTW participant bonus — Week ${oldWeekNum}`, "system");
 

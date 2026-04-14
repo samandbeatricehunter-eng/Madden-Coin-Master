@@ -264,7 +264,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
   // Player autocomplete — covers add, update, iso, send-offer
   if (["player1","player2","player3","player4","player5"].includes(focused.name)) {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
     const rosterRows = await db.select({
       playerId:  franchiseRostersTable.playerId,
       firstName: franchiseRostersTable.firstName,
@@ -295,7 +295,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
   // Listing autocomplete — for remove/update
   if (focused.name === "listing") {
-    const season   = await getOrCreateActiveSeason();
+    const season   = await getOrCreateActiveSeason(interaction.guildId!);
     const listings = await db.select().from(tradeBlockListingsTable)
       .where(and(
         eq(tradeBlockListingsTable.discordId, interaction.user.id),
@@ -355,7 +355,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 async function handleAdd(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const season   = await getOrCreateActiveSeason();
+  const season   = await getOrCreateActiveSeason(interaction.guildId!);
   const teamName = await getMyTeam(interaction.user.id);
 
   // Enforce 3-listing cap
@@ -422,7 +422,7 @@ async function handleRemove(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const listingId = parseInt(interaction.options.getString("listing", true), 10);
-  const season    = await getOrCreateActiveSeason();
+  const season    = await getOrCreateActiveSeason(interaction.guildId!);
 
   const [listing] = await db.select().from(tradeBlockListingsTable)
     .where(and(
@@ -461,7 +461,7 @@ async function handleUpdate(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const listingId = parseInt(interaction.options.getString("listing", true), 10);
-  const season    = await getOrCreateActiveSeason();
+  const season    = await getOrCreateActiveSeason(interaction.guildId!);
   const teamName  = await getMyTeam(interaction.user.id);
 
   const [listing] = await db.select().from(tradeBlockListingsTable)
@@ -509,7 +509,7 @@ async function handleUpdate(interaction: ChatInputCommandInteraction) {
 async function handleISO(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const season   = await getOrCreateActiveSeason();
+  const season   = await getOrCreateActiveSeason(interaction.guildId!);
   const teamName = await getMyTeam(interaction.user.id);
 
   // Seeking
@@ -722,7 +722,7 @@ async function handleSendOffer(interaction: ChatInputCommandInteraction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  const season     = await getOrCreateActiveSeason();
+  const season     = await getOrCreateActiveSeason(interaction.guildId!);
   const rosterRows = await db.select({
     playerId:  franchiseRostersTable.playerId,
     firstName: franchiseRostersTable.firstName,

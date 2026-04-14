@@ -13,7 +13,7 @@ async function checkAdmin(interaction: ChatInputCommandInteraction | Autocomplet
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   if (member?.permissions.has(PermissionFlagsBits.Administrator)) return true;
-  return isAdminUser(interaction.user.id);
+  return isAdminUser(interaction.user.id, interaction.guildId!);
 }
 
 export const data = new SlashCommandBuilder()
@@ -65,7 +65,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const sub    = interaction.options.getSubcommand();
   const target = interaction.options.getUser("user", false);
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // "add_to_user_vault", "vault_view", and "move_in_inventory" all require a target user
   if (!target && sub !== "remove_from_inventory") {

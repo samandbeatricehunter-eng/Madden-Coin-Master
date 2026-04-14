@@ -59,13 +59,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     label     = found.team ?? found.discordUsername;
   } else if (targetUser) {
     discordId = targetUser.id;
-    await getOrCreateUser(discordId, targetUser.username);
+    await getOrCreateUser(discordId, targetUser.username, interaction.guildId!);
     const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
     label     = row[0]?.team ?? targetUser.username;
   } else {
     // Default: show caller's own record
     discordId = interaction.user.id;
-    await getOrCreateUser(discordId, interaction.user.username);
+    await getOrCreateUser(discordId, interaction.user.username, interaction.guildId!);
     const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
     label     = row[0]?.team ?? interaction.user.username;
   }

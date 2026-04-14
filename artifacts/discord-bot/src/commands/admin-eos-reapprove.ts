@@ -83,7 +83,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Credit coins and mark approved ────────────────────────────────────────
-  await addBalance(payout.discordId, payout.totalCoins);
+  await addBalance(payout.discordId, payout.totalCoins, interaction.guildId!);
   await logTransaction(
     payout.discordId,
     payout.totalCoins,

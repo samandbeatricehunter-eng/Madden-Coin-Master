@@ -78,7 +78,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "view_payout_settings") {
     const config = await getAllPayoutConfig();
     const keys   = getAllPayoutKeys();
-    const season     = await getOrCreateActiveSeason();
+    const season     = await getOrCreateActiveSeason(interaction.guildId!);
     const rules      = await getSeasonRules(season);
     const cpSettings = await getCustomPlayerSettings();
 

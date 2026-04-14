@@ -39,7 +39,7 @@ async function checkAdmin(interaction: ChatInputCommandInteraction): Promise<boo
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const discordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const dbAdmin      = await isAdminUser(interaction.user.id);
+  const dbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
   return discordAdmin || dbAdmin;
 }
 

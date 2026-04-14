@@ -238,7 +238,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       }
 
       if (focused.name === "position") {
-        const rosterSeasonId = await getRosterSeasonId();
+        const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
         const rows = await getRosterRows({ id: rosterSeasonId }, { position: franchiseRostersTable.position });
         const positions = [...new Set((rows as { position: string }[]).map(r => r.position).filter(Boolean))].sort();
         const q = focused.value.toLowerCase();
@@ -252,7 +252,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
       if (focused.name === "player") {
         const positionFilter = interaction.options.getString("position");
-        const rosterSeasonId = await getRosterSeasonId();
+        const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
         const season = { id: rosterSeasonId };
         const rows: { firstName: string; lastName: string; devTrait: number; overall: number; position: string }[] =
           await getRosterRows(season, {
@@ -327,8 +327,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── /purchase legend ─────────────────────────────────────────────────────────
   if (sub === "legend") {
-    const user   = await getOrCreateUser(interaction.user.id, interaction.user.username);
-    const season = await getOrCreateActiveSeason();
+    const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
     const rules  = await getSeasonRules(season);
     const cost   = rules.legendCost;
 
@@ -360,8 +360,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}).`)] });
     }
 
-    await deductBalance(interaction.user.id, cost);
-    await logTransaction(interaction.user.id, -cost, "purchase", `Legend purchase — ${legend.name} (${legend.position})`);
+    await deductBalance(interaction.user.id, cost, interaction.guildId!);
+    await logTransaction(interaction.user.id, -cost, "purchase", `Legend purchase — ${legend.name} (${legend.position})`, interaction.guildId!);
     const [purchase] = await db.insert(purchasesTable).values({
       discordId: interaction.user.id,
       seasonId: season.id,
@@ -391,10 +391,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const targetUser   = interaction.options.getUser("user") ?? interaction.user;
     const playerInput  = interaction.options.getString("player", true);
     const devUpType    = interaction.options.getString("dev_type", true);
-    const season       = await getOrCreateActiveSeason();
+    const season       = await getOrCreateActiveSeason(interaction.guildId!);
     const stats        = await getSeasonStats(interaction.user.id, season.id);
     const rules        = await getSeasonRules(season);
-    const user         = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const user         = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
     const costPer      = rules.devUpsCost;
     const totalCost    = costPer;
     const remaining    = rules.devUpsCap - stats.devUpsPurchased;
@@ -408,7 +408,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (user.balance < totalCost) return insufficientFunds(interaction, totalCost, user.balance);
 
     // Find the player on the roster (for their position + current dev trait) — use roster season in case new season not yet imported
-    const rosterSeasonId = await getRosterSeasonId();
+    const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
     const rosterRows = await db
       .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position, devTrait: franchiseRostersTable.devTrait })
       .from(franchiseRostersTable)
@@ -420,8 +420,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const playerPosition = match?.position ?? interaction.options.getString("position", true);
     const currentDevLabel = DEV_LABEL[match?.devTrait ?? 0] ?? "Normal";
 
-    await deductBalance(interaction.user.id, totalCost);
-    await logTransaction(interaction.user.id, -totalCost, "purchase", `Dev upgrade (${devUpType}) — ${playerInput} (${playerPosition})`);
+    await deductBalance(interaction.user.id, totalCost, interaction.guildId!);
+    await logTransaction(interaction.user.id, -totalCost, "purchase", `Dev upgrade (${devUpType}) — ${playerInput} (${playerPosition})`, interaction.guildId!);
     await db.update(seasonStatsTable)
       .set({ devUpsPurchased: sql`${seasonStatsTable.devUpsPurchased} + 1` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
@@ -467,10 +467,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "age_reset") {
     const targetUser   = interaction.options.getUser("user") ?? interaction.user;
     const playerInput  = interaction.options.getString("player", true);
-    const season       = await getOrCreateActiveSeason();
+    const season       = await getOrCreateActiveSeason(interaction.guildId!);
     const stats        = await getSeasonStats(interaction.user.id, season.id);
     const rules        = await getSeasonRules(season);
-    const user         = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const user         = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
     const costPer      = rules.ageResetCost;
     const remaining    = rules.ageResetsCap - stats.ageResetsPurchased;
 
@@ -483,7 +483,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (user.balance < costPer) return insufficientFunds(interaction, costPer, user.balance);
 
     // Find position + current age from roster — use roster season in case new season not yet imported
-    const rosterSeasonIdForAge = await getRosterSeasonId();
+    const rosterSeasonIdForAge = await getRosterSeasonId(interaction.guildId!);
     const rosterRows = await db
       .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position, age: franchiseRostersTable.age })
       .from(franchiseRostersTable)
@@ -495,8 +495,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const playerPosition = match?.position ?? interaction.options.getString("position", true);
     const currentAge = match?.age ?? null;
 
-    await deductBalance(interaction.user.id, costPer);
-    await logTransaction(interaction.user.id, -costPer, "purchase", `Age reset — ${playerInput} (${playerPosition})`);
+    await deductBalance(interaction.user.id, costPer, interaction.guildId!);
+    await logTransaction(interaction.user.id, -costPer, "purchase", `Age reset — ${playerInput} (${playerPosition})`, interaction.guildId!);
     await db.update(seasonStatsTable)
       .set({ ageResetsPurchased: sql`${seasonStatsTable.ageResetsPurchased} + 1` })
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));

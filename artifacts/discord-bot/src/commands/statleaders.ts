@@ -109,7 +109,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ?? interaction.options.getString("mode")
     ?? "all";
   const category = rawCategory === "watch" ? "teams" : rawCategory;
-  const season   = await getOrCreateActiveSeason();
+  const season   = await getOrCreateActiveSeason(interaction.guildId!);
 
   // ── Load data ───────────────────────────────────────────────────────────────
   // Alias the MCA teams table so we can join it twice (home + away)

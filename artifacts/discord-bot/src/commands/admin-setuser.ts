@@ -135,7 +135,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } else {
     discordId = targetUser!.id;
     username  = targetUser!.username;
-    await getOrCreateUser(discordId, username);
+    await getOrCreateUser(discordId, username, interaction.guildId!);
     const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
     team = row[0]?.team ?? null;
   }
@@ -192,7 +192,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  const season  = await getOrCreateActiveSeason();
+  const season  = await getOrCreateActiveSeason(interaction.guildId!);
   const changes: string[] = [];
 
   // ── Update economy_users ───────────────────────────────────────────────────
@@ -267,7 +267,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             await db.update(usersTable)
               .set({ balance: sql`${usersTable.balance} + ${milestone.coins}`, updatedAt: new Date() })
               .where(eq(usersTable.discordId, discordId));
-            await logTransaction(discordId, milestone.coins, "addcoins", `Win milestone bonus — ${milestone.label} (retroactive import)`);
+            await logTransaction(discordId, milestone.coins, "addcoins", `Win milestone bonus — ${milestone.label} (retroactive import)`, interaction.guildId!);
             changes.push(`${milestone.emoji} **Milestone awarded:** ${milestone.label} → +${milestone.coins.toLocaleString()} coins`);
             highestNewTier = Math.max(highestNewTier, milestone.tier);
           }

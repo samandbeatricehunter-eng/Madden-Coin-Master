@@ -3,9 +3,13 @@ import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
   inventoryTable, legendsTable, coinTransactionsTable, rulesTable, rulesSectionsTable,
   userRecordsTable, gameLogTable, customPlayersTable, franchiseRostersTable,
+  globalUserRecordsTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
 import { eq, and, sql, desc, ne } from "drizzle-orm";
+
+// ── Primary guild ID for the original server (legacy / default) ──────────────
+export const PRIMARY_GUILD_ID = "1476251181524189438";
 
 // ── Default rules (seeds the DB if a section has never been set) ───────────────
 export const SECTION_META: Record<string, { title: string; color: number }> = {
@@ -67,26 +71,29 @@ export const DEFAULT_RULES: Record<string, string[]> = {
   ],
 };
 
-export async function getOrSeedRules(section: string): Promise<string[]> {
-  const row = await db.select().from(rulesTable).where(eq(rulesTable.section, section)).limit(1);
+export async function getOrSeedRules(section: string, guildId: string): Promise<string[]> {
+  const row = await db.select().from(rulesTable)
+    .where(and(eq(rulesTable.guildId, guildId), eq(rulesTable.section, section)))
+    .limit(1);
   if (row.length > 0) return row[0]!.rules;
   const defaults = DEFAULT_RULES[section] ?? [];
-  await db.insert(rulesTable).values({ section, rules: defaults }).onConflictDoNothing();
+  await db.insert(rulesTable).values({ guildId, section, rules: defaults }).onConflictDoNothing();
   return defaults;
 }
 
-export async function setRules(section: string, rules: string[], updatedBy: string): Promise<void> {
+export async function setRules(section: string, rules: string[], updatedBy: string, guildId: string): Promise<void> {
   await db.insert(rulesTable)
-    .values({ section, rules, updatedBy, updatedAt: new Date() })
+    .values({ guildId, section, rules, updatedBy, updatedAt: new Date() })
     .onConflictDoUpdate({
-      target: rulesTable.section,
+      target: [rulesTable.guildId, rulesTable.section],
       set: { rules, updatedBy, updatedAt: new Date() },
     });
 }
 
 /** Returns all sections — built-in hardcoded ones merged with any custom ones stored in DB. */
-export async function getAllSections(): Promise<Record<string, { title: string; color: number }>> {
-  const customRows = await db.select().from(rulesSectionsTable);
+export async function getAllSections(guildId: string): Promise<Record<string, { title: string; color: number }>> {
+  const customRows = await db.select().from(rulesSectionsTable)
+    .where(eq(rulesSectionsTable.guildId, guildId));
   const merged: Record<string, { title: string; color: number }> = { ...SECTION_META };
   for (const row of customRows) {
     merged[row.key] = { title: row.title, color: row.color };
@@ -95,16 +102,16 @@ export async function getAllSections(): Promise<Record<string, { title: string; 
 }
 
 /** Create or update a custom section entry in the DB. */
-export async function createSection(key: string, title: string, color = 0x3498db): Promise<void> {
+export async function createSection(key: string, title: string, color = 0x3498db, guildId: string = PRIMARY_GUILD_ID): Promise<void> {
   await db.insert(rulesSectionsTable)
-    .values({ key, title, color })
-    .onConflictDoUpdate({ target: rulesSectionsTable.key, set: { title, color } });
+    .values({ guildId, key, title, color })
+    .onConflictDoUpdate({ target: [rulesSectionsTable.guildId, rulesSectionsTable.key], set: { title, color } });
 }
 
-export async function isAdminUser(discordId: string): Promise<boolean> {
+export async function isAdminUser(discordId: string, guildId: string): Promise<boolean> {
   const user = await db.select({ isAdmin: usersTable.isAdmin })
     .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)))
     .limit(1);
   return user[0]?.isAdmin ?? false;
 }
@@ -114,9 +121,11 @@ export async function logTransaction(
   amount: number,
   type: "purchase" | "purchase_refund" | "addcoins" | "removecoins" | "sendcoins_sent" | "sendcoins_received" | "season_adjustment" | "setbalance" | "savings_deposit" | "savings_withdraw" | "savings_interest",
   description: string,
+  guildId: string,
   relatedUserId?: string,
 ): Promise<void> {
   await db.insert(coinTransactionsTable).values({
+    guildId,
     discordId,
     amount,
     type,
@@ -125,31 +134,38 @@ export async function logTransaction(
   });
 }
 
-export async function getOrCreateUser(discordId: string, discordUsername: string): Promise<User> {
-  const existing = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+export async function getOrCreateUser(discordId: string, discordUsername: string, guildId: string): Promise<User> {
+  const existing = await db.select().from(usersTable)
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)))
+    .limit(1);
   if (existing.length > 0) {
-    // Update username in case it changed
-    await db.update(usersTable).set({ discordUsername, updatedAt: new Date() }).where(eq(usersTable.discordId, discordId));
+    await db.update(usersTable)
+      .set({ discordUsername, updatedAt: new Date() })
+      .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
     return existing[0]!;
   }
-  const [user] = await db.insert(usersTable).values({ discordId, discordUsername }).returning();
+  const [user] = await db.insert(usersTable).values({ discordId, guildId, discordUsername }).returning();
   return user!;
 }
 
-export async function getUserByDiscordId(discordId: string): Promise<User | null> {
-  const rows = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+export async function getUserByDiscordId(discordId: string, guildId: string): Promise<User | null> {
+  const rows = await db.select().from(usersTable)
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)))
+    .limit(1);
   return rows[0] ?? null;
 }
 
-export async function getActiveSeason(): Promise<Season | null> {
-  const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+export async function getActiveSeason(guildId: string): Promise<Season | null> {
+  const seasons = await db.select().from(seasonsTable)
+    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
+    .limit(1);
   return seasons[0] ?? null;
 }
 
-export async function getOrCreateActiveSeason(): Promise<Season> {
-  const existing = await getActiveSeason();
+export async function getOrCreateActiveSeason(guildId: string): Promise<Season> {
+  const existing = await getActiveSeason(guildId);
   if (existing) return existing;
-  const [season] = await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true }).returning();
+  const [season] = await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true }).returning();
   return season!;
 }
 
@@ -159,8 +175,8 @@ export async function getOrCreateActiveSeason(): Promise<Season> {
  * most recent season that does. This handles the common case where a new
  * season has been created but rosters haven't been re-imported from MCA yet.
  */
-export async function getRosterSeasonId(): Promise<number> {
-  const season = await getOrCreateActiveSeason();
+export async function getRosterSeasonId(guildId: string): Promise<number> {
+  const season = await getOrCreateActiveSeason(guildId);
 
   // Check if the active season has any roster rows
   const [check] = await db
@@ -188,24 +204,29 @@ export async function getSeasonStats(discordId: string, seasonId: number): Promi
   return newStats!;
 }
 
-export async function getUserBalance(discordId: string): Promise<number> {
-  const user = await db.select({ balance: usersTable.balance }).from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+export async function getUserBalance(discordId: string, guildId: string): Promise<number> {
+  const user = await db.select({ balance: usersTable.balance })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)))
+    .limit(1);
   return user[0]?.balance ?? 0;
 }
 
-export async function deductBalance(discordId: string, amount: number): Promise<boolean> {
-  const user = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+export async function deductBalance(discordId: string, amount: number, guildId: string): Promise<boolean> {
+  const user = await db.select().from(usersTable)
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)))
+    .limit(1);
   if (!user[0] || user[0].balance < amount) return false;
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} - ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, discordId));
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
   return true;
 }
 
-export async function addBalance(discordId: string, amount: number): Promise<void> {
+export async function addBalance(discordId: string, amount: number, guildId: string): Promise<void> {
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, discordId));
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
 }
 
 export async function getInventoryCount(discordId: string, seasonId: number) {
@@ -369,18 +390,15 @@ export async function normalizeDefensivePositions(): Promise<void> {
 }
 
 // ── Streak computation ─────────────────────────────────────────────────────────
-// Returns the current consecutive W/L streak for a user.
+// Returns the current consecutive W/L streak for a user within a guild.
 // h2hOnly=true skips CPU games (detected by [CPU] prefix on opponentLabel).
 // Orders by id DESC (not recordedAt) so batch-imported games within the same
 // timestamp don't produce non-deterministic results.
-export async function computeStreak(
-  discordId: string,
-  h2hOnly: boolean,
-): Promise<{ result: "win" | "loss" | null; count: number }> {
+export async function computeStreak(discordId: string, h2hOnly: boolean, guildId: string): Promise<{ result: "win" | "loss" | null; count: number }> {
   const rows = await db
     .select({ id: gameLogTable.id, result: gameLogTable.result, opponentLabel: gameLogTable.opponentLabel })
     .from(gameLogTable)
-    .where(eq(gameLogTable.discordId, discordId))
+    .where(and(eq(gameLogTable.discordId, discordId), eq(gameLogTable.guildId, guildId)))
     .orderBy(desc(gameLogTable.id));
 
   const filtered = h2hOnly
@@ -396,4 +414,28 @@ export async function computeStreak(
     else break;
   }
   return { result: firstResult, count };
+}
+
+// ── Global cross-server W/L/tie record ────────────────────────────────────────
+// Called from franchise-processor whenever any game result fires in any guild.
+// Only H2H games count — CPU wins do not update the global record.
+export async function upsertGlobalRecord(
+  discordId: string,
+  result: "win" | "loss" | "tie",
+): Promise<void> {
+  const incWins   = result === "win"  ? 1 : 0;
+  const incLosses = result === "loss" ? 1 : 0;
+  const incTies   = result === "tie"  ? 1 : 0;
+
+  await db.insert(globalUserRecordsTable)
+    .values({ discordId, wins: incWins, losses: incLosses, ties: incTies, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: globalUserRecordsTable.discordId,
+      set: {
+        wins:      sql`${globalUserRecordsTable.wins}   + ${incWins}`,
+        losses:    sql`${globalUserRecordsTable.losses} + ${incLosses}`,
+        ties:      sql`${globalUserRecordsTable.ties}   + ${incTies}`,
+        updatedAt: new Date(),
+      },
+    });
 }

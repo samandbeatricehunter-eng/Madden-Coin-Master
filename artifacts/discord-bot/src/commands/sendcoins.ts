@@ -32,18 +32,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return interaction.editReply({ embeds: [errorEmbed("Invalid Transfer", "You cannot send coins to a bot.")] });
   }
 
-  await getOrCreateUser(interaction.user.id, interaction.user.username);
-  await getOrCreateUser(target.id, target.username);
+  await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
+  await getOrCreateUser(target.id, target.username, interaction.guildId!);
 
-  const balance = await getUserBalance(interaction.user.id);
+  const balance = await getUserBalance(interaction.user.id, interaction.guildId!);
   if (balance < amount) {
     return interaction.editReply({
       embeds: [errorEmbed("Insufficient Funds", `You only have **${balance.toLocaleString()} coins** but tried to send **${amount.toLocaleString()} coins**.`)],
     });
   }
 
-  await deductBalance(interaction.user.id, amount);
-  await addBalance(target.id, amount);
+  await deductBalance(interaction.user.id, amount, interaction.guildId!);
+  await addBalance(target.id, amount, interaction.guildId!);
 
   await logTransaction(
     interaction.user.id,

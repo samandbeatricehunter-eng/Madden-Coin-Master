@@ -5,7 +5,7 @@ import {
   franchiseScheduleTable, playoffGotwPollsTable,
 } from "@workspace/db";
 import { eq, and, gte, lt } from "drizzle-orm";
-import { addBalance, logTransaction } from "./db-helpers.js";
+import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 
 export const GOTW_CHANNEL_ID    = "1485290029294289037";
@@ -258,6 +258,7 @@ export async function autoPayoutGotwVoters(
   weekIndex: number,  // the week whose GOTW result we're paying out
   weekNum:   number,  // human-readable (weekIndex + 1)
   isPlayoff: boolean,
+  guildId:   string = PRIMARY_GUILD_ID,
 ): Promise<string> {
   if (weekIndex < 0) return "";
 
@@ -371,11 +372,11 @@ export async function autoPayoutGotwVoters(
   for (const [userId, user] of voters) {
     // Don't pay the winning player themselves (they already get the H2H payout)
     // — actually the user may want to allow it; let's just pay all voters equally
-    await addBalance(userId, bonus);
+    await addBalance(userId, bonus, guildId);
     await logTransaction(
       userId, bonus, "addcoins",
       `GOTW correct guess bonus — ${weekLabel}`,
-      "auto",
+      guildId, "auto",
     );
     paid.push(`<@${userId}>`);
 
@@ -417,6 +418,7 @@ export async function autoPayoutPlayoffGotw(
   seasonId:   number,
   weekIndex:  number,  // 18=wildcard, 19=divisional, 20=conference, 22=superbowl
   weekLabel:  string,  // "wildcard" | "divisional" | "conference" | "superbowl" (for display)
+  guildId:    string = PRIMARY_GUILD_ID,
 ): Promise<string> {
   const polls = await db.select()
     .from(playoffGotwPollsTable)
@@ -518,11 +520,11 @@ export async function autoPayoutPlayoffGotw(
 
     const paid: string[] = [];
     for (const [userId, user] of voters) {
-      await addBalance(userId, playoffBonus);
+      await addBalance(userId, playoffBonus, guildId);
       await logTransaction(
         userId, playoffBonus, "addcoins",
         `Playoff GOTW correct guess — ${weekLabel} (${poll.teamName1} vs ${poll.teamName2})`,
-        "auto",
+        guildId, "auto",
       );
       paid.push(`<@${userId}>`);
       try {

@@ -74,7 +74,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Ensure all users exist in DB ──────────────────────────────────────────
   for (const uid of userIds) {
     const discordUser = await interaction.client.users.fetch(uid).catch(() => null);
-    if (discordUser) await getOrCreateUser(uid, discordUser.username);
+    if (discordUser) await getOrCreateUser(uid, discordUser.username, interaction.guildId!);
   }
 
   // ── Bulk add balance ──────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const failedIds:    string[] = [];
 
   await Promise.all(userIds.map(async uid => {
-    await logTransaction(uid, amount, "addcoins", txReason, interaction.user.id);
+    await logTransaction(uid, amount, "addcoins", txReason, interaction.guildId!, interaction.user.id);
 
     const newBal = balanceMap.get(uid);
     const discordUser = await interaction.client.users.fetch(uid).catch(() => null);

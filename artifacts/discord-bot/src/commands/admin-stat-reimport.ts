@@ -63,7 +63,7 @@ const SEASON_TOTAL   = REG_TOTAL + PLAYOFF_TOTAL; // 22
 async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const safeModeVal = await getPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE);
   const safeModeActive = safeModeVal > 0;
 
@@ -170,7 +170,7 @@ async function handleEnable(interaction: ChatInputCommandInteraction): Promise<v
   }
 
   await interaction.deferReply({ ephemeral: true });
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // Count what will be deleted
   const [{ playerRows }] = await db
@@ -329,7 +329,7 @@ async function handleFixTurnover(interaction: ChatInputCommandInteraction): Prom
   }
 
   // 3. Patch ONLY turnoverDiff in team_season_stats for the active season
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   let updated = 0;
 
   for (const [teamId, diff] of toDiffByTeam) {
@@ -386,7 +386,7 @@ async function handleDisable(interaction: ChatInputCommandInteraction): Promise<
   const wasActive = (await getPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE)) > 0;
   await setPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE, 0, interaction.user.id);
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // Quick stat summary so commissioner can confirm data looks right
   const [regWeekRows, postWeekRows] = await Promise.all([

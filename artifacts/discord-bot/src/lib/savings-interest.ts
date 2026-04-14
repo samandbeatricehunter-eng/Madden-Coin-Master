@@ -2,7 +2,7 @@ import { db } from "@workspace/db";
 import { userSavingsTable, payoutConfigTable } from "@workspace/db";
 import { gt, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { logTransaction } from "./db-helpers.js";
+import { logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 const RATE_KEY      = "savings_interest_rate";   // stored as basis points (100 = 1%)
 const LAST_RUN_KEY  = "savings_last_interest_at"; // stored as unix epoch seconds
@@ -85,6 +85,7 @@ async function runInterestPayout(): Promise<{ usersRewarded: number; totalCoins:
       interest,
       "savings_interest",
       `Daily savings interest: ${(rateBps / 100).toFixed(2)}% on ${holder.balance.toLocaleString()} coins`,
+      PRIMARY_GUILD_ID,
     );
 
     usersRewarded++;

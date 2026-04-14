@@ -20,7 +20,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // Load all roster data for this season
   const rosterRows = await db

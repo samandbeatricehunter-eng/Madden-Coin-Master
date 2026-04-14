@@ -58,7 +58,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member         = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.editReply({ content: "❌ You don't have permission to use this command." });
     return;
@@ -76,7 +76,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const H2H_LOSS_PAYOUT = await getPayoutValue(PAYOUT_KEYS.H2H_LOSS);
   const CPU_WIN_PAYOUT  = await getPayoutValue(PAYOUT_KEYS.CPU_WIN);
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   const [homeUser] = await db.select().from(usersTable).where(eq(usersTable.discordId, homeDiscordUser.id)).limit(1);
   if (!homeUser) {

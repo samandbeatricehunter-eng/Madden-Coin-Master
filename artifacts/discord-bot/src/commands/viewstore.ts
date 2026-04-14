@@ -101,7 +101,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const season     = await getOrCreateActiveSeason();
+  const season     = await getOrCreateActiveSeason(interaction.guildId!);
   const rules      = await getSeasonRules(season);
   const cpSettings = await getCustomPlayerSettings();
 

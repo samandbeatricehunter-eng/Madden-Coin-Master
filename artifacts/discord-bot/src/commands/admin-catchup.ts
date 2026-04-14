@@ -36,7 +36,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const sub    = interaction.options.getSubcommand(true);
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // ── STATUS ──────────────────────────────────────────────────────────────────
   if (sub === "status") {

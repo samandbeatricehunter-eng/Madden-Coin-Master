@@ -7,7 +7,7 @@ import { Client, EmbedBuilder, Colors, TextChannel } from "discord.js";
 import { db } from "@workspace/db";
 import { franchiseScheduleTable, franchiseMcaTeamsTable, usersTable } from "@workspace/db";
 import { eq, and, asc, isNotNull } from "drizzle-orm";
-import { getRosterSeasonId } from "./db-helpers.js";
+import { getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 const SCHEDULE_CHANNEL_ID = "1478947361014288445";
 
@@ -16,7 +16,7 @@ const SCHEDULE_CHANNEL_ID = "1478947361014288445";
  * Indexes by MCA fullName + nickName so schedule names match correctly.
  */
 async function buildMentionMap(seasonId: number): Promise<Map<string, string>> {
-  const rosterSeasonId = await getRosterSeasonId();
+  const rosterSeasonId = await getRosterSeasonId(PRIMARY_GUILD_ID);
 
   const mcaTeams = await db
     .select({

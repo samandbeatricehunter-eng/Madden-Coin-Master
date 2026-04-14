@@ -587,7 +587,7 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
   let channelNote = "";
   if (failed.length === 0) {
     try {
-      const season      = await getOrCreateActiveSeason();
+      const season      = await getOrCreateActiveSeason(interaction.guildId!);
       const postedWeeks = await postFullSeasonScheduleToChannel(
         interaction.client,
         season.id,

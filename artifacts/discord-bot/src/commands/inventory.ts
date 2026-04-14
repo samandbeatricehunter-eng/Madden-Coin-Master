@@ -18,8 +18,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
-  const season = await getOrCreateActiveSeason();
+  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // ── Current-season items (devUps, ageResets, attributes, this season's legends/customs) ──
   // These are non-permanent items bought in the active season.

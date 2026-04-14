@@ -36,7 +36,7 @@ export const data = new SlashCommandBuilder()
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
   const focused = interaction.options.getFocused().toLowerCase();
-  const allSections = await getAllSections();
+  const allSections = await getAllSections(interaction.guildId!);
   const choices = Object.entries(allSections)
     .map(([key, meta]) => ({ name: meta.title.replace(/[\u{1F300}-\u{1FFFF}]/gu, "").trim(), value: key }))
     .filter(c => c.name.toLowerCase().includes(focused) || c.value.toLowerCase().includes(focused))
@@ -50,14 +50,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const mention    = interaction.options.getString("mention") as "everyone" | "here" | null;
   const taggedUser = interaction.options.getUser("user");
 
-  const allSections = await getAllSections();
+  const allSections = await getAllSections(interaction.guildId!);
   const meta = allSections[section];
   if (!meta) {
     await interaction.reply({ content: "❌ Unknown rules section. Use `/rules` and pick from the list.", ephemeral: true });
     return;
   }
 
-  const rules = await getOrSeedRules(section);
+  const rules = await getOrSeedRules(section, interaction.guildId!);
 
   // ── Resolve how to address the reply ─────────────────────────────────────────
   // Priority: mention (@everyone/@here) > tagged user > no tag (ephemeral)
@@ -68,11 +68,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (mention === "everyone") {
     prefix          = "@everyone";
     ephemeral       = false;
-    allowedMentions = { parse: ["everyone"] };
+    allowedMentions = { parse: ["everyone" as import("discord.js").AllowedMentionsTypes] };
   } else if (mention === "here") {
     prefix          = "@here";
     ephemeral       = false;
-    allowedMentions = { parse: ["everyone"] };   // discord.js uses "everyone" key for both @everyone and @here
+    allowedMentions = { parse: ["everyone" as import("discord.js").AllowedMentionsTypes] };   // discord.js uses "everyone" key for both @everyone and @here
   } else if (taggedUser) {
     prefix    = taggedUser.toString();
     ephemeral = false;

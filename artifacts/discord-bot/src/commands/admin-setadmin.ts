@@ -35,7 +35,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
 
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.editReply({ content: "❌ You do not have permission to use admin commands." });

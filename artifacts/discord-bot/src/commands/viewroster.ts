@@ -106,7 +106,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
   const focused = interaction.options.getFocused().toLowerCase();
 
   try {
-    const rosterSeasonId = await getRosterSeasonId();
+    const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
 
     // Distinct team names in this season (or fallback season), ordered alphabetically
     const rows = await db
@@ -157,7 +157,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // If the active season has no roster data yet, fall back to the most recent
   // season that does (e.g. right after a new season starts before MCA import).
-  const rosterSeasonId = await getRosterSeasonId();
+  const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
   const [season] = rosterSeasonId === activeSeason.id
     ? [activeSeason]
     : await db.select().from(seasonsTable).where(eq(seasonsTable.id, rosterSeasonId)).limit(1);

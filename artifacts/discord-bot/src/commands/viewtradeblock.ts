@@ -255,7 +255,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const isPublic      = interaction.options.getBoolean("public") ?? false;
   const wantsAdmin    = interaction.options.getBoolean("admin") ?? false;
-  const isAdminMode   = wantsAdmin && await isAdminUser(interaction.user.id);
+  const isAdminMode   = wantsAdmin && await isAdminUser(interaction.user.id, interaction.guildId!);
 
   if (wantsAdmin && !isAdminMode) {
     await interaction.reply({ content: "❌ Admin mode is restricted to league commissioners.", ephemeral: true });
@@ -264,7 +264,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await interaction.deferReply({ ephemeral: !isPublic });
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const { embed, components } = await buildPageResponse(interaction.user.id, 0, isAdminMode, season.id);
 
   await interaction.editReply({ embeds: [embed], components });

@@ -77,12 +77,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } else if (targetUser) {
     discordId = targetUser.id;
     username  = targetUser.username;
-    await getOrCreateUser(discordId, username);
+    await getOrCreateUser(discordId, username, interaction.guildId!);
   } else {
-    await getOrCreateUser(discordId, username);
+    await getOrCreateUser(discordId, username, interaction.guildId!);
   }
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const stats  = await getSeasonStats(discordId, season.id);
   const rules  = await getSeasonRules(season);
   const legendHistory = await getLegendPurchaseHistory(discordId);

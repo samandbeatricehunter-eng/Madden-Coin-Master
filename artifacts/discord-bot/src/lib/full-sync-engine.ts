@@ -17,7 +17,7 @@ import {
   gameLogTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "./db-helpers.js";
+import { getOrCreateActiveSeason, PRIMARY_GUILD_ID } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { listMcaFilesSafe, readMcaJson, mcaFileExists } from "./gcs-reader.js";
 
@@ -671,7 +671,7 @@ export async function runFullSync(
     errors:            [],
   };
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
 
   await runTeamAutoLink(guildMembers, report);
   await runGcsScheduleProcessing(season.id, report);

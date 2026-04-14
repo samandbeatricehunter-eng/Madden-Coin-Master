@@ -9,7 +9,7 @@ import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "./gotw-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
-import { getRosterSeasonId } from "./db-helpers.js";
+import { getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
 const MIN_COMPLETED_STATUS = 2;
@@ -37,7 +37,7 @@ export interface RunWeeklyMatchupsOpts {
  * Exported so the GOTW decline handler can use the same map-building logic.
  */
 export async function buildTeamToDiscord(): Promise<Map<string, string>> {
-  const rosterSeasonId = await getRosterSeasonId();
+  const rosterSeasonId = await getRosterSeasonId(PRIMARY_GUILD_ID);
   const mcaTeams = await db
     .select({
       fullName:  franchiseMcaTeamsTable.fullName,

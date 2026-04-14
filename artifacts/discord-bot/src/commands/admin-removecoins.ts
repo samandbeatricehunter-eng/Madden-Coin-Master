@@ -32,10 +32,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const reason = interaction.options.getString("reason");
   const allowNegative = interaction.options.getBoolean("allow_negative") ?? false;
 
-  await getOrCreateUser(target.id, target.username);
+  await getOrCreateUser(target.id, target.username, interaction.guildId!);
 
   if (!allowNegative) {
-    const balance = await getUserBalance(target.id);
+    const balance = await getUserBalance(target.id, interaction.guildId!);
     if (balance < amount) {
       return interaction.editReply({
         embeds: [

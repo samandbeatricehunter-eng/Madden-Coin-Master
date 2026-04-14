@@ -22,14 +22,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member       = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
 
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.editReply({ content: "❌ You don't have permission to use this command." });
     return;
   }
 
-  const season      = await getOrCreateActiveSeason();
+  const season      = await getOrCreateActiveSeason(interaction.guildId!);
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
 
@@ -47,8 +47,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const lines: string[] = [];
   for (const user of players) {
-    await addBalance(user.id, POTW_BONUS);
-    await logTransaction(user.id, POTW_BONUS, "addcoins", `Player of the Week bonus — ${weekDisplay}`, interaction.user.id);
+    await addBalance(user.id, POTW_BONUS, interaction.guildId!);
+    await logTransaction(user.id, POTW_BONUS, "addcoins", `Player of the Week bonus — ${weekDisplay}`, interaction.guildId!, interaction.user.id);
     lines.push(`🌟 <@${user.id}> → +**${POTW_BONUS} coins**`);
     try {
       const discordUser = await interaction.client.users.fetch(user.id);

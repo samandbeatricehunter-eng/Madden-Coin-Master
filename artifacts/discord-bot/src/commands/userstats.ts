@@ -45,7 +45,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const target  = interaction.options.getUser("user") ?? interaction.user;
   const isSelf  = target.id === interaction.user.id;
-  const season  = await getOrCreateActiveSeason();
+  const season  = await getOrCreateActiveSeason(interaction.guildId!);
   const weekDisplay = weekLabel((season as any).currentWeek ?? "1");
 
   // ── Core user record ──────────────────────────────────────────────────────
@@ -77,8 +77,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .where(eq(userRecordsTable.discordId, target.id)),
 
     getSavings(target.id),
-    computeStreak(target.id, false),
-    computeStreak(target.id, true),
+    computeStreak(target.id, false, interaction.guildId!),
+    computeStreak(target.id, true, interaction.guildId!),
   ]);
 
   // Build the team-aware WHERE clause for permanent vault items.

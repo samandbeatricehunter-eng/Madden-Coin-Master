@@ -7,7 +7,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, sql } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel, GOTW_CHANNEL_ID } from "./gotw-helpers.js";
-import { addBalance, logTransaction } from "./db-helpers.js";
+import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
 
 const MATCHUPS_CHANNEL_ID  = "1478777175128932463";
@@ -263,6 +263,7 @@ export async function payoutPlayoffRoundResults(
   client:  Client,
   season:  Season,
   weekKey: string,
+  guildId: string = PRIMARY_GUILD_ID,
 ): Promise<string> {
   const meta = PLAYOFF_WEEK_META[weekKey];
   if (!meta) return `❌ Unknown playoff week: ${weekKey}`;
@@ -369,13 +370,13 @@ export async function payoutPlayoffRoundResults(
       : PLAYOFF_WIN_BONUS_WC;
 
     // ── Award coins ─────────────────────────────────────────────────────
-    await addBalance(winnerId, winBonus);
+    await addBalance(winnerId, winBonus, guildId);
     await logTransaction(winnerId, winBonus, "addcoins",
-      `Playoff win vs ${loserTeam} — ${label} (${hiScore}–${loScore})`);
+      `Playoff win vs ${loserTeam} — ${label} (${hiScore}–${loScore})`, guildId);
 
-    await addBalance(loserId, PLAYOFF_LOSS_BONUS);
+    await addBalance(loserId, PLAYOFF_LOSS_BONUS, guildId);
     await logTransaction(loserId, PLAYOFF_LOSS_BONUS, "addcoins",
-      `Playoff elimination vs ${winnerTeam} — ${label} (${loScore}–${hiScore})`);
+      `Playoff elimination vs ${winnerTeam} — ${label} (${loScore}–${hiScore})`, guildId);
 
     // ── Update season playoff W/L in userRecordsTable ───────────────────
     // Upsert for winner

@@ -55,7 +55,7 @@ async function checkAdmin(interaction: ChatInputCommandInteraction): Promise<boo
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   if (member?.permissions.has(PermissionFlagsBits.Administrator)) return true;
-  return isAdminUser(interaction.user.id);
+  return isAdminUser(interaction.user.id, interaction.guildId!);
 }
 
 export const data = new SlashCommandBuilder()
@@ -111,7 +111,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── VIEW ────────────────────────────────────────────────────────────────────
   if (sub === "view") {
     const targetUser = interaction.options.getUser("user", true);
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
 
     const items = await db.select().from(inventoryTable)
       .where(
@@ -207,7 +207,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const targetUser = interaction.options.getUser("user", true);
     const notes      = interaction.options.getString("notes")?.trim() ?? "";
 
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
 
     const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
       .from(usersTable)

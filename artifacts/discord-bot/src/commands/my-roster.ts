@@ -103,7 +103,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Get the season that has roster data (falls back if new season not yet imported) ──
-  const rosterSeasonId = await getRosterSeasonId();
+  const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
   const [season] = await db.select().from(seasonsTable).where(eq(seasonsTable.id, rosterSeasonId)).limit(1);
 
   // ── Fetch roster for this user's team ────────────────────────────────────

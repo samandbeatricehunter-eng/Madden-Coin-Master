@@ -79,10 +79,10 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username);
+  const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
   const requesterTeam = requester.team ?? interaction.user.username;
 
-  const season      = await getOrCreateActiveSeason();
+  const season      = await getOrCreateActiveSeason(interaction.guildId!);
   const currentWeek = (season as any).currentWeek ?? "1";
   const weekDisplay = weekLabel(currentWeek);
 

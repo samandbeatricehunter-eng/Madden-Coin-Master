@@ -112,7 +112,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const member       = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id);
+  const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
 
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.editReply({ content: "❌ You don't have permission to use this command." });
@@ -169,8 +169,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const lines: string[] = [];
     for (const { user } of winners) {
-      await addBalance(user.id, DIVISION_BONUS);
-      await logTransaction(user.id, DIVISION_BONUS, "addcoins", "Division winner bonus", interaction.user.id);
+      await addBalance(user.id, DIVISION_BONUS, interaction.guildId!);
+      await logTransaction(user.id, DIVISION_BONUS, "addcoins", "Division winner bonus", interaction.guildId!, interaction.user.id);
       lines.push(`✅ <@${user.id}> → +**${DIVISION_BONUS} coins**`);
       try {
         const discordUser = await interaction.client.users.fetch(user.id);

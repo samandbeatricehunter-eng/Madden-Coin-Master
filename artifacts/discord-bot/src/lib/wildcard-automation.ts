@@ -26,7 +26,7 @@ import {
 } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
-import { addBalance, logTransaction } from "./db-helpers.js";
+import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { postSeasonRecap } from "./season-recap.js";
 
@@ -402,9 +402,9 @@ async function postAwards(
     const discordId = teamNameToDiscord.get(teamNick.toLowerCase().trim());
     if (discordId && !bonusedTeams.has(discordId) && awardWinBonus > 0) {
       bonusedTeams.add(discordId);
-      await addBalance(discordId, awardWinBonus);
+      await addBalance(discordId, awardWinBonus, PRIMARY_GUILD_ID);
       await logTransaction(discordId, awardWinBonus, "addcoins",
-        `Season ${seasonNumber} in-game award winner bonus`, "system");
+        `Season ${seasonNumber} in-game award winner bonus`, PRIMARY_GUILD_ID, "system");
       try {
         const user = await client.users.fetch(discordId);
         await user.send(
@@ -511,9 +511,9 @@ async function issueSeasonPrBonuses(
     const bonus = rankToPayout(entry.rank);
 
     if (mca?.discordId) {
-      await addBalance(mca.discordId, bonus);
+      await addBalance(mca.discordId, bonus, PRIMARY_GUILD_ID);
       await logTransaction(mca.discordId, bonus, "addcoins",
-        `Season PR ranking bonus — #${entry.rank} (${teamDisplay})`, "system");
+        `Season PR ranking bonus — #${entry.rank} (${teamDisplay})`, PRIMARY_GUILD_ID, "system");
       try {
         const u = await client.users.fetch(mca.discordId);
         await u.send(

@@ -37,7 +37,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const isAdmin = await isAdminUser(interaction.user.id);
+  const isAdmin = await isAdminUser(interaction.user.id, interaction.guildId!);
   if (!isAdmin && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
     return interaction.editReply({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Access Denied").setDescription("This command requires administrator permissions.")],

@@ -239,7 +239,7 @@ async function handleButton(interaction: ButtonInteraction) {
       const member = interaction.guild?.members.cache.get(clickerId)
         ?? await interaction.guild?.members.fetch(clickerId).catch(() => null);
       const hasDiscordAdmin = member?.permissions.has(0x8n) ?? false; // ADMINISTRATOR bit
-      const hasDbAdmin      = await isAdminUser(clickerId);
+      const hasDbAdmin      = await isAdminUser(clickerId, interaction.guildId!);
       isAdmin = hasDiscordAdmin || hasDbAdmin;
     }
 
@@ -284,7 +284,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const member = interaction.guild?.members.cache.get(interaction.user.id)
       ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
     const hasDiscordAdmin = member?.permissions.has(0x8n) ?? false;
-    const hasDbAdmin      = await isAdminUser(interaction.user.id);
+    const hasDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
 
     if (!hasDiscordAdmin && !hasDbAdmin) {
       await interaction.followUp({
@@ -504,10 +504,10 @@ async function handleButton(interaction: ButtonInteraction) {
     if (purchase.status === "refunded") { await interaction.followUp({ content: "⚠️ Already refunded.",  ephemeral: true }); return; }
 
     await db.update(purchasesTable).set({ status: "refunded" }).where(eq(purchasesTable.id, purchaseId));
-    await addBalance(userId!, purchase.cost);
+    await addBalance(userId!, purchase.cost, interaction.guildId!);
     await logTransaction(userId!, purchase.cost, "purchase_refund",
       `Refund: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`,
-      interaction.user.id);
+      interaction.guildId!, interaction.user.id);
 
     if (purchaseType === "legend") {
       await db.update(usersTable)
@@ -558,10 +558,10 @@ async function handleButton(interaction: ButtonInteraction) {
 
     // Refund coins
     await db.update(purchasesTable).set({ status: "refunded" }).where(eq(purchasesTable.id, purchaseId));
-    await addBalance(buyerId, purchase.cost);
+    await addBalance(buyerId, purchase.cost, interaction.guildId!);
     await logTransaction(buyerId, purchase.cost, "purchase_refund",
       `Draft revoked: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`,
-      interaction.user.id);
+      interaction.guildId!, interaction.user.id);
 
     // Restore legend to store if applicable
     if (purchase.purchaseType === "legend" && purchase.legendId) {
@@ -605,8 +605,8 @@ async function handleButton(interaction: ButtonInteraction) {
       return;
     }
 
-    await addBalance(interview.discordId, INTERVIEW_PAYOUT);
-    await logTransaction(interview.discordId, INTERVIEW_PAYOUT, "addcoins", "Post-game interview payout", interaction.user.id);
+    await addBalance(interview.discordId, INTERVIEW_PAYOUT, interaction.guildId!);
+    await logTransaction(interview.discordId, INTERVIEW_PAYOUT, "addcoins", "Post-game interview payout", interaction.guildId!, interaction.user.id);
     await db.update(interviewRequestsTable)
       .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
       .where(eq(interviewRequestsTable.id, interviewId));
@@ -740,13 +740,13 @@ async function handleButton(interaction: ButtonInteraction) {
     }
 
     // Deduct from both — coins go into holding (tracked by wager record)
-    await addBalance(wager.challengerId, -wager.amount);
+    await addBalance(wager.challengerId, -wager.amount, interaction.guildId!);
     await logTransaction(wager.challengerId, -wager.amount, "removecoins",
-      `Wager #${wagerId} held: ${wager.teamFor} vs ${wager.teamAgainst}`, wager.opponentId);
+      `Wager #${wagerId} held: ${wager.teamFor} vs ${wager.teamAgainst}`, interaction.guildId!, wager.opponentId);
 
-    await addBalance(wager.opponentId, -wager.amount);
+    await addBalance(wager.opponentId, -wager.amount, interaction.guildId!);
     await logTransaction(wager.opponentId, -wager.amount, "removecoins",
-      `Wager #${wagerId} held: ${wager.teamAgainst} vs ${wager.teamFor}`, wager.challengerId);
+      `Wager #${wagerId} held: ${wager.teamAgainst} vs ${wager.teamFor}`, interaction.guildId!, wager.challengerId);
 
     await db.update(wagersTable).set({ status: "active" }).where(eq(wagersTable.id, wagerId));
 
@@ -882,9 +882,9 @@ async function handleButton(interaction: ButtonInteraction) {
     const loserTeam  = winnerId === wager.challengerId ? wager.teamAgainst : wager.teamFor;
 
     // Pay out the full pot to the winner
-    await addBalance(winnerId, wager.pot);
+    await addBalance(winnerId, wager.pot, interaction.guildId!);
     await logTransaction(winnerId, wager.pot, "addcoins",
-      `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, interaction.user.id);
+      `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, interaction.guildId!, interaction.user.id);
 
     await db.update(wagersTable)
       .set({ status: "completed", winnerId, resolvedAt: new Date(), resolvedBy: interaction.user.id })
@@ -929,7 +929,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const payoutId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    if (!(await isAdminUser(interaction.user.id))) {
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
       await interaction.followUp({ content: "❌ Only commissioners can approve payouts.", ephemeral: true });
       return;
     }
@@ -946,15 +946,15 @@ async function handleButton(interaction: ButtonInteraction) {
     }
 
     // Award coins to streamer
-    await addBalance(payout.discordId, payout.amount);
+    await addBalance(payout.discordId, payout.amount, interaction.guildId!);
     await logTransaction(payout.discordId, payout.amount, "addcoins",
-      `Stream payout — Week ${payout.week}`, interaction.user.id);
+      `Stream payout — Week ${payout.week}`, interaction.guildId!, interaction.user.id);
 
     // Award coins to H2H opponent if applicable
     if (payout.opponentDiscordId && payout.opponentAmount) {
-      await addBalance(payout.opponentDiscordId, payout.opponentAmount);
+      await addBalance(payout.opponentDiscordId, payout.opponentAmount, interaction.guildId!);
       await logTransaction(payout.opponentDiscordId, payout.opponentAmount, "addcoins",
-        `Stream payout (opponent) — Week ${payout.week}`, interaction.user.id);
+        `Stream payout (opponent) — Week ${payout.week}`, interaction.guildId!, interaction.user.id);
     }
 
     await db.update(pendingChannelPayoutsTable)
@@ -1033,7 +1033,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const payoutId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    if (!(await isAdminUser(interaction.user.id))) {
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
       await interaction.followUp({ content: "❌ Only commissioners can deny payouts.", ephemeral: true });
       return;
     }
@@ -1081,7 +1081,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const payoutId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    if (!(await isAdminUser(interaction.user.id))) {
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
       await interaction.followUp({ content: "❌ Only commissioners can approve payouts.", ephemeral: true });
       return;
     }
@@ -1097,9 +1097,9 @@ async function handleButton(interaction: ButtonInteraction) {
       return;
     }
 
-    await addBalance(payout.discordId, payout.amount);
+    await addBalance(payout.discordId, payout.amount, interaction.guildId!);
     await logTransaction(payout.discordId, payout.amount, "addcoins",
-      `Highlight video payout — Week ${payout.week}`, interaction.user.id);
+      `Highlight video payout — Week ${payout.week}`, interaction.guildId!, interaction.user.id);
 
     await db.update(pendingChannelPayoutsTable)
       .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
@@ -1148,7 +1148,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const payoutId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    if (!(await isAdminUser(interaction.user.id))) {
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
       await interaction.followUp({ content: "❌ Only commissioners can deny payouts.", ephemeral: true });
       return;
     }
@@ -1556,7 +1556,7 @@ async function handleButton(interaction: ButtonInteraction) {
 
     try {
       const [ndSeason, ndUser] = await Promise.all([
-        getOrCreateActiveSeason(),
+        getOrCreateActiveSeason(interaction.guildId!),
         db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
       ]);
       const ndTeam = ndUser[0]?.team ?? interaction.user.username;
@@ -1574,7 +1574,7 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Trade Block: Admin remove listing ─────────────────────────────────────────
   if (action === "tb_rm") {
     const listingId = parseInt(secondPart ?? "0", 10);
-    const admin = await isAdminUser(interaction.user.id);
+    const admin = await isAdminUser(interaction.user.id, interaction.guildId!);
     if (!admin) {
       await interaction.reply({ content: "❌ Only league commissioners can remove listings.", ephemeral: true });
       return;
@@ -1587,7 +1587,7 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Trade Block: Admin remove ISO ─────────────────────────────────────────────
   if (action === "tb_rm_iso") {
     const isoId = parseInt(secondPart ?? "0", 10);
-    const admin = await isAdminUser(interaction.user.id);
+    const admin = await isAdminUser(interaction.user.id, interaction.guildId!);
     if (!admin) {
       await interaction.reply({ content: "❌ Only league commissioners can remove ISO posts.", ephemeral: true });
       return;
@@ -1603,7 +1603,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const isAdminMode = (userId ?? "0") === "1";
 
     await interaction.deferUpdate();
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
     const { embed, components } = await buildPageResponse(interaction.user.id, page, isAdminMode, season.id);
     await interaction.editReply({ embeds: [embed], components });
     return;
@@ -1635,7 +1635,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const offerField     = originalEmbed?.fields?.[1]?.value ?? "—";
 
     // Fetch DB info for both teams
-    const season        = await getOrCreateActiveSeason();
+    const season        = await getOrCreateActiveSeason(interaction.guildId!);
     const [posterRow]   = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
       .from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1);
     const [offerorRow]  = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername, balance: usersTable.balance })
@@ -1649,9 +1649,9 @@ async function handleButton(interaction: ButtonInteraction) {
     // The offeror offered coins as part of their deal; transfer them to the poster (acceptor).
     let coinNote = "";
     if (!isNaN(coins) && coins > 0) {
-      const deducted = await deductBalance(offerorId, coins);
+      const deducted = await deductBalance(offerorId, coins, interaction.guildId!);
       if (deducted) {
-        await addBalance(posterDiscordId, coins);
+        await addBalance(posterDiscordId, coins, interaction.guildId!);
         coinNote = `\n💰 **${coins.toLocaleString()} coins** transferred from **${offerorTeam}** to **${posterTeam}**.`;
       } else {
         coinNote = `\n⚠️ Coin transfer of **${coins.toLocaleString()}** skipped — **${offerorTeam}** had insufficient balance.`;
@@ -1897,7 +1897,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const seasonId = parseInt(secondPart ?? "0", 10);
     if (!seasonId) { await interaction.reply({ content: "❌ Invalid season ID.", ephemeral: true }); return; }
 
-    const adminCheck = await isAdminUser(interaction.user.id).catch(() => false);
+    const adminCheck = await isAdminUser(interaction.user.id, interaction.guildId!).catch(() => false);
     if (!adminCheck) {
       await interaction.reply({ content: "❌ Only admins can seed stat tier defaults.", ephemeral: true });
       return;
@@ -1973,10 +1973,10 @@ async function handleButton(interaction: ButtonInteraction) {
     // regardless of what Discord ID was embedded in the button customId.
     const discordId = payout.discordId;
 
-    await addBalance(discordId, payout.totalCoins);
+    await addBalance(discordId, payout.totalCoins, interaction.guildId!);
     await logTransaction(discordId, payout.totalCoins, "addcoins",
       `EOS Season ${payout.seasonId} payout — approved by ${interaction.user.username}`,
-      interaction.user.id);
+      interaction.guildId!, interaction.user.id);
     await db.update(pendingEosPayoutsTable)
       .set({ status: "approved", approvedBy: interaction.user.id, approvedAt: new Date() })
       .where(eq(pendingEosPayoutsTable.id, payoutId));
@@ -2109,7 +2109,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const violationId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    if (!(await isAdminUser(interaction.user.id))) {
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
       await interaction.followUp({ content: "❌ Only commissioners can confirm violations.", ephemeral: true });
       return;
     }
@@ -2231,7 +2231,7 @@ async function handleButton(interaction: ButtonInteraction) {
     const violationId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    if (!(await isAdminUser(interaction.user.id))) {
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
       await interaction.followUp({ content: "❌ Only commissioners can deny violations.", ephemeral: true });
       return;
     }
@@ -2353,9 +2353,9 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
       const team = userRow?.team ?? "Unknown";
 
       if (gotyCoins > 0) {
-        await addBalance(discordId, gotyCoins);
+        await addBalance(discordId, gotyCoins, interaction.guildId!);
         await logTransaction(discordId, gotyCoins, "addcoins",
-          `GOTY Award Winner — Season ${seasonId}`, interaction.user.id);
+          `GOTY Award Winner — Season ${seasonId}`, interaction.guildId!, interaction.user.id);
       }
 
       winnerLines.push(`🏆 <@${discordId}> (${team})`);
@@ -2533,9 +2533,9 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     await interaction.deferReply({ ephemeral: true });
 
-    const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
     const requesterTeam = requester.team ?? interaction.user.username;
-    const season        = await getOrCreateActiveSeason();
+    const season        = await getOrCreateActiveSeason(interaction.guildId!);
     const currentWeek   = (season as any).currentWeek ?? "1";
     const weekDisplay   = weekLabel(currentWeek);
     const commChannelId = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
@@ -2723,7 +2723,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     try {
       const [soSeason, targetTeam] = await Promise.all([
-        getOrCreateActiveSeason(),
+        getOrCreateActiveSeason(interaction.guildId!),
         getMyTeam(targetId),
       ]);
       void logTradeEvent({
@@ -2807,7 +2807,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     try {
       const [tbSeason, offerorRows, posterRows] = await Promise.all([
-        getOrCreateActiveSeason(),
+        getOrCreateActiveSeason(interaction.guildId!),
         db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
         db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1),
       ]);
@@ -2955,7 +2955,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     try {
       const [isoSeason, offerorIsoRows, posterIsoRows] = await Promise.all([
-        getOrCreateActiveSeason(),
+        getOrCreateActiveSeason(interaction.guildId!),
         db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
         db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1),
       ]);
@@ -2988,7 +2988,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     let team1Name = "Unknown Team";
     let seasonId  = 0;
     try {
-      const season = await getOrCreateActiveSeason();
+      const season = await getOrCreateActiveSeason(interaction.guildId!);
       seasonId = season.id;
       if (listingType === "I") {
         const [iso] = await db.select({ teamName: tradeBlockISOTable.teamName, discordId: tradeBlockISOTable.discordId })

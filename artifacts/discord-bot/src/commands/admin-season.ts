@@ -478,7 +478,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
       .where(eq(usersTable.discordId, target.id));
 
-    await logTransaction(target.id, amount, "season_adjustment", "Season coin adjustment by commissioner", interaction.user.id);
+    await logTransaction(target.id, amount, "season_adjustment", "Season coin adjustment by commissioner", interaction.guildId!, interaction.user.id);
 
     return interaction.editReply({
       embeds: [

@@ -87,7 +87,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const user = await getUserByDiscordId(targetUser.id);
+  const user = await getUserByDiscordId(targetUser.id, interaction.guildId!);
   if (!user) {
     await interaction.editReply({
       content: `❌ <@${targetUser.id}> is not registered. Use \`/admin-setuser\` first.`,
@@ -95,7 +95,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // Load tier configs from DB for only the stats entered
   const allTierRows = await db.select()

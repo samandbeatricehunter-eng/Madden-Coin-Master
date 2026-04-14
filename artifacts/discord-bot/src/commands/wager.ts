@@ -69,14 +69,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return interaction.editReply({ content: "❌ You can't wager against a bot." });
   }
 
-  const challenger = await getOrCreateUser(interaction.user.id, interaction.user.username);
+  const challenger = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
   if (challenger.balance < amount) {
     return interaction.editReply({
       content: `❌ Insufficient coins. Your balance: **${challenger.balance.toLocaleString()} coins**, wager: **${amount.toLocaleString()} coins**.`,
     });
   }
 
-  await getOrCreateUser(opponent.id, opponent.username);
+  await getOrCreateUser(opponent.id, opponent.username, interaction.guildId!);
 
   const [wager] = await db.insert(wagersTable).values({
     challengerId:      interaction.user.id,

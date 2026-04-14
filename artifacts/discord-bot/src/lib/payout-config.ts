@@ -1,6 +1,7 @@
 import { db } from "@workspace/db";
 import { payoutConfigTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 export const PAYOUT_KEYS = {
   // ── Game result payouts ──────────────────────────────────────────────────────
@@ -80,32 +81,35 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   "stat.safe_mode":    { value: 0,   description: "Stat reimport safe mode (1 = active — EOS payouts blocked)",       category: "System"            },
 };
 
-const cache = new Map<PayoutKey, number>();
+// Cache key: "${guildId}:${payoutKey}" for per-guild isolation
+const cache = new Map<string, number>();
 
-export async function getPayoutValue(key: PayoutKey): Promise<number> {
-  if (cache.has(key)) return cache.get(key)!;
+export async function getPayoutValue(key: PayoutKey, guildId: string = PRIMARY_GUILD_ID): Promise<number> {
+  const cacheKey = `${guildId}:${key}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey)!;
   const [row] = await db.select({ value: payoutConfigTable.value })
     .from(payoutConfigTable)
-    .where(eq(payoutConfigTable.key, key))
+    .where(and(eq(payoutConfigTable.guildId, guildId), eq(payoutConfigTable.key, key)))
     .limit(1);
   const value = row?.value ?? DEFAULTS[key].value;
-  cache.set(key, value);
+  cache.set(cacheKey, value);
   return value;
 }
 
-export async function setPayoutValue(key: PayoutKey, value: number, updatedBy: string): Promise<void> {
+export async function setPayoutValue(key: PayoutKey, value: number, updatedBy: string, guildId: string = PRIMARY_GUILD_ID): Promise<void> {
   const desc = DEFAULTS[key].description;
   await db.insert(payoutConfigTable)
-    .values({ key, value, description: desc, updatedBy, updatedAt: new Date() })
+    .values({ guildId, key, value, description: desc, updatedBy, updatedAt: new Date() })
     .onConflictDoUpdate({
-      target: payoutConfigTable.key,
+      target: [payoutConfigTable.guildId, payoutConfigTable.key],
       set: { value, updatedBy, updatedAt: new Date() },
     });
-  cache.set(key, value);
+  cache.set(`${guildId}:${key}`, value);
 }
 
-export async function getAllPayoutConfig(): Promise<Map<PayoutKey, number>> {
-  const rows = await db.select().from(payoutConfigTable);
+export async function getAllPayoutConfig(guildId: string = PRIMARY_GUILD_ID): Promise<Map<PayoutKey, number>> {
+  const rows = await db.select().from(payoutConfigTable)
+    .where(eq(payoutConfigTable.guildId, guildId));
   const result = new Map<PayoutKey, number>();
   for (const key of Object.values(PAYOUT_KEYS) as PayoutKey[]) {
     const row = rows.find(r => r.key === key);

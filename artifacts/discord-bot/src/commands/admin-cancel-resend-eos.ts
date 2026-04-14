@@ -25,7 +25,7 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   // Delete all pending (not yet approved) EOS payout rows for this season
   const deleted = await db.delete(pendingEosPayoutsTable)

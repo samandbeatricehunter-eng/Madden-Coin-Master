@@ -181,7 +181,7 @@ async function handleTeamStatsView(
     return;
   }
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   let teamRosterQuery: any;
   if (targetUser) {
@@ -231,7 +231,7 @@ async function handleAllTeamsView(interaction: ChatInputCommandInteraction): Pro
 
   await interaction.deferReply({ ephemeral });
 
-  const season   = await getOrCreateActiveSeason();
+  const season   = await getOrCreateActiveSeason(interaction.guildId!);
   const allStats = await db.select().from(teamSeasonStatsTable)
     .where(eq(teamSeasonStatsTable.seasonId, season.id));
 
@@ -396,7 +396,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
     if (sub === "team_stats") {
       const focused = interaction.options.getFocused(true);
       if (focused.name === "team") {
-        const season = await getOrCreateActiveSeason();
+        const season = await getOrCreateActiveSeason(interaction.guildId!);
         const teams = await db
           .select({ name: franchiseMcaTeamsTable.nickName })
           .from(franchiseMcaTeamsTable)

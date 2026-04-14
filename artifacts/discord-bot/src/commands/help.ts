@@ -8,13 +8,13 @@ export const data = new SlashCommandBuilder()
   .setName("help")
   .setDescription("View all available bot commands");
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   try {
     const member = interaction.guild?.members.cache.get(interaction.user.id)
       ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
 
     const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-    const isDbAdmin      = await isAdminUser(interaction.user.id);
+    const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
 
     // ── Member embed ──────────────────────────────────────────────────────────
@@ -100,7 +100,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setTimestamp();
 
     if (!isAdmin) {
-      return await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
+      return;
     }
 
     // ── Admin embed 1: User/Coin/Inventory/Legends/Rules ─────────────────────
@@ -231,7 +232,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // Send member embed first, then follow up with admin embeds separately
     // (splitting avoids Discord's 6000-char combined embed limit)
     await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
-    return await interaction.followUp({ embeds: [adminEmbed1, adminEmbed2], ephemeral: true });
+    await interaction.followUp({ embeds: [adminEmbed1, adminEmbed2], ephemeral: true });
   } catch (err) {
     console.error("[/help] Error:", err);
     const msg = err instanceof Error ? err.message : String(err);

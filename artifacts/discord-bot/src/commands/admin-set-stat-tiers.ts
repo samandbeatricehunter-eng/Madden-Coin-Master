@@ -62,7 +62,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
     seasonId = rows[0].id;
   } else {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
     seasonId = season.id;
   }
 

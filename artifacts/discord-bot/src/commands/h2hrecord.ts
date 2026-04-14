@@ -29,8 +29,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // Look up both users
   const [callerRow, opponentRow] = await Promise.all([
-    getUserByDiscordId(callerId),
-    getUserByDiscordId(opponentUser.id),
+    getUserByDiscordId(callerId, interaction.guildId!),
+    getUserByDiscordId(opponentUser.id, interaction.guildId!),
   ]);
 
   if (!callerRow) {

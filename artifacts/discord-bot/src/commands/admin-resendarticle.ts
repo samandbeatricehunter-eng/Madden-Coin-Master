@@ -55,7 +55,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Fetch active season ───────────────────────────────────────────────────
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
 
   await interaction.editReply({
     embeds: [new EmbedBuilder()

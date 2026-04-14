@@ -32,7 +32,7 @@ import {
   franchiseMcaTeamsTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "./db-helpers.js";
+import { getOrCreateActiveSeason, PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 export const DRAFT_TOGGLE_PREFIX   = "draft_toggle";   // full id: draft_toggle:DISCORD_ID
 export const DRAFT_CLOSE_BUTTON_ID = "draft_presence_close";
@@ -103,7 +103,7 @@ export async function populatePresence(sessionId: number): Promise<void> {
   }
 
   // 2. All MCA teams (32 teams in the franchise)
-  const season   = await getOrCreateActiveSeason().catch(() => null);
+  const season   = await getOrCreateActiveSeason(PRIMARY_GUILD_ID).catch(() => null);
   if (!season) return;
 
   const mcaTeams = await db.select()

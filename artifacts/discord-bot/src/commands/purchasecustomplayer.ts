@@ -16,7 +16,7 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const season    = await getOrCreateActiveSeason();
+  const season    = await getOrCreateActiveSeason(interaction.guildId!);
   const discordId = interaction.user.id;
 
   // ── Fetch settings + combined season inventory count in parallel ───────────

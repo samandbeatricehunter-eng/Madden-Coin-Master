@@ -724,11 +724,11 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
 
   // Deduct coins
   if (session.totalCost > 0) {
-    await addBalance(session.userId, -session.totalCost);
+    await addBalance(session.userId, -session.totalCost, interaction.guildId!);
     await logTransaction(
       session.userId, -session.totalCost, "purchase",
       `Custom player: ${session.firstName} ${session.lastName} (${session.position} / ${session.archetypeName})`,
-      "system",
+      interaction.guildId!, "system",
     );
   }
 
@@ -1028,11 +1028,11 @@ export async function handleCcpRefundModal(interaction: ModalSubmitInteraction, 
 
   // Refund coins
   if (row.totalCost > 0) {
-    await addBalance(row.discordId, row.totalCost);
+    await addBalance(row.discordId, row.totalCost, interaction.guildId!);
     await logTransaction(
       row.discordId, row.totalCost, "addcoins",
       `Custom player refund (#${playerId}): ${reason}`,
-      interaction.user.id,
+      interaction.guildId!, interaction.user.id,
     );
   }
 

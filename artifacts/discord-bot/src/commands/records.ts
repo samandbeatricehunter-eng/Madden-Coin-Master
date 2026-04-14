@@ -47,7 +47,7 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
   await interaction.deferReply();
   if (!await requireMcaEnabled(interaction)) return;
 
-  const season = await getOrCreateActiveSeason();
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const { records, source } = await getSeasonRecords(season.id);
 
   if (records.length === 0) {

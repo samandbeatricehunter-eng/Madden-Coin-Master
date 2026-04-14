@@ -97,7 +97,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   // ── 1. Resolve season ────────────────────────────────────────────────────────
-  const activeSeason = await getOrCreateActiveSeason();
+  const activeSeason = await getOrCreateActiveSeason(interaction.guildId!);
   const seasonIdInput = interaction.options.getInteger("season_id");
   const seasonId      = seasonIdInput ?? activeSeason.id;
   const seasonNum     = seasonId === activeSeason.id ? activeSeason.seasonNumber : seasonId;

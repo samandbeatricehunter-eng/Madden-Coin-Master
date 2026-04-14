@@ -186,7 +186,7 @@ async function handleDeposit(interaction: ChatInputCommandInteraction) {
     .set({ balance: sql`${userSavingsTable.balance} + ${amount}`, updatedAt: new Date() })
     .where(eq(userSavingsTable.discordId, discordId));
 
-  await logTransaction(discordId, amount, "savings_deposit", `Deposited ${amount.toLocaleString()} coins to global savings`);
+  await logTransaction(discordId, amount, "savings_deposit", `Deposited ${amount.toLocaleString()} coins to global savings`, interaction.guildId!);
 
   const newWallet  = walletBalance - amount;
   const newSavings = await getSavingsBalance(discordId);
@@ -245,7 +245,7 @@ async function handleWithdraw(interaction: ChatInputCommandInteraction) {
     .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
     .where(eq(usersTable.discordId, discordId));
 
-  await logTransaction(discordId, amount, "savings_withdraw", `Withdrew ${amount.toLocaleString()} coins from global savings to league wallet`);
+  await logTransaction(discordId, amount, "savings_withdraw", `Withdrew ${amount.toLocaleString()} coins from global savings to league wallet`, interaction.guildId!);
 
   const newSavings = savingsBalance - amount;
   const newWallet  = (userRow[0].balance) + amount;
@@ -274,7 +274,7 @@ async function handleSetRate(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const admin = await isAdminUser(interaction.user.id);
+  const admin = await isAdminUser(interaction.user.id, interaction.guildId!);
   if (!admin) {
     await interaction.editReply({ content: "❌ This command is restricted to league admins." });
     return;

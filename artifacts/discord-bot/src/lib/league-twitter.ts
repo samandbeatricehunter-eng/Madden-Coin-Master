@@ -19,7 +19,7 @@ import {
   leagueNewsTable,
 } from "@workspace/db";
 import { eq, desc, and, gte, isNotNull, ne } from "drizzle-orm";
-import { getOrCreateActiveSeason, getRosterSeasonId } from "./db-helpers.js";
+import { getOrCreateActiveSeason, getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -308,9 +308,9 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
   // ── Team rosters (top 7 players per human team by OVR) ─────────────────────
   // Included so the AI knows exactly who is on each roster. It must NEVER
   // reference a player as being on a team if they are not listed here.
-  // Uses getRosterSeasonId() so a fresh season without imported rosters yet
+  // Uses getRosterSeasonId(interaction.guildId!) so a fresh season without imported rosters yet
   // transparently falls back to the most recent season that does have data.
-  const rosterSeasonId = await getRosterSeasonId();
+  const rosterSeasonId = await getRosterSeasonId(PRIMARY_GUILD_ID);
   const rosterRows = await db.select({
     teamName:  franchiseRostersTable.teamName,
     firstName: franchiseRostersTable.firstName,
@@ -1004,7 +1004,7 @@ async function postOneTweet(
  */
 export async function postLeagueTweet(client: Client): Promise<void> {
   try {
-    const season  = await getOrCreateActiveSeason();
+    const season  = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
     const context = await buildLeagueContext(season);
 
     const ch = client.channels.cache.get(LEAGUE_TWITTER_CHANNEL_ID)
@@ -1106,7 +1106,7 @@ export async function handleTwitterReply(client: Client, message: import("discor
   try {
     if (!message.reference?.messageId) return;
 
-    const season = await getOrCreateActiveSeason().catch(() => null);
+    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID).catch(() => null);
     if (!season) return;
 
     const [tweetRow] = await db.select()

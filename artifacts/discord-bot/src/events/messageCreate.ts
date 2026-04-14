@@ -12,7 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
-  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules,
+  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules, PRIMARY_GUILD_ID,
 } from "../lib/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
 import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -123,10 +123,10 @@ let adminCache: { ids: string[]; at: number } | null = null;
 async function getCachedRules(): Promise<string> {
   if (rulesCache && Date.now() - rulesCache.at < CACHE_TTL) return rulesCache.text;
 
-  const sections = await getAllSections();
+  const sections = await getAllSections(PRIMARY_GUILD_ID);
   const parts: string[] = [];
   for (const [key, meta] of Object.entries(sections)) {
-    const rules = await getOrSeedRules(key);
+    const rules = await getOrSeedRules(key, PRIMARY_GUILD_ID);
     if (!rules.length) continue;
     parts.push(`== ${meta.title} ==`);
     rules.forEach((r, i) => parts.push(`${i + 1}. ${r}`));
@@ -159,7 +159,7 @@ async function fetchLeagueContext(): Promise<string> {
   if (leagueCtxCache && Date.now() - leagueCtxCache.at < CACHE_TTL) return leagueCtxCache.text;
 
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
 
     const [records, teamStats, rosterAvgs, topRosterPlayers, allPlayerStats] = await Promise.all([
 
@@ -319,7 +319,7 @@ async function fetchEosPayoutContext(): Promise<string> {
   if (eosCtxCache && Date.now() - eosCtxCache.at < CACHE_TTL) return eosCtxCache.text;
 
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
 
     const [allTierRows, payoutConfig, teamStats, playerAggs] = await Promise.all([
       db.select().from(seasonStatTierConfigsTable)
@@ -473,7 +473,7 @@ async function fetchUserStats(discordId: string) {
   let playerStatLines: string[] = [];
 
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
 
     // Season record
     const [rec] = await db
@@ -1235,7 +1235,7 @@ async function handleStreamPost(message: Message): Promise<void> {
   }
 
   try {
-    const season       = await getOrCreateActiveSeason();
+    const season       = await getOrCreateActiveSeason(message.guildId!);
     const currentWeek  = (season as any).currentWeek ?? "1";
     const streamPayout = await getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT);
 
@@ -1488,7 +1488,7 @@ async function handleHighlightPost(message: Message): Promise<void> {
   }
 
   try {
-    const season          = await getOrCreateActiveSeason();
+    const season          = await getOrCreateActiveSeason(message.guildId!);
     const currentWeek     = (season as any).currentWeek ?? "1";
     const isPlayoffWeek   = PLAYOFF_WEEKS_SET.has(currentWeek);
     const highlightLimit  = await getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT);
@@ -1707,7 +1707,7 @@ export async function execute(message: Message): Promise<void> {
   });
 
   const [isAdmin, userStats, rulesText, adminIds, leagueContext, eosContext, mentionedUsersData] = await Promise.all([
-    isAdminUser(message.author.id).catch(() => false),
+    isAdminUser(message.author.id, message.guildId!).catch(() => false),
     fetchUserStats(message.author.id).catch(defaultStats),
     getCachedRules().catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
@@ -1722,7 +1722,7 @@ export async function execute(message: Message): Promise<void> {
   ]);
 
   // Fetch live season rules so the AI always quotes commish-configured caps
-  const activeSeason  = await getOrCreateActiveSeason().catch(() => null);
+  const activeSeason  = await getOrCreateActiveSeason(message.guildId!).catch(() => null);
   const seasonRules   = activeSeason ? await getSeasonRules(activeSeason).catch(() => null) : null;
   const pricingBlock  = buildPricingBlock(seasonRules ?? {
     coreAttrCost:    COSTS.core_attribute,

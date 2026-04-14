@@ -17,7 +17,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   if (!await requireMcaEnabled(interaction)) return;
 
-  const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
+  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
 
   if (!user.team) {
     await interaction.editReply({
@@ -26,7 +26,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const season  = await getOrCreateActiveSeason();
+  const season  = await getOrCreateActiveSeason(interaction.guildId!);
   const teamLower = user.team.toLowerCase().trim();
 
   const nextGames = await db.select().from(franchiseScheduleTable)

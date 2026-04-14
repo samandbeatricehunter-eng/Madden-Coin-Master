@@ -229,7 +229,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: !isPublic });
   if (!await requireMcaEnabled(interaction)) return;
 
-  const season      = await getOrCreateActiveSeason();
+  const season      = await getOrCreateActiveSeason(interaction.guildId!);
   const allStandings = await getArticleStandings(season.id, TOTAL_GAMES);
 
   // ── ALL — both conferences ──────────────────────────────────────────────────
