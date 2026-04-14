@@ -54,6 +54,22 @@ export async function readMcaPayload(key: string): Promise<unknown | null> {
 }
 
 /**
+ * List all saved MCA payload keys in the bucket.
+ * Returns an empty array if GCS is unavailable or the bucket is empty.
+ */
+export async function listMcaPayloadKeys(): Promise<string[]> {
+  const bucket = getBucket();
+  if (!bucket) return [];
+  try {
+    const [files] = await bucket.getFiles({ prefix: "mca/" });
+    return files.map(f => f.name);
+  } catch (err: unknown) {
+    console.error("[mcaStorage] Failed to list keys:", err);
+    return [];
+  }
+}
+
+/**
  * Fire-and-forget: write raw MCA payload to GCS as a JSON file.
  * Each key is deterministic so re-exports overwrite the previous file.
  * Deferred via setImmediate so serialization never adds latency to responses.

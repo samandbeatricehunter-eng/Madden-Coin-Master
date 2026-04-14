@@ -15,7 +15,7 @@ import {
   processLeagueNews,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
-import { saveMcaPayload, readMcaPayload } from "../lib/mcaStorage.js";
+import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaStorage.js";
 import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
@@ -600,6 +600,29 @@ router.post("/madden/:leagueKey/:platform/:leagueId/awards", validateKey, (req, 
   const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
   console.log("[mca/awards] Received. Top-level keys:", keys);
   console.log("[mca/awards] First item sample:", JSON.stringify(sample)?.slice(0, 600));
+});
+
+// ── /admin/read-payload — read a saved raw EA payload from object storage ────────
+// GET /madden/:leagueKey/admin/read-payload?key=mca/roster-team-1.json
+// Returns the raw saved JSON. Useful for inspecting EA payload structure in prod.
+router.get("/madden/:leagueKey/admin/read-payload", validateKey, async (req, res) => {
+  const key = String((req.query as any)?.key ?? "").trim();
+  if (!key) {
+    res.status(400).json({ error: "?key= query param required. Example: ?key=mca/roster-team-1.json" });
+    return;
+  }
+  const payload = await readMcaPayload(key);
+  if (payload === null) {
+    res.status(404).json({ error: `No saved payload found for key: ${key}` });
+    return;
+  }
+  res.status(200).json(payload);
+});
+
+// ── /admin/list-payloads — list all saved EA payload keys ─────────────────────
+router.get("/madden/:leagueKey/admin/list-payloads", validateKey, async (req, res) => {
+  const keys = await listMcaPayloadKeys();
+  res.status(200).json({ count: keys.length, keys });
 });
 
 // ── /admin/purge-preseason-stats — remove preseason-tainted player stats ────────
