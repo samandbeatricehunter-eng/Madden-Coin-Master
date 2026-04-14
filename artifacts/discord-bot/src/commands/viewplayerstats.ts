@@ -6,7 +6,7 @@ import {
 import { db } from "@workspace/db";
 import {
   franchiseMcaTeamsTable, franchiseRostersTable, playerSeasonStatsTable,
-  seasonsTable,
+  playerXpLogTable, seasonsTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
@@ -41,6 +41,11 @@ function isNfc(conference: string | null, fullName: string, nickName: string): b
 const DEV_LABEL: Record<number, string> = {
   0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor",
 };
+
+// EA CDN portrait URL — same pattern used in /viewplayerdetails
+function portraitUrl(playerId: number): string {
+  return `https://madden-assets-cdn.pulse.ea.com/madden26/portraits/64/${playerId}.png`;
+}
 
 // Ordered position groups for a clean dropdown display
 const POSITION_ORDER = [
@@ -272,7 +277,7 @@ export async function handlePlayerSelect(
     return;
   }
 
-  const [rosterRows, statRows] = await Promise.all([
+  const [rosterRows, statRows, xpRows] = await Promise.all([
     db.select()
       .from(franchiseRostersTable)
       .where(and(
@@ -288,10 +293,24 @@ export async function handlePlayerSelect(
         eq(playerSeasonStatsTable.playerId, playerId),
       ))
       .limit(1),
+    // Most-recent XP log entry for this player this season
+    db.select({
+      xpEarned: playerXpLogTable.xpEarned,
+      xpTotal:  playerXpLogTable.xpTotal,
+      weekNum:  playerXpLogTable.weekNum,
+    })
+      .from(playerXpLogTable)
+      .where(and(
+        eq(playerXpLogTable.seasonId, seasonId),
+        eq(playerXpLogTable.playerId, playerId),
+      ))
+      .orderBy(desc(playerXpLogTable.loggedAt))
+      .limit(1),
   ]);
 
-  const roster = rosterRows[0];
-  const stats  = statRows[0];
+  const roster  = rosterRows[0];
+  const stats   = statRows[0];
+  const xpEntry = xpRows[0];
 
   if (!roster) {
     await interaction.editReply({ content: "Player not found in roster data.", components: [] });
@@ -429,11 +448,27 @@ export async function handlePlayerSelect(
     .limit(1);
   const seasonLabel = seasonRow?.seasonNumber ?? seasonId;
 
+  // ── XP block ──────────────────────────────────────────────────────────────
+  // xpEntry = most recent log row; xpTotal on the roster row is the live total
+  // from the latest export. Show the weekly delta from the log + total from roster.
+  const xpTotalLive = roster.xpTotal ?? xpEntry?.xpTotal;
+  const xpWeekLabel = xpEntry?.weekNum ? `Week ${xpEntry.weekNum}` : "Last export";
+
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(`${roster.jerseyNum != null ? `#${roster.jerseyNum} ` : ""}${fullName}`)
     .setDescription(`**${roster.teamName || "Free Agent"}**\n${bioLines.join(" · ")}`)
-    .addFields({ name: `Season ${seasonLabel} Stats`, value: statLines.join("\n"), inline: false })
+    .setThumbnail(portraitUrl(roster.playerId))
+    .addFields({ name: `Season ${seasonLabel} Stats`, value: statLines.join("\n"), inline: false });
+
+  if (xpTotalLive != null || xpEntry) {
+    const xpParts: string[] = [];
+    if (xpEntry)         xpParts.push(`+${xpEntry.xpEarned.toLocaleString()} XP (${xpWeekLabel})`);
+    if (xpTotalLive != null) xpParts.push(`**${xpTotalLive.toLocaleString()} XP total**`);
+    embed.addFields({ name: "⚡ Experience", value: xpParts.join(" · "), inline: false });
+  }
+
+  embed
     .setFooter({ text: "Stats from MCA franchise export" })
     .setTimestamp();
 
