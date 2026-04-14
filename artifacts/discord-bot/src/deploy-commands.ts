@@ -1,113 +1,27 @@
 import { REST, Routes } from "discord.js";
-
-// ── Unified admin + view ──────────────────────────────────────────────────────
-import * as admin              from "./commands/admin.js";
-import * as view               from "./commands/view.js";
-
-
-// ── User-facing commands ──────────────────────────────────────────────────────
-import * as help             from "./commands/help.js";
-import * as balance          from "./commands/balance.js";
-import * as sendcoins        from "./commands/sendcoins.js";
-import * as purchase         from "./commands/purchase.js";
-import * as inventory        from "./commands/inventory.js";
-import * as recentH2H        from "./commands/recentH2H.js";
-import * as wager            from "./commands/wager.js";
-import * as teamlist         from "./commands/teamlist.js";
-import * as openteams        from "./commands/openteams.js";
-import * as seasonschedule   from "./commands/seasonschedule.js";
-import * as nextschedule     from "./commands/nextschedule.js";
-import * as nextopp          from "./commands/nextopp.js";
-import * as myRoster         from "./commands/my-roster.js";
-import * as savings          from "./commands/savings.js";
-import * as weeklyMatchups   from "./commands/weekly-matchups.js";
-import * as standings        from "./commands/standings.js";
-import * as tradeBlock       from "./commands/tradeblock.js";
-import * as h2hrecord        from "./commands/h2hrecord.js";
-import * as customarticle    from "./commands/customarticle.js";
-import * as webhookurl       from "./commands/webhookurl.js";
-import * as viewPayoutTiers  from "./commands/viewpayouttiers.js";
-import * as interviewrequest from "./commands/interviewrequest.js";
-import * as advanceweek      from "./commands/advanceweek.js";
-import * as statleaders      from "./commands/statleaders.js";
-import * as availableupgrades from "./commands/availableupgrades.js";
-import * as viewFreeAgents   from "./commands/viewfreeagents.js";
-import * as viewXp            from "./commands/viewxp.js";
-
-// ── Admin tools ───────────────────────────────────────────────────────────────
-import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
-import * as adminStatReimport        from "./commands/admin-stat-reimport.js";
-import * as adminEaConnect           from "./commands/admin-ea-connect.js";
-import * as adminEaExport            from "./commands/admin-ea-export.js";
-import * as adminCancelResendEos     from "./commands/admin-cancel-resend-eos.js";
-import * as adminRebuildHistorical   from "./commands/admin-rebuild-historical.js";
-import * as draftPresence            from "./commands/draft-presence.js";
-import * as adminPlayoffs            from "./commands/admin-playoffs.js";
-import * as adminResendArticle       from "./commands/admin-resendarticle.js";
-import * as adminCatchup             from "./commands/admin-catchup.js";
-import * as adminManualScore         from "./commands/admin-manualscore.js";
-import * as adminReverseGame         from "./commands/admin-reverse-game.js";
-import * as adminPostFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
-import * as adminRollbackFranchise   from "./commands/admin-rollback-franchise.js";
-import * as endofseasonpayout        from "./commands/endofseasonpayout.js";
-import * as adminSetPayouts          from "./commands/admin-setpayouts.js";
-import * as adminSetStatTiers        from "./commands/admin-set-stat-tiers.js";
-import * as adminStatTiers           from "./commands/admin-stat-tiers.js";
-import * as adminSetMilestoneTier    from "./commands/admin-setmilestonetier.js";
-import * as adminLegendVault         from "./commands/admin-legendvault.js";
-import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
-import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
-import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
-import * as adminEosReapprove       from "./commands/admin-eos-reapprove.js";
-import * as adminSeason             from "./commands/admin-season.js";
-import * as adminLinkTeam           from "./commands/admin-linkteam.js";
-import * as adminInventory          from "./commands/admin-inventory.js";
-import * as adminInitialize         from "./commands/admin-initialize.js";
-
-// ── Records / rankings ────────────────────────────────────────────────────────
-import { seasonPRData, allTimePRData } from "./commands/records.js";
+import { buildCommandJSON } from "./lib/command-list.js";
 
 const token    = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;
-const guildId  = process.env["DISCORD_GUILD_ID"]!;
+const guildId  = process.env["DISCORD_GUILD_ID"];
 
-if (!token || !clientId || !guildId) {
-  throw new Error("DISCORD_TOKEN, DISCORD_CLIENT_ID, and DISCORD_GUILD_ID must be set");
+if (!token || !clientId) {
+  throw new Error("DISCORD_TOKEN and DISCORD_CLIENT_ID must be set");
 }
 
-const commands = [
-  // Unified admin & view
-  admin,
-  view,
+const commands = buildCommandJSON();
+const rest     = new REST().setToken(token);
 
-  // User-facing commands
-  help, balance, sendcoins, purchase, inventory,
-  recentH2H, wager, teamlist, openteams,
-  seasonschedule, nextschedule, nextopp, myRoster, savings, weeklyMatchups,
-  standings, tradeBlock, h2hrecord, customarticle, webhookurl,
-  viewPayoutTiers, interviewrequest,
-  advanceweek, statleaders, availableupgrades, viewFreeAgents, viewXp,
+async function deploy() {
+  if (guildId) {
+    console.log(`Registering ${commands.length} commands to guild ${guildId} (instant)...`);
+    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+    console.log(`✅ Guild commands registered for ${guildId}`);
+  }
 
-  // Admin tools
-  adminEosTestrun, adminStatReimport, adminEaConnect, adminEaExport,
-  adminCancelResendEos, adminRebuildHistorical, draftPresence,
-  adminPlayoffs, adminResendArticle,
-  adminCatchup, adminManualScore, adminReverseGame, adminPostFullSeasonSchedule, adminRollbackFranchise,
-  endofseasonpayout, adminSetPayouts,
-  adminSetStatTiers, adminStatTiers, adminSetMilestoneTier,
-  adminLegendVault, adminCustomArcetypes, adminCustomPlayerSettings, adminFixPlayerNames,
-  adminEosReapprove, adminSeason, adminLinkTeam, adminInventory, adminInitialize,
-].map(c => c.data.toJSON());
+  console.log(`Registering ${commands.length} commands globally (propagates to all servers within ~1 hour)...`);
+  await rest.put(Routes.applicationCommands(clientId), { body: commands });
+  console.log("✅ Global commands registered");
+}
 
-commands.push(
-  seasonPRData.toJSON(),
-  allTimePRData.toJSON(),
-);
-
-const rest = new REST().setToken(token);
-
-console.log(`Registering ${commands.length} slash commands to guild ${guildId}...`);
-
-rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands })
-  .then(() => console.log("✅ Slash commands registered successfully!"))
-  .catch(console.error);
+deploy().catch(console.error);

@@ -76,6 +76,7 @@ import {
 import * as interactionCreate from "./events/interactionCreate.js";
 import * as ready             from "./events/ready.js";
 import * as messageCreate     from "./events/messageCreate.js";
+import * as guildCreate       from "./events/guildCreate.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 import { startSavingsInterestScheduler } from "./lib/savings-interest.js";
@@ -189,7 +190,7 @@ if (!isProduction && !devBotEnabled) {
     client.commands.set(command.data.name, command);
   }
 
-  const events = [interactionCreate, ready, messageCreate];
+  const events = [interactionCreate, ready, messageCreate, guildCreate];
   for (const event of events) {
     if ((event as any).once) {
       client.once(event.name, (...args) => event.execute(...args as [any]));

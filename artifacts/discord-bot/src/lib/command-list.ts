@@ -1,0 +1,82 @@
+import * as admin              from "../commands/admin.js";
+import * as view               from "../commands/view.js";
+import * as help               from "../commands/help.js";
+import * as balance            from "../commands/balance.js";
+import * as sendcoins          from "../commands/sendcoins.js";
+import * as purchase           from "../commands/purchase.js";
+import * as inventory          from "../commands/inventory.js";
+import * as recentH2H          from "../commands/recentH2H.js";
+import * as wager              from "../commands/wager.js";
+import * as teamlist           from "../commands/teamlist.js";
+import * as openteams          from "../commands/openteams.js";
+import * as seasonschedule     from "../commands/seasonschedule.js";
+import * as nextschedule       from "../commands/nextschedule.js";
+import * as nextopp            from "../commands/nextopp.js";
+import * as myRoster           from "../commands/my-roster.js";
+import * as savings            from "../commands/savings.js";
+import * as weeklyMatchups     from "../commands/weekly-matchups.js";
+import * as standings          from "../commands/standings.js";
+import * as tradeBlock         from "../commands/tradeblock.js";
+import * as h2hrecord          from "../commands/h2hrecord.js";
+import * as customarticle      from "../commands/customarticle.js";
+import * as webhookurl         from "../commands/webhookurl.js";
+import * as viewpayouttiers    from "../commands/viewpayouttiers.js";
+import * as interviewrequest   from "../commands/interviewrequest.js";
+import * as advanceweek        from "../commands/advanceweek.js";
+import * as statleaders        from "../commands/statleaders.js";
+import * as availableupgrades  from "../commands/availableupgrades.js";
+import * as viewFreeAgents     from "../commands/viewfreeagents.js";
+import * as viewXp             from "../commands/viewxp.js";
+import * as adminEosTestrun         from "../commands/admin-eos-testrun.js";
+import * as adminStatReimport       from "../commands/admin-stat-reimport.js";
+import * as adminEaConnect          from "../commands/admin-ea-connect.js";
+import * as adminEaExport           from "../commands/admin-ea-export.js";
+import * as adminCancelResendEos    from "../commands/admin-cancel-resend-eos.js";
+import * as adminRebuildHistorical  from "../commands/admin-rebuild-historical.js";
+import * as draftPresence           from "../commands/draft-presence.js";
+import * as adminPlayoffs           from "../commands/admin-playoffs.js";
+import * as adminResendArticle      from "../commands/admin-resendarticle.js";
+import * as adminCatchup            from "../commands/admin-catchup.js";
+import * as adminManualScore        from "../commands/admin-manualscore.js";
+import * as adminReverseGame        from "../commands/admin-reverse-game.js";
+import * as adminPostFullSeasonSchedule from "../commands/admin-postfullseasonschedule.js";
+import * as adminRollbackFranchise  from "../commands/admin-rollback-franchise.js";
+import * as endofseasonpayout       from "../commands/endofseasonpayout.js";
+import * as adminSetPayouts         from "../commands/admin-setpayouts.js";
+import * as adminSetStatTiers       from "../commands/admin-set-stat-tiers.js";
+import * as adminStatTiers          from "../commands/admin-stat-tiers.js";
+import * as adminSetMilestoneTier   from "../commands/admin-setmilestonetier.js";
+import * as adminLegendVault        from "../commands/admin-legendvault.js";
+import * as adminCustomArcetypes    from "../commands/admin-customarchetypes.js";
+import * as adminCustomPlayerSettings from "../commands/admin-customplayersettings.js";
+import * as adminFixPlayerNames     from "../commands/admin-fixplayernames.js";
+import * as adminEosReapprove       from "../commands/admin-eos-reapprove.js";
+import * as adminSeason             from "../commands/admin-season.js";
+import * as adminLinkTeam           from "../commands/admin-linkteam.js";
+import * as adminInventory          from "../commands/admin-inventory.js";
+import * as adminInitialize         from "../commands/admin-initialize.js";
+import { seasonPRData, allTimePRData } from "../commands/records.js";
+
+export function buildCommandJSON(): object[] {
+  const modules = [
+    admin, view,
+    help, balance, sendcoins, purchase, inventory,
+    recentH2H, wager, teamlist, openteams,
+    seasonschedule, nextschedule, nextopp, myRoster, savings, weeklyMatchups,
+    standings, tradeBlock, h2hrecord, customarticle, webhookurl,
+    viewpayouttiers, interviewrequest, advanceweek, statleaders,
+    availableupgrades, viewFreeAgents, viewXp,
+    adminEosTestrun, adminStatReimport, adminEaConnect, adminEaExport,
+    adminCancelResendEos, adminRebuildHistorical, draftPresence,
+    adminPlayoffs, adminResendArticle, adminCatchup, adminManualScore,
+    adminReverseGame, adminPostFullSeasonSchedule, adminRollbackFranchise,
+    endofseasonpayout, adminSetPayouts, adminSetStatTiers, adminStatTiers,
+    adminSetMilestoneTier, adminLegendVault, adminCustomArcetypes,
+    adminCustomPlayerSettings, adminFixPlayerNames, adminEosReapprove,
+    adminSeason, adminLinkTeam, adminInventory, adminInitialize,
+  ];
+
+  const commands = modules.map(m => m.data.toJSON());
+  commands.push(seasonPRData.toJSON(), allTimePRData.toJSON());
+  return commands;
+}
