@@ -1956,7 +1956,9 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
       const playerId = rawId != null ? Number(rawId) : NaN;
       if (isNaN(playerId) || playerId <= 0) continue;
 
-      rows.push(buildPlayerValues(p, season.id, mcaTeamId, teamEntry.fullName, teamEntry.discordId ?? null));
+      const row = buildPlayerValues(p, season.id, mcaTeamId, teamEntry.fullName, teamEntry.discordId ?? null);
+      console.log(`[roster/archetype] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) → EA raw: ${row.archetypeAbbrev ?? "null"}`);
+      rows.push(row);
     }
 
     if (rows.length === 0) {
