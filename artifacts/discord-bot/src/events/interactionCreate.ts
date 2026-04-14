@@ -1865,6 +1865,103 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── /initialize-server follow-up buttons ─────────────────────────────────────
+  if (action === "init_settings") {
+    await interaction.deferUpdate();
+    const settings = await getServerSettings();
+    await interaction.followUp({
+      ephemeral: true,
+      content: "**⚙️ Server Feature Settings** — toggle any feature on or off:",
+      embeds:     [buildSettingsEmbed(settings)],
+      components: buildSettingsRows(settings),
+    });
+    return;
+  }
+
+  if (action === "init_teamguide") {
+    await interaction.deferUpdate();
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("👥 Team Linking Guide")
+      .setDescription(
+        "Link each Discord member to their NFL franchise. Repeat for every manager in your league.\n\n" +
+        "**Step 1 — Assign a team:**\n" +
+        "```/admin-linkteam set  user:@Member  team:Dallas Cowboys```\n" +
+        "Start typing the team name to autocomplete it.\n\n" +
+        "**Step 2 — Verify all assignments:**\n" +
+        "```/admin-linkteam view```\n" +
+        "Shows all linked managers and flags anyone still unlinked.\n\n" +
+        "**Step 3 — After importing EA data:**\n" +
+        "```/admin-linkteam relink```\n" +
+        "Re-cascades Discord IDs to roster rows — run this after each new MCA/EA import to make sure rosters and stats are attributed correctly.\n\n" +
+        "**Notes:**\n" +
+        "• CPU-controlled teams don't need a Discord link\n" +
+        "• Reassigning a team preserves the user's coin balance and records\n" +
+        "• If a manager leaves, use `/admin-clearteam` to free their slot",
+      )
+      .setFooter({ text: "Team Linking Guide • /initialize-server setup" });
+    await interaction.followUp({ ephemeral: true, embeds: [embed] });
+    return;
+  }
+
+  if (action === "init_ea") {
+    await interaction.deferUpdate();
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("🔗 Connect to EA — Franchise Data Import")
+      .setDescription(
+        "Choose one of two methods to feed your franchise data into the bot:\n\n" +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+        "**Option A — EA Direct Connect (Recommended)**\n" +
+        "Automatically pulls rosters, schedules, and stats directly from EA with no MCA needed.\n\n" +
+        "**Step 1:** Get the EA login link:\n" +
+        "```/admin_ea_connect start```\n" +
+        "**Step 2:** Log in with the Commissioner's EA account. Copy the redirect URL from your browser.\n\n" +
+        "**Step 3:** Paste it back:\n" +
+        "```/admin_ea_connect code  redirect_url:<paste URL>```\n" +
+        "**Step 4:** If multiple leagues appear, pick yours:\n" +
+        "```/admin_ea_connect connect  league_id:<id>```\n" +
+        "**Step 5:** Pull data any time:\n" +
+        "```/admin_ea_export```\n\n" +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+        "**Option B — MCA Webhook (Manual)**\n" +
+        "Use Madden Companion App → export your franchise data to a webhook URL.\n\n" +
+        "**Step 1:** Get your webhook URL:\n" +
+        "```/webhookurl```\n" +
+        "**Step 2:** In MCA, paste the URL and export league data after each week.",
+      )
+      .setFooter({ text: "EA Connect Guide • /initialize-server setup" });
+    await interaction.followUp({ ephemeral: true, embeds: [embed] });
+    return;
+  }
+
+  if (action === "init_payouts") {
+    await interaction.deferUpdate();
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("💰 Payout Configuration Guide")
+      .setDescription(
+        "Configure how coins are awarded at the end of each season.\n\n" +
+        "**Set EOS payout amounts:**\n" +
+        "```/admin-setpayouts```\n" +
+        "Set values for: Champion, Runner-up, 3rd place, Playoff appearance, Regular season wins, etc.\n\n" +
+        "**Set stat-based XP tiers:**\n" +
+        "```/admin-set-stat-tiers```\n" +
+        "Define thresholds for QB/HB/WR/TE/DEF stats that earn bonus coins each week.\n\n" +
+        "**Preview what EOS payouts would look like right now:**\n" +
+        "```/admin-eos-testrun```\n" +
+        "Dry-run the payout calculation — nothing is actually paid out.\n\n" +
+        "**Run EOS payouts at season end:**\n" +
+        "```/endofseasonpayout```\n" +
+        "Distributes all coins based on standings, stats, and milestone tiers.\n\n" +
+        "**View current payout tier settings:**\n" +
+        "```/view-payout-tiers```",
+      )
+      .setFooter({ text: "Payout Guide • /initialize-server setup" });
+    await interaction.followUp({ ephemeral: true, embeds: [embed] });
+    return;
+  }
+
   // ── Server settings: toggle feature flag ─────────────────────────────────────
   if (action === "settings_toggle") {
     const featureKey = secondPart as keyof typeof FEATURE_LABELS | undefined;
