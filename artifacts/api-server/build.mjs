@@ -4,38 +4,13 @@ import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
 import { rm } from "node:fs/promises";
-import { execSync } from "node:child_process";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
-const workspaceRoot = path.resolve(artifactDir, "../..");
-const dbPackageDir = path.resolve(workspaceRoot, "lib/db");
-
-async function syncProductionSchema() {
-  if (process.env.NODE_ENV !== "production") return;
-  if (!process.env.DATABASE_URL) {
-    console.warn("[build] DATABASE_URL not set — skipping schema sync");
-    return;
-  }
-  console.log("[build] Syncing database schema to production (additive only — no data changes)...");
-  try {
-    execSync("npx drizzle-kit push --force --config ./drizzle.config.ts", {
-      cwd: dbPackageDir,
-      stdio: "inherit",
-      env: { ...process.env },
-    });
-    console.log("[build] Schema sync complete.");
-  } catch (err) {
-    console.error("[build] Schema sync failed — aborting build to prevent schema mismatch in production.", err);
-    process.exit(1);
-  }
-}
 
 async function buildAll() {
-  await syncProductionSchema();
-
   const distDir = path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
 
