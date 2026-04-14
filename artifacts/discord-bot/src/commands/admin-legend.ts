@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { legendsTable, inventoryTable, usersTable } from "@workspace/db";
-import { eq, asc, inArray } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
   .setName("legend")
@@ -114,7 +114,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         discordId: usersTable.discordId,
         discordUsername: usersTable.discordUsername,
       }).from(usersTable)
-        .where(inArray(usersTable.discordId, ownerDiscordIds));
+        .where(and(inArray(usersTable.discordId, ownerDiscordIds), eq(usersTable.guildId, interaction.guildId!)));
       for (const u of userRows) userMap[u.discordId] = u.discordUsername;
     }
 

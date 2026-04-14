@@ -290,7 +290,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const allUsers = await db.select({
         discordId: usersTable.discordId,
         team:      usersTable.team,
-      }).from(usersTable);
+      }).from(usersTable).where(eq(usersTable.guildId, interaction.guildId!));
       for (const u of allUsers) {
         if (u.team && !teamToDiscord.has(u.team.toLowerCase().trim())) {
           teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);

@@ -96,7 +96,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Build team → Discord mention map ────────────────────────────────────────
-  const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable);
+  const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable)
+    .where(eq(usersTable.guildId, interaction.guildId!));
   const mcaTeams = await db.select({ discordId: franchiseMcaTeamsTable.discordId, fullName: franchiseMcaTeamsTable.fullName })
     .from(franchiseMcaTeamsTable)
     .where(eq(franchiseMcaTeamsTable.seasonId, season.id));

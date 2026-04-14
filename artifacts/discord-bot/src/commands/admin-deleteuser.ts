@@ -87,7 +87,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       balance:         usersTable.balance,
     })
     .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!existing) {

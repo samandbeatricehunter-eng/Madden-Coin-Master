@@ -77,7 +77,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const season = await getOrCreateActiveSeason(interaction.guildId!);
 
-  const [homeUser] = await db.select().from(usersTable).where(eq(usersTable.discordId, homeDiscordUser.id)).limit(1);
+  const [homeUser] = await db.select().from(usersTable).where(and(eq(usersTable.discordId, homeDiscordUser.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
   if (!homeUser) {
     await interaction.editReply({ content: `❌ <@${homeDiscordUser.id}> is not registered. Use \`/admin-setuser\` first.` });
     return;
@@ -85,7 +85,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   let awayUser: typeof homeUser | null = null;
   if (awayDiscordUser) {
-    const [row] = await db.select().from(usersTable).where(eq(usersTable.discordId, awayDiscordUser.id)).limit(1);
+    const [row] = await db.select().from(usersTable).where(and(eq(usersTable.discordId, awayDiscordUser.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     if (!row) {
       await interaction.editReply({ content: `❌ <@${awayDiscordUser.id}> is not registered. Use \`/admin-setuser\` first.` });
       return;

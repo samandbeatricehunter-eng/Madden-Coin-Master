@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { coinTransactionsTable, usersTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
@@ -80,7 +80,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     label = `${found.team ?? found.discordUsername} (${found.discordUsername})`;
   } else {
     discordId = targetUser!.id;
-    const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+    const row = await db.select().from(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     label = row[0]?.team
       ? `${row[0].team} (${targetUser!.username})`
       : targetUser!.username;

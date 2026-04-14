@@ -3,7 +3,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userSavingsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { getServerSettings } from "../lib/server-settings.js";
 import { isAdminUser, logTransaction } from "../lib/db-helpers.js";
 import {
@@ -102,7 +102,7 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
 
   const userRow = await db.select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow[0]) {
@@ -159,7 +159,7 @@ async function handleDeposit(interaction: ChatInputCommandInteraction) {
 
   const userRow = await db.select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow[0]) {
@@ -180,7 +180,7 @@ async function handleDeposit(interaction: ChatInputCommandInteraction) {
   // Atomic transfer: deduct from wallet, credit savings
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} - ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, discordId));
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!)));
 
   await db.update(userSavingsTable)
     .set({ balance: sql`${userSavingsTable.balance} + ${amount}`, updatedAt: new Date() })
@@ -218,7 +218,7 @@ async function handleWithdraw(interaction: ChatInputCommandInteraction) {
 
   const userRow = await db.select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow[0]) {
@@ -243,7 +243,7 @@ async function handleWithdraw(interaction: ChatInputCommandInteraction) {
 
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, discordId));
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!)));
 
   await logTransaction(discordId, amount, "savings_withdraw", `Withdrew ${amount.toLocaleString()} coins from global savings to league wallet`, interaction.guildId!);
 

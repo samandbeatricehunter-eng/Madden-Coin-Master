@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable } from "@workspace/db";
-import { eq, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
@@ -24,7 +24,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
   const linked = await db
     .select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
     .from(usersTable)
-    .where(isNotNull(usersTable.team));
+    .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, interaction.guildId!)));
 
   const choices = linked
     .filter(r => r.team && r.team.toLowerCase().includes(focused))
@@ -53,7 +53,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       team: usersTable.team,
     })
     .from(usersTable)
-    .where(eq(usersTable.team, teamName))
+    .where(and(eq(usersTable.team, teamName), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow[0]) {

@@ -2766,7 +2766,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     await interaction.deferReply({ ephemeral: true });
 
-    const myTeam = await getMyTeam(interaction.user.id);
+    const myTeam = await getMyTeam(interaction.user.id, interaction.guildId!);
 
     // ── Build "Offering" section ───────────────────────────────────────────────
     const offerParts: string[] = [];
@@ -2844,7 +2844,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     try {
       const [soSeason, targetTeam] = await Promise.all([
         getOrCreateActiveSeason(interaction.guildId!),
-        getMyTeam(targetId),
+        getMyTeam(targetId, interaction.guildId!),
       ]);
       void logTradeEvent({
         seasonId:  soSeason.id,

@@ -12,7 +12,7 @@ const PERMANENT_CAP = 4;
 
 // Promote current-season legends → permanent for all users, enforcing the 4-cap.
 // Returns a summary of what happened.
-async function rolloverLegends(seasonId: number): Promise<string> {
+async function rolloverLegends(seasonId: number, guildId: string): Promise<string> {
   const currentLegends = await db.select().from(inventoryTable)
     .where(and(
       eq(inventoryTable.seasonId, seasonId),
@@ -36,7 +36,7 @@ async function rolloverLegends(seasonId: number): Promise<string> {
     // Resolve the team this user currently controls — items will be stamped with it
     // so the permanent vault follows the FRANCHISE, not the individual Discord account.
     const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
-      .where(eq(usersTable.discordId, userId)).limit(1);
+      .where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId))).limit(1);
     const teamName = userRow?.team ?? null;
 
     // Count existing permanent legends for this team (or user as fallback)
@@ -82,7 +82,7 @@ async function rolloverLegends(seasonId: number): Promise<string> {
 
 // Move active custom players from customPlayersTable → inventoryTable as permanent items.
 // Only processes non-refunded players that haven't already been rolled over.
-async function rolloverCustomPlayers(seasonId: number): Promise<string> {
+async function rolloverCustomPlayers(seasonId: number, guildId: string): Promise<string> {
   const active = await db.select()
     .from(customPlayersTable)
     .where(and(
@@ -103,7 +103,7 @@ async function rolloverCustomPlayers(seasonId: number): Promise<string> {
   for (const cp of active) {
     // Resolve the team this user currently controls so the permanent item follows the franchise.
     const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
-      .where(eq(usersTable.discordId, cp.discordId)).limit(1);
+      .where(and(eq(usersTable.discordId, cp.discordId), eq(usersTable.guildId, guildId))).limit(1);
     const teamName = userRow?.team ?? null;
 
     // Check if already in inventory (idempotent guard)
@@ -324,12 +324,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     // ── Roll over current-season legends → permanent ───────────────────────
     const rolloverMsg = currentSeason
-      ? await rolloverLegends(currentSeason.id)
+      ? await rolloverLegends(currentSeason.id, interaction.guildId!)
       : "No previous season to roll over.";
 
     // ── Roll over active custom players → permanent inventory ──────────────
     const cpRolloverMsg = currentSeason
-      ? await rolloverCustomPlayers(currentSeason.id)
+      ? await rolloverCustomPlayers(currentSeason.id, interaction.guildId!)
       : "";
 
     await db.update(seasonsTable).set({ isActive: false });

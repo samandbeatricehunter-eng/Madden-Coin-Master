@@ -78,9 +78,9 @@ function parsePlayerOption(raw: string | null): TradeItem | null {
   };
 }
 
-export async function getMyTeam(discordId: string): Promise<string> {
+export async function getMyTeam(discordId: string, guildId: string): Promise<string> {
   const rows = await db.select({ team: usersTable.team }).from(usersTable)
-    .where(eq(usersTable.discordId, discordId)).limit(1);
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId))).limit(1);
   return rows[0]?.team ?? "Unknown Team";
 }
 
@@ -356,7 +356,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const season   = await getOrCreateActiveSeason(interaction.guildId!);
-  const teamName = await getMyTeam(interaction.user.id);
+  const teamName = await getMyTeam(interaction.user.id, interaction.guildId!);
 
   // Enforce 3-listing cap
   const activeCount = await getActiveListingCount(interaction.user.id, season.id);
@@ -462,7 +462,7 @@ async function handleUpdate(interaction: ChatInputCommandInteraction) {
 
   const listingId = parseInt(interaction.options.getString("listing", true), 10);
   const season    = await getOrCreateActiveSeason(interaction.guildId!);
-  const teamName  = await getMyTeam(interaction.user.id);
+  const teamName  = await getMyTeam(interaction.user.id, interaction.guildId!);
 
   const [listing] = await db.select().from(tradeBlockListingsTable)
     .where(and(
@@ -510,7 +510,7 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const season   = await getOrCreateActiveSeason(interaction.guildId!);
-  const teamName = await getMyTeam(interaction.user.id);
+  const teamName = await getMyTeam(interaction.user.id, interaction.guildId!);
 
   // Seeking
   const pos1         = interaction.options.getString("seeking_pos1") ?? null;

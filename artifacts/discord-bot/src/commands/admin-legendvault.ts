@@ -82,7 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const description = interaction.options.getString("description") ?? undefined;
 
     // Guard: user must exist in the system
-    const userRows = await db.select().from(usersTable).where(eq(usersTable.discordId, t.id)).limit(1);
+    const userRows = await db.select().from(usersTable).where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     if (!userRows[0]) {
       await interaction.editReply({ content: `❌ <@${t.id}> doesn't have an economy account yet. Add them first.` });
       return;
@@ -168,7 +168,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "vault_view") {
     // Resolve the user's team so we can show team-owned permanent items
     const [viewUserRow] = await db.select({ team: usersTable.team }).from(usersTable)
-      .where(eq(usersTable.discordId, t.id)).limit(1);
+      .where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     const viewTeam = viewUserRow?.team ?? null;
 
     // Current-season legends: always by discordId
@@ -232,7 +232,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // Enforce permanent cap when moving to permanent (count by team if available)
     if (to === "permanent") {
       const [moveUserRow] = await db.select({ team: usersTable.team }).from(usersTable)
-        .where(eq(usersTable.discordId, t.id)).limit(1);
+        .where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
       const moveTeam = moveUserRow?.team ?? null;
 
       const capWhere = and(

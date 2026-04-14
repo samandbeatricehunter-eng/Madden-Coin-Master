@@ -160,7 +160,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await db.delete(inventoryTable).where(eq(inventoryTable.id, itemId));
 
     const ownerInfo = await db.select({ discordUsername: usersTable.discordUsername })
-      .from(usersTable).where(eq(usersTable.discordId, item.discordId)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, item.discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     const ownerName = ownerInfo[0]?.discordUsername ?? item.discordId;
 
     const reasonNote = reason ? `\n**Reason:** ${reason}` : "";
@@ -184,7 +184,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const item = existing[0]!;
     const oldOwnerInfo = await db.select({ discordUsername: usersTable.discordUsername })
-      .from(usersTable).where(eq(usersTable.discordId, item.discordId)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, item.discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     const oldOwnerName = oldOwnerInfo[0]?.discordUsername ?? item.discordId;
 
     await db.update(inventoryTable)
@@ -211,7 +211,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
       .from(usersTable)
-      .where(eq(usersTable.discordId, targetUser.id))
+      .where(and(eq(usersTable.discordId, targetUser.id), eq(usersTable.guildId, interaction.guildId!)))
       .limit(1);
 
     if (!userRow) {
@@ -277,7 +277,7 @@ export async function handleAcpPositionSelect(interaction: StringSelectMenuInter
   // Look up the user's team name
   const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
     .from(usersTable)
-    .where(eq(usersTable.discordId, targetDiscordId))
+    .where(and(eq(usersTable.discordId, targetDiscordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow?.team) {
@@ -354,7 +354,7 @@ export async function handleAcpPlayerSelect(interaction: StringSelectMenuInterac
   // Look up the user's team
   const [userRow] = await db.select({ team: usersTable.team, discordUsername: usersTable.discordUsername })
     .from(usersTable)
-    .where(eq(usersTable.discordId, targetDiscordId))
+    .where(and(eq(usersTable.discordId, targetDiscordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   const [inserted] = await db.insert(inventoryTable).values({

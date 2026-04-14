@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { gameLogTable, usersTable, userRecordsTable } from "@workspace/db";
-import { eq, desc, sum } from "drizzle-orm";
+import { eq, and, desc, sum } from "drizzle-orm";
 import { getOrCreateUser } from "../lib/db-helpers.js";
 import { findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
@@ -60,13 +60,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } else if (targetUser) {
     discordId = targetUser.id;
     await getOrCreateUser(discordId, targetUser.username, interaction.guildId!);
-    const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+    const row = await db.select().from(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     label     = row[0]?.team ?? targetUser.username;
   } else {
     // Default: show caller's own record
     discordId = interaction.user.id;
     await getOrCreateUser(discordId, interaction.user.username, interaction.guildId!);
-    const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+    const row = await db.select().from(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     label     = row[0]?.team ?? interaction.user.username;
   }
 

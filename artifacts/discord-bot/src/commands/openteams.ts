@@ -3,7 +3,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { isNotNull } from "drizzle-orm";
+import { isNotNull, and, eq } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
@@ -16,7 +16,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const takenRows = await db
     .select({ team: usersTable.team })
     .from(usersTable)
-    .where(isNotNull(usersTable.team));
+    .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, interaction.guildId!)));
 
   const taken = new Set(takenRows.map(r => r.team as string));
   const open = NFL_TEAMS.filter(t => !taken.has(t));

@@ -240,7 +240,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     } else {
       const [linked] = await db.select({ team: usersTable.team })
         .from(usersTable)
-        .where(eq(usersTable.discordId, targetUser.id))
+        .where(and(eq(usersTable.discordId, targetUser.id), eq(usersTable.guildId, interaction.guildId!)))
         .limit(1);
 
       if (!linked?.team) {

@@ -61,7 +61,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const [userRow] = await db
     .select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, tx.discordId))
+    .where(and(eq(usersTable.discordId, tx.discordId), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow) {

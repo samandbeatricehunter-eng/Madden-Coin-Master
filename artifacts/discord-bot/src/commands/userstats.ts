@@ -50,7 +50,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Core user record ──────────────────────────────────────────────────────
   const userRows = await db.select().from(usersTable)
-    .where(eq(usersTable.discordId, target.id)).limit(1);
+    .where(and(eq(usersTable.discordId, target.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
   const user = userRows[0];
 
   if (!user) {

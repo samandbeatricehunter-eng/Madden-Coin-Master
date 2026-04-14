@@ -3,7 +3,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
@@ -52,7 +52,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       team:            usersTable.team,
     })
       .from(usersTable)
-      .where(eq(usersTable.isAdmin, true));
+      .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, interaction.guildId!)));
 
     if (admins.length === 0) {
       await interaction.editReply({ content: "📋 No bot admins are currently set." });

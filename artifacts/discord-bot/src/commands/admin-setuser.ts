@@ -136,7 +136,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     discordId = targetUser!.id;
     username  = targetUser!.username;
     await getOrCreateUser(discordId, username, interaction.guildId!);
-    const row = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+    const row = await db.select().from(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     team = row[0]?.team ?? null;
   }
 
@@ -257,7 +257,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         changes.push(`🎯 **Milestone tier** silently synced to ${correctTier} (${allTimeWins} all-time wins — payouts already issued before bot)`);
       } else {
         // milestonesAlreadyPaid === false — award any owed milestones now
-        const userRow = await db.select().from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+        const userRow = await db.select().from(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, interaction.guildId!))).limit(1);
         const currentTier = userRow[0]?.milestoneTierAwarded ?? 0;
         let highestNewTier = currentTier;
 

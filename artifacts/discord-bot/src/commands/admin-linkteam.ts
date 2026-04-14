@@ -127,7 +127,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       balance:         usersTable.balance,
       allTimeH2HWins:  usersTable.allTimeH2HWins,
       milestoneTier:   usersTable.milestoneTierAwarded,
-    }).from(usersTable).orderBy(usersTable.team);
+    }).from(usersTable).where(eq(usersTable.guildId, interaction.guildId!)).orderBy(usersTable.team);
 
     const linked   = allUsers.filter(u => u.team);
     const unlinked = allUsers.filter(u => !u.team);
@@ -202,7 +202,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const usersWithTeams = await db.select({
       discordId: usersTable.discordId,
       team:      usersTable.team,
-    }).from(usersTable).where(isNotNull(usersTable.team));
+    }).from(usersTable).where(and(isNotNull(usersTable.team), eq(usersTable.guildId, interaction.guildId!)));
 
     if (usersWithTeams.length === 0) {
       return interaction.editReply({
@@ -289,7 +289,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const existingOwner = await db.select({
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
-  }).from(usersTable).where(eq(usersTable.team, teamName)).limit(1);
+  }).from(usersTable).where(and(eq(usersTable.team, teamName), eq(usersTable.guildId, interaction.guildId!))).limit(1);
 
   if (existingOwner.length > 0 && existingOwner[0]!.discordId !== targetUser.id) {
     return interaction.editReply({
@@ -304,7 +304,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const existing = await db.select().from(usersTable)
-    .where(eq(usersTable.discordId, targetUser.id)).limit(1);
+    .where(and(eq(usersTable.discordId, targetUser.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
 
   const oldTeam = existing[0]?.team ?? null;
 

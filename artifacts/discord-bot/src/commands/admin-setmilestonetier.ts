@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 const MILESTONES = [
   { tier: 0, label: "None (no milestone awarded)",     wins: 0,  bonus: 0    },
@@ -53,7 +53,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     allTimeH2HWins:       usersTable.allTimeH2HWins,
   })
     .from(usersTable)
-    .where(eq(usersTable.discordId, target.id))
+    .where(and(eq(usersTable.discordId, target.id), eq(usersTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!userRow) {

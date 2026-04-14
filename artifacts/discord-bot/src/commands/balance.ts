@@ -3,7 +3,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userSavingsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getServerSettings } from "../lib/server-settings.js";
 import { getSavingsInterestRateBps } from "../lib/savings-interest.js";
 
@@ -24,7 +24,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const userRow = await db.select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, discordId))
+    .where(and(
+      eq(usersTable.discordId, discordId),
+      eq(usersTable.guildId,   interaction.guildId!),
+    ))
     .limit(1);
 
   if (!userRow[0]) {

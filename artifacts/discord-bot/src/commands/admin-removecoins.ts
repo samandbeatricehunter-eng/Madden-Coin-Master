@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { getOrCreateUser, getUserBalance, logTransaction } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
@@ -52,10 +52,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} - ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, target.id));
+    .where(and(eq(usersTable.discordId, target.id), eq(usersTable.guildId, interaction.guildId!)));
 
   const newBalance = await db.select({ balance: usersTable.balance })
-    .from(usersTable).where(eq(usersTable.discordId, target.id)).limit(1);
+    .from(usersTable).where(and(eq(usersTable.discordId, target.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
 
   await logTransaction(
     target.id,

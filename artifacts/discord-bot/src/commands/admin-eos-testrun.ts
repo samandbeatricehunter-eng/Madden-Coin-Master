@@ -107,7 +107,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
     team:            usersTable.team,
-  }).from(usersTable);
+  }).from(usersTable).where(eq(usersTable.guildId, interaction.guildId!));
 
   if (allUsers.length === 0) {
     await interaction.editReply({ content: "❌ No registered users found." });

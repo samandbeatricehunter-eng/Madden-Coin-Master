@@ -87,10 +87,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   if (!await requireMcaEnabled(interaction)) return;
 
-  // ── Look up the calling user ───────────────────────────────────────────────
+  // ── Look up the calling user — scoped to this guild ───────────────────────
   const [user] = await db.select()
     .from(usersTable)
-    .where(eq(usersTable.discordId, interaction.user.id))
+    .where(and(
+      eq(usersTable.discordId, interaction.user.id),
+      eq(usersTable.guildId,   interaction.guildId!),
+    ))
     .limit(1);
 
   if (!user) {

@@ -250,10 +250,12 @@ export async function getRosterSeasonId(guildId: string): Promise<number> {
     .limit(1);
   if ((check?.n ?? 0) > 0) return season.id;
 
-  // Fall back to the most recent season that has roster data
+  // Fall back to the most recent season that has roster data — scoped to this guild
   const [fallback] = await db
     .select({ seasonId: franchiseRostersTable.seasonId })
     .from(franchiseRostersTable)
+    .innerJoin(seasonsTable, eq(franchiseRostersTable.seasonId, seasonsTable.id))
+    .where(eq(seasonsTable.guildId, guildId))
     .orderBy(desc(franchiseRostersTable.seasonId))
     .limit(1);
   return fallback?.seasonId ?? season.id;

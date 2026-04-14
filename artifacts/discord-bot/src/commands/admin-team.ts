@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { deleteAllUserData, findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
@@ -71,7 +71,7 @@ export async function executeAddNewUser(interaction: ChatInputCommandInteraction
 
   // 2. If the new user already exists, wipe their old data for a fresh start
   const existingNewUser = await db.select().from(usersTable)
-    .where(eq(usersTable.discordId, newUser.id)).limit(1);
+    .where(and(eq(usersTable.discordId, newUser.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
   if (existingNewUser.length > 0) {
     await deleteAllUserData(newUser.id);
   }
@@ -168,7 +168,7 @@ export async function executeDeleteMember(interaction: ChatInputCommandInteracti
     displayName = `${found.discordUsername} (${teamName})`;
   } else {
     const found = await db.select().from(usersTable)
-      .where(eq(usersTable.discordId, targetUser!.id)).limit(1);
+      .where(and(eq(usersTable.discordId, targetUser!.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     if (!found[0]) {
       return interaction.editReply({
         embeds: [

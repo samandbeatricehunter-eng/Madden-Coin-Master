@@ -3,7 +3,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { isNotNull, asc } from "drizzle-orm";
+import { isNotNull, asc, and, eq } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
   .setName("teamlist")
@@ -19,7 +19,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       team: usersTable.team,
     })
     .from(usersTable)
-    .where(isNotNull(usersTable.team))
+    .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, interaction.guildId!)))
     .orderBy(asc(usersTable.team));
 
   if (members.length === 0) {

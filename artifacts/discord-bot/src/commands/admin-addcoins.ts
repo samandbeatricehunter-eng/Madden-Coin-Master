@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { getOrCreateUser, logTransaction } from "../lib/db-helpers.js";
 import { isAdminUser } from "../lib/db-helpers.js";
 
@@ -80,12 +80,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Bulk add balance ──────────────────────────────────────────────────────
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
-    .where(inArray(usersTable.discordId, userIds));
+    .where(and(inArray(usersTable.discordId, userIds), eq(usersTable.guildId, interaction.guildId!)));
 
   // ── Fetch new balances for summary ────────────────────────────────────────
   const updated = await db.select({ discordId: usersTable.discordId, balance: usersTable.balance })
     .from(usersTable)
-    .where(inArray(usersTable.discordId, userIds));
+    .where(and(inArray(usersTable.discordId, userIds), eq(usersTable.guildId, interaction.guildId!)));
 
   const balanceMap = new Map(updated.map(r => [r.discordId, r.balance]));
 

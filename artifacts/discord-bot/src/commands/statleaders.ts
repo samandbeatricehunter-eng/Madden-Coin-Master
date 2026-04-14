@@ -143,7 +143,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )),
     db.select().from(userRecordsTable)
       .where(eq(userRecordsTable.seasonId, season.id)),
-    db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable),
+    db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable).where(eq(usersTable.guildId, interaction.guildId!)),
     // Live roster fallback — used to fill missing firstName/lastName/position/teamName
     // on stat rows where the backfill didn't find a match (e.g. playerId mismatch).
     db.select({
