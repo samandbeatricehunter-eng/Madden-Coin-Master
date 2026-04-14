@@ -12,7 +12,7 @@ import * as viewstore          from "./viewstore.js";
 import * as viewCustomArchetypes from "./viewcustomarchetypes.js";
 import * as viewroster         from "./viewroster.js";
 import * as viewtradeblock     from "./viewtradeblock.js";
-import * as viewplayerdetails  from "./viewplayerdetails.js";
+
 import * as statLeaders        from "./statleaders.js";
 import * as viewplayerstats    from "./viewplayerstats.js";
 import * as rulesCmd           from "./rules.js";
@@ -104,15 +104,6 @@ export const data = new SlashCommandBuilder()
     .addBooleanOption(o => o.setName("admin").setDescription("Admin mode: show Remove buttons on every listing").setRequired(false))
   )
 
-  // ── playerDetails ─────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("player_details")
-    .setDescription("View full attribute breakdown for any player in the league or free agent pool")
-    .addStringOption(o => o.setName("team").setDescription("Select a team or Free Agents").setRequired(false).setAutocomplete(true))
-    .addStringOption(o => o.setName("player").setDescription("Select a player from that team (start typing a name to search)").setRequired(false).setAutocomplete(true))
-    .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel?").setRequired(false))
-  )
-
   // ── rules ─────────────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("rules")
@@ -137,7 +128,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "custom_player_archetypes") return viewCustomArchetypes.execute(interaction);
   if (sub === "roster")                   return viewroster.execute(interaction);
   if (sub === "trade_block")              return viewtradeblock.execute(interaction);
-  if (sub === "player_details")           return viewplayerdetails.execute(interaction);
   if (sub === "rules")                    return rulesCmd.execute(interaction);
 
   if (sub === "player_stats") {
@@ -390,7 +380,6 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
     const sub = interaction.options.getSubcommand();
 
     if (sub === "roster")        return viewroster.autocomplete(interaction);
-    if (sub === "player_details") return viewplayerdetails.autocomplete(interaction);
     if (sub === "rules")          return rulesCmd.autocomplete(interaction);
 
     if (sub === "team_stats") {

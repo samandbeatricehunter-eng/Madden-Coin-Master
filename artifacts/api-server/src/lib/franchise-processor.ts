@@ -1824,8 +1824,78 @@ function buildPlayerValues(p: any, seasonId: number, teamId: number, teamName: s
     archetypeAbbrev:   resolveArchetypeAbbrev(p),
     xpTotal:           p.experiencePoints != null ? Number(p.experiencePoints) : null,
     attributes:        Object.keys(attributes).length > 0 ? attributes : null,
+    abilities:         resolveAbilities(p),
     importedAt:        new Date(),
   };
+}
+
+// ── Extract Superstar / X-Factor ability data ─────────────────────────────────
+// Madden CFM sends ability info across several field names depending on API version.
+// We try a wide net and normalise to { zone?, superstar? }.
+// Only Superstar (devTrait=2) and X-Factor (devTrait>=3) players have abilities.
+interface PlayerAbilities {
+  zone?:      string;     // X-Factor zone ability name
+  superstar?: string[];   // Superstar / X-Factor active abilities
+}
+
+function resolveAbilities(p: any): PlayerAbilities | null {
+  const devTrait = Number(p.devTrait ?? p.devTraitId ?? p.playerDevTrait ?? 0);
+  if (devTrait < 2) return null;  // Normal/Star — no abilities to track
+
+  const result: PlayerAbilities = {};
+
+  // ── Zone ability (X-Factor only) ────────────────────────────────────────────
+  // Possible field names from EA MCA API (Madden 24-26):
+  const zoneRaw =
+    p.signatureSlotList ??       // array of {abilityId, ...} or plain string
+    p.playerZoneAbility   ??
+    p.zoneAbility         ??
+    p.signatureAbilityName ??
+    p.signatureAbility    ??
+    null;
+
+  if (zoneRaw != null) {
+    if (typeof zoneRaw === "string" && zoneRaw.trim().length > 0) {
+      result.zone = zoneRaw.trim();
+    } else if (Array.isArray(zoneRaw) && zoneRaw.length > 0) {
+      // Pull the first slot's ability name/id
+      const slot = zoneRaw[0];
+      const name = typeof slot === "string" ? slot
+        : (slot?.abilityName ?? slot?.name ?? slot?.abilityId ?? slot?.id ?? null);
+      if (name && typeof name === "string" && name.trim().length > 0) {
+        result.zone = String(name).trim();
+      }
+    }
+  }
+
+  // ── Superstar / active abilities ────────────────────────────────────────────
+  // Possible field names:
+  const activeRaw =
+    p.activeAbilityList  ??   // most common in Madden 25/26
+    p.playerAbilityList  ??
+    p.abilitiesSlotList  ??
+    p.abilitySlotList    ??
+    p.packageAbility     ??   // single ability as fallback
+    null;
+
+  if (activeRaw != null) {
+    const names: string[] = [];
+    const process = (item: any) => {
+      if (!item) return;
+      if (typeof item === "string" && item.trim().length > 0) {
+        names.push(item.trim());
+      } else if (typeof item === "object") {
+        const n = item.abilityName ?? item.name ?? item.abilityId ?? item.id ?? null;
+        if (n && typeof n === "string" && n.trim().length > 0) names.push(String(n).trim());
+      }
+    };
+    if (Array.isArray(activeRaw)) activeRaw.forEach(process);
+    else process(activeRaw);
+    if (names.length > 0) result.superstar = names;
+  }
+
+  // Only store if we found something
+  return (result.zone || (result.superstar && result.superstar.length > 0)) ? result : null;
 }
 
 // ── Resolve archetype abbreviation from any known EA field name ───────────────

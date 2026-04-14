@@ -396,6 +396,7 @@ export const franchiseRostersTable = pgTable("franchise_rosters", {
   archetypeAbbrev:    text("archetype_abbrev"),          // EA's archetype abbreviation e.g. "FIELD_GENERAL", "SPEED_BACK"
   xpTotal:            integer("xp_total"),               // EA experiencePoints — total accumulated XP (used to compute weekly delta)
   attributes:         json("attributes"),               // Record<string, number> — all *Rating fields from MCA export
+  abilities:          json("abilities"),                 // { zone?: string, superstar?: string[] } — Superstar/X-Factor ability names
   importedAt: timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("franchise_roster_player_season_idx")
