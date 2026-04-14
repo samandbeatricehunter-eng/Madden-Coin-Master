@@ -1380,8 +1380,11 @@ export async function processWeekScores(
       .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
     const teamMap  = new Map(mcaTeams.map(t => [t.teamId, t]));
 
+    // Scope to current season only — EA reuses scheduleIds across seasons, so
+    // pulling all seasons would cause cross-season false-positive dupe matches.
     const allProcessed = await db.select({ gameId: franchiseProcessedGamesTable.gameId })
-      .from(franchiseProcessedGamesTable);
+      .from(franchiseProcessedGamesTable)
+      .where(eq(franchiseProcessedGamesTable.seasonIdRef, season.id));
     const processedSet = new Set(allProcessed.map(r => r.gameId));
 
     // MCA may send playoff rounds as weekType="reg" weekNum>=19 (Format A) OR
@@ -1554,7 +1557,11 @@ export async function processWeekScores(
           await db.update(usersTable)
             .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
             .where(eq(usersTable.discordId, loserId));
-          await upsertH2HMatchup(winnerId, loserId);
+          try {
+            await upsertH2HMatchup(winnerId, loserId);
+          } catch (h2hErr) {
+            console.error(`[mca/week${weekNum}/schedules] H2H record update failed for game ${gameId} — payout still issued:`, h2hErr);
+          }
 
           // Track playoff wins/losses separately in userRecordsTable
           if (isPlayoff) {
