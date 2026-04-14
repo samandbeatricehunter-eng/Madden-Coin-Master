@@ -700,15 +700,18 @@ export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
 }));
 
 // ── Configurable payout amounts (key → integer coin value, per-guild) ────────
+// NOTE: key is the primary key to match the existing production schema.
+// guild_id is a regular column (with default) scoped per-guild via a unique index.
+// This avoids a destructive primary-key migration on production.
 export const payoutConfigTable = pgTable("payout_config", {
+  key:         text("key").primaryKey(),
   guildId:     text("guild_id").notNull().default("1476251181524189438"),
-  key:         text("key").notNull(),
   value:       integer("value").notNull(),
   description: text("description").notNull().default(""),
   updatedAt:   timestamp("updated_at").notNull().defaultNow(),
   updatedBy:   text("updated_by"),
 }, (t) => ({
-  pk: primaryKey({ columns: [t.guildId, t.key] }),
+  uniq: uniqueIndex("payout_config_guild_key_uniq").on(t.guildId, t.key),
 }));
 
 // ── Pending polls awaiting expiry + result processing ─────────────────────────
