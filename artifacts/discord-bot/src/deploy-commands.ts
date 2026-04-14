@@ -32,6 +32,7 @@ import * as advanceweek      from "./commands/advanceweek.js";
 import * as statleaders      from "./commands/statleaders.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
 import * as viewFreeAgents   from "./commands/viewfreeagents.js";
+import * as viewXp            from "./commands/viewxp.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
@@ -83,7 +84,7 @@ const commands = [
   seasonschedule, nextschedule, nextopp, myRoster, savings, weeklyMatchups,
   standings, tradeBlock, h2hrecord, customarticle, webhookurl,
   viewPayoutTiers, interviewrequest,
-  advanceweek, statleaders, availableupgrades, viewFreeAgents,
+  advanceweek, statleaders, availableupgrades, viewFreeAgents, viewXp,
 
   // Admin tools
   adminEosTestrun, adminStatReimport, adminEaConnect, adminEaExport,
