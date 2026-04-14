@@ -18,7 +18,7 @@ import {
   franchiseScheduleTable, franchiseRostersTable,
   leagueNewsTable,
 } from "@workspace/db";
-import { eq, desc, and, gte, isNotNull, ne } from "drizzle-orm";
+import { eq, desc, and, gte, lt, isNotNull, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason, getRosterSeasonId, PRIMARY_GUILD_ID } from "./db-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -145,35 +145,71 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
   // ── Season info ────────────────────────────────────────────────────────────
   parts.push(`SEASON: Season ${season.seasonNumber}, current week: ${season.currentWeek ?? "pre-season"}`);
 
-  // ── Standings — use MCA in-game records (teamSeasonStatsTable) ─────────────
-  // These come directly from the Madden CFM franchise data import and reflect
-  // the actual in-game regular season record, NOT the Discord H2H tracking record.
+  // ── Standings — derived from actual scored games in franchise_schedule ────────
+  // We tally wins/losses directly from the schedule table (where homeScore IS NOT NULL)
+  // rather than trusting the accumulated teamSeasonStatsTable columns, which can
+  // double-count if the EA export sends cumulative totals on each weekly export.
+  // This guarantees the record exactly matches what games have actually been scored.
   const mcaStandings = await db.select({
-    teamName:     teamSeasonStatsTable.teamName,
-    wins:         teamSeasonStatsTable.wins,
-    losses:       teamSeasonStatsTable.losses,
+    teamName:      teamSeasonStatsTable.teamName,
+    discordId:     teamSeasonStatsTable.discordId,
     offPtsPerGame: teamSeasonStatsTable.offPtsPerGame,
-    turnoverDiff: teamSeasonStatsTable.turnoverDiff,
+    turnoverDiff:  teamSeasonStatsTable.turnoverDiff,
+    // Keep the raw accumulated columns only for other stat highlights (not for W/L)
+    wins:    teamSeasonStatsTable.wins,
+    losses:  teamSeasonStatsTable.losses,
   })
     .from(teamSeasonStatsTable)
     .where(eq(teamSeasonStatsTable.seasonId, season.id));
 
-  // Sanity bounds: a Madden regular season has at most 17 games (18 with a bye bye),
-  // so any team showing wins > 25 or losses > 25 has corrupt data (the MCA export
-  // sometimes writes total season points into the wins/losses fields instead).
-  // Filter those out entirely so the AI never sees fabricated records.
-  const activeStandings = mcaStandings
-    .filter(t => {
-      const total = t.wins + t.losses;
-      return total > 0 && t.wins <= 25 && t.losses <= 25;
-    })
+  // Human-controlled team names (discordId present)
+  const humanTeamNames = new Set(
+    mcaStandings.filter(t => t.discordId).map(t => t.teamName),
+  );
+
+  // Tally wins/losses per team from the schedule — regular season only (weekIndex < 1000)
+  const scoredGames = await db.select({
+    homeTeamName: franchiseScheduleTable.homeTeamName,
+    awayTeamName: franchiseScheduleTable.awayTeamName,
+    homeScore:    franchiseScheduleTable.homeScore,
+    awayScore:    franchiseScheduleTable.awayScore,
+  })
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId, season.id),
+      isNotNull(franchiseScheduleTable.homeScore),
+      lt(franchiseScheduleTable.weekIndex, 1000),   // regular season only
+    ));
+
+  const schedWins:   Map<string, number> = new Map();
+  const schedLosses: Map<string, number> = new Map();
+  for (const g of scoredGames) {
+    const home  = g.homeTeamName;
+    const away  = g.awayTeamName;
+    const hScore = g.homeScore ?? 0;
+    const aScore = g.awayScore ?? 0;
+    const homeWon = hScore > aScore;
+    schedWins.set(home,   (schedWins.get(home)   ?? 0) + (homeWon ? 1 : 0));
+    schedLosses.set(home, (schedLosses.get(home) ?? 0) + (homeWon ? 0 : 1));
+    schedWins.set(away,   (schedWins.get(away)   ?? 0) + (homeWon ? 0 : 1));
+    schedLosses.set(away, (schedLosses.get(away) ?? 0) + (homeWon ? 1 : 0));
+  }
+
+  // Build sorted standings for human teams that have played at least one game
+  const activeStandings = [...humanTeamNames]
+    .map(name => ({
+      teamName: name,
+      wins:     schedWins.get(name)   ?? 0,
+      losses:   schedLosses.get(name) ?? 0,
+    }))
+    .filter(t => t.wins + t.losses > 0)
     .sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
 
   if (activeStandings.length > 0) {
     // Show ONLY win-loss records — no other numbers, to avoid the AI mis-reading
     // any parenthetical stats as part of the record.
     const lines = activeStandings.map(r => `  ${r.teamName}: ${r.wins}W-${r.losses}L`);
-    parts.push(`\nCURRENT STANDINGS (in-game regular season record — wins and losses only):\n${lines.join("\n")}`);
+    parts.push(`\nCURRENT STANDINGS (computed from scored games — wins and losses only):\n${lines.join("\n")}`);
   } else {
     // No valid standings data — explicitly tell the model not to invent records.
     parts.push(`\nCURRENT STANDINGS: Data not available this cycle. Do NOT invent, assume, or quote any team's record. Avoid any mention of win-loss records entirely.`);

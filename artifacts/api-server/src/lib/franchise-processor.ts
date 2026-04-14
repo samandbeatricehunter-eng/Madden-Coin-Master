@@ -595,7 +595,7 @@ export async function processTeamWeekStats(
             set: {
               discordId:  teamEntry.discordId ?? null,
               teamName:   teamEntry.fullName,
-              // Counts: accumulate week-over-week (MCA sends per-game totals)
+              // Per-game stat counts: accumulate week-over-week (EA sends single-game totals)
               offYds:        sql`${teamSeasonStatsTable.offYds}        + ${offYds}`,
               offPassYds:    sql`${teamSeasonStatsTable.offPassYds}    + ${offPassYds}`,
               offRushYds:    sql`${teamSeasonStatsTable.offRushYds}    + ${offRushYds}`,
@@ -604,10 +604,13 @@ export async function processTeamWeekStats(
               defRushYds:    sql`${teamSeasonStatsTable.defRushYds}    + ${defRushYds}`,
               defTDs:        sql`${teamSeasonStatsTable.defTDs}        + ${defTDs}`,
               defFumblesRec: sql`${teamSeasonStatsTable.defFumblesRec} + ${defFumblesRec}`,
-              // Turnover diff accumulates each week's +/- (can be negative)
+              // Turnover diff accumulates each week's +/- delta (can be negative)
               turnoverDiff:  sql`${teamSeasonStatsTable.turnoverDiff}  + ${turnoverDiff}`,
-              wins:          sql`${teamSeasonStatsTable.wins}          + ${wins}`,
-              losses:        sql`${teamSeasonStatsTable.losses}        + ${losses}`,
+              // Wins/losses: EA sends CUMULATIVE season-to-date totals (not per-game deltas).
+              // Using GREATEST prevents double-counting across multiple weekly exports —
+              // the DB value can only move forward, matching Madden's running record.
+              wins:   sql`GREATEST(${teamSeasonStatsTable.wins},   ${wins})`,
+              losses: sql`GREATEST(${teamSeasonStatsTable.losses}, ${losses})`,
               // Percentages: overwrite with latest export value (running avg, not additive)
               ...(offRedZonePct > 0 ? { offRedZonePct } : {}),
               ...(defRedZonePct > 0 ? { defRedZonePct } : {}),
