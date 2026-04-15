@@ -3,8 +3,8 @@ import {
   PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userRecordsTable } from "@workspace/db";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { usersTable, userRecordsTable, seasonsTable } from "@workspace/db";
+import { eq, and, isNotNull, inArray } from "drizzle-orm";
 import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
@@ -71,10 +71,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await db.update(usersTable)
     .set({ team: null, playoffSeed: null, playoffConference: null, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, target.discordId));
+    .where(and(eq(usersTable.discordId, target.discordId), eq(usersTable.guildId, interaction.guildId!)));
+
+  // Scope record deletion to seasons belonging to this guild only
+  const guildSeasonIds = db
+    .select({ id: seasonsTable.id })
+    .from(seasonsTable)
+    .where(eq(seasonsTable.guildId, interaction.guildId!));
 
   const deleted = await db.delete(userRecordsTable)
-    .where(eq(userRecordsTable.discordId, target.discordId))
+    .where(and(eq(userRecordsTable.discordId, target.discordId), inArray(userRecordsTable.seasonId, guildSeasonIds)))
     .returning({ id: userRecordsTable.id });
 
   return interaction.editReply({

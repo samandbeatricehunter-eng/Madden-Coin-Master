@@ -42,6 +42,7 @@ import {
   franchiseRostersTable,
   teamSeasonStatsTable,
   playerSeasonStatsTable,
+  seasonsTable,
 } from "@workspace/db";
 import { eq, or, and, inArray } from "drizzle-orm";
 
@@ -132,6 +133,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Perform deletion ────────────────────────────────────────────────────────
+  const guildId = interaction.guildId!;
   const counts: Record<string, number> = {};
   const skipped: string[] = [];
 
@@ -140,47 +142,56 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     counts[label] = rows.length;
   };
 
+  // Subquery: season IDs that belong to this guild — used to scope all
+  // tables that have seasonId but no guildId column.
+  const guildSeasonIds = db
+    .select({ id: seasonsTable.id })
+    .from(seasonsTable)
+    .where(eq(seasonsTable.guildId, guildId));
+
   if (flags.economy) {
-    await del("savings",      db.delete(userSavingsTable)     .where(eq(userSavingsTable.discordId,      discordId)).returning({ id: userSavingsTable.discordId }));
-    await del("inventory",    db.delete(inventoryTable)       .where(eq(inventoryTable.discordId,        discordId)).returning({ id: inventoryTable.id }));
-    await del("season_stats", db.delete(seasonStatsTable)     .where(eq(seasonStatsTable.discordId,      discordId)).returning({ id: seasonStatsTable.id }));
-    await del("transactions", db.delete(coinTransactionsTable).where(eq(coinTransactionsTable.discordId, discordId)).returning({ id: coinTransactionsTable.id }));
-    await del("purchases",    db.delete(purchasesTable)       .where(eq(purchasesTable.discordId,        discordId)).returning({ id: purchasesTable.id }));
+    // userSavingsTable is intentionally global — no guild filter
+    await del("savings",      db.delete(userSavingsTable)     .where(eq(userSavingsTable.discordId, discordId)).returning({ id: userSavingsTable.discordId }));
+    await del("inventory",    db.delete(inventoryTable)       .where(and(eq(inventoryTable.discordId,        discordId), inArray(inventoryTable.seasonId,   guildSeasonIds))).returning({ id: inventoryTable.id }));
+    await del("season_stats", db.delete(seasonStatsTable)     .where(and(eq(seasonStatsTable.discordId,      discordId), inArray(seasonStatsTable.seasonId, guildSeasonIds))).returning({ id: seasonStatsTable.id }));
+    await del("transactions", db.delete(coinTransactionsTable).where(and(eq(coinTransactionsTable.discordId, discordId), eq(coinTransactionsTable.guildId, guildId))).returning({ id: coinTransactionsTable.id }));
+    await del("purchases",    db.delete(purchasesTable)       .where(and(eq(purchasesTable.discordId,        discordId), inArray(purchasesTable.seasonId,   guildSeasonIds))).returning({ id: purchasesTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["economy"]!);
   }
 
   if (flags.records) {
-    await del("user_records", db.delete(userRecordsTable)      .where(eq(userRecordsTable.discordId,     discordId)).returning({ id: userRecordsTable.id }));
-    await del("h2h_records",  db.delete(h2hMatchupRecordsTable).where(or(eq(h2hMatchupRecordsTable.discordId1, discordId), eq(h2hMatchupRecordsTable.discordId2, discordId))).returning({ id: h2hMatchupRecordsTable.id }));
-    await del("game_log",     db.delete(gameLogTable)          .where(eq(gameLogTable.discordId,         discordId)).returning({ id: gameLogTable.id }));
+    await del("user_records", db.delete(userRecordsTable)      .where(and(eq(userRecordsTable.discordId, discordId), inArray(userRecordsTable.seasonId, guildSeasonIds))).returning({ id: userRecordsTable.id }));
+    await del("h2h_records",  db.delete(h2hMatchupRecordsTable).where(and(or(eq(h2hMatchupRecordsTable.discordId1, discordId), eq(h2hMatchupRecordsTable.discordId2, discordId)), eq(h2hMatchupRecordsTable.guildId, guildId))).returning({ id: h2hMatchupRecordsTable.id }));
+    await del("game_log",     db.delete(gameLogTable)          .where(and(eq(gameLogTable.discordId,         discordId), eq(gameLogTable.guildId, guildId))).returning({ id: gameLogTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["records"]!);
   }
 
   if (flags.wagers) {
-    await del("wagers", db.delete(wagersTable).where(or(eq(wagersTable.challengerId, discordId), eq(wagersTable.opponentId, discordId))).returning({ id: wagersTable.id }));
+    await del("wagers", db.delete(wagersTable).where(and(or(eq(wagersTable.challengerId, discordId), eq(wagersTable.opponentId, discordId)), eq(wagersTable.guildId, guildId))).returning({ id: wagersTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["wagers"]!);
   }
 
   if (flags.trade_listings) {
-    await del("trade_listings", db.delete(tradeBlockListingsTable).where(eq(tradeBlockListingsTable.discordId, discordId)).returning({ id: tradeBlockListingsTable.id }));
-    await del("trade_iso",      db.delete(tradeBlockISOTable)     .where(eq(tradeBlockISOTable.discordId,     discordId)).returning({ id: tradeBlockISOTable.id }));
+    await del("trade_listings", db.delete(tradeBlockListingsTable).where(and(eq(tradeBlockListingsTable.discordId, discordId), inArray(tradeBlockListingsTable.seasonId, guildSeasonIds))).returning({ id: tradeBlockListingsTable.id }));
+    await del("trade_iso",      db.delete(tradeBlockISOTable)     .where(and(eq(tradeBlockISOTable.discordId,     discordId), inArray(tradeBlockISOTable.seasonId,     guildSeasonIds))).returning({ id: tradeBlockISOTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["trade_listings"]!);
   }
 
   if (flags.payout_data) {
+    // payoutRequestsTable has no guildId or seasonId — delete by discordId only
     await del("payout_requests", db.delete(payoutRequestsTable)      .where(or(eq(payoutRequestsTable.requesterId, discordId), eq(payoutRequestsTable.opponentId, discordId))).returning({ id: payoutRequestsTable.id }));
-    await del("channel_payouts", db.delete(pendingChannelPayoutsTable).where(eq(pendingChannelPayoutsTable.discordId, discordId)).returning({ id: pendingChannelPayoutsTable.id }));
-    await del("eos_payouts",     db.delete(pendingEosPayoutsTable)    .where(eq(pendingEosPayoutsTable.discordId,    discordId)).returning({ id: pendingEosPayoutsTable.id }));
+    await del("channel_payouts", db.delete(pendingChannelPayoutsTable).where(and(eq(pendingChannelPayoutsTable.discordId, discordId), eq(pendingChannelPayoutsTable.guildId, guildId))).returning({ id: pendingChannelPayoutsTable.id }));
+    await del("eos_payouts",     db.delete(pendingEosPayoutsTable)    .where(and(eq(pendingEosPayoutsTable.discordId, discordId),    inArray(pendingEosPayoutsTable.seasonId, guildSeasonIds))).returning({ id: pendingEosPayoutsTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["payout_data"]!);
   }
 
   if (flags.interviews) {
-    await del("interviews", db.delete(interviewRequestsTable).where(eq(interviewRequestsTable.discordId, discordId)).returning({ id: interviewRequestsTable.id }));
+    await del("interviews", db.delete(interviewRequestsTable).where(and(eq(interviewRequestsTable.discordId, discordId), eq(interviewRequestsTable.guildId, guildId))).returning({ id: interviewRequestsTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["interviews"]!);
   }
@@ -190,31 +201,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // the team still exists in Madden; we just unlink the owner.
     const mcaRows = await db.update(franchiseMcaTeamsTable)
       .set({ discordId: null, isHuman: false, updatedAt: new Date() })
-      .where(eq(franchiseMcaTeamsTable.discordId, discordId))
+      .where(and(eq(franchiseMcaTeamsTable.discordId, discordId), inArray(franchiseMcaTeamsTable.seasonId, guildSeasonIds)))
       .returning({ id: franchiseMcaTeamsTable.id });
     counts["franchise_mca"] = mcaRows.length;
 
     // Null out discord_id on all roster rows owned by this player
     const rosterResult = await db.update(franchiseRostersTable)
       .set({ discordId: null })
-      .where(eq(franchiseRostersTable.discordId, discordId))
+      .where(and(eq(franchiseRostersTable.discordId, discordId), inArray(franchiseRostersTable.seasonId, guildSeasonIds)))
       .returning({ id: franchiseRostersTable.id });
     counts["franchise_rosters"] = rosterResult.length;
 
-    await del("team_season_stats", db.delete(teamSeasonStatsTable)   .where(eq(teamSeasonStatsTable.discordId,    discordId)).returning({ id: teamSeasonStatsTable.id }));
-    await del("player_stats",      db.delete(playerSeasonStatsTable) .where(eq(playerSeasonStatsTable.discordId, discordId)).returning({ id: playerSeasonStatsTable.id }));
+    await del("team_season_stats", db.delete(teamSeasonStatsTable)  .where(and(eq(teamSeasonStatsTable.discordId,   discordId), inArray(teamSeasonStatsTable.seasonId,   guildSeasonIds))).returning({ id: teamSeasonStatsTable.id }));
+    await del("player_stats",      db.delete(playerSeasonStatsTable).where(and(eq(playerSeasonStatsTable.discordId, discordId), inArray(playerSeasonStatsTable.seasonId,   guildSeasonIds))).returning({ id: playerSeasonStatsTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["franchise_data"]!);
   }
 
   if (flags.custom_players) {
-    await del("custom_players", db.delete(customPlayersTable).where(eq(customPlayersTable.discordId, discordId)).returning({ id: customPlayersTable.id }));
+    await del("custom_players", db.delete(customPlayersTable).where(and(eq(customPlayersTable.discordId, discordId), inArray(customPlayersTable.seasonId, guildSeasonIds))).returning({ id: customPlayersTable.id }));
   } else {
     skipped.push(CATEGORY_LABELS["custom_players"]!);
   }
 
-  // Always delete the user profile last
-  await db.delete(usersTable).where(eq(usersTable.discordId, discordId));
+  // Always delete the user profile last — scoped to this guild only
+  await db.delete(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
 
   // ── Build summary ───────────────────────────────────────────────────────────
   const deletedLines = Object.entries(counts)
