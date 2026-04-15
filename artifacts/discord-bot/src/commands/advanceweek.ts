@@ -4,7 +4,12 @@ import {
   ActionRowBuilder, ButtonBuilder, ComponentType,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable } from "@workspace/db";
+import {
+  seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable,
+  gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable,
+  playerSeasonStatsTable, playerStatWeekProcessedTable,
+  gameLogTable, userRecordsTable, statPaddingViolationsTable,
+} from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { generateFranchiseArticle, generateWeekPreview } from "../lib/franchise-article.js";
@@ -125,6 +130,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // Declare channelLines early so both GOTW bonus and channel lifecycle can append to it
   const channelLines: string[] = [];
+
+  // ── Wipe preseason stats when advancing from Training Camp → Week 1 ─────────
+  let preseasonWipeNote = "";
+  if (season.currentWeek === "training_camp" && newWeek === "1") {
+    try {
+      await Promise.all([
+        db.delete(playerSeasonStatsTable)      .where(eq(playerSeasonStatsTable.seasonId,      season.id)),
+        db.delete(playerStatWeekProcessedTable).where(eq(playerStatWeekProcessedTable.seasonId, season.id)),
+        db.delete(gameLogTable)                .where(eq(gameLogTable.seasonId,                 season.id)),
+        db.delete(userRecordsTable)            .where(eq(userRecordsTable.seasonId,              season.id)),
+        db.delete(statPaddingViolationsTable)  .where(eq(statPaddingViolationsTable.seasonId,   season.id)),
+      ]);
+      preseasonWipeNote =
+        "✅ Preseason stats cleared (player stats, game logs, W/L records, and violation flags have been reset for the regular season).";
+      console.log(`[advanceweek] Preseason stats wiped for season ${season.id}`);
+    } catch (err) {
+      preseasonWipeNote = "⚠️ Preseason stat wipe partially failed — check logs.";
+      console.error("[advanceweek] Preseason stat wipe error:", err);
+    }
+  }
 
   // ── GOTW bonus + cleanup for the week we're leaving ──────────────────────
   const oldWeekNum = parseInt(season.currentWeek ?? "1", 10);
@@ -383,6 +408,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (channelLines.length > 0) {
     embed.addFields({ name: "📺 Matchup Channels", value: channelLines.join("\n") });
+  }
+
+  if (preseasonWipeNote) {
+    embed.addFields({ name: "🧹 Preseason Data Cleared", value: preseasonWipeNote });
   }
 
   if (newWeek === "wildcard") {
