@@ -2,8 +2,8 @@
  * /initialize-server — One-time server setup wizard for new REC League servers.
  *
  * Creates the exact category/channel structure matching the primary REC League
- * server, assigns permissions, registers channel IDs in the DB, and creates
- * Season 1 for the new guild.
+ * server, assigns permissions, registers channel IDs in the DB, creates
+ * Season 1, and seeds 32 NFL team placeholder slots.
  */
 
 import {
@@ -14,13 +14,13 @@ import {
   Guild, Role, CategoryChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { seasonsTable, usersTable } from "@workspace/db";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { isAdminUser, setGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
+import { NFL_TEAMS } from "../lib/constants.js";
 
 // ── Channel name → DB key mapping ─────────────────────────────────────────────
-// Must exactly match the `name` fields in SERVER_BLUEPRINT below.
 const CHANNEL_KEY_MAP: Record<string, string> = {
   "general-discussion":    CHANNEL_KEYS.GENERAL,
   "season-schedule":       CHANNEL_KEYS.SCHEDULE,
@@ -40,21 +40,20 @@ const CHANNEL_KEY_MAP: Record<string, string> = {
 type ChannelKind = "text" | "voice";
 
 interface ChannelDef {
-  name: string;
-  kind?: ChannelKind;   // defaults to "text"
-  topic?: string;
-  readOnly?: boolean;   // @everyone can read, cannot send
-  private?: boolean;    // @everyone cannot see at all
+  name:     string;
+  kind?:    ChannelKind;
+  topic?:   string;
+  readOnly?: boolean;
+  private?:  boolean;
 }
 
 interface CategoryDef {
-  name: string;
-  private?: boolean;    // entire category hidden from @everyone
+  name:     string;
+  private?: boolean;
   channels: ChannelDef[];
 }
 
 // ── Standalone channels (no category parent) ───────────────────────────────────
-// Created first so they appear at the top of the channel list.
 const STANDALONE_CHANNELS: ChannelDef[] = [
   {
     name:     "welcome",
@@ -64,18 +63,16 @@ const STANDALONE_CHANNELS: ChannelDef[] = [
 ];
 
 // ── Categories and their channels ─────────────────────────────────────────────
-// Mirrors the primary REC League Discord server structure exactly.
 const SERVER_BLUEPRINT: CategoryDef[] = [
   {
     name: "🔒 MEMBERS ONLY",
     channels: [
-      { name: "general-discussion",  topic: "General league discussion"                                        },
-      { name: "member-league-chat",  topic: "Member-only league chat"                                         },
-      { name: "league-announcements",topic: "Commissioner announcements", readOnly: true                       },
+      { name: "general-discussion",   topic: "General league discussion"                                        },
+      { name: "member-league-chat",   topic: "Member-only league chat"                                         },
+      { name: "league-announcements", topic: "Commissioner announcements", readOnly: true                       },
     ],
   },
   {
-    // Voice channel in its own category so it stays in order
     name: "🎙️ VOICE",
     channels: [
       { name: "Trash Talk", kind: "voice" },
@@ -84,8 +81,8 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
   {
     name: "🏈 GAMEDAY CENTER",
     channels: [
-      { name: "season-schedule",   topic: "Full season schedule — posted by bot each new season", readOnly: true },
-      { name: "weekly-matchups",   topic: "Weekly matchup embeds — posted by bot",                readOnly: true },
+      { name: "season-schedule",       topic: "Full season schedule — posted by bot each new season", readOnly: true },
+      { name: "weekly-matchups",       topic: "Weekly matchup embeds — posted by bot",                readOnly: true },
       { name: "weekly-gotw-spotlight", topic: "Game of the Week spotlight and poll"                              },
     ],
   },
@@ -104,19 +101,19 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
     private: true,
     channels: [
       { name: "position-change-requests", topic: "Legend and custom player position change tracker", readOnly: true, private: true },
-      { name: "commissioners-office",    topic: "Private commissioner coordination channel",                   private: true },
-      { name: "commissioners-log",       topic: "Commissioner rulings and decisions",                          private: true },
-      { name: "referral-log",      topic: "Member referral tracking",                                         private: true },
-      { name: "violation-log",     topic: "Stat padding violations and rule infractions",                     private: true },
-      { name: "transactions-log",  topic: "All transactions — trades, signings, and releases", readOnly: true, private: true },
+      { name: "commissioners-office",     topic: "Private commissioner coordination channel",                   private: true },
+      { name: "commissioners-log",        topic: "Commissioner rulings and decisions",                          private: true },
+      { name: "referral-log",             topic: "Member referral tracking",                                    private: true },
+      { name: "violation-log",            topic: "Stat padding violations and rule infractions",                private: true },
+      { name: "transactions-log",         topic: "All transactions — trades, signings, and releases", readOnly: true, private: true },
     ],
   },
   {
     name: "🏆 THE HALL OF FAME AND SHAME",
     channels: [
-      { name: "the-quit-list",            topic: "Members who have left the league",            readOnly: true },
-      { name: "historical-records-season",topic: "Season-by-season historical records",          readOnly: true },
-      { name: "historical-records-alltime",topic: "All-time league records",                     readOnly: true },
+      { name: "the-quit-list",             topic: "Members who have left the league",          readOnly: true },
+      { name: "historical-records-season", topic: "Season-by-season historical records",        readOnly: true },
+      { name: "historical-records-alltime",topic: "All-time league records",                   readOnly: true },
     ],
   },
   {
@@ -127,23 +124,23 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
   },
 ];
 
-// ── Setup checklist shown in the summary embed ─────────────────────────────────
+// ── Setup checklist ────────────────────────────────────────────────────────────
 const SETUP_STEPS = [
-  { step: "1", icon: "✅", label: "Channels & roles created",                                                          done: true },
-  { step: "2", icon: "⚙️", label: "Configure feature settings (Economy, Wagers, MCA, etc.)"                                       },
-  { step: "3", icon: "👥", label: "Link each manager to their NFL team (`/admin-linkteam set`)"                                    },
-  { step: "4", icon: "🔗", label: "Connect to EA for automatic data imports (`/admin_ea_connect start`)"                           },
-  { step: "5", icon: "📤", label: "Or set up MCA webhook URL if using manual export (`/webhookurl`)"                               },
-  { step: "6", icon: "💰", label: "Configure end-of-season payout tiers (`/admin-setpayouts`)"                                    },
-  { step: "7", icon: "🏈", label: "Import league teams + rosters from EA (`/admin_ea_export` or MCA)"                             },
-  { step: "8", icon: "📋", label: "Customize league rules for your league (`/rules` → section editor)"                            },
-  { step: "9", icon: "🏆", label: "Post opening week schedule (`/admin-postfullseasonschedule`)"                                  },
+  { step: "1", icon: "✅", label: "Channels, roles, and team slots created"                                                         },
+  { step: "2", icon: "⚙️", label: "Configure feature settings (Economy, Wagers, MCA, etc.)"                                        },
+  { step: "3", icon: "👥", label: "Link each manager to their NFL team (`/admin-linkteam set`)"                                     },
+  { step: "4", icon: "🔗", label: "Connect to EA for automatic data imports (`/admin_ea_connect start`)"                            },
+  { step: "5", icon: "📤", label: "Or set up MCA webhook URL if using manual export (`/webhookurl`)"                                },
+  { step: "6", icon: "💰", label: "Configure end-of-season payout tiers (`/admin-setpayouts`)"                                     },
+  { step: "7", icon: "🏈", label: "Import league teams + rosters from EA (`/admin_ea_export` or MCA)"                              },
+  { step: "8", icon: "📋", label: "Customize league rules for your league (`/rules` → section editor)"                             },
+  { step: "9", icon: "🏆", label: "Post opening week schedule (`/admin-postfullseasonschedule`)"                                   },
 ];
 
 // ── Command definition ─────────────────────────────────────────────────────────
 export const data = new SlashCommandBuilder()
   .setName("initialize-server")
-  .setDescription("First-time server setup: creates channels, roles, and walks through configuration")
+  .setDescription("First-time server setup: creates channels, roles, team slots, and walks through configuration")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addBooleanOption(o =>
     o.setName("confirm")
@@ -182,96 +179,86 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  await interaction.editReply({ content: "⏳ Starting server initialization… this may take 15–30 seconds." });
+  await interaction.editReply({ content: "⏳ Starting server initialization… this may take 30–60 seconds." });
 
-  const guildId           = interaction.guildId!;
-  const log: string[]                    = [];
-  const channelMentions: Record<string, string> = {};
-  const channelIds: Record<string, string>      = {};
+  const guildId                                     = interaction.guildId!;
+  const log: string[]                               = [];
+  const channelMentions: Record<string, string>     = {};
+  const channelIds: Record<string, string>          = {};
 
   try {
     // ── Step 1: Roles ──────────────────────────────────────────────────────────
-    const commRole   = await ensureRole(guild, "Commissioner",    0xFFD700);
-    const coCommRole = await ensureRole(guild, "Co-Commissioner", 0x4FC3F7);
-    log.push(`Roles: **Commissioner** <@&${commRole.id}> · **Co-Commissioner** <@&${coCommRole.id}>`);
+    const commRole     = await ensureRole(guild, "Commissioner",    0xFFD700);
+    const coCommRole   = await ensureRole(guild, "Co-Commissioner", 0x4FC3F7);
+    const approvedRole = await ensureRole(guild, "Approved Member", 0x57F287);
+    log.push(
+      `Roles: **Commissioner** <@&${commRole.id}> · **Co-Commissioner** <@&${coCommRole.id}> · **Approved Member** <@&${approvedRole.id}>`,
+    );
 
-    // ── Step 2: Standalone channels (no category) ──────────────────────────────
+    // ── Step 2: Delete all pre-existing channels ────────────────────────────────
+    // Fetch fresh so we have everything including default "general" / voice channels.
+    await guild.channels.fetch();
+    const toDelete = [...guild.channels.cache.values()];
+    let deleted = 0;
+    for (const ch of toDelete) {
+      await ch.delete("REC League initialization — clearing pre-existing channels").catch(() => null);
+      deleted++;
+    }
+    log.push(`🗑️ Removed ${deleted} pre-existing channel(s)`);
+
+    // ── Step 3: Standalone channels ────────────────────────────────────────────
     for (const chDef of STANDALONE_CHANNELS) {
-      const existing = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildText && c.name === chDef.name && !c.parentId,
-      );
-      if (existing) {
-        channelMentions[chDef.name] = `<#${existing.id}>`;
-        channelIds[chDef.name]      = existing.id;
-        continue;
-      }
-      const perms = buildPerms(guild, commRole, coCommRole, chDef, false);
+      const perms = buildPerms(guild, commRole, coCommRole, approvedRole, chDef, false);
       const created = await guild.channels.create({
-        name:                chDef.name,
-        type:                ChannelType.GuildText,
-        topic:               chDef.topic,
+        name:                 chDef.name,
+        type:                 ChannelType.GuildText,
+        topic:                chDef.topic,
         permissionOverwrites: perms,
       });
       channelMentions[chDef.name] = `<#${created.id}>`;
       channelIds[chDef.name]      = created.id;
     }
 
-    // ── Step 3: Categories and their channels ──────────────────────────────────
+    // ── Step 4: Categories and their channels ──────────────────────────────────
     for (const catDef of SERVER_BLUEPRINT) {
-      const existingCat = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildCategory && c.name === catDef.name,
-      ) as CategoryChannel | undefined;
+      const catPerms: OverwriteResolvable[] = catDef.private
+        ? [
+            { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+            { id: approvedRole,         deny:  [PermissionFlagsBits.ViewChannel] },
+            { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+            { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+          ]
+        : [
+            { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+            { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+            { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+            { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+          ];
 
-      let category: CategoryChannel;
-      if (existingCat) {
-        category = existingCat;
-        log.push(`↩️ Reused category: ${catDef.name}`);
-      } else {
-        const catPerms: OverwriteResolvable[] = catDef.private
-          ? [
-              { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
-              { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
-              { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-            ]
-          : [];
-
-        category = await guild.channels.create({
-          name:                catDef.name,
-          type:                ChannelType.GuildCategory,
-          permissionOverwrites: catPerms,
-        });
-        log.push(`✅ Created category: ${catDef.name}`);
-      }
+      const category: CategoryChannel = await guild.channels.create({
+        name:                 catDef.name,
+        type:                 ChannelType.GuildCategory,
+        permissionOverwrites: catPerms,
+      });
+      log.push(`✅ Created category: ${catDef.name}`);
 
       for (const chDef of catDef.channels) {
-        const isVoice   = chDef.kind === "voice";
-        const chType    = isVoice ? ChannelType.GuildVoice : ChannelType.GuildText;
-        const existing  = guild.channels.cache.find(
-          c => c.type === chType && c.name === chDef.name && c.parentId === category.id,
-        );
-        if (existing) {
-          if (!isVoice) {
-            channelMentions[chDef.name] = `<#${existing.id}>`;
-            channelIds[chDef.name]      = existing.id;
-          }
-          continue;
-        }
-
-        const perms = buildPerms(guild, commRole, coCommRole, chDef, catDef.private ?? false);
+        const isVoice = chDef.kind === "voice";
+        const perms   = buildPerms(guild, commRole, coCommRole, approvedRole, chDef, catDef.private ?? false);
 
         if (isVoice) {
           await guild.channels.create({
-            name:                chDef.name,
-            type:                ChannelType.GuildVoice,
-            parent:              category.id,
+            name:                 chDef.name,
+            type:                 ChannelType.GuildVoice,
+            parent:               category.id,
             permissionOverwrites: perms,
           });
         } else {
           const created = await guild.channels.create({
-            name:                chDef.name,
-            type:                ChannelType.GuildText,
-            parent:              category.id,
-            topic:               chDef.topic,
+            name:                 chDef.name,
+            type:                 ChannelType.GuildText,
+            parent:               category.id,
+            topic:                chDef.topic,
             permissionOverwrites: perms,
           });
           channelMentions[chDef.name] = `<#${created.id}>`;
@@ -280,7 +267,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       }
     }
 
-    // ── Step 4: Save channel IDs to DB ─────────────────────────────────────────
+    // ── Step 5: Save channel IDs to DB ─────────────────────────────────────────
     const saves: Promise<void>[] = [];
     for (const [name, id] of Object.entries(channelIds)) {
       const key = CHANNEL_KEY_MAP[name];
@@ -289,24 +276,53 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     await Promise.all(saves);
     log.push(`💾 Saved ${saves.length} channel IDs to database`);
 
-    // ── Step 5: Season 1 ───────────────────────────────────────────────────────
-    const existing = await db
+    // ── Step 6: Season 1 ───────────────────────────────────────────────────────
+    const existingSeasons = await db
       .select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
       .from(seasonsTable)
       .where(eq(seasonsTable.guildId, guildId))
       .limit(1);
 
     let seasonNote: string;
-    if (existing.length > 0) {
-      seasonNote = `Season ${existing[0]!.seasonNumber} already exists — no new season created.`;
+    if (existingSeasons.length > 0) {
+      seasonNote = `Season ${existingSeasons[0]!.seasonNumber} already exists — no new season created.`;
     } else {
       await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true });
       seasonNote = "Season 1 created and set as active.";
     }
     log.push(`🗓️ ${seasonNote}`);
 
-    // ── Step 6: Server settings row ────────────────────────────────────────────
+    // ── Step 7: Server settings row ────────────────────────────────────────────
     await getServerSettings();
+
+    // ── Step 8: Seed 32 NFL team placeholder slots ─────────────────────────────
+    // Only seed teams that don't already have a real (non-placeholder) user.
+    const realTeamRows = await db
+      .select({ team: usersTable.team, discordId: usersTable.discordId })
+      .from(usersTable)
+      .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
+
+    const realTeams = new Set(
+      realTeamRows
+        .filter(r => !r.discordId.startsWith("unlinked_"))
+        .map(r => r.team!),
+    );
+
+    const teamsToSeed = (NFL_TEAMS as readonly string[]).filter(t => !realTeams.has(t));
+
+    if (teamsToSeed.length > 0) {
+      await db.insert(usersTable).values(
+        teamsToSeed.map(team => ({
+          discordId:            `unlinked_${team.toLowerCase()}`,
+          guildId,
+          discordUsername:      "Open Slot",
+          team,
+          balance:              0,
+          totalLegendPurchases: 0,
+        })),
+      ).onConflictDoNothing();
+      log.push(`🏈 Seeded ${teamsToSeed.length} open team slot(s) (${NFL_TEAMS.length - teamsToSeed.length} already claimed)`);
+    }
 
   } catch (err: any) {
     console.error("[initialize-server] Error during setup:", err);
@@ -327,22 +343,32 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .setTimestamp();
 
   const channelCard = [
-    `💬 ${channelMentions["general-discussion"]     ?? "#general-discussion"}     — General`,
-    `📅 ${channelMentions["season-schedule"]         ?? "#season-schedule"}         — Schedule`,
-    `🏟️ ${channelMentions["weekly-matchups"]         ?? "#weekly-matchups"}         — Matchups`,
-    `🗳️ ${channelMentions["weekly-gotw-spotlight"]    ?? "#weekly-gotw-spotlight"}    — GOTW Spotlight`,
-    `🐦 ${channelMentions["league-twitter"]          ?? "#league-twitter"}           — League Twitter`,
-    `📰 ${channelMentions["league-headlines"]        ?? "#league-headlines"}         — Headlines`,
-    `🆚 ${channelMentions["h2h-goty-candidates"]     ?? "#h2h-goty-candidates"}      — GOTY`,
-    `📋 ${channelMentions["position-change-requests"] ?? "#position-change-requests"} — Position Changes`,
-    `🔒 ${channelMentions["commissioners-office"]    ?? "#commissioners-office"}     — Commissioner (private)`,
-    `⚠️ ${channelMentions["violation-log"]           ?? "#violation-log"}           — Violations (private)`,
-    `💱 ${channelMentions["transactions-log"]        ?? "#transactions-log"}        — Transactions (private)`,
-    `🎊 ${channelMentions["end-of-season-payouts"]   ?? "#end-of-season-payouts"}   — EOS Payouts`,
+    `💬 ${channelMentions["general-discussion"]       ?? "#general-discussion"}     — General`,
+    `📅 ${channelMentions["season-schedule"]           ?? "#season-schedule"}         — Schedule`,
+    `🏟️ ${channelMentions["weekly-matchups"]           ?? "#weekly-matchups"}         — Matchups`,
+    `🗳️ ${channelMentions["weekly-gotw-spotlight"]     ?? "#weekly-gotw-spotlight"}   — GOTW Spotlight`,
+    `🐦 ${channelMentions["league-twitter"]            ?? "#league-twitter"}          — League Twitter`,
+    `📰 ${channelMentions["league-headlines"]          ?? "#league-headlines"}        — Headlines`,
+    `🆚 ${channelMentions["h2h-goty-candidates"]       ?? "#h2h-goty-candidates"}     — GOTY`,
+    `📋 ${channelMentions["position-change-requests"]  ?? "#position-change-requests"} — Position Changes`,
+    `🔒 ${channelMentions["commissioners-office"]      ?? "#commissioners-office"}    — Commissioner (private)`,
+    `⚠️ ${channelMentions["violation-log"]             ?? "#violation-log"}           — Violations (private)`,
+    `💱 ${channelMentions["transactions-log"]          ?? "#transactions-log"}        — Transactions (private)`,
+    `🎊 ${channelMentions["end-of-season-payouts"]     ?? "#end-of-season-payouts"}   — EOS Payouts`,
   ].join("\n");
 
   embed.addFields(
     { name: "📌 Key Channels", value: channelCard, inline: false },
+    {
+      name: "🎭 Roles Created",
+      value: [
+        "**Commissioner** — Full access, manages all channels",
+        "**Co-Commissioner** — Same access as Commissioner (no ManageMessages)",
+        "**Approved Member** — Access to all non-private member channels",
+        "\n*Assign **Approved Member** to each new member so they can see the server.*",
+      ].join("\n"),
+      inline: false,
+    },
     {
       name: "📖 After Setup — Key Commands",
       value: [
@@ -378,26 +404,50 @@ async function ensureRole(guild: Guild, name: string, color: number): Promise<Ro
 }
 
 function buildPerms(
-  guild:      Guild,
-  commRole:   Role,
-  coCommRole: Role,
-  chDef:      ChannelDef,
-  catPrivate: boolean,
+  guild:        Guild,
+  commRole:     Role,
+  coCommRole:   Role,
+  approvedRole: Role,
+  chDef:        ChannelDef,
+  catPrivate:   boolean,
 ): OverwriteResolvable[] {
   const isPrivate = chDef.private || catPrivate;
+
+  // #welcome — the only public channel (@everyone can view, no one can send)
+  if (chDef.name === "welcome") {
+    return [
+      { id: guild.roles.everyone, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
+      { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
+      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+    ];
+  }
+
+  // Private channels — Approved Members cannot see
   if (isPrivate) {
     return [
       { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
-      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+      { id: approvedRole,         deny:  [PermissionFlagsBits.ViewChannel] },
       { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
     ];
   }
+
+  // Read-only member channels
   if (chDef.readOnly) {
     return [
-      { id: guild.roles.everyone, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
-      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+      { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+      { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
       { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
     ];
   }
-  return [];
+
+  // Standard member channel (read + write)
+  return [
+    { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+    { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+    { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+    { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+  ];
 }

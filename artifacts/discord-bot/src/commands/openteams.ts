@@ -14,11 +14,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: false });
 
   const takenRows = await db
-    .select({ team: usersTable.team })
+    .select({ team: usersTable.team, discordId: usersTable.discordId })
     .from(usersTable)
     .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, interaction.guildId!)));
 
-  const taken = new Set(takenRows.map(r => r.team as string));
+  // Exclude placeholder slots — only count teams with a real linked Discord user
+  const taken = new Set(
+    takenRows
+      .filter(r => !r.discordId.startsWith("unlinked_"))
+      .map(r => r.team as string),
+  );
   const open = NFL_TEAMS.filter(t => !taken.has(t));
 
   if (open.length === 0) {

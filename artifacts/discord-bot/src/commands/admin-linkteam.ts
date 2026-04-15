@@ -134,7 +134,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const unlinked = allUsers.filter(u => !u.team);
 
     const linkedLines = linked.map(u =>
-      `🏈 **${u.team}** → <@${u.discordId}> (${u.discordUsername}) | ${u.allTimeH2HWins}W all-time · tier ${u.milestoneTier}`
+      u.discordId.startsWith("unlinked_")
+        ? `🔓 **${u.team}** — *Open Slot*`
+        : `🏈 **${u.team}** → <@${u.discordId}> (${u.discordUsername}) | ${u.allTimeH2HWins}W all-time · tier ${u.milestoneTier}`
     );
     const unlinkedLines = unlinked.map(u =>
       `❓ <@${u.discordId}> (${u.discordUsername}) — no team assigned`
@@ -287,6 +289,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
+  // Remove placeholder slot for this team so the real user can claim it cleanly
+  await db.delete(usersTable)
+    .where(and(
+      eq(usersTable.discordId, `unlinked_${teamName.toLowerCase()}`),
+      eq(usersTable.guildId, interaction.guildId!),
+    ));
+
   const existingOwner = await db.select({
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
@@ -312,6 +321,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (existing.length === 0) {
     await db.insert(usersTable).values({
       discordId:            targetUser.id,
+      guildId:              interaction.guildId!,
       discordUsername:      targetUser.username,
       team:                 teamName,
       balance:              0,
