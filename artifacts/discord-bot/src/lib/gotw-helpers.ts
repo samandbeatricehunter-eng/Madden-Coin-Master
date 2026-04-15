@@ -10,6 +10,15 @@ import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 
 export const GOTW_COOLDOWN_WEEKS = 4;
 
+/**
+ * Fuzzy team-name match: handles "Vikings" stored in gotwHistory vs
+ * "Minnesota Vikings" stored in franchise_schedule.
+ * Returns true when either name fully contains the other (case-insensitive).
+ */
+function nameMatch(a: string, b: string): boolean {
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 export type ScoredH2HGame = {
   awayTeamName:   string;
   homeTeamName:   string;
@@ -296,15 +305,15 @@ export async function autoPayoutGotwVoters(
       eq(franchiseScheduleTable.weekIndex, weekIndex),
     ));
 
-  // Match the GOTW game by team names (case-insensitive)
+  // Match the GOTW game by team names (fuzzy — handles "Vikings" vs "Minnesota Vikings")
   const t1 = row.teamName1.toLowerCase().trim();
   const t2 = row.teamName2.toLowerCase().trim();
   const gotwGame = scheduleRows.find(g => {
     const away = g.awayTeamName.toLowerCase().trim();
     const home = g.homeTeamName.toLowerCase().trim();
     return (
-      (away === t1 && home === t2) ||
-      (away === t2 && home === t1)
+      (nameMatch(away, t1) && nameMatch(home, t2)) ||
+      (nameMatch(away, t2) && nameMatch(home, t1))
     );
   });
 
@@ -334,7 +343,7 @@ export async function autoPayoutGotwVoters(
   }
 
   const gameAwayName = gotwGame.awayTeamName.toLowerCase().trim();
-  if (gameAwayName === gotw1Name) {
+  if (nameMatch(gameAwayName, gotw1Name)) {
     // teamName1 was the away team in the actual game
     winningAnswerId  = awayWon ? 1 : 2;
     winnerDiscordId  = awayWon ? row.discordId1 : row.discordId2;
@@ -465,13 +474,16 @@ export async function autoPayoutPlayoffGotw(
       continue;
     }
 
-    // Match the game by team names (case-insensitive, try both orderings)
+    // Match the game by team names (fuzzy — handles "Raiders" vs "Las Vegas Raiders")
     const t1 = poll.teamName1.toLowerCase().trim();
     const t2 = poll.teamName2.toLowerCase().trim();
     const game = scheduleRows.find(g => {
       const away = g.awayTeamName.toLowerCase().trim();
       const home = g.homeTeamName.toLowerCase().trim();
-      return (away === t1 && home === t2) || (away === t2 && home === t1);
+      return (
+        (nameMatch(away, t1) && nameMatch(home, t2)) ||
+        (nameMatch(away, t2) && nameMatch(home, t1))
+      );
     });
 
     if (!game) {
@@ -499,7 +511,7 @@ export async function autoPayoutPlayoffGotw(
     // poll answer 1 = teamName1; figure out if teamName1 was the away or home team
     let winningAnswerId: number;
     let winnerName: string;
-    if (gameAwayName === t1) {
+    if (nameMatch(gameAwayName, t1)) {
       winningAnswerId = awayWon ? 1 : 2;
       winnerName      = awayWon ? poll.teamName1 : poll.teamName2;
     } else {
