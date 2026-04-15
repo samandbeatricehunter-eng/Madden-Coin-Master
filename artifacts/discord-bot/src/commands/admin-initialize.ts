@@ -14,7 +14,7 @@ import {
   Guild, Role, CategoryChannel, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, usersTable } from "@workspace/db";
+import { seasonsTable, usersTable, serverSettingsTable } from "@workspace/db";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { isAdminUser, setGuildChannel, CHANNEL_KEYS, DEFAULT_RULES, SECTION_META } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
@@ -179,12 +179,28 @@ export const data = new SlashCommandBuilder()
         { name: "Super Bowl",              value: "superbowl"     },
         { name: "Off-Season",              value: "offseason"     },
       ),
+  )
+  .addIntegerOption(o =>
+    o.setName("franchise_length")
+      .setDescription("Total number of seasons this franchise will run (default: 10)")
+      .setRequired(false)
+      .setMinValue(1)
+      .setMaxValue(30),
+  )
+  .addIntegerOption(o =>
+    o.setName("current_season")
+      .setDescription("Starting season number — set above 1 if joining an existing franchise mid-run (default: 1)")
+      .setRequired(false)
+      .setMinValue(1)
+      .setMaxValue(30),
   );
 
 // ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const confirm      = interaction.options.getBoolean("confirm", true);
-  const startingWeek = interaction.options.getString("starting_week") ?? "training_camp";
+  const confirm             = interaction.options.getBoolean("confirm", true);
+  const startingWeek        = interaction.options.getString("starting_week")  ?? "training_camp";
+  const franchiseLength     = interaction.options.getInteger("franchise_length") ?? 10;
+  const currentSeasonNumber = interaction.options.getInteger("current_season")   ?? 1;
 
   if (!confirm) {
     await interaction.reply({
@@ -322,13 +338,17 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (existingSeasons.length > 0) {
       seasonNote = `Season ${existingSeasons[0]!.seasonNumber} already exists — no new season created.`;
     } else {
-      await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true, currentWeek: startingWeek });
-      seasonNote = `Season 1 created — starting on **${startingWeek.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}**.`;
+      await db.insert(seasonsTable).values({ guildId, seasonNumber: currentSeasonNumber, isActive: true, currentWeek: startingWeek });
+      const weekLabel = startingWeek.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      seasonNote = `Season **${currentSeasonNumber}** of **${franchiseLength}** created — starting on **${weekLabel}**.`;
     }
     log.push(`🗓️ ${seasonNote}`);
 
-    // ── Step 7: Server settings row ────────────────────────────────────────────
-    await getServerSettings();
+    // ── Step 7: Server settings row + franchise length ─────────────────────────
+    await getServerSettings(); // ensures the row exists
+    await db.update(serverSettingsTable)
+      .set({ maxSeasons: franchiseLength })
+      .where(eq(serverSettingsTable.guildId, "global"));
 
     // ── Step 8: Seed 32 NFL team placeholder slots ─────────────────────────────
     // Only seed teams that don't already have a real (non-placeholder) user.
