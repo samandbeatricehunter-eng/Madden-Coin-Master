@@ -6,7 +6,7 @@ import {
   usersTable, userRecordsTable, coinTransactionsTable,
   inventoryTable, purchasesTable, interviewRequestsTable,
   seasonStatsTable, userSavingsTable,
-  customPlayersTable,
+  customPlayersTable, seasonsTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, ne, inArray, or, isNull } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
@@ -68,13 +68,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
       .limit(1),
 
+    // All-time records scoped to THIS guild by joining through seasons
     db.select({
       totalWins:          sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
       totalLosses:        sql<string>`COALESCE(SUM(${userRecordsTable.losses}), 0)`,
       totalPlayoffWins:   sql<string>`COALESCE(SUM(${userRecordsTable.playoffWins}), 0)`,
       totalPlayoffLosses: sql<string>`COALESCE(SUM(${userRecordsTable.playoffLosses}), 0)`,
     }).from(userRecordsTable)
-      .where(eq(userRecordsTable.discordId, target.id)),
+      .innerJoin(seasonsTable, eq(userRecordsTable.seasonId, seasonsTable.id))
+      .where(and(
+        eq(userRecordsTable.discordId, target.id),
+        eq(seasonsTable.guildId, interaction.guildId!),
+      )),
 
     getSavings(target.id),
     computeStreak(target.id, false, interaction.guildId!),
@@ -113,7 +118,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .limit(20),
 
     db.select().from(coinTransactionsTable)
-      .where(eq(coinTransactionsTable.discordId, target.id))
+      .where(and(
+        eq(coinTransactionsTable.discordId, target.id),
+        eq(coinTransactionsTable.guildId, interaction.guildId!),
+      ))
       .orderBy(desc(coinTransactionsTable.createdAt))
       .limit(10),
 

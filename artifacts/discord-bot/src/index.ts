@@ -40,6 +40,7 @@ import * as availableupgrades from "./commands/availableupgrades.js";
 import * as viewFreeAgents   from "./commands/viewfreeagents.js";
 import * as viewXp            from "./commands/viewxp.js";
 import * as waitlist          from "./commands/waitlist.js";
+import * as globalrecords     from "./commands/globalrecords.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
@@ -192,6 +193,7 @@ if (!isProduction && !devBotEnabled) {
     adminInventory,
     adminInitialize,
     waitlist,
+    globalrecords,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },
