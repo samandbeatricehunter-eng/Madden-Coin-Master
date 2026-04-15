@@ -62,6 +62,7 @@ import * as adminLinkTeam           from "../commands/admin-linkteam.js";
 import * as adminRosterLegends      from "../commands/admin-roster-legends.js";
 import * as adminInventory          from "../commands/admin-inventory.js";
 import * as adminInitialize         from "../commands/admin-initialize.js";
+import * as waitlist                from "../commands/waitlist.js";
 import { seasonPRData, allTimePRData } from "../commands/records.js";
 
 /**
@@ -124,6 +125,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminRosterLegends,    true],
     [adminInventory,        true],
     [adminInitialize,    true],
+    [waitlist,           true],
     [adminSetStatTiers,  true],
     [adminStatTiers,     true],
 
