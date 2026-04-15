@@ -1,0 +1,124 @@
+Settings Default Rules: 
+
+1. Skill Level = ALL MADDEN; Game Style = Simulation; Kick Meter = Classic; Quarter Length = 8 Minutes; Accelerated Clock = On; Min Play Clock time = 20 SECONDS; Offensive Play Cooldown/Limit = 8-Play Cooldown; Defensive Play Call Cooldown/Limit = Off
+
+2. Season Experience = Full Control - All Manual; Auto Progress Players = Off; Ability Weekly Recap = Off; Tutorial Pop-Ups = Off
+
+3. Team Setting Overrides: Ball Hawk = OFF; Heat Seeker = OFF; Switch Assist = Keep Individual; Controlled Player Art = Keep Individual
+
+4. Commissioner Settings: Trade Deadline = OFF; Trade Type = Very Hard; Salary Cap = On; Free agent Motivation = Very High; Practice Squad Stealing = On; Relocation Setting = DISABLED; Practice Injury =  OFF; Injury = On; Pre Existing Injury = OFF; Prospect Storylines = On; Draft Presentation = Limited; Draft Timer = ON; Free Agent Negotiations on Stage 1 = 3; Free Agent Negotiations on Stage 2 = 5; Free Agent Negotiations on Stage 3: Unlimited; Pre Order Bonus = Off
+
+5. League Type Settings: Coach Firing = OFF; Career Clock = ON; 
+
+6. Dev Trait Management: Break Out Scenarios = On; Development Trait Regression = On; Desired X-Factor Dev Players = 60; Desired Super Star Dev Players = 85; Desired Star Dev Player = 430; Super Star Abilities = On; Ability Edit Controls = Everyone; Player Trait Edit Controls = Commissioner; 
+
+7. Roster Settings: Minimum Roster Size = 46; In-Season Player Movement Limit = Unlimited; Player OVR Cut Restriction = 90 Overall; Offseason Player Cut Limit = Unlimited; Fill Roster = Off
+
+8. Wear & Tear Sliders: Tackle Impact Scale = 60; Catch Tackle Impact Scale = 70; Hitstick Tackle Impact Scale: 70; Cutstick Tackle Impact = 70; Defender Tackle Advantage Scale = 65; Sack Impact Scale = 64; Block Impact Scale = 50; Impact Block Impact Scale = 65; Per-Play Recovery = 25; Per-Timeout Recovery = 20; Per-Quarter Recovery = 25; Halftime Recovery = 50; Healing Reserve Pool Scale = 40; Week to Week Recovery = 25
+
+9. Gameplay Sliders | User Skill: QB Accuracy = 40; Pass Blocking; 48; WR Catching = 46; Run Blocking = 30; Ball Security = 55; Reaction Time = 60; Interceptions = 45; Pass Coverage = 60; Tackling = 70
+CPU Skill: QB Accuracy = 42; Pass Blocking = 60; WR Catching = 48; Run Blocking = 60; Ball Security = 50; Reaction Time = 60; Interceptions = 50; Pass Coverage = 60; Tackling = 75
+Special Teams: FG Power = 44; FG Accuracy = 38; Punt Power = 44; Punt Accuracy = 38; Kickoff Power = 60
+
+9. Game Options Settings: Injures = 23 (Or OFF); Physics Based Tackling Results = 42 (Main Menu Only); Fatigue = 80; Min Player Speed Threshold/Parity Scale: 85
+
+10. Precipitation Sliders: Catch Chance = 35; Pass Accuracy = 35; Pass Strength Scale = 35; Broken Tackle = 40; Kicking Accuracy = 50; Kicking Strength = 55; Slip Scale = 40; Movement Penalties = 35
+
+11. Penalties: Offsides = 70; False Start = 70; Holding = 51; Face Mask = 85; Defensive Pass Interface = 52; Offensive Pass interface = On; Kick Catch Interference = On; Illegal Block in the Back = 51; Intentional Grounding = On; Roughing The Kicker = On; Illegal Contact = On
+
+12. XP Sliders: QB = 70; HB = 56; TE = 92; WR = 74; FB = 96; T = 102; G = 102; C = 104; Edge = 104; DT = 80; MLB = 112; OLB = 124; CB = 86; FS = 112; SS = 108; K = 86; P = 98
+
+13. Age Progression XP Rate Sliders: 20 = 80; 21 = 90; 22 = 100; 23 = 110; 24 = 120; 25 = 130; 26 = 130; 27 = 100; 28 = 100; 29 = 90; 30 = 80; 31 = 70; 32 = 60; 33 = 60; 34 = 50; 35+ = 100
+
+14. Offense Regression Rate Sliders: QB = 90; HB = 150; TE = 110; WR = 140; FB = 110; T = 130; G = 130; C = 120
+
+15. Defense Regression Rate Sliders: Edge = 120; DT = 130; MLB = 90; OLB = 100; CB = 120; FS = 90; SS = 100
+
+16. Special Team Regression Rate Sliders: K = 120; P = 120
+
+17. Age Regression Sliders: 26 = 90; 27 = 100; 28 = 100; 29 = 110; 30 = 120; 31 = 120; 32 = 130; 33 = 140; 34 = 120; 35+ = 90
+
+18. Draft Class Strength: All set to weak. (If you want a higher overall league leave at normal. You will get more 90-99 players. Keep in mind that TMP and MOR stat increases may create more 99 OVR by the end of the season.)
+
+19. Custom Coaches are a REQUIREMENT for User Teams - not an option. Failure to follow this rule will result in removal from the league. 
+
+20. Any playbook that is default to the game may be used. Custom playbooks are not allowed.
+
+21. The League's advance policy is per Commissioner discretion and subject to change. 
+
+22. Users can skip their CPU games and will receive a force win by default. This does not need to be requested in-server unless otherwise stated by a Commissioner. 
+
+23.  Users are limited to one attempt at each weekly game, unless the Commissioner is notified of extraordinary circumstances that would require more than one attempt; Any User caught violating this rule will be subject to disciplinary consequences. 
+
+24. Player position swapping is only allowed if the position swap is logical; Requesting a position swap for a small, speedy WR to be moved to TE won't be approved; Position swap requests should be reasonable, ie, strong HB to FB, over-sized WR to TE, any DB to any DB position, DL and OL shifts; however, Users can sub players in during games however they see fit.
+
+25. No coaching abilities are banned. 
+
+Off-Season Default Rules: 
+
+1. If Economy is activated, purchase caps (attribute upgrades, dev ups, age resets, custom players) reset at the start of each new season.
+
+2. If Legends or Custom Players are active, all Draft purchases MUST be submitted by the end of the Wildcard playoff round. Failure to submit them before the deadline will void your purchases. 
+
+3. Users are limited to drafting 1 Legend per draft and 1 Custom Player.
+
+4. Users are limited to 3 bids in the first two rounds of Free Agency and an unlimited amount in the final round. There will be no offer evaluations between round advances.
+
+5. Users are required to handle resigning their players on their own time. There will be no extra efforts put in by Commissioners to reobtain a player for you that you forgot to sign prior to the off-season. 
+
+6. The speed at which the off-season is handled is per Commissioner discretion.
+
+Trade Policy Default Rules: 
+1. Both Users must submit a trade through the /tradeblock command in-server, if activated, prior to submitting and accepting it in-game. 
+
+2. CPU trades are per Commissioner discretion. 
+
+3. Users can use their in-house currency, if it is an active feature, as an added trade mechanism when trading with other users. 
+
+Default 4th Down Rules: 
+
+1. In H2H games, Users can only go for it when at midfield and beyond and 4th and 4 or less. The only exception to this rule is if a User is losing in the second half. They may go for it whenever in those circumstances.
+2. Repeatedly going for it on 4th down early in the game while blowing out an opponent is considered unsportsmanlike. This does not incur a penalty but it is frowned upon.
+3. Onside kicks are only allowed if you are losing in the second half or the game has gone to OT.
+4. Fake punts and fake field goals are always allowed.
+
+Activity category of Rules should be changed to Scheduling & Server Activity and these are the default rules:
+
+1. All games must be completed by the weekly deadline set by the commissioner.
+
+2. Users must be reachable and responsive — check in at least every 12-24 hours during the season. When scheduling your weekly game, if one user reaches out to schedule and receives no reply from their opponent before 6 PM CST of that same day, then the result is a Force Win for the user who attempted to schedule. We all have lives outside of this server, so expecting an opponent to respond to a last minute game request when they reached out hours earlier is not acceptable.
+
+3. Users who fail to notify a Commissioner of an intended absence from the league may be kicked due to inactivity. A commissioner may try to reach out to Users who have been unresponsive and if a deadline is set for communication, a Commissioner is within their right to kick a user who fails to check in by the set deadline. 
+
+4. Users who need an extended leave can request to be put on Auto-Pilot. Failure to return by their set date, without reaching out to a Commissioner if something changes, may result in removal from the league for inactivity. 
+
+5. Active Checks may occur from time to time and users should be prepared for removal if they fail to check in. 
+
+6. If both users in a H2H fail to attempt scheduling or agree on a time for their game before advance, the result will be a Fair Sim.
+
+7. If you cannot play your game on time, notify your opponent AND a commissioner as early as possible. If both parties agreed to a time previously and one party misses the time or changes their mind without their opponent agreeing to a new one, the result will be a Force Win for the other party. If a time is agreed on and both parties fail to make the time, the result will be a Fair Sim.
+
+8. If you've set a time with your opponent and they show up on time and message you to play, there is a 1 hour window from that timestamp for you to respond and attempt to reschedule if needed. If you fail to respond, they receive the Fore Win. If you respond and try to reschedule but they cannot, then they will still receive the FW for showing up during the original timeframe both parties agreed upon.
+
+9. No vague "some time later tonight" scheduling attempts will be accepted. If you try to schedule your game this way, your opponent is within their right to request a FW if you don't settle on an exact time to play.
+
+10. One User streaming in a H2H will provide a payout bonus to each user involved in the game. Posting up to 2 highlights after the game will provide a payout bonus per highlight to the provider. 
+
+11. It is recommended that Users either Livestream their games to ensure fair play or save replays of violations to ensure visual proof is available for confirmation by the Commissioner. He said/She said won't be accepted as proof of violation. It is also recommended for users to save the VOD if twitch streaming. 
+
+12. Streaming is required by at least one user in a GOTW H2H. Failure to do so will forfeit the GOTW bonus as well as any future chance at hosting a GOTW for that season.
+
+13. In the post season, highlights can be posted for any game by any team and will still receive the max payout of 20 per highlight, up to 2 per week. Teams that do not make the playoffs may still benefit from this bonus.
+
+Sportsmanship rule category should be titled "User Expectations" and the default rules should be: 
+
+1. Treat all league members with respect at all times.
+2. No trash talk that crosses into personal attacks — keep it competitive, not personal. Personal attacks may result in removal from the league or any punishment per Commissioner discretion. 
+3.  Users in a H2H game can concede any time in the 4th Quarter if they're losing and their opponent agrees to the concede. Rage quitting or intentionally disconnecting to avoid a loss is not tolerated and consequences for violating this rule are per Commissioner discretion. 
+4. Do not exploit glitches, cheese plays, or any mechanics considered unsportsmanlike by the league. Obvious Cheese/Spam will not be tolerated and is considered as follows: No hovering over the Center on defense to cause blocking glitches; No nano-blitzing; No loop blitzing; No stacking players in the box; Using a Mug formation is acceptable as long as you aren't shifting the backers around to exploit blocking; If a safety is blitzing or your formation alignment calls for it, you may have your safeties in the box, however, pulling your safety down to crowd the line when not blitzing or pressed in coverage is unacceptable. 
+5. Disputes must be brought to a commissioner — do not handle conflicts in public channels.
+6. Any member found to be acting in bad faith may be removed from the league.
+7. Stat Padding against the CPU (point spread of 35+; 6+ TDs for any player; Any excessively record-breaking performance) will be flagged by the bot and could result in consequences, per commissioner discretion.
+8. Stat Padding against a H2H opponent would be a spread of 35+ against NON-Divisional opponents and a point spread of 42+ against Divisional opponents. Player stats are not relevant for stat padding in a H2H as long as the final spread is within the boundaries. Violations could result in consequences, per commissioner discretion. 
+9. All Stat-Padding occurences are judged on a case-by-case basis. 
+10. Users are REQUIRED to rush a minimum of 3 players on EVERY defensive down. 
