@@ -17,7 +17,7 @@ import {
   gameLogTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { getOrCreateActiveSeason, PRIMARY_GUILD_ID } from "./db-helpers.js";
+import { getOrCreateActiveSeason, PRIMARY_GUILD_ID, upsertGlobalRecord } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { listMcaFilesSafe, readMcaJson, mcaFileExists } from "./gcs-reader.js";
 
@@ -449,6 +449,9 @@ export async function runGcsScheduleProcessing(
         await upsertRecord(winnerId, winnerUser?.discordUsername ?? "", winnerUser?.team ?? null, seasonId, true,  spread);
         await upsertRecord(loserId,  loserUser?.discordUsername  ?? "", loserUser?.team  ?? null, seasonId, false, -spread);
 
+        await upsertGlobalRecord(winnerId, "win");
+        await upsertGlobalRecord(loserId,  "loss");
+
         await db.update(usersTable)
           .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins} + 1`,   updatedAt: new Date() })
           .where(eq(usersTable.discordId, winnerId));
@@ -479,6 +482,8 @@ export async function runGcsScheduleProcessing(
           { discordId: hData.discordId!, seasonId, result: "loss", pointSpread: 0, opponentLabel: aData.fullName, gameType: "regular_season" },
           { discordId: aData.discordId!, seasonId, result: "loss", pointSpread: 0, opponentLabel: hData.fullName, gameType: "regular_season" },
         ]);
+        await upsertGlobalRecord(hData.discordId!, "tie");
+        await upsertGlobalRecord(aData.discordId!, "tie");
         await db.insert(franchiseProcessedGamesTable).values({
           gameId, payoutType: "h2h_tie",
           seasonIdRef: seasonId, weekIndexRef: weekNum - 1,

@@ -2778,6 +2778,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       .from(interviewRequestsTable)
       .where(and(
         eq(interviewRequestsTable.discordId, interaction.user.id),
+        eq(interviewRequestsTable.guildId,   interaction.guildId!),
         eq(interviewRequestsTable.week, currentWeek),
         inArray(interviewRequestsTable.status, ["pending", "approved"]),
       ))
@@ -2794,6 +2795,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     // Create the interview record with questions + answers
     const [interview] = await db.insert(interviewRequestsTable).values({
       discordId: interaction.user.id,
+      guildId:   interaction.guildId!,
       week:      currentWeek,
       status:    "pending",
       question1: q1,

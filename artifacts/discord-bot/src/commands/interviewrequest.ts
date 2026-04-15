@@ -92,6 +92,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .from(interviewRequestsTable)
     .where(and(
       eq(interviewRequestsTable.discordId, interaction.user.id),
+      eq(interviewRequestsTable.guildId,   interaction.guildId!),
       eq(interviewRequestsTable.week, currentWeek),
       inArray(interviewRequestsTable.status, ["pending", "approved"]),
     ))

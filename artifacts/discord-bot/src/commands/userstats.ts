@@ -130,7 +130,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       week:   interviewRequestsTable.week,
       status: interviewRequestsTable.status,
     }).from(interviewRequestsTable)
-      .where(eq(interviewRequestsTable.discordId, target.id))
+      .where(and(
+        eq(interviewRequestsTable.discordId, target.id),
+        eq(interviewRequestsTable.guildId, interaction.guildId!),
+      ))
       .orderBy(desc(interviewRequestsTable.createdAt))
       .limit(5),
 

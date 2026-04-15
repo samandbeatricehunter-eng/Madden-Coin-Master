@@ -239,6 +239,7 @@ export const payoutRequestsTable = pgTable("payout_requests", {
 export const interviewRequestsTable = pgTable("interview_requests", {
   id: serial("id").primaryKey(),
   discordId: text("discord_id").notNull(),
+  guildId:   text("guild_id").notNull().default("1476251181524189438"),
   payoutRequestId: integer("payout_request_id"), // nullable — kept for backward compat; new interviews leave this null
   week: text("week"), // matches the active season's currentWeek when the interview was submitted
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "denied"

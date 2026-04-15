@@ -196,7 +196,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "relink") {
     const [season] = await db.select({ id: seasonsTable.id })
       .from(seasonsTable)
-      .where(eq(seasonsTable.isActive, true))
+      .where(and(eq(seasonsTable.isActive, true), eq(seasonsTable.guildId, interaction.guildId!)))
       .limit(1);
 
     if (!season) {
@@ -331,13 +331,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } else {
     await db.update(usersTable)
       .set({ team: teamName, discordUsername: targetUser.username, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, targetUser.id));
+      .where(and(eq(usersTable.discordId, targetUser.id), eq(usersTable.guildId, interaction.guildId!)));
   }
 
   // ── Cascade discordId to franchise_mca_teams + franchise_rosters ────────────
   const [season] = await db.select({ id: seasonsTable.id })
     .from(seasonsTable)
-    .where(eq(seasonsTable.isActive, true))
+    .where(and(eq(seasonsTable.isActive, true), eq(seasonsTable.guildId, interaction.guildId!)))
     .limit(1);
 
   let rosterInfo    = "";
