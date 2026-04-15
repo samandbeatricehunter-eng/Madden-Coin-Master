@@ -6,27 +6,25 @@
  * Season 1, and seeds 32 NFL team placeholder slots.
  */
 
-import path from "path";
 import {
   SlashCommandBuilder, ChatInputCommandInteraction,
   EmbedBuilder, Colors, PermissionFlagsBits,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  ChannelType, OverwriteResolvable, AttachmentBuilder,
+  ChannelType, OverwriteResolvable,
   Guild, Role, CategoryChannel, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable, usersTable } from "@workspace/db";
 import { eq, and, isNotNull } from "drizzle-orm";
-import { isAdminUser, setGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
+import { isAdminUser, setGuildChannel, CHANNEL_KEYS, DEFAULT_RULES, SECTION_META } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { NFL_TEAMS } from "../lib/constants.js";
-import { buildMemberHelpEmbed } from "./help.js";
-
-const ASSETS_DIR = path.join(process.cwd(), "artifacts/discord-bot/assets");
 
 // ── Channel name → DB key mapping ─────────────────────────────────────────────
 const CHANNEL_KEY_MAP: Record<string, string> = {
+  "welcome":               CHANNEL_KEYS.WELCOME,
+  "league-announcements":  CHANNEL_KEYS.ANNOUNCEMENTS,
   "general-discussion":    CHANNEL_KEYS.GENERAL,
   "season-schedule":       CHANNEL_KEYS.SCHEDULE,
   "weekly-matchups":       CHANNEL_KEYS.MATCHUPS,
@@ -50,6 +48,7 @@ interface ChannelDef {
   topic?:             string;
   readOnly?:          boolean;
   private?:           boolean;
+  memberReadOnly?:    boolean; // Override: Approved Members can see + read but NOT write (even inside a private category)
   commissionerWrite?: boolean; // Approved Members/Co-Comm can read; only Commissioner can write
 }
 
@@ -107,7 +106,7 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
     name: "🏢 FRONT OFFICE",
     private: true,
     channels: [
-      { name: "position-change-requests", topic: "Legend and custom player position change tracker", readOnly: true, private: true },
+      { name: "position-change-requests", topic: "Legend and custom player position change tracker", memberReadOnly: true },
       { name: "commissioners-office",     topic: "Private commissioner coordination channel",                   private: true },
       { name: "commissioners-log",        topic: "Commissioner rulings and decisions",                          private: true },
       { name: "referral-log",             topic: "Member referral tracking",                                    private: true },
@@ -117,11 +116,7 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
   },
   {
     name: "🏆 THE HALL OF FAME AND SHAME",
-    channels: [
-      { name: "the-quit-list",             topic: "Members who have left the league",          readOnly: true },
-      { name: "historical-records-season", topic: "Season-by-season historical records",        readOnly: true },
-      { name: "historical-records-alltime",topic: "All-time league records",                   readOnly: true },
-    ],
+    channels: [],
   },
   {
     name: "🎊 END OF SEASON PAYOUTS",
@@ -153,11 +148,44 @@ export const data = new SlashCommandBuilder()
     o.setName("confirm")
       .setDescription("Set to true to confirm you want to run first-time setup on this server")
       .setRequired(true),
+  )
+  .addStringOption(o =>
+    o.setName("starting_week")
+      .setDescription("What week should Season 1 start on? (default: Training Camp)")
+      .setRequired(false)
+      .addChoices(
+        { name: "Training Camp (default)", value: "training_camp" },
+        { name: "Week 1",                  value: "1"             },
+        { name: "Week 2",                  value: "2"             },
+        { name: "Week 3",                  value: "3"             },
+        { name: "Week 4",                  value: "4"             },
+        { name: "Week 5",                  value: "5"             },
+        { name: "Week 6",                  value: "6"             },
+        { name: "Week 7",                  value: "7"             },
+        { name: "Week 8",                  value: "8"             },
+        { name: "Week 9",                  value: "9"             },
+        { name: "Week 10",                 value: "10"            },
+        { name: "Week 11",                 value: "11"            },
+        { name: "Week 12",                 value: "12"            },
+        { name: "Week 13",                 value: "13"            },
+        { name: "Week 14",                 value: "14"            },
+        { name: "Week 15",                 value: "15"            },
+        { name: "Week 16",                 value: "16"            },
+        { name: "Week 17",                 value: "17"            },
+        { name: "Week 18",                 value: "18"            },
+        { name: "Wild Card",               value: "wildcard"      },
+        { name: "Divisional Round",        value: "divisional"    },
+        { name: "Conference Championship", value: "conference"    },
+        { name: "Super Bowl",              value: "superbowl"     },
+        { name: "Off-Season",              value: "offseason"     },
+      ),
   );
 
 // ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const confirm = interaction.options.getBoolean("confirm", true);
+  const confirm      = interaction.options.getBoolean("confirm", true);
+  const startingWeek = interaction.options.getString("starting_week") ?? "training_camp";
+
   if (!confirm) {
     await interaction.reply({
       content:
@@ -195,9 +223,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   try {
     // ── Step 1: Roles ──────────────────────────────────────────────────────────
-    const commRole     = await ensureRole(guild, "Commissioner",    0xFFD700);
-    const coCommRole   = await ensureRole(guild, "Co-Commissioner", 0x4FC3F7);
-    const approvedRole = await ensureRole(guild, "Approved Member", 0x57F287);
+    const commRole     = await ensureRole(guild, "Commissioner",    0x9B59B6); // Purple
+    const coCommRole   = await ensureRole(guild, "Co-Commissioner", 0xFFD700); // Gold/Yellow
+    const approvedRole = await ensureRole(guild, "Approved Member", 0xE74C3C); // Red
     log.push(
       `Roles: **Commissioner** <@&${commRole.id}> · **Co-Commissioner** <@&${coCommRole.id}> · **Approved Member** <@&${approvedRole.id}>`,
     );
@@ -294,8 +322,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (existingSeasons.length > 0) {
       seasonNote = `Season ${existingSeasons[0]!.seasonNumber} already exists — no new season created.`;
     } else {
-      await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true });
-      seasonNote = "Season 1 created and set as active.";
+      await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true, currentWeek: startingWeek });
+      seasonNote = `Season 1 created — starting on **${startingWeek.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}**.`;
     }
     log.push(`🗓️ ${seasonNote}`);
 
@@ -331,36 +359,115 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       log.push(`🏈 Seeded ${teamsToSeed.length} open team slot(s) (${NFL_TEAMS.length - teamsToSeed.length} already claimed)`);
     }
 
-    // ── Step 9: Seed #help-and-faqs with the member help embed + clip guides ───
-    const faqId = channelIds["help-and-faqs"];
-    if (faqId) {
+    // ── Step 9: Post admin setup guide to #welcome ─────────────────────────────
+    const welcomeId = channelIds["welcome"];
+    if (welcomeId) {
       try {
-        const faqCh = await interaction.client.channels.fetch(faqId).catch(() => null);
-        if (faqCh && faqCh.isTextBased()) {
-          const tc = faqCh as TextChannel;
-
-          // Post member command reference and pin it
-          const helpMsg = await tc.send({ embeds: [buildMemberHelpEmbed()] });
-          await helpMsg.pin().catch(() => null);
-
-          // Clip guide images to post and pin
-          const clipGuides: Array<{ caption: string; file: string }> = [
-            { caption: "📱 **How to Share Madden Clips — PlayStation (PS5)**", file: "clips-ps5.png"     },
-            { caption: "🎮 **How to Share Madden Clips — Xbox**",              file: "clips-xbox.png"    },
-            { caption: "🎬 **How to Clip — Twitch**",                          file: "clips-twitch.png"  },
-            { caption: "💻 **How to Clip — Discord**",                         file: "clips-discord.png" },
-          ];
-
-          for (const guide of clipGuides) {
-            const attachment = new AttachmentBuilder(path.join(ASSETS_DIR, guide.file), { name: guide.file });
-            const msg = await tc.send({ content: guide.caption, files: [attachment] });
-            await msg.pin().catch(() => null);
-          }
-
-          log.push(`📌 Posted and pinned help guide + ${clipGuides.length} clip guides in <#${faqId}>`);
+        const welcomeCh = await interaction.client.channels.fetch(welcomeId).catch(() => null);
+        if (welcomeCh?.isTextBased()) {
+          const tc = welcomeCh as TextChannel;
+          const setupGuideEmbed = new EmbedBuilder()
+            .setColor(Colors.Orange)
+            .setTitle("⚙️ Commissioner Setup Checklist")
+            .setDescription(
+              `<@${interaction.user.id}> — Work through these steps to finish setting up the league bot. ` +
+              "Once everything is configured, use the **📋 Post Help Guide** button in your setup reply to publish the member command guide to <#" +
+              (channelIds["help-and-faqs"] ?? "help-and-faqs") + ">.\n\u200b",
+            )
+            .addFields(
+              {
+                name: "1️⃣  Configure Feature Settings",
+                value: "Toggle the coin economy, legends, custom players, wagers, and other features on or off.\n" +
+                       "```/adminserver server_bot_settings```",
+              },
+              {
+                name: "2️⃣  Update League Info Rules",
+                value: "Add your **in-game Madden league name and password** so members can find and join.\n" +
+                       "```/adminrules set league_info 1 \"League Name: [name] | Password: [password]\"```",
+              },
+              {
+                name: "3️⃣  Review & Edit All Rule Sections",
+                value: "Browse every rule section and customize for your league.\n" +
+                       "```/rules [section]``` to view  ·  ```/adminrules set [section] [#] [text]``` to edit",
+              },
+              {
+                name: "4️⃣  Configure Weekly Payout Amounts",
+                value: "Set how many coins are awarded for H2H wins, losses, and CPU wins.\n" +
+                       "```/admin-setpayouts```",
+              },
+              {
+                name: "5️⃣  Configure End-of-Season Payouts",
+                value: "Set coin prizes for champion, runner-up, playoff teams, and stat milestones.\n" +
+                       "```/admin-setpayouts```  ·  ```/admin-set-stat-tiers```",
+              },
+              {
+                name: "6️⃣  Link Managers to Their NFL Teams",
+                value: "Assign each Discord member to their franchise. Repeat for every manager.\n" +
+                       "```/admin-linkteam set  user:@Member  team:Dallas Cowboys```",
+              },
+              {
+                name: "7️⃣  Connect EA / Import Rosters",
+                value: "Pull franchise data so stats, schedules, and rosters are live.\n" +
+                       "```/admin_ea_connect start``` — EA Direct  ·  ```/webhookurl``` — MCA Webhook",
+              },
+              {
+                name: "8️⃣  Post Opening Schedule",
+                value: "```/admin-postfullseasonschedule```",
+              },
+              {
+                name: "✅  Post Help Guide to #help-and-faqs",
+                value: "When all steps above are complete, click the **📋 Post Help Guide** button in your initialization reply to publish the member command guide.",
+              },
+            )
+            .setFooter({ text: `Server initialized by ${interaction.user.tag}` })
+            .setTimestamp();
+          const guideMsg = await tc.send({ embeds: [setupGuideEmbed] });
+          await guideMsg.pin().catch(() => null);
+          log.push(`📌 Posted admin setup guide in <#${welcomeId}>`);
         }
-      } catch (faqErr) {
-        log.push(`⚠️ Could not seed #help-and-faqs: ${(faqErr as Error).message}`);
+      } catch (guideErr) {
+        log.push(`⚠️ Could not post setup guide to #welcome: ${(guideErr as Error).message}`);
+      }
+    }
+
+    // ── Step 10: Post all rule sections to #league-announcements ───────────────
+    const announceId = channelIds["league-announcements"];
+    if (announceId) {
+      try {
+        const announceCh = await interaction.client.channels.fetch(announceId).catch(() => null);
+        if (announceCh?.isTextBased()) {
+          const tc = announceCh as TextChannel;
+          for (const sectionKey of Object.keys(DEFAULT_RULES)) {
+            const meta  = SECTION_META[sectionKey];
+            const rules = DEFAULT_RULES[sectionKey];
+            if (!meta || !rules?.length) continue;
+            const desc = rules.map((r, i) => `**${i + 1}.** ${r}`).join("\n\n");
+            const chunks: string[] = [];
+            let current = "";
+            for (const line of desc.split("\n")) {
+              if ((current + "\n" + line).length > 3900) {
+                chunks.push(current);
+                current = line;
+              } else {
+                current += (current ? "\n" : "") + line;
+              }
+            }
+            if (current) chunks.push(current);
+            for (let ci = 0; ci < chunks.length; ci++) {
+              const isFirst = ci === 0;
+              const rulesEmbed = new EmbedBuilder()
+                .setColor(meta.color)
+                .setTitle(isFirst ? meta.title : `${meta.title} (cont.)`)
+                .setDescription(chunks[ci]!)
+                .setTimestamp();
+              await tc.send({ content: isFirst ? "@everyone" : undefined, embeds: [rulesEmbed] });
+              await new Promise(res => setTimeout(res, 600));
+            }
+          }
+          log.push(`📋 Posted all rule sections to <#${announceId}> with @everyone`);
+        }
+      } catch (ruleErr) {
+        log.push(`⚠️ Could not post rules to #league-announcements: ${(ruleErr as Error).message}`);
       }
     }
 
@@ -475,10 +582,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   embed.setFooter({ text: `Initialized by ${interaction.user.tag} • Guild ${interaction.guildId}` });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("init_settings") .setLabel("⚙️ Configure Features").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("init_teamguide").setLabel("👥 Team Linking Guide") .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("init_ea")       .setLabel("🔗 Connect EA")         .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("init_payouts")  .setLabel("💰 Payout Guide")       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("init_settings")  .setLabel("⚙️ Configure Features").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("init_teamguide") .setLabel("👥 Team Linking Guide") .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("init_ea")        .setLabel("🔗 Connect EA")         .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("init_payouts")   .setLabel("💰 Payout Guide")       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("init_post_help") .setLabel("📋 Post Help Guide")    .setStyle(ButtonStyle.Success),
   );
 
   await interaction.editReply({ content: null, embeds: [embed], components: [row] });
@@ -495,7 +603,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 // ── Helpers ────────────────────────────────────────────────────────────────────
 async function ensureRole(guild: Guild, name: string, color: number): Promise<Role> {
   const existing = guild.roles.cache.find(r => r.name === name);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.color !== color) {
+      await existing.edit({ color }).catch(() => null);
+    }
+    return existing;
+  }
   return guild.roles.create({ name, color, reason: "REC League bot initialization" });
 }
 
@@ -507,7 +620,17 @@ function buildPerms(
   chDef:        ChannelDef,
   catPrivate:   boolean,
 ): OverwriteResolvable[] {
-  const isPrivate = chDef.private || catPrivate;
+  const isPrivate = (chDef.private === true) || (catPrivate && !chDef.memberReadOnly);
+
+  // memberReadOnly channels — Approved Members can view/read but NOT write (overrides category privacy)
+  if (chDef.memberReadOnly) {
+    return [
+      { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+      { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
+      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+    ];
+  }
 
   // Commissioner-write channels — members/co-comm can read, only Commissioner can send
   if (chDef.commissionerWrite) {

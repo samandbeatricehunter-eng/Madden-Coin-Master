@@ -25,6 +25,8 @@ export const CHANNEL_KEYS = {
   VIOLATION_LOG:  "violation_log",
   GOTY:           "goty",
   TRANSACTIONS:   "transactions",
+  WELCOME:        "welcome",
+  ANNOUNCEMENTS:  "announcements",
 } as const;
 
 // Hardcoded fallback IDs for the primary guild (backward compatibility).

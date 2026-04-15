@@ -3,6 +3,7 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { isAdminUser } from "../lib/db-helpers.js";
+import { getServerSettings, type ServerSettings } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("help")
@@ -22,88 +23,116 @@ export const data = new SlashCommandBuilder()
     .setRequired(false),
   );
 
-// ── Shared embed builder (also used by initialize-server to seed #help-and-faqs) ──
-export function buildMemberHelpEmbed(): EmbedBuilder {
-  return new EmbedBuilder()
+// ── Shared embed builder (also used by init_post_help button to seed #help-and-faqs) ──
+export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBuilder {
+  const economy       = settings?.coinEconomy           ?? true;
+  const legends       = economy && (settings?.legendsEnabled            ?? true);
+  const custom        = economy && (settings?.customSuperstarsEnabled   ?? true);
+  const attrUpgrades  = economy && (settings?.attributeUpgradesEnabled  ?? true);
+  const devUpgrades   = economy && (settings?.devUpgradesEnabled        ?? true);
+  const ageResets     = economy && (settings?.ageResetsEnabled          ?? true);
+  const wagers        = economy && (settings?.wagerEnabled              ?? true);
+  const tradeBlock    = settings?.tradeBlockEnabled ?? true;
+
+  const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
-    .setTitle("🏈 REC League Econo-Bot — Member Commands")
-    .addFields(
-      {
-        name: "💰 Economy",
-        value: [
-          "`/balance` — Check your current coin balance",
-          "`/sendcoins @user [amount]` — Send coins to another player",
-          "`/wager @user [amount]` — Challenge a player to a coin wager",
-        ].join("\n"),
-      },
-      {
-        name: "🛒 Store — Commands",
-        value: [
-          "`/viewstore` — Browse available items with current season prices",
-          "`/buy-legend [name]` — Buy a legend player",
-          "`/buy-attribute [player] [attr] [qty]` — Boost a player attribute",
-          "`/buy-devup [player] [type]` — Dev upgrade (Star / Superstar / X-Factor)",
-          "`/buy-agereset [player]` — Reset a player's age",
-          "`/buy-customplayer` — Build and buy a custom player slot",
-          "`/inventory` — View your current season inventory",
-          "`/availableupgrades` — See remaining upgrades for the season",
-        ].join("\n"),
-      },
-      {
-        name: "🛒 Store — Default Pricing & Limits",
-        value: [
-          "• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory",
-          "• **Core Attributes** — 25 coins/pt | 16 pts/season",
-          "• **Non-Core Attributes** — 10 coins/pt | 32 pts/season | Speed ≤5 pts/season",
-          "• **Dev Upgrades** — 250 coins | 2/season",
-          "• **Age Resets** — 250 coins | 2/season",
-          "• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins",
-          "• Legends + Custom Players combined: max 4/season",
-          "",
-          "⚠️ *Commissioners may adjust any of these per season. Use `/viewstore` for live prices.*",
-        ].join("\n"),
-      },
-      {
-        name: "🏆 Game Payouts",
-        value: [
-          "**Payouts are issued automatically** when game data is uploaded via the Madden Companion App.",
-          "  → H2H Win **+50 coins** | H2H Loss **+20 coins** | CPU Win **+20 coins**",
-          "",
-          "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
-          "  → One per week · Game must be uploaded from MCA first",
-          "  → H2H players get an expanded question pool",
-          "  → All interview payouts require commissioner approval",
-        ].join("\n"),
-      },
-      {
-        name: "📊 Rankings & Stats",
-        value: [
-          "`/userstats [@user]` — Detailed season stats for yourself or any member",
-          "`/recenth2h @user` — View recent H2H game history",
-          "`/seasonpr` — Current season power rankings",
-          "`/alltimepr` — All-time power rankings across all seasons",
-        ].join("\n"),
-      },
-      {
-        name: "📅 Schedule & Teams",
-        value: [
-          "`/seasonschedule` — Full current-season schedule",
-          "`/nextopp [@user]` — Your next opponent (or any member's)",
-          "`/teamlist` — All members and their linked NFL teams",
-          "`/openteams` — Unclaimed teams available for new members",
-        ].join("\n"),
-      },
-      {
-        name: "📋 League Rules",
-        value: [
-          "`/rules [section]` — Display all rules in a section",
-          "`/rules [section] [rule_number]` — Quote a single rule",
-          "`/rules [section] [rule_number] @user` — Share a rule with a member (posts publicly)",
-        ].join("\n"),
-      },
-    )
+    .setTitle("🏈 REC League Econo-Bot — Member Commands");
+
+  if (economy) {
+    const econLines = [
+      "`/balance` — Check your current coin balance",
+      "`/sendcoins @user [amount]` — Send coins to another player",
+    ];
+    if (wagers) econLines.push("`/wager @user [amount]` — Challenge a player to a coin wager");
+    embed.addFields({ name: "💰 Economy", value: econLines.join("\n") });
+  }
+
+  // Store — commands section (only if economy is on and at least one item type is enabled)
+  const storeCommands: string[] = ["`/viewstore` — Browse available items with current season prices"];
+  if (legends)      storeCommands.push("`/buy-legend [name]` — Buy a legend player");
+  if (attrUpgrades) storeCommands.push("`/buy-attribute [player] [attr] [qty]` — Boost a player attribute");
+  if (devUpgrades)  storeCommands.push("`/buy-devup [player] [type]` — Dev upgrade (Star / Superstar / X-Factor)");
+  if (ageResets)    storeCommands.push("`/buy-agereset [player]` — Reset a player's age");
+  if (custom)       storeCommands.push("`/buy-customplayer` — Build and buy a custom player slot");
+  storeCommands.push("`/inventory` — View your current season inventory");
+  storeCommands.push("`/availableupgrades` — See remaining upgrades for the season");
+
+  if (economy) {
+    embed.addFields({ name: "🛒 Store — Commands", value: storeCommands.join("\n") });
+
+    const pricingLines: string[] = [];
+    if (legends)      pricingLines.push("• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory");
+    if (attrUpgrades) pricingLines.push("• **Core Attributes** — 25 coins/pt | 16 pts/season");
+    if (attrUpgrades) pricingLines.push("• **Non-Core Attributes** — 10 coins/pt | 32 pts/season | Speed ≤5 pts/season");
+    if (devUpgrades)  pricingLines.push("• **Dev Upgrades** — 250 coins | 2/season");
+    if (ageResets)    pricingLines.push("• **Age Resets** — 250 coins | 2/season");
+    if (custom)       pricingLines.push("• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins");
+    if (legends || custom) pricingLines.push("• Legends + Custom Players combined: max 4/season");
+    pricingLines.push("", "⚠️ *Commissioners may adjust any of these per season. Use `/viewstore` for live prices.*");
+
+    if (pricingLines.length > 2) {
+      embed.addFields({ name: "🛒 Store — Default Pricing & Limits", value: pricingLines.join("\n") });
+    }
+
+    embed.addFields({
+      name: "🏆 Game Payouts",
+      value: [
+        "**Payouts are issued automatically** when game data is uploaded via the Madden Companion App.",
+        "  → H2H Win **+50 coins** | H2H Loss **+20 coins** | CPU Win **+20 coins**",
+        "",
+        "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
+        "  → One per week · Game must be uploaded from MCA first",
+        "  → H2H players get an expanded question pool",
+        "  → All interview payouts require commissioner approval",
+      ].join("\n"),
+    });
+  }
+
+  embed.addFields(
+    {
+      name: "📊 Rankings & Stats",
+      value: [
+        "`/userstats [@user]` — Detailed season stats for yourself or any member",
+        "`/recenth2h @user` — View recent H2H game history",
+        "`/seasonpr` — Current season power rankings",
+        "`/alltimepr` — All-time power rankings across all seasons",
+      ].join("\n"),
+    },
+    {
+      name: "📅 Schedule & Teams",
+      value: [
+        "`/seasonschedule` — Full current-season schedule",
+        "`/nextopp [@user]` — Your next opponent (or any member's)",
+        "`/teamlist` — All members and their linked NFL teams",
+        "`/openteams` — Unclaimed teams available for new members",
+      ].join("\n"),
+    },
+    {
+      name: "📋 League Rules",
+      value: [
+        "`/rules [section]` — Display all rules in a section",
+        "`/rules [section] [rule_number]` — Quote a single rule",
+        "`/rules [section] [rule_number] @user` — Share a rule with a member (posts publicly)",
+      ].join("\n"),
+    },
+  );
+
+  if (tradeBlock) {
+    embed.addFields({
+      name: "🔄 Trade Block",
+      value: [
+        "`/tradeblock add [player] [position] [notes]` — List a player for trade",
+        "`/tradeblock view` — Browse current trade block listings",
+        "`/tradeblock remove [id]` — Remove your listing",
+      ].join("\n"),
+    });
+  }
+
+  embed
     .setFooter({ text: "Use /viewstore for live prices. Purchases go to the commissioner for approval." })
     .setTimestamp();
+
+  return embed;
 }
 
 // ── Execute ────────────────────────────────────────────────────────────────────
@@ -129,13 +158,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         });
         return;
       }
-      await interaction.reply({ embeds: [buildMemberHelpEmbed()], ephemeral });
+      const settings = await getServerSettings().catch(() => null);
+      await interaction.reply({ embeds: [buildMemberHelpEmbed(settings)], ephemeral });
       return;
     }
 
     // ── Admin chose member section ─────────────────────────────────────────────
     if (section === "member") {
-      await interaction.reply({ embeds: [buildMemberHelpEmbed()], ephemeral });
+      const settings = await getServerSettings().catch(() => null);
+      await interaction.reply({ embeds: [buildMemberHelpEmbed(settings)], ephemeral });
       return;
     }
 

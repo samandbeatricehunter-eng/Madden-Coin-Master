@@ -1,6 +1,6 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction,
-  EmbedBuilder, Colors, PermissionFlagsBits,
+  EmbedBuilder, Colors, PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -10,6 +10,7 @@ import {
 import { eq, and, or, ilike, isNotNull, sql } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
 import { assignRosterLegends, formatLegendAssignResult } from "../lib/roster-legend-assign.js";
+import { getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-linkteam")
@@ -353,6 +354,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     legendSummary = formatLegendAssignResult(legendResult, teamName);
   }
 
+  // Fire-and-forget: refresh open teams + team list in #welcome
+  postTeamListsToWelcome(interaction).catch(() => null);
+
   if (oldTeam && oldTeam !== teamName) {
     return interaction.editReply({
       embeds: [new EmbedBuilder()
@@ -381,4 +385,74 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setDescription(`Balance, records, and inventory are untouched.${rosterInfo}`)
       .setTimestamp()],
   });
+}
+
+// ── Helper: refresh open-teams + team-list in #welcome after every team link ──
+async function postTeamListsToWelcome(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId   = interaction.guildId!;
+  const welcomeId = await getGuildChannel(guildId, CHANNEL_KEYS.WELCOME).catch(() => null);
+  if (!welcomeId) return;
+
+  const welcomeCh = interaction.guild?.channels.cache.get(welcomeId)
+    ?? await interaction.client.channels.fetch(welcomeId).catch(() => null);
+  if (!welcomeCh?.isTextBased()) return;
+
+  const tc = welcomeCh as TextChannel;
+
+  // Delete previous open-teams / team-list posts from this bot
+  const messages = await tc.messages.fetch({ limit: 50 }).catch(() => null);
+  if (messages) {
+    for (const msg of messages.values()) {
+      if (msg.author.id !== interaction.client.user!.id) continue;
+      const isTeamPost = msg.embeds.some(e =>
+        e.title?.startsWith("🏈 Open Teams") ||
+        e.title?.startsWith("🏈 League Teams"),
+      );
+      if (isTeamPost) await msg.delete().catch(() => null);
+    }
+  }
+
+  // ── Open Teams embed ───────────────────────────────────────────────────────
+  const takenRows = await db
+    .select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
+
+  const taken = new Set(
+    takenRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team as string),
+  );
+  const open = NFL_TEAMS.filter(t => !taken.has(t));
+
+  const openEmbed = open.length > 0
+    ? new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle(`🏈 Open Teams (${open.length} available)`)
+        .setDescription(open.map(t => `• ${t}`).join("\n"))
+        .setTimestamp()
+    : new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("🏈 Open Teams")
+        .setDescription("All 32 NFL teams are currently assigned to league members!")
+        .setTimestamp();
+  await tc.send({ embeds: [openEmbed] }).catch(() => null);
+
+  // ── Team List embed ────────────────────────────────────────────────────────
+  const allRows = await db
+    .select({ discordId: usersTable.discordId, team: usersTable.team })
+    .from(usersTable)
+    .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
+
+  const realMembers = allRows.filter(r => !r.discordId.startsWith("unlinked_"));
+  if (realMembers.length === 0) return;
+
+  const lines = realMembers.map(r => `**${r.team}** — <@${r.discordId}>`);
+  for (let i = 0; i < lines.length; i += 25) {
+    const chunk = lines.slice(i, i + 25);
+    const listEmbed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle(i === 0 ? `🏈 League Teams (${realMembers.length} linked)` : "🏈 League Teams (continued)")
+      .setDescription(chunk.join("\n"))
+      .setTimestamp();
+    await tc.send({ embeds: [listEmbed] }).catch(() => null);
+  }
 }

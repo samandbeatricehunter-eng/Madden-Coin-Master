@@ -49,6 +49,7 @@ import {
   FEATURE_LABELS,
 } from "../lib/server-settings.js";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
+import { buildMemberHelpEmbed } from "../commands/help.js";
 import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import {
@@ -1966,6 +1967,60 @@ async function handleButton(interaction: ButtonInteraction) {
       )
       .setFooter({ text: "Payout Guide • /initialize-server setup" });
     await interaction.followUp({ ephemeral: true, embeds: [embed] });
+    return;
+  }
+
+  if (action === "init_post_help") {
+    await interaction.deferUpdate();
+    try {
+      const settings = await getServerSettings().catch(() => null);
+
+      // Find #help-and-faqs by name in the guild
+      await interaction.guild?.channels.fetch().catch(() => null);
+      let faqChannel = interaction.guild?.channels.cache.find(c => c.name === "help-and-faqs") ?? null;
+
+      if (!faqChannel?.isTextBased()) {
+        await interaction.followUp({
+          ephemeral: true,
+          content: "❌ Could not find the **#help-and-faqs** channel. Make sure it exists on this server.",
+        });
+        return;
+      }
+
+      const { TextChannel, AttachmentBuilder } = await import("discord.js");
+      const tc = faqChannel as InstanceType<typeof TextChannel>;
+      const path = await import("path");
+      const ASSETS_DIR = path.join(process.cwd(), "artifacts/discord-bot/assets");
+
+      const helpMsg = await tc.send({ embeds: [buildMemberHelpEmbed(settings)] });
+      await helpMsg.pin().catch(() => null);
+
+      const clipGuides: Array<{ caption: string; file: string }> = [
+        { caption: "📱 **How to Share Madden Clips — PlayStation (PS5)**", file: "clips-ps5.png"     },
+        { caption: "🎮 **How to Share Madden Clips — Xbox**",              file: "clips-xbox.png"    },
+        { caption: "🎬 **How to Clip — Twitch**",                          file: "clips-twitch.png"  },
+        { caption: "💻 **How to Clip — Discord**",                         file: "clips-discord.png" },
+      ];
+      let clipsPosted = 0;
+      for (const guide of clipGuides) {
+        try {
+          const attachment = new AttachmentBuilder(path.join(ASSETS_DIR, guide.file), { name: guide.file });
+          const msg = await tc.send({ content: guide.caption, files: [attachment] });
+          await msg.pin().catch(() => null);
+          clipsPosted++;
+        } catch { /* skip missing asset */ }
+      }
+
+      await interaction.followUp({
+        ephemeral: true,
+        content: `✅ Help guide posted and pinned in <#${tc.id}> (${clipsPosted} clip guides included).`,
+      });
+    } catch (err) {
+      await interaction.followUp({
+        ephemeral: true,
+        content: `❌ Failed to post help guide: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
     return;
   }
 
