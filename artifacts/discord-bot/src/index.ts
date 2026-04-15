@@ -39,6 +39,7 @@ import * as statleaders      from "./commands/statleaders.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
 import * as viewFreeAgents   from "./commands/viewfreeagents.js";
 import * as viewXp            from "./commands/viewxp.js";
+import * as waitlist          from "./commands/waitlist.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
@@ -81,6 +82,7 @@ import * as interactionCreate from "./events/interactionCreate.js";
 import * as ready             from "./events/ready.js";
 import * as messageCreate     from "./events/messageCreate.js";
 import * as guildCreate       from "./events/guildCreate.js";
+import * as guildMemberAdd    from "./events/guildMemberAdd.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 import { startSavingsInterestScheduler } from "./lib/savings-interest.js";
@@ -113,6 +115,7 @@ if (!isProduction && !devBotEnabled) {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
@@ -188,6 +191,7 @@ if (!isProduction && !devBotEnabled) {
     adminLinkTeam,
     adminInventory,
     adminInitialize,
+    waitlist,
 
     // Records (named exports)
     { data: seasonPRData, execute: executeSeasonPR },
@@ -198,7 +202,7 @@ if (!isProduction && !devBotEnabled) {
     client.commands.set(command.data.name, command);
   }
 
-  const events = [interactionCreate, ready, messageCreate, guildCreate];
+  const events = [interactionCreate, ready, messageCreate, guildCreate, guildMemberAdd];
   for (const event of events) {
     if ((event as any).once) {
       client.once(event.name, (...args) => event.execute(...args as [any]));

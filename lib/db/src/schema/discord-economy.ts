@@ -994,6 +994,21 @@ export const playerXpLogTable = pgTable("player_xp_log", {
   playerWeek: uniqueIndex("player_xp_log_player_week_idx").on(t.seasonId, t.playerId, t.weekNum, t.weekType),
 }));
 
+// ── Waitlist — prospective members waiting for an open team ─────────────────
+export const waitlistTable = pgTable("waitlist", {
+  id:          serial("id").primaryKey(),
+  guildId:     text("guild_id").notNull(),
+  discordId:   text("discord_id").notNull(),
+  addedBy:     text("added_by").notNull(),            // admin discordId who added them
+  addedAt:     timestamp("added_at").notNull().defaultNow(),
+  notifiedAt:  timestamp("notified_at"),              // last DM notification sent
+  status:      text("status").notNull().default("waiting"), // "waiting" | "notified" | "accepted" | "denied"
+}, (t) => ({
+  uniq: uniqueIndex("waitlist_guild_user_idx").on(t.guildId, t.discordId),
+}));
+
+export type WaitlistEntry = typeof waitlistTable.$inferSelect;
+
 // ── Per-guild channel ID registry ────────────────────────────────────────────
 // Populated by /initialize-server; read by getGuildChannel() in db-helpers.
 // Channel keys: general, matchups, gotw, schedule, league_twitter, headlines,

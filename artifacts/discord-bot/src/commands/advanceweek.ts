@@ -17,6 +17,7 @@ import { postFullSeasonScheduleToChannel } from "../lib/season-schedule-post.js"
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
 import { triggerWeekAdvanceTweets } from "../lib/league-twitter.js";
+import { checkAndNotifyWaitlist } from "./waitlist.js";
 
 const MATCHUP_CATEGORY_ID  = "1478427821666861272";
 const ANNOUNCE_CHANNEL_ID  = "1484689142515368188"; // general announcements / rule-change channel
@@ -756,4 +757,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     })();
   }
+
+  // ── Waitlist scan — notify waitlisted users if teams are open ────────────────
+  checkAndNotifyWaitlist(
+    interaction.client,
+    interaction.guild,
+    interaction.guildId!,
+  ).catch(err => console.error("[advanceweek] Waitlist scan error:", err));
 }

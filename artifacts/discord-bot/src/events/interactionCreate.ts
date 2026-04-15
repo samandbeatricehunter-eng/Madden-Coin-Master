@@ -62,6 +62,10 @@ import {
 import { buildTeamToDiscord } from "../lib/weekly-matchups-runner.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { logTradeEvent } from "../lib/league-twitter.js";
+import { waitlistTable } from "@workspace/db";
+import {
+  WAITLIST_ACCEPT_PREFIX, WAITLIST_DENY_PREFIX,
+} from "../commands/waitlist.js";
 
 
 // ── Send-offer in-memory player selection store ────────────────────────────────
@@ -2020,6 +2024,60 @@ async function handleButton(interaction: ButtonInteraction) {
         ephemeral: true,
         content: `❌ Failed to post help guide: ${err instanceof Error ? err.message : String(err)}`,
       });
+    }
+    return;
+  }
+
+  // ── Waitlist: accept / deny from DM ──────────────────────────────────────────
+  if (interaction.customId.startsWith(WAITLIST_ACCEPT_PREFIX) || interaction.customId.startsWith(WAITLIST_DENY_PREFIX)) {
+    const isAccept = interaction.customId.startsWith(WAITLIST_ACCEPT_PREFIX);
+    const targetGuildId = interaction.customId.slice(
+      isAccept ? WAITLIST_ACCEPT_PREFIX.length : WAITLIST_DENY_PREFIX.length,
+    );
+
+    await interaction.deferUpdate().catch(() => {});
+
+    const userId = interaction.user.id;
+
+    // Remove the user from the waitlist regardless of choice
+    await db
+      .delete(waitlistTable)
+      .where(and(eq(waitlistTable.guildId, targetGuildId), eq(waitlistTable.discordId, userId)));
+
+    if (isAccept) {
+      // Post in #welcome of the target guild tagging comms
+      try {
+        const guild       = interaction.client.guilds.cache.get(targetGuildId)
+                          ?? await interaction.client.guilds.fetch(targetGuildId).catch(() => null);
+        const welcomeId   = guild ? await getGuildChannel(targetGuildId, CHANNEL_KEYS.WELCOME).catch(() => null) : null;
+        const welcomeCh   = (welcomeId && guild)
+                          ? guild.channels.cache.get(welcomeId) ?? await interaction.client.channels.fetch(welcomeId).catch(() => null)
+                          : null;
+
+        if (welcomeCh?.isTextBased()) {
+          const commRole   = guild?.roles.cache.find(r => r.name === "Commissioner");
+          const coCommRole = guild?.roles.cache.find(r => r.name === "Co-Commissioner");
+          const rolePing   = [commRole, coCommRole].filter(Boolean).map(r => `<@&${r!.id}>`).join(" ");
+          await (welcomeCh as TextChannel).send({
+            content: [
+              `📣 ${rolePing ? `${rolePing} ` : ""}**<@${userId}> has accepted their waitlist invite and is ready to be assigned a team!**`,
+              "Please assign them a team using `/admin-linkteam set`.",
+            ].join("\n"),
+          });
+        }
+      } catch (err) {
+        console.error("[waitlist accept] Failed to post in welcome channel:", err);
+      }
+
+      await interaction.editReply({
+        content: "✅ **You've accepted the invite!** A commissioner will reach out shortly to assign your team. Welcome to the R.E.C. League!",
+        components: [],
+      }).catch(() => {});
+    } else {
+      await interaction.editReply({
+        content: "You've declined the invite and have been removed from the waitlist. If you change your mind, ask a commissioner to re-add you.",
+        components: [],
+      }).catch(() => {});
     }
     return;
   }

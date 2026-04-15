@@ -5,7 +5,7 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, franchiseMcaTeamsTable, franchiseRostersTable,
-  playerSeasonStatsTable, seasonsTable,
+  playerSeasonStatsTable, seasonsTable, waitlistTable,
 } from "@workspace/db";
 import { eq, and, or, ilike, isNotNull, sql } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
@@ -356,6 +356,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // Fire-and-forget: refresh open teams + team list in #welcome
   postTeamListsToWelcome(interaction).catch(() => null);
+
+  // Auto-remove from waitlist if this user was on it
+  db.delete(waitlistTable)
+    .where(and(eq(waitlistTable.guildId, interaction.guildId!), eq(waitlistTable.discordId, targetUser.id)))
+    .catch(() => null);
 
   if (oldTeam && oldTeam !== teamName) {
     return interaction.editReply({
