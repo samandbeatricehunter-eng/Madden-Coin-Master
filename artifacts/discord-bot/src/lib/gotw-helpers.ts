@@ -1,4 +1,4 @@
-import { Client, Guild, TextChannel } from "discord.js";
+import { Client, Guild, TextChannel, EmbedBuilder, Colors } from "discord.js";
 import { db } from "@workspace/db";
 import {
   gotwHistoryTable, teamSeasonStatsTable, userRecordsTable,
