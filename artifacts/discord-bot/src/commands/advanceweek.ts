@@ -1,6 +1,7 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   PermissionFlagsBits, ChannelType, TextChannel,
+  ActionRowBuilder, ButtonBuilder, ComponentType,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable, gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable } from "@workspace/db";
@@ -613,6 +614,60 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         console.log("[advanceweek] Cleared playoff seeds for new season");
       } catch (err) {
         console.error("[advanceweek] Failed to clear playoff seeds:", err);
+      }
+
+      // Remove "Refund" buttons from legend & custom player commissioner log
+      // messages — once a new season begins (draft occurred), these purchases
+      // are non-refundable so the Refund action should no longer be visible.
+      try {
+        const commId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
+        if (commId) {
+          const commCh = interaction.client.channels.cache.get(commId)
+            ?? await interaction.client.channels.fetch(commId).catch(() => null);
+          if (commCh?.isTextBased()) {
+            const messages = await (commCh as TextChannel).messages.fetch({ limit: 100 });
+            for (const msg of messages.values()) {
+              if (!msg.components.length || !msg.editable) continue;
+
+              const NON_REFUNDABLE = new Set(["legend", "custom_player"]);
+              let modified = false;
+
+              const newRows: ReturnType<typeof ButtonBuilder.from>[][] = [];
+              for (const row of msg.components) {
+                if (row.type !== ComponentType.ActionRow) continue;
+                const kept: ReturnType<typeof ButtonBuilder.from>[] = [];
+                for (const c of (row as any).components ?? []) {
+                  if (c.type !== ComponentType.Button) {
+                    kept.push(ButtonBuilder.from(c.toJSON?.() ?? c));
+                    continue;
+                  }
+                  const id: string = c.customId ?? "";
+                  if (!id.startsWith("refund_purchase:")) {
+                    kept.push(ButtonBuilder.from(c.toJSON?.() ?? c));
+                    continue;
+                  }
+                  const purchaseType: string = id.split(":")[3] ?? "";
+                  if (NON_REFUNDABLE.has(purchaseType) || purchaseType.startsWith("custom_player")) {
+                    modified = true;
+                  } else {
+                    kept.push(ButtonBuilder.from(c.toJSON?.() ?? c));
+                  }
+                }
+                if (kept.length > 0) newRows.push(kept);
+              }
+
+              if (modified) {
+                const actionRows = newRows.map(btns =>
+                  new ActionRowBuilder<ButtonBuilder>().addComponents(btns)
+                );
+                await msg.edit({ components: actionRows }).catch(() => null);
+              }
+            }
+            console.log("[advanceweek] Refund buttons removed from commissioner channel for new season");
+          }
+        }
+      } catch (err) {
+        console.error("[advanceweek] Refund button removal error:", err);
       }
 
       // Auto-post full 18-week schedule to schedule channel

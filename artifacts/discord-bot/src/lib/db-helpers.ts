@@ -77,15 +77,19 @@ export async function setGuildChannel(guildId: string, key: string, channelId: s
 
 // ── Default rules (seeds the DB if a section has never been set) ───────────────
 export const SECTION_META: Record<string, { title: string; color: number }> = {
-  sportsmanship: { title: "🤝 Sportsmanship",     color: 0x57f287 },
-  activity:      { title: "📅 Activity",            color: 0x5865f2 },
-  settings:      { title: "⚙️ Settings",            color: 0xfee75c },
-  "4th_down":    { title: "4️⃣ 4th Down Rules",     color: 0xeb6f31 },
-  trade_policy:  { title: "🔄 Trade Policy",        color: 0xa855f7 },
-  off_season:    { title: "🏖️ Off-Season Rules",    color: 0xff73fa },
+  league_info:   { title: "📋 League Info",          color: 0xffd700 },
+  sportsmanship: { title: "🤝 Sportsmanship",        color: 0x57f287 },
+  activity:      { title: "📅 Activity",              color: 0x5865f2 },
+  settings:      { title: "⚙️ Settings",              color: 0xfee75c },
+  "4th_down":    { title: "4️⃣ 4th Down Rules",       color: 0xeb6f31 },
+  trade_policy:  { title: "🔄 Trade Policy",          color: 0xa855f7 },
+  off_season:    { title: "🏖️ Off-Season Rules",      color: 0xff73fa },
 };
 
 export const DEFAULT_RULES: Record<string, string[]> = {
+  league_info: [
+    "League Name: [Enter your in-game Madden league name here] | Password: [Enter your league password here]",
+  ],
   sportsmanship: [
     "Treat all league members with respect at all times.",
     "No trash talk that crosses into personal attacks — keep it competitive, not personal.",

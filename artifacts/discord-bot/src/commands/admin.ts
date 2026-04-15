@@ -201,20 +201,23 @@ export const data = new SlashCommandBuilder()
   )
 
   // ── payouts ────────────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("payout_gotw")
-    .setDescription("Award GOTW correct-guess bonuses in bulk (up to 10 users)")
-    .addUserOption(o => o.setName("user1").setDescription("Correct guesser").setRequired(true))
-    .addUserOption(o => o.setName("user2").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user3").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user4").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user5").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user6").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user7").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user8").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user9").setDescription("Correct guesser").setRequired(false))
-    .addUserOption(o => o.setName("user10").setDescription("Correct guesser").setRequired(false))
-  )
+  .addSubcommand(s => {
+    s.setName("payout_gotw")
+      .setDescription("Award GOTW correct-guess bonuses in bulk (up to 24 users, or use 'all' to pay everyone)")
+      .addBooleanOption(o =>
+        o.setName("all")
+          .setDescription("Pay every registered member currently linked to a team")
+          .setRequired(false)
+      );
+    for (let i = 1; i <= 24; i++) {
+      s.addUserOption(o =>
+        o.setName(`user${i}`)
+          .setDescription("Correct guesser")
+          .setRequired(false)
+      );
+    }
+    return s;
+  })
   .addSubcommand(s => s
     .setName("payout_potw")
     .setDescription("Award Player of the Week bonus — 1 to 4 players")

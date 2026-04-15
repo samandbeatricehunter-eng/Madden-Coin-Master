@@ -19,6 +19,7 @@ import { seasonsTable, usersTable } from "@workspace/db";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { isAdminUser, setGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
+import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 import { buildMemberHelpEmbed } from "./help.js";
 
@@ -139,7 +140,7 @@ const SETUP_STEPS = [
   { step: "5", icon: "📤", label: "Or set up MCA webhook URL if using manual export (`/webhookurl`)"                                },
   { step: "6", icon: "💰", label: "Configure end-of-season payout tiers (`/admin-setpayouts`)"                                     },
   { step: "7", icon: "🏈", label: "Import league teams + rosters from EA (`/admin_ea_export` or MCA)"                              },
-  { step: "8", icon: "📋", label: "Customize league rules for your league (`/rules` → section editor)"                             },
+  { step: "8", icon: "📋", label: "Customize league rules for your league (`/rules` → section editor) — **be sure to fill in the League Info section with your in-game league name & password so members can join**" },
   { step: "9", icon: "🏆", label: "Post opening week schedule (`/admin-postfullseasonschedule`)"                                   },
 ];
 
@@ -423,6 +424,54 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     },
   );
 
+  // ── Self-admin: automatically set the initializing user as a bot admin ──────
+  try {
+    const adminId  = interaction.user.id;
+    const guildId2 = interaction.guildId!;
+    const existing = await db
+      .select()
+      .from(usersTable)
+      .where(and(eq(usersTable.discordId, adminId), eq(usersTable.guildId, guildId2)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db
+        .update(usersTable)
+        .set({ isAdmin: true })
+        .where(and(eq(usersTable.discordId, adminId), eq(usersTable.guildId, guildId2)));
+    } else {
+      await db
+        .insert(usersTable)
+        .values({ discordId: adminId, guildId: guildId2, discordUsername: interaction.user.username, isAdmin: true })
+        .onConflictDoNothing();
+    }
+    console.log(`[initialize-server] Set ${interaction.user.tag} as bot admin`);
+  } catch (err) {
+    console.error("[initialize-server] Failed to set self as admin:", err);
+  }
+
+  embed.addFields({
+    name: "📋 League Info Rules Section",
+    value: [
+      "A **League Info** rules section has been added automatically.",
+      "Use it to store your **in-game Madden league name and password** so members can find and join the league.",
+      "",
+      "> **Update it now:**",
+      "> `/adminrules set league_info 1 \"League Name: [name] | Password: [password]\"`",
+    ].join("\n"),
+    inline: false,
+  });
+
+  embed.addFields({
+    name: "🔐 Bot Admin Access",
+    value: [
+      `You (<@${interaction.user.id}>) have been set as a **bot admin** automatically.`,
+      "This grants you access to all admin commands regardless of Discord role.",
+      "You can grant admin access to others via `/admin set_admin_role`.",
+    ].join("\n"),
+    inline: false,
+  });
+
   embed.setFooter({ text: `Initialized by ${interaction.user.tag} • Guild ${interaction.guildId}` });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -433,6 +482,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   );
 
   await interaction.editReply({ content: null, embeds: [embed], components: [row] });
+
+  // Deploy slash commands for this guild now that setup is complete
+  try {
+    await registerCommandsForGuild(interaction.guildId!);
+    console.log(`[initialize-server] Commands deployed for guild ${interaction.guildId}`);
+  } catch (err) {
+    console.error("[initialize-server] Command deployment failed:", err);
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

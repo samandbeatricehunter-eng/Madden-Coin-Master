@@ -3,15 +3,14 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { franchiseScheduleTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { franchiseScheduleTable, usersTable } from "@workspace/db";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { isAdminUser, addBalance, logTransaction, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "./advanceweek.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { runGotwPrompt, type MatchupsReplyFn } from "../lib/weekly-matchups-runner.js";
 import { getRosterSeasonId } from "../lib/db-helpers.js";
 import { franchiseMcaTeamsTable } from "@workspace/db";
-import { isNotNull } from "drizzle-orm";
 
 const PLAYOFF_WEEKS = ["wildcard", "divisional", "conference", "superbowl"];
 
@@ -31,21 +30,25 @@ export const data = new SlashCommandBuilder()
           .setMaxValue(18)
       )
   )
-  // ── /admin-gotw payout user1…user10 ──────────────────────────────────────
-  .addSubcommand(sub =>
-    sub.setName("payout")
-      .setDescription("Award GOTW correct-guess bonuses in bulk")
-      .addUserOption(o => o.setName("user1").setDescription("Correct guesser").setRequired(true))
-      .addUserOption(o => o.setName("user2").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user3").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user4").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user5").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user6").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user7").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user8").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user9").setDescription("Correct guesser").setRequired(false))
-      .addUserOption(o => o.setName("user10").setDescription("Correct guesser").setRequired(false))
-  );
+  // ── /admin-gotw payout user1…user24 [all] ────────────────────────────────
+  .addSubcommand(sub => {
+    sub
+      .setName("payout")
+      .setDescription("Award GOTW correct-guess bonuses in bulk (up to 24 users, or use 'all' to pay everyone)")
+      .addBooleanOption(o =>
+        o.setName("all")
+          .setDescription("Pay every registered member currently linked to a team")
+          .setRequired(false)
+      );
+    for (let i = 1; i <= 24; i++) {
+      sub.addUserOption(o =>
+        o.setName(`user${i}`)
+          .setDescription("Correct guesser")
+          .setRequired(false)
+      );
+    }
+    return sub;
+  });
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
@@ -69,7 +72,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const season = await getOrCreateActiveSeason(interaction.guildId!);
 
-    // Fetch schedule games for the requested week
     const games = await db
       .select()
       .from(franchiseScheduleTable)
@@ -85,7 +87,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Build team→discordId from franchise_mca_teams (fullName + nickName)
     const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
     const mcaTeams = await db
       .select({
@@ -123,8 +124,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── /admin-gotw payout ────────────────────────────────────────────────────
-  if (sub === "payout") {
+  // ── /admin-gotw payout  (also handles routing from /admin payout_gotw) ───
+  if (sub === "payout" || sub === "payout_gotw") {
     const season      = await getOrCreateActiveSeason(interaction.guildId!);
     const currentWeek = (season as any).currentWeek ?? "1";
     const weekDisplay = weekLabel(currentWeek);
@@ -134,25 +135,46 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ? `+${bonus} coins (postseason — all games are GOTW)`
       : `+${bonus} coins (regular season)`;
 
-    const users: any[] = [];
-    for (let i = 1; i <= 10; i++) {
-      const user = interaction.options.getUser(`user${i}`);
-      if (!user) break;
-      users.push(user);
-    }
+    const payAll = interaction.options.getBoolean("all") ?? false;
 
-    if (users.length === 0) {
-      await interaction.editReply({ content: "❌ No users provided." });
-      return;
+    let recipients: { id: string }[] = [];
+
+    if (payAll) {
+      // Fetch every registered member linked to a real team (not a placeholder)
+      const rows = await db
+        .select({ discordId: usersTable.discordId })
+        .from(usersTable)
+        .where(and(
+          eq(usersTable.guildId, interaction.guildId!),
+          isNotNull(usersTable.team),
+        ));
+      recipients = rows
+        .filter(r => !r.discordId.startsWith("unlinked_"))
+        .map(r => ({ id: r.discordId }));
+
+      if (recipients.length === 0) {
+        await interaction.editReply({ content: "❌ No registered members are currently linked to a team." });
+        return;
+      }
+    } else {
+      for (let i = 1; i <= 24; i++) {
+        const user = interaction.options.getUser(`user${i}`);
+        if (!user) break;
+        recipients.push(user);
+      }
+      if (recipients.length === 0) {
+        await interaction.editReply({ content: "❌ No users provided. Specify at least one user or set `all: True`." });
+        return;
+      }
     }
 
     const lines: string[] = [];
-    for (const user of users) {
-      await addBalance(user.id, bonus, interaction.guildId!);
-      await logTransaction(user.id, bonus, "addcoins", `GOTW correct guess bonus — ${weekDisplay}`, interaction.guildId!, interaction.user.id);
-      lines.push(`✅ <@${user.id}> → +**${bonus} coins**`);
+    for (const recipient of recipients) {
+      await addBalance(recipient.id, bonus, interaction.guildId!);
+      await logTransaction(recipient.id, bonus, "addcoins", `GOTW correct guess bonus — ${weekDisplay}`, interaction.guildId!, interaction.user.id);
+      lines.push(`✅ <@${recipient.id}> → +**${bonus} coins**`);
       try {
-        const discordUser = await interaction.client.users.fetch(user.id);
+        const discordUser = await interaction.client.users.fetch(recipient.id);
         await discordUser.send(
           `🏈 **GOTW Correct Guess Bonus!** Your prediction for **${weekDisplay}**'s Game of the Week was correct!\n` +
           `**+${bonus} coins** added to your balance.`
@@ -160,14 +182,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       } catch (_) {}
     }
 
+    // Split the recipients list if it's too long for one embed field
+    const MAX_FIELD_LEN = 1024;
+    const chunks: string[][] = [[]];
+    for (const line of lines) {
+      const current = chunks[chunks.length - 1]!;
+      if ((current.join("\n") + "\n" + line).length > MAX_FIELD_LEN) {
+        chunks.push([line]);
+      } else {
+        current.push(line);
+      }
+    }
+
     const embed = new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("🏈 GOTW Correct Guess Bonuses Issued")
       .addFields(
-        { name: "Week",       value: weekDisplay,  inline: true },
-        { name: "Bonus",      value: bonusLabel,   inline: true },
-        { name: "Recipients", value: lines.join("\n") },
-      )
+        { name: "Week",  value: weekDisplay, inline: true },
+        { name: "Bonus", value: bonusLabel,  inline: true },
+        { name: "Mode",  value: payAll ? "All linked members" : `${recipients.length} selected user(s)`, inline: true },
+      );
+
+    for (let i = 0; i < chunks.length; i++) {
+      embed.addFields({
+        name: chunks.length === 1 ? "Recipients" : `Recipients (${i + 1}/${chunks.length})`,
+        value: chunks[i]!.join("\n"),
+      });
+    }
+
+    embed
       .setFooter({ text: `Issued by ${interaction.user.username}` })
       .setTimestamp();
 
