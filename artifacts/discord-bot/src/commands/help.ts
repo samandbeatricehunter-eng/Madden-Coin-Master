@@ -22,6 +22,91 @@ export const data = new SlashCommandBuilder()
     .setRequired(false),
   );
 
+// ── Shared embed builder (also used by initialize-server to seed #help-and-faqs) ──
+export function buildMemberHelpEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle("🏈 REC League Econo-Bot — Member Commands")
+    .addFields(
+      {
+        name: "💰 Economy",
+        value: [
+          "`/balance` — Check your current coin balance",
+          "`/sendcoins @user [amount]` — Send coins to another player",
+          "`/wager @user [amount]` — Challenge a player to a coin wager",
+        ].join("\n"),
+      },
+      {
+        name: "🛒 Store — Commands",
+        value: [
+          "`/viewstore` — Browse available items with current season prices",
+          "`/purchase legend [name]` — Buy a legend player",
+          "`/purchase attribute [player] [attr] [qty]` — Boost a player attribute",
+          "`/purchase devup [player] [type] [qty]` — Dev upgrade (Star / Superstar)",
+          "`/purchase agereset [player] [qty]` — Reset a player's age",
+          "`/purchase customplayer [tier] [player]` — Buy a custom player slot",
+          "`/inventory` — View your current season inventory",
+          "`/availableupgrades` — See remaining upgrades for the season",
+        ].join("\n"),
+      },
+      {
+        name: "🛒 Store — Default Pricing & Limits",
+        value: [
+          "• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory",
+          "• **Core Attributes** — 25 coins/pt | 16 pts/season",
+          "• **Non-Core Attributes** — 10 coins/pt | 32 pts/season | Speed ≤5 pts/season",
+          "• **Dev Upgrades** — 250 coins | 2/season",
+          "• **Age Resets** — 250 coins | 2/season",
+          "• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins",
+          "• Legends + Custom Players combined: max 4/season",
+          "",
+          "⚠️ *Commissioners may adjust any of these per season. Use `/viewstore` for live prices.*",
+        ].join("\n"),
+      },
+      {
+        name: "🏆 Game Payouts",
+        value: [
+          "**Payouts are issued automatically** when game data is uploaded via the Madden Companion App.",
+          "  → H2H Win **+50 coins** | H2H Loss **+20 coins** | CPU Win **+20 coins**",
+          "",
+          "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
+          "  → One per week · Game must be uploaded from MCA first",
+          "  → H2H players get an expanded question pool",
+          "  → All interview payouts require commissioner approval",
+        ].join("\n"),
+      },
+      {
+        name: "📊 Rankings & Stats",
+        value: [
+          "`/userstats [@user]` — Detailed season stats for yourself or any member",
+          "`/recenth2h @user` — View recent H2H game history",
+          "`/seasonpr` — Current season power rankings",
+          "`/alltimepr` — All-time power rankings across all seasons",
+        ].join("\n"),
+      },
+      {
+        name: "📅 Schedule & Teams",
+        value: [
+          "`/seasonschedule` — Full current-season schedule",
+          "`/nextopp [@user]` — Your next opponent (or any member's)",
+          "`/teamlist` — All members and their linked NFL teams",
+          "`/openteams` — Unclaimed teams available for new members",
+        ].join("\n"),
+      },
+      {
+        name: "📋 League Rules",
+        value: [
+          "`/rules [section]` — Display all rules in a section",
+          "`/rules [section] [rule_number]` — Quote a single rule",
+          "`/rules [section] [rule_number] @user` — Share a rule with a member (posts publicly)",
+        ].join("\n"),
+      },
+    )
+    .setFooter({ text: "Use /viewstore for live prices. Purchases go to the commissioner for approval." })
+    .setTimestamp();
+}
+
+// ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   try {
     const section   = interaction.options.getString("section") ?? "member";
@@ -35,88 +120,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
 
-    // ── Member embed ──────────────────────────────────────────────────────────
-    const memberEmbed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle("🏈 REC League Econo-Bot — Member Commands")
-      .addFields(
-        {
-          name: "💰 Economy",
-          value: [
-            "`/balance` — Check your current coin balance",
-            "`/sendcoins @user [amount]` — Send coins to another player",
-            "`/wager @user [amount]` — Challenge a player to a coin wager",
-          ].join("\n"),
-        },
-        {
-          name: "🛒 Store — Commands",
-          value: [
-            "`/viewstore` — Browse available items with current season prices",
-            "`/purchase legend [name]` — Buy a legend player",
-            "`/purchase attribute [player] [attr] [qty]` — Boost a player attribute",
-            "`/purchase devup [player] [type] [qty]` — Dev upgrade (Star / Superstar)",
-            "`/purchase agereset [player] [qty]` — Reset a player's age",
-            "`/purchase customplayer [tier] [player]` — Buy a custom player slot",
-            "`/inventory` — View your current season inventory",
-            "`/availableupgrades` — See remaining upgrades for the season",
-          ].join("\n"),
-        },
-        {
-          name: "🛒 Store — Default Pricing & Limits",
-          value: [
-            "• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory",
-            "• **Core Attributes** — 25 coins/pt | 16 pts/season",
-            "• **Non-Core Attributes** — 10 coins/pt | 32 pts/season | Speed ≤5 pts/season",
-            "• **Dev Upgrades** — 250 coins | 2/season",
-            "• **Age Resets** — 250 coins | 2/season",
-            "• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins",
-            "• Legends + Custom Players combined: max 4/season",
-            "",
-            "⚠️ *Commissioners may adjust any of these per season. Use `/viewstore` for live prices.*",
-          ].join("\n"),
-        },
-        {
-          name: "🏆 Game Payouts",
-          value: [
-            "**Payouts are issued automatically** when game data is uploaded via the Madden Companion App.",
-            "  → H2H Win **+50 coins** | H2H Loss **+20 coins** | CPU Win **+20 coins**",
-            "",
-            "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
-            "  → One per week · Game must be uploaded from MCA first",
-            "  → H2H players get an expanded question pool",
-            "  → All interview payouts require commissioner approval",
-          ].join("\n"),
-        },
-        {
-          name: "📊 Rankings & Stats",
-          value: [
-            "`/userstats [@user]` — Detailed season stats for yourself or any member",
-            "`/recenth2h @user` — View recent H2H game history",
-            "`/seasonpr` — Current season power rankings",
-            "`/alltimepr` — All-time power rankings across all seasons",
-          ].join("\n"),
-        },
-        {
-          name: "📅 Schedule & Teams",
-          value: [
-            "`/seasonschedule` — Full current-season schedule",
-            "`/nextopp [@user]` — Your next opponent (or any member's)",
-            "`/teamlist` — All members and their linked NFL teams",
-            "`/openteams` — Unclaimed teams available for new members",
-          ].join("\n"),
-        },
-        {
-          name: "📋 League Rules",
-          value: [
-            "`/rules [section]` — Display all rules in a section",
-            "`/rules [section] [rule_number]` — Quote a single rule",
-            "`/rules [section] [rule_number] @user` — Share a rule with a member (posts publicly)",
-          ].join("\n"),
-        },
-      )
-      .setFooter({ text: "Use /viewstore for live prices. Purchases go to the commissioner for approval." })
-      .setTimestamp();
-
     // ── Non-admins always get member help ─────────────────────────────────────
     if (!isAdmin) {
       if (section === "admin") {
@@ -126,13 +129,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         });
         return;
       }
-      await interaction.reply({ embeds: [memberEmbed], ephemeral });
+      await interaction.reply({ embeds: [buildMemberHelpEmbed()], ephemeral });
       return;
     }
 
     // ── Admin chose member section ─────────────────────────────────────────────
     if (section === "member") {
-      await interaction.reply({ embeds: [memberEmbed], ephemeral });
+      await interaction.reply({ embeds: [buildMemberHelpEmbed()], ephemeral });
       return;
     }
 

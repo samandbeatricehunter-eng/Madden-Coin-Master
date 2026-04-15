@@ -6,12 +6,13 @@
  * Season 1, and seeds 32 NFL team placeholder slots.
  */
 
+import path from "path";
 import {
   SlashCommandBuilder, ChatInputCommandInteraction,
   EmbedBuilder, Colors, PermissionFlagsBits,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  ChannelType, OverwriteResolvable,
-  Guild, Role, CategoryChannel,
+  ChannelType, OverwriteResolvable, AttachmentBuilder,
+  Guild, Role, CategoryChannel, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable, usersTable } from "@workspace/db";
@@ -19,6 +20,9 @@ import { eq, and, isNotNull } from "drizzle-orm";
 import { isAdminUser, setGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { NFL_TEAMS } from "../lib/constants.js";
+import { buildMemberHelpEmbed } from "./help.js";
+
+const ASSETS_DIR = path.join(process.cwd(), "artifacts/discord-bot/assets");
 
 // ── Channel name → DB key mapping ─────────────────────────────────────────────
 const CHANNEL_KEY_MAP: Record<string, string> = {
@@ -40,11 +44,12 @@ const CHANNEL_KEY_MAP: Record<string, string> = {
 type ChannelKind = "text" | "voice";
 
 interface ChannelDef {
-  name:     string;
-  kind?:    ChannelKind;
-  topic?:   string;
-  readOnly?: boolean;
-  private?:  boolean;
+  name:               string;
+  kind?:              ChannelKind;
+  topic?:             string;
+  readOnly?:          boolean;
+  private?:           boolean;
+  commissionerWrite?: boolean; // Approved Members/Co-Comm can read; only Commissioner can write
 }
 
 interface CategoryDef {
@@ -67,9 +72,10 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
   {
     name: "🔒 MEMBERS ONLY",
     channels: [
-      { name: "general-discussion",   topic: "General league discussion"                                        },
-      { name: "member-league-chat",   topic: "Member-only league chat"                                         },
-      { name: "league-announcements", topic: "Commissioner announcements", readOnly: true                       },
+      { name: "general-discussion",   topic: "General league discussion"                                              },
+      { name: "member-league-chat",   topic: "Member-only league chat"                                               },
+      { name: "league-announcements", topic: "Commissioner announcements",                    readOnly: true          },
+      { name: "help-and-faqs",        topic: "Bot command guide and how-to resources for members", commissionerWrite: true },
     ],
   },
   {
@@ -324,6 +330,39 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       log.push(`🏈 Seeded ${teamsToSeed.length} open team slot(s) (${NFL_TEAMS.length - teamsToSeed.length} already claimed)`);
     }
 
+    // ── Step 9: Seed #help-and-faqs with the member help embed + clip guides ───
+    const faqId = channelIds["help-and-faqs"];
+    if (faqId) {
+      try {
+        const faqCh = await interaction.client.channels.fetch(faqId).catch(() => null);
+        if (faqCh && faqCh.isTextBased()) {
+          const tc = faqCh as TextChannel;
+
+          // Post member command reference and pin it
+          const helpMsg = await tc.send({ embeds: [buildMemberHelpEmbed()] });
+          await helpMsg.pin().catch(() => null);
+
+          // Clip guide images to post and pin
+          const clipGuides: Array<{ caption: string; file: string }> = [
+            { caption: "📱 **How to Share Madden Clips — PlayStation (PS5)**", file: "clips-ps5.png"     },
+            { caption: "🎮 **How to Share Madden Clips — Xbox**",              file: "clips-xbox.png"    },
+            { caption: "🎬 **How to Clip — Twitch**",                          file: "clips-twitch.png"  },
+            { caption: "💻 **How to Clip — Discord**",                         file: "clips-discord.png" },
+          ];
+
+          for (const guide of clipGuides) {
+            const attachment = new AttachmentBuilder(path.join(ASSETS_DIR, guide.file), { name: guide.file });
+            const msg = await tc.send({ content: guide.caption, files: [attachment] });
+            await msg.pin().catch(() => null);
+          }
+
+          log.push(`📌 Posted and pinned help guide + ${clipGuides.length} clip guides in <#${faqId}>`);
+        }
+      } catch (faqErr) {
+        log.push(`⚠️ Could not seed #help-and-faqs: ${(faqErr as Error).message}`);
+      }
+    }
+
   } catch (err: any) {
     console.error("[initialize-server] Error during setup:", err);
     await interaction.editReply({
@@ -412,6 +451,16 @@ function buildPerms(
   catPrivate:   boolean,
 ): OverwriteResolvable[] {
   const isPrivate = chDef.private || catPrivate;
+
+  // Commissioner-write channels — members/co-comm can read, only Commissioner can send
+  if (chDef.commissionerWrite) {
+    return [
+      { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+      { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
+      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
+      { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ReadMessageHistory] },
+    ];
+  }
 
   // #welcome — the only public channel (@everyone can view, no one can send)
   if (chDef.name === "welcome") {
