@@ -6,10 +6,28 @@ import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("help")
-  .setDescription("View all available bot commands");
+  .setDescription("View all available bot commands")
+  .addStringOption(o => o
+    .setName("section")
+    .setDescription("Which help section to view (admin section requires commissioner access)")
+    .addChoices(
+      { name: "Member Commands", value: "member" },
+      { name: "Admin Commands",  value: "admin"  },
+    )
+    .setRequired(false),
+  )
+  .addBooleanOption(o => o
+    .setName("public")
+    .setDescription("Post the response publicly in the channel so others can see it (default: private)")
+    .setRequired(false),
+  );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   try {
+    const section   = interaction.options.getString("section") ?? "member";
+    const isPublic  = interaction.options.getBoolean("public") ?? false;
+    const ephemeral = !isPublic;
+
     const member = interaction.guild?.members.cache.get(interaction.user.id)
       ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
 
@@ -99,8 +117,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       .setFooter({ text: "Use /viewstore for live prices. Purchases go to the commissioner for approval." })
       .setTimestamp();
 
+    // ── Non-admins always get member help ─────────────────────────────────────
     if (!isAdmin) {
-      await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
+      if (section === "admin") {
+        await interaction.reply({
+          content: "❌ Commissioner access is required to view admin commands.",
+          ephemeral: true,
+        });
+        return;
+      }
+      await interaction.reply({ embeds: [memberEmbed], ephemeral });
+      return;
+    }
+
+    // ── Admin chose member section ─────────────────────────────────────────────
+    if (section === "member") {
+      await interaction.reply({ embeds: [memberEmbed], ephemeral });
       return;
     }
 
@@ -229,10 +261,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       .setFooter({ text: "Admin commands are only visible to bot admins and server administrators." })
       .setTimestamp();
 
-    // Send member embed first, then follow up with admin embeds separately
-    // (splitting avoids Discord's 6000-char combined embed limit)
-    await interaction.reply({ embeds: [memberEmbed], ephemeral: true });
-    await interaction.followUp({ embeds: [adminEmbed1, adminEmbed2], ephemeral: true });
+    // Admin section — show both admin command pages
+    await interaction.reply({ embeds: [adminEmbed1, adminEmbed2], ephemeral });
   } catch (err) {
     console.error("[/help] Error:", err);
     const msg = err instanceof Error ? err.message : String(err);
