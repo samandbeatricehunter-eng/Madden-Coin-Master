@@ -11,7 +11,11 @@ import * as view          from "./commands/view.js";
 import * as help             from "./commands/help.js";
 import * as balance          from "./commands/balance.js";
 import * as sendcoins        from "./commands/sendcoins.js";
-import * as purchase         from "./commands/purchase.js";
+import * as buyLegend        from "./commands/buy-legend.js";
+import * as buyAttribute     from "./commands/buy-attribute.js";
+import * as buyDevup         from "./commands/buy-devup.js";
+import * as buyAgereset      from "./commands/buy-agereset.js";
+import * as buyCustomPlayer  from "./commands/buy-customplayer.js";
 import * as inventory        from "./commands/inventory.js";
 import * as recentH2H        from "./commands/recentH2H.js";
 import * as wager            from "./commands/wager.js";
@@ -126,7 +130,11 @@ if (!isProduction && !devBotEnabled) {
     help,
     balance,
     sendcoins,
-    purchase,
+    buyLegend,
+    buyAttribute,
+    buyDevup,
+    buyAgereset,
+    buyCustomPlayer,
     inventory,
     recentH2H,
     wager,

@@ -1,0 +1,181 @@
+/**
+ * Shared helpers used across the individual purchase commands
+ * (buy-legend, buy-attribute, buy-devup, buy-agereset, buy-customplayer).
+ */
+
+import {
+  ChatInputCommandInteraction, EmbedBuilder, Colors,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel,
+  AutocompleteInteraction,
+} from "discord.js";
+import { db } from "@workspace/db";
+import {
+  usersTable, franchiseRostersTable, franchiseMcaTeamsTable,
+} from "@workspace/db";
+import { eq, and, ilike, or, sql } from "drizzle-orm";
+import { getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
+import { errorEmbed } from "./embeds.js";
+
+export const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
+
+// ── Insufficient-funds reply ───────────────────────────────────────────────────
+export function insufficientFunds(
+  interaction: ChatInputCommandInteraction,
+  cost: number,
+  balance: number,
+) {
+  return interaction.editReply({
+    embeds: [errorEmbed(
+      "Insufficient Funds",
+      `You need **${cost.toLocaleString()} coins** but only have **${balance.toLocaleString()} coins**. ` +
+      `You're short by **${(cost - balance).toLocaleString()} coins**.`,
+    )],
+  });
+}
+
+// ── Commissioner notification ──────────────────────────────────────────────────
+export async function sendCommissionerNotification(
+  interaction: ChatInputCommandInteraction,
+  type: string,
+  purchaseId: number,
+  details: Record<string, string | number | undefined>,
+) {
+  try {
+    const channelId =
+      await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+      ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+
+    let title        = "";
+    let description  = "";
+    let buttonLabel  = "✅ Mark as Applied";
+
+    if (type === "legend") {
+      title = "🏆 Legend Purchase Request";
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        `**Legend:** ${details["legendName"]} (${details["legendPosition"]})`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Once you've added this player to the draft pool, click the button below to notify the member.",
+      ].join("\n");
+      buttonLabel = "✅ Added to Draft Pool";
+    } else if (type === "dev_upgrade") {
+      const costPer  = details["costPer"];
+      const fromDev  = details["currentDevLabel"] ?? "?";
+      const toDev    = details["devUpType"] ?? "?";
+      title = "📈 Dev Upgrade Request";
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+        `**Dev Level:** ${fromDev} → ${toDev}`,
+        `**Cost:** ${costPer} coins`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Click the button below once this has been applied in-game.",
+      ].filter(Boolean).join("\n");
+    } else if (type === "age_reset") {
+      const costPer   = details["costPer"];
+      const ageBefore = details["currentAge"] ? `${details["currentAge"]} → 23` : "→ 23";
+      title = "🔄 Age Reset Request";
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+        `**Age:** ${ageBefore}`,
+        `**Cost:** ${costPer} coins`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Click the button below once this has been applied in-game.",
+      ].filter(Boolean).join("\n");
+    } else if (type.startsWith("custom_player")) {
+      title = `🎨 Custom Player Request — ${details["tier"]}`;
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+        `**Tier:** ${details["tier"]}`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Click the button below once this has been applied in-game.",
+      ].join("\n");
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Orange)
+      .setTitle(title)
+      .setDescription(description)
+      .setTimestamp();
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`approve_purchase:${purchaseId}:${interaction.user.id}:${type}`)
+        .setLabel(buttonLabel)
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`refund_purchase:${purchaseId}:${interaction.user.id}:${type}`)
+        .setLabel("🔄 Refund")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    await (channel as TextChannel).send({ embeds: [embed], components: [row] });
+  } catch (err) {
+    console.error("Commissioner notification failed (purchase still completed):", err);
+  }
+}
+
+// ── Roster row lookup (shared by autocomplete in devup / agereset / attribute) ─
+export type RosterField = {
+  position?: string;
+  firstName?: string;
+  lastName?: string;
+  devTrait?: number;
+  overall?: number;
+  age?: number;
+};
+
+export async function getRosterRows<T extends Record<string, any>>(
+  interaction: AutocompleteInteraction | ChatInputCommandInteraction,
+  seasonId: number,
+  fields: T,
+): Promise<T[]> {
+  const userId = interaction.user.id;
+  const guildId = interaction.guildId!;
+
+  const baseWhere = and(
+    eq(franchiseRostersTable.seasonId, seasonId),
+    eq(franchiseRostersTable.discordId, userId),
+  );
+  const direct = await (db.select(fields).from(franchiseRostersTable).where(baseWhere) as any) as T[];
+  if (direct.length > 0) return direct;
+
+  // Fallback: resolve via team name stored in economy_users
+  const [userRow] = await db
+    .select({ team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId)))
+    .limit(1);
+  if (!userRow?.team) return [];
+
+  const teamSearch  = userRow.team.trim();
+  const teamEntries = await db
+    .select({ teamId: franchiseMcaTeamsTable.teamId })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      or(
+        ilike(franchiseMcaTeamsTable.fullName, `%${teamSearch}%`),
+        ilike(franchiseMcaTeamsTable.nickName, `%${teamSearch}%`),
+      ),
+    ));
+  if (teamEntries.length === 0) return [];
+
+  const teamIds = teamEntries.map(t => t.teamId);
+  return (db.select(fields).from(franchiseRostersTable).where(and(
+    eq(franchiseRostersTable.seasonId, seasonId),
+    teamIds.length === 1
+      ? eq(franchiseRostersTable.teamId, teamIds[0]!)
+      : sql`${franchiseRostersTable.teamId} = ANY(ARRAY[${sql.join(teamIds.map(id => sql`${id}`), sql`, `)}])`,
+  )) as any) as T[];
+}
