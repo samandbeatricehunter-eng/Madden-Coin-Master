@@ -5,6 +5,7 @@ import {
 import { db } from "@workspace/db";
 import { usersTable, seasonsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+
 import { isAdminUser } from "../lib/db-helpers.js";
 import { assignRosterLegends, formatLegendAssignResult } from "../lib/roster-legend-assign.js";
 
@@ -49,7 +50,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const [season] = await db.select({ id: seasonsTable.id })
     .from(seasonsTable)
-    .where(eq(seasonsTable.isActive, true))
+    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
     .limit(1);
 
   if (!season) {

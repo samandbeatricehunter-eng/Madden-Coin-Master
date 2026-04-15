@@ -63,7 +63,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Parallel batch 1: records + savings + streaks ─────────────────────────
-  const [recordRows, allTimeRows, savingsBalance, overallStreak, h2hStreak] = await Promise.all([
+  const [recordRows, allTimeRows, savingsBalance, overallStreak] = await Promise.all([
     db.select().from(userRecordsTable)
       .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
       .limit(1),
@@ -83,7 +83,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     getSavings(target.id),
     computeStreak(target.id, false, interaction.guildId!),
-    computeStreak(target.id, true, interaction.guildId!),
   ]);
 
   // Build the team-aware WHERE clause for permanent vault items.
@@ -224,11 +223,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setFooter({ text: isSelf ? "Only you can see this message" : `Viewed by ${interaction.user.username}` });
 
   // Embed 2: Records & Milestones
-  const wins    = record?.wins ?? 0;
-  const losses  = record?.losses ?? 0;
-  const pd      = record?.pointDifferential ?? 0;
-  const pWins   = record?.playoffWins ?? 0;
-  const pLosses = record?.playoffLosses ?? 0;
+  const wins   = record?.wins ?? 0;
+  const losses = record?.losses ?? 0;
+  const pd     = record?.pointDifferential ?? 0;
   const allTimeSB      = user.allTimeSuperbowlWins   ?? 0;
   const allTimeSBL     = user.allTimeSuperbowlLosses ?? 0;
   const milestoneLabel = MILESTONE_LABELS[user.milestoneTierAwarded ?? 0] ?? "None";
@@ -250,10 +247,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setTitle("🏈 Season Record & Milestones")
     .addFields(
       { name: "Season Record",            value: `**${wins}W – ${losses}L** (PD: ${pd > 0 ? "+" : ""}${pd})`, inline: true },
-      { name: "This Season Playoffs",    value: `${pWins}W – ${pLosses}L`, inline: true },
-      { name: "\u200b",                  value: "\u200b", inline: true },
       { name: "📈 Overall Streak",       value: fmtStreak(overallStreak), inline: true },
-      { name: "⚔️ H2H-Only Streak",     value: fmtStreak(h2hStreak), inline: true },
       { name: "\u200b",                  value: "\u200b", inline: true },
       { name: "All-Time H2H Wins",       value: `**${allTimeH2HW}**`, inline: true },
       { name: "All-Time H2H Losses",     value: `**${allTimeH2HL}**`, inline: true },
