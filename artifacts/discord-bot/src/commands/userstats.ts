@@ -12,7 +12,7 @@ import { eq, and, desc, sql, ne, inArray, or, isNull } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
 import { weekLabel } from "./advanceweek.js";
-import { requireMcaEnabled } from "../lib/server-settings.js";
+import { requireMcaEnabled, getGuildSettings } from "../lib/server-settings.js";
 
 const MILESTONE_LABELS: Record<number, string> = {
   0: "None",
@@ -96,8 +96,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )
     : eq(inventoryTable.discordId, target.id);
 
-  // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs ─
-  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers, permanentLegendsFromVault] = await Promise.all([
+  const guildId = interaction.guildId!;
+
+  // Subquery: season IDs that belong to THIS guild — used to scope permanent
+  // inventory items so cross-server data never leaks in.
+  const guildSeasonIds = db
+    .select({ id: seasonsTable.id })
+    .from(seasonsTable)
+    .where(eq(seasonsTable.guildId, guildId));
+
+  // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs + settings ─
+  const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers, permanentLegendsFromVault, guildSettings] = await Promise.all([
     // Current-season non-permanent items only (dev ups, age resets, attributes, this season's legends/customs).
     // Use OR isNull to catch legend rows that pre-date the legendCategory column being set at approval time.
     db.select().from(inventoryTable)
@@ -153,7 +162,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ))
       .orderBy(desc(customPlayersTable.createdAt)),
 
-    // Permanent custom players — by team (or discordId fallback), no season constraint
+    // Permanent custom players — scoped to this guild's seasons to prevent cross-server leaks.
     db.select({
       id:             inventoryTable.id,
       playerName:     inventoryTable.playerName,
@@ -165,19 +174,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         permOwnerWhere,
         inArray(inventoryTable.itemType, ["custom_player_gold", "custom_player_silver", "custom_player_bronze"]),
         sql`${inventoryTable.legendCategory} = 'permanent'`,
+        inArray(inventoryTable.seasonId, guildSeasonIds),
       )),
 
-    // Permanent legends — by team (or discordId fallback), no season constraint.
+    // Permanent legends — scoped to this guild's seasons to prevent cross-server leaks.
     // Also picks up legend rows from prior seasons whose legendCategory is null (missed by old rollover logic).
     db.select().from(inventoryTable)
       .where(and(
         permOwnerWhere,
         eq(inventoryTable.itemType, "legend"),
+        inArray(inventoryTable.seasonId, guildSeasonIds),
         or(
           sql`${inventoryTable.legendCategory} = 'permanent'`,
           and(isNull(inventoryTable.legendCategory), sql`${inventoryTable.seasonId} != ${season.id}`),
         ),
       )),
+
+    // Guild feature settings — determines which embed sections to render.
+    getGuildSettings(guildId),
   ]);
 
   const record      = recordRows[0];
@@ -298,12 +312,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }).join("\n")
     : "*None*";
 
-  const inventoryEmbed = new EmbedBuilder()
-    .setColor(Colors.Gold)
-    .setTitle("🎒 Season Inventory & Purchases")
-    .addFields(
-      { name: `⚡ Season Legends (${currentLegends.length})`,          value: fmtLegend(currentLegends)   },
+  const legendsOn = guildSettings.legendsEnabled;
+  const customsOn  = guildSettings.customSuperstarsEnabled;
+
+  const inventoryFields: { name: string; value: string; inline?: boolean }[] = [];
+
+  if (legendsOn) {
+    inventoryFields.push(
+      { name: `⚡ Season Legends (${currentLegends.length})`,             value: fmtLegend(currentLegends)   },
       { name: `🔒 Permanent Legend Vault (${permanentLegends.length}/4)`, value: fmtLegend(permanentLegends) },
+    );
+  }
+
+  if (customsOn) {
+    inventoryFields.push(
       {
         name:  `🏈 Season Custom Players (${cpSlotStr}${refundedCount > 0 ? `, ${refundedCount} refunded` : ""})`,
         value: seasonCustomStr,
@@ -312,14 +334,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name:  `🗃️ Permanent Custom Players (${(permCustomPlayers ?? []).length})`,
         value: permCustomStr,
       },
-      { name: "Core Attr Pts Used",     value: `${coreAttrUsed}`,    inline: true },
-      { name: "Non-Core Attr Pts Used", value: `${nonCoreAttrUsed}`, inline: true },
-      { name: "\u200b",                 value: "\u200b",             inline: true },
-      { name: "Dev Upgrades Used",      value: `${devUpsUsed}`,      inline: true },
-      { name: "Age Resets Used",        value: `${ageResetsUsed}`,   inline: true },
-      { name: "\u200b",                 value: "\u200b",             inline: true },
-      { name: "Pending Purchases",      value: `${pendingCount}`,    inline: true },
     );
+  }
+
+  inventoryFields.push(
+    { name: "Core Attr Pts Used",     value: `${coreAttrUsed}`,    inline: true },
+    { name: "Non-Core Attr Pts Used", value: `${nonCoreAttrUsed}`, inline: true },
+    { name: "\u200b",                 value: "\u200b",             inline: true },
+    { name: "Dev Upgrades Used",      value: `${devUpsUsed}`,      inline: true },
+    { name: "Age Resets Used",        value: `${ageResetsUsed}`,   inline: true },
+    { name: "\u200b",                 value: "\u200b",             inline: true },
+    { name: "Pending Purchases",      value: `${pendingCount}`,    inline: true },
+  );
+
+  const inventoryEmbed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("🎒 Season Inventory & Purchases")
+    .addFields(...inventoryFields);
 
   // Embed 4: Recent Activity
   const txLines = transactions.length > 0

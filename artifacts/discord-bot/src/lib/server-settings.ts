@@ -21,6 +21,20 @@ export async function getServerSettings(): Promise<ServerSettings> {
   return created!;
 }
 
+/**
+ * Fetch settings for a specific guild. Falls back to creating a default row
+ * for that guild if none exists yet.
+ */
+export async function getGuildSettings(guildId: string): Promise<ServerSettings> {
+  const [settings] = await db.select().from(serverSettingsTable)
+    .where(eq(serverSettingsTable.guildId, guildId)).limit(1);
+  if (settings) return settings;
+  // No per-guild row yet — create one with all defaults
+  const [created] = await db.insert(serverSettingsTable)
+    .values({ guildId }).returning();
+  return created!;
+}
+
 export type FeatureKey = keyof Omit<ServerSettings, "id" | "guildId" | "updatedAt">;
 
 export async function toggleFeature(feature: FeatureKey): Promise<ServerSettings> {
