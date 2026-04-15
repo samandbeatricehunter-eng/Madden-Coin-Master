@@ -19,6 +19,25 @@ function nameMatch(a: string, b: string): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+/**
+ * Silently send an embed to the commissioner log channel.
+ * Never throws — all errors are swallowed so a logging failure never
+ * interrupts the main payout flow.
+ */
+async function sendGotwCommLog(
+  client:  Client,
+  guildId: string,
+  embed:   EmbedBuilder,
+): Promise<void> {
+  try {
+    const commId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+    if (!commId) return;
+    const ch = await client.channels.fetch(commId).catch(() => null);
+    if (!ch?.isTextBased()) return;
+    await (ch as TextChannel).send({ embeds: [embed] });
+  } catch (_) {}
+}
+
 export type ScoredH2HGame = {
   awayTeamName:   string;
   homeTeamName:   string;
@@ -318,6 +337,17 @@ export async function autoPayoutGotwVoters(
   });
 
   if (!gotwGame) {
+    await sendGotwCommLog(client, guildId, new EmbedBuilder()
+      .setColor(Colors.Orange)
+      .setTitle(`⚠️ GOTW Payout Issue — Week ${weekNum}`)
+      .setDescription("Game was **not found** in the schedule. Voter list is **still live** — act quickly before advance deletes it.")
+      .addFields(
+        { name: "Matchup",      value: `**${row.teamName1}** vs **${row.teamName2}**` },
+        { name: "Participants", value: `<@${row.discordId1}> (${row.teamName1})\n<@${row.discordId2}> (${row.teamName2})` },
+        { name: "Action",       value: "Check that MCA schedules are imported, then use `/admin-gotw` to pay correct voters manually." },
+      )
+      .setTimestamp(),
+    );
     return `⚠️ Could not find GOTW game (${row.teamName1} vs ${row.teamName2}) in Week ${weekNum} schedule — use \`/admin-gotw\` to pay manually.`;
   }
 
@@ -365,28 +395,62 @@ export async function autoPayoutGotwVoters(
 
   const pollMsg = await tc.messages.fetch(row.pollMessageId).catch(() => null);
   if (!pollMsg || !pollMsg.poll) {
+    await sendGotwCommLog(client, guildId, new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle(`❌ GOTW Payout Issue — Week ${weekNum}: Poll Deleted`)
+      .setDescription("The poll message was **not found or already deleted**. The voter list is **unrecoverable**. Manual payout is required.")
+      .addFields(
+        { name: "Matchup",      value: `**${row.teamName1}** vs **${row.teamName2}**` },
+        { name: "Final Score",  value: `${gotwGame.awayTeamName} **${gotwGame.awayScore}** – **${gotwGame.homeScore}** ${gotwGame.homeTeamName}` },
+        { name: "Winner",       value: `**${winnerTeamName}** (<@${winnerDiscordId}>)` },
+        { name: "Participants", value: `<@${row.discordId1}> (${row.teamName1})\n<@${row.discordId2}> (${row.teamName2})` },
+        { name: "Action",       value: "Use `/admin-gotw` to manually pay anyone you know voted correctly for the winner." },
+      )
+      .setTimestamp(),
+    );
     return `⚠️ Poll message for Week ${weekNum} GOTW not found (may have been deleted) — use \`/admin-gotw\` to pay manually.`;
   }
 
   // 4. Fetch voters for the winning answer
   const winningAnswer = pollMsg.poll.answers.get(winningAnswerId);
   if (!winningAnswer) {
+    await sendGotwCommLog(client, guildId, new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle(`❌ GOTW Payout Issue — Week ${weekNum}: Answer Missing`)
+      .setDescription(`Could not find answer ${winningAnswerId} in the poll. This is unexpected — the poll may be corrupted.`)
+      .addFields(
+        { name: "Matchup", value: `**${row.teamName1}** vs **${row.teamName2}**` },
+        { name: "Winner",  value: `**${winnerTeamName}** (<@${winnerDiscordId}>)` },
+        { name: "Action",  value: "Use `/admin-gotw` to pay correct voters manually." },
+      )
+      .setTimestamp(),
+    );
     return `❌ Could not find answer ${winningAnswerId} in the Week ${weekNum} GOTW poll — use \`/admin-gotw\` to pay manually.`;
   }
 
   const voters = await winningAnswer.fetchVoters().catch(() => null);
   if (!voters) {
+    await sendGotwCommLog(client, guildId, new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle(`❌ GOTW Payout Issue — Week ${weekNum}: Voter Fetch Failed`)
+      .setDescription("Could not retrieve voter list from the poll. Discord API error or the poll has expired.")
+      .addFields(
+        { name: "Matchup", value: `**${row.teamName1}** vs **${row.teamName2}**` },
+        { name: "Winner",  value: `**${winnerTeamName}** (<@${winnerDiscordId}>)` },
+        { name: "Action",  value: "Use `/admin-gotw` to pay correct voters manually." },
+      )
+      .setTimestamp(),
+    );
     return `❌ Failed to fetch voters for Week ${weekNum} GOTW poll — use \`/admin-gotw\` to pay manually.`;
   }
 
   // 5. Issue payouts
   const bonus     = await getPayoutValue(isPlayoff ? PAYOUT_KEYS.GOTW_PLAYOFF_BONUS : PAYOUT_KEYS.GOTW_REGULAR_BONUS);
   const weekLabel = `Week ${weekNum}`;
-  const paid: string[] = [];
+  const paid:      string[]                                = [];
+  const voterLog:  { id: string; username: string }[]     = [];
 
   for (const [userId, user] of voters) {
-    // Don't pay the winning player themselves (they already get the H2H payout)
-    // — actually the user may want to allow it; let's just pay all voters equally
     await addBalance(userId, bonus, guildId);
     await logTransaction(
       userId, bonus, "addcoins",
@@ -394,6 +458,7 @@ export async function autoPayoutGotwVoters(
       guildId, "auto",
     );
     paid.push(`<@${userId}>`);
+    voterLog.push({ id: userId, username: user.username });
 
     // DM the winner
     try {
@@ -411,6 +476,24 @@ export async function autoPayoutGotwVoters(
       eq(gotwHistoryTable.seasonId,  seasonId),
       eq(gotwHistoryTable.weekIndex, weekIndex),
     ));
+
+  // 7. Commissioner log — captures voter list before the channel is purged
+  await sendGotwCommLog(client, guildId, new EmbedBuilder()
+    .setColor(paid.length > 0 ? Colors.Green : Colors.Blue)
+    .setTitle(`📋 GOTW Payout Log — Week ${weekNum}`)
+    .addFields(
+      { name: "Matchup",     value: `**${row.teamName1}** vs **${row.teamName2}**` },
+      { name: "Final Score", value: `${gotwGame.awayTeamName} **${gotwGame.awayScore}** – **${gotwGame.homeScore}** ${gotwGame.homeTeamName}`, inline: true },
+      { name: "Winner",      value: `**${winnerTeamName}** (<@${winnerDiscordId}>)`, inline: true },
+      {
+        name:  paid.length > 0 ? `✅ Correct Voters Paid — +${bonus} coins each (${paid.length})` : "📊 No Correct Voters",
+        value: paid.length > 0
+          ? voterLog.map(v => `• <@${v.id}> (\`${v.username}\`)`).join("\n")
+          : "No one voted for the correct team — no payouts issued.",
+      },
+    )
+    .setTimestamp(),
+  );
 
   if (paid.length === 0) {
     return `📊 Week ${weekNum} GOTW winner: **${winnerTeamName}** (<@${winnerDiscordId}>)\nNo one voted for the correct team — no payouts issued.`;
@@ -521,23 +604,59 @@ export async function autoPayoutPlayoffGotw(
 
     const pollMsg = await tc.messages.fetch(poll.pollMessageId).catch(() => null);
     if (!pollMsg?.poll) {
+      await sendGotwCommLog(client, guildId, new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle(`❌ Playoff GOTW Payout Issue — ${weekLabel}: Poll Deleted`)
+        .setDescription("The poll message was **not found or already deleted**. The voter list is **unrecoverable**. Manual payout required.")
+        .addFields(
+          { name: "Matchup",     value: `**${poll.teamName1}** vs **${poll.teamName2}**` },
+          { name: "Final Score", value: `${game.awayTeamName} **${game.awayScore}** – **${game.homeScore}** ${game.homeTeamName}` },
+          { name: "Winner",      value: `**${winnerName}**` },
+          { name: "Action",      value: "Use `/admin-gotw` to manually pay anyone you know voted correctly for the winner." },
+        )
+        .setTimestamp(),
+      );
       results.push(`⚠️ ${poll.teamName1} vs ${poll.teamName2} — poll message not found`);
       continue;
     }
 
     const winningAnswer = pollMsg.poll.answers.get(winningAnswerId);
     if (!winningAnswer) {
+      await sendGotwCommLog(client, guildId, new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle(`❌ Playoff GOTW Payout Issue — ${weekLabel}: Answer Missing`)
+        .setDescription(`Could not find answer ${winningAnswerId} in the poll.`)
+        .addFields(
+          { name: "Matchup", value: `**${poll.teamName1}** vs **${poll.teamName2}**` },
+          { name: "Winner",  value: `**${winnerName}**` },
+          { name: "Action",  value: "Use `/admin-gotw` to pay correct voters manually." },
+        )
+        .setTimestamp(),
+      );
       results.push(`❌ ${poll.teamName1} vs ${poll.teamName2} — answer ${winningAnswerId} missing from poll`);
       continue;
     }
 
     const voters = await winningAnswer.fetchVoters().catch(() => null);
     if (!voters) {
+      await sendGotwCommLog(client, guildId, new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle(`❌ Playoff GOTW Payout Issue — ${weekLabel}: Voter Fetch Failed`)
+        .setDescription("Could not retrieve voter list from the poll.")
+        .addFields(
+          { name: "Matchup", value: `**${poll.teamName1}** vs **${poll.teamName2}**` },
+          { name: "Winner",  value: `**${winnerName}**` },
+          { name: "Action",  value: "Use `/admin-gotw` to pay correct voters manually." },
+        )
+        .setTimestamp(),
+      );
       results.push(`❌ ${poll.teamName1} vs ${poll.teamName2} — failed to fetch voters`);
       continue;
     }
 
-    const paid: string[] = [];
+    const paid:     string[]                             = [];
+    const voterLog: { id: string; username: string }[]  = [];
+
     for (const [userId, user] of voters) {
       await addBalance(userId, playoffBonus, guildId);
       await logTransaction(
@@ -546,6 +665,7 @@ export async function autoPayoutPlayoffGotw(
         guildId, "auto",
       );
       paid.push(`<@${userId}>`);
+      voterLog.push({ id: userId, username: user.username });
       try {
         await user.send(
           `🏆 **Playoff GOTW Correct Guess!** Your pick of **${winnerName}** in the ` +
@@ -558,6 +678,24 @@ export async function autoPayoutPlayoffGotw(
     await db.update(playoffGotwPollsTable)
       .set({ payoutIssuedAt: new Date() })
       .where(eq(playoffGotwPollsTable.id, poll.id));
+
+    // Commissioner log for this playoff poll
+    await sendGotwCommLog(client, guildId, new EmbedBuilder()
+      .setColor(paid.length > 0 ? Colors.Green : Colors.Blue)
+      .setTitle(`📋 Playoff GOTW Payout Log — ${weekLabel.charAt(0).toUpperCase() + weekLabel.slice(1)}`)
+      .addFields(
+        { name: "Matchup",     value: `**${poll.teamName1}** vs **${poll.teamName2}**` },
+        { name: "Final Score", value: `${game.awayTeamName} **${game.awayScore}** – **${game.homeScore}** ${game.homeTeamName}`, inline: true },
+        { name: "Winner",      value: `**${winnerName}**`, inline: true },
+        {
+          name:  paid.length > 0 ? `✅ Correct Voters Paid — +${playoffBonus} coins each (${paid.length})` : "📊 No Correct Voters",
+          value: paid.length > 0
+            ? voterLog.map(v => `• <@${v.id}> (\`${v.username}\`)`).join("\n")
+            : "No one voted for the correct team.",
+        },
+      )
+      .setTimestamp(),
+    );
 
     results.push(
       paid.length > 0
