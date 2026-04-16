@@ -64,6 +64,7 @@ import * as adminInventory          from "../commands/admin-inventory.js";
 import * as adminInitialize         from "../commands/admin-initialize.js";
 import * as adminRules              from "../commands/admin-rules.js";
 import * as adminTeamLogo          from "../commands/admin-team-logo.js";
+import * as adminRepostBanners     from "../commands/admin-repost-banners.js";
 import * as waitlist                from "../commands/waitlist.js";
 import * as globalrecords          from "../commands/globalrecords.js";
 import * as alltimeleaderboard     from "../commands/alltimeleaderboard.js";
@@ -131,6 +132,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminInitialize,    true],
     [adminRules,         true],
     [adminTeamLogo,      true],
+    [adminRepostBanners, true],
     [waitlist,           true],
     [globalrecords,         true],
     [alltimeleaderboard,    true],

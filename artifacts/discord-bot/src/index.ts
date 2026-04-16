@@ -73,6 +73,7 @@ import * as adminInventory          from "./commands/admin-inventory.js";
 import * as adminInitialize         from "./commands/admin-initialize.js";
 import * as adminRules              from "./commands/admin-rules.js";
 import * as adminTeamLogo          from "./commands/admin-team-logo.js";
+import * as adminRepostBanners     from "./commands/admin-repost-banners.js";
 
 // ── Records / rankings (standalone) ──────────────────────────────────────────
 import {
@@ -196,6 +197,7 @@ if (!isProduction && !devBotEnabled) {
     adminInitialize,
     adminRules,
     adminTeamLogo,
+    adminRepostBanners,
     waitlist,
     globalrecords,
 

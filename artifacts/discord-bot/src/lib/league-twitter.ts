@@ -135,7 +135,7 @@ function pickReporter(avoid?: string): Reporter {
 
 // ── Context builder ────────────────────────────────────────────────────────────
 
-async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Promise<string> {
+async function buildLeagueContext(season: typeof seasonsTable.$inferSelect, guildId: string): Promise<string> {
   const parts: string[] = [];
 
   // ── Season info ────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect): Pro
     playoffConference: usersTable.playoffConference,
   })
     .from(usersTable)
-    .where(isNotNull(usersTable.team));
+    .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
 
   const playoffTeams = allUserTeams
     .filter(u => u.playoffSeed !== null && u.playoffSeed >= 1 && u.playoffSeed <= 7 && u.playoffConference)
@@ -939,14 +939,14 @@ function generateFanHandle(): string {
 }
 
 async function generateFanTweet(
-  context:        string,
-  targetDiscordId: string,
-  targetTeam:     string,
+  context:     string,
+  mention:     string,   // "<@discordId>" for linked users, "Coach Chargers" for unlinked
+  targetTeam:  string,
 ): Promise<string> {
   const system =
 `You are an anonymous, frustrated R.E.C. League fan on Twitter/X — loud, unfiltered, and mean.
 
-The R.E.C. League is a Madden CFM franchise-mode football league treated as a REAL professional league. Your target is the coach of ${targetTeam}. In Discord their mention is <@${targetDiscordId}>. Refer to them ONLY as "Coach <@${targetDiscordId}>" or "the coach of ${targetTeam}" — never use any name or username.
+The R.E.C. League is a Madden CFM franchise-mode football league treated as a REAL professional league. Your target is the coach of ${targetTeam}. Refer to them ONLY as "${mention}" or "the coach of ${targetTeam}" — never use any name or username.
 
 RULES:
 - Be explicitly negative, insulting, or brutal — real angry fan energy
@@ -958,7 +958,7 @@ RULES:
 - Output ONLY the tweet text`;
 
   const user =
-`LEAGUE CONTEXT:\n${context}\n\nTarget: Coach of ${targetTeam} (<@${targetDiscordId}>)\n\nWrite your brutal fan tweet:`;
+`LEAGUE CONTEXT:\n${context}\n\nTarget: ${mention} (coach of ${targetTeam})\n\nWrite your brutal fan tweet:`;
 
   const completion = await openai.chat.completions.create({
     model:      "gpt-4.1-mini",
@@ -968,6 +968,11 @@ RULES:
   });
 
   return completion.choices[0]?.message?.content?.trim() ?? "";
+}
+
+/** Return the last word of a full team name as the nickname (e.g. "Raiders" from "Las Vegas Raiders"). */
+function teamNickname(fullName: string): string {
+  return fullName.split(/\s+/).pop() ?? fullName;
 }
 
 /** Post a fan-persona tweet targeting a random human team's coach. */
@@ -983,8 +988,14 @@ async function postOneFanTweet(
   const target = eligible[Math.floor(Math.random() * eligible.length)]!;
   if (!target.discordId || !target.team) return;
 
+  // Use a Discord mention for real users; fall back to "Coach <Nickname>" for unlinked placeholders
+  const isUnlinked = target.discordId.startsWith("unlinked_");
+  const mention    = isUnlinked
+    ? `Coach ${teamNickname(target.team)}`
+    : `<@${target.discordId}>`;
+
   const handle    = generateFanHandle();
-  const tweetText = await generateFanTweet(context, target.discordId, target.team);
+  const tweetText = await generateFanTweet(context, mention, target.team);
   if (!tweetText) return;
 
   const header = `**${handle}** · *Verified NFL Fan*`;
@@ -1037,7 +1048,7 @@ async function postOneTweet(
 export async function postLeagueTweet(client: Client, guildId: string = PRIMARY_GUILD_ID): Promise<void> {
   try {
     const season  = await getOrCreateActiveSeason(guildId);
-    const context = await buildLeagueContext(season);
+    const context = await buildLeagueContext(season, guildId);
 
     const twitterChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.LEAGUE_TWITTER);
     const ch = twitterChannelId
@@ -1050,10 +1061,10 @@ export async function postLeagueTweet(client: Client, guildId: string = PRIMARY_
     const burstRoll = Math.random();
     const count = burstRoll < 0.25 ? 3 : burstRoll < 0.75 ? 4 : 5;
 
-    // ── Pull all human-team users (needed for fan tweets + spotlight avoidance) ─
+    // ── Pull all human-team users for THIS guild (fan tweets + spotlight avoidance) ─
     const userTeams = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
       .from(usersTable)
-      .where(isNotNull(usersTable.team));
+      .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
 
     const knownTeams = [...new Set(
       userTeams.map(u => u.team).filter((t): t is string => !!t && t.trim().length > 0)
@@ -1154,7 +1165,7 @@ export async function handleTwitterReply(client: Client, message: import("discor
     const reporter: Reporter = REPORTERS.find(r => r.name === tweetRow.reporterName)
       ?? { name: tweetRow.reporterName, handle: tweetRow.reporterHandle, outlet: "NFL Network", style: "Direct and factual." };
 
-    const context = await buildLeagueContext(season);
+    const context = await buildLeagueContext(season, twitterGuildId);
     const replyText = await generateReply(reporter, tweetRow.content, message.content, context);
     if (!replyText) return;
 
