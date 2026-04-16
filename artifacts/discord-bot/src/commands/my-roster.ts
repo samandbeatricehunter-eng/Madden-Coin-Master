@@ -6,6 +6,7 @@ import { usersTable, franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
 import { getRosterSeasonId } from "../lib/db-helpers.js";
+import { devBadge, DEV_LEGEND } from "../lib/dev-trait.js";
 
 // ── Position grouping ─────────────────────────────────────────────────────────
 const OFFENSE_GROUPS: { label: string; positions: string[] }[] = [
@@ -34,15 +35,6 @@ const DEFENSE_POSITIONS_SET = new Set(
   DEFENSE_GROUPS.flatMap(g => g.positions),
 );
 
-// Madden CFM devTrait values: 0=Normal 1=Star 2=Superstar 3=X-Factor
-function devBadge(trait: number): string {
-  switch (trait) {
-    case 3: return " ⚡";   // X-Factor
-    case 2: return " ★★★";  // Superstar
-    case 1: return " ★★";   // Star
-    default: return "";      // Normal (0) or unknown
-  }
-}
 
 function formatPlayerLine(p: {
   firstName: string; lastName: string;
@@ -202,7 +194,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setTitle(`📋 ${user.team} Roster`)
         .setDescription(
           `**Season ${season.seasonNumber}** • ${players.length} players • Avg OVR: **${avgOvr}**\n` +
-          `⚡ = X-Factor  ★★★ = Superstar  ★★ = Star`,
+          DEV_LEGEND,
         );
     } else {
       embed.setTitle(`📋 ${user.team} Roster (cont.)`);

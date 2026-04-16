@@ -8,6 +8,7 @@ import {
 import { db } from "@workspace/db";
 import { franchiseRostersTable, seasonsTable } from "@workspace/db";
 import { eq, and, asc, desc, gte, ilike } from "drizzle-orm";
+import { devBadge } from "../lib/dev-trait.js";
 
 // ── Position groups (mirrors viewroster layout) ───────────────────────────────
 
@@ -30,12 +31,6 @@ const KNOWN_POSITIONS = new Set(ALL_GROUPS.flatMap(g => g.positions));
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-function devBadge(trait: number): string {
-  if (trait >= 3) return " ⚡";
-  if (trait === 2) return " ★★★";
-  if (trait === 1) return " ★★";
-  return "";
-}
 
 type PlayerRow = {
   firstName: string; lastName: string;

@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import { tradeBlockListingsTable, tradeBlockISOTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason, isAdminUser } from "../lib/db-helpers.js";
+import { devBadge } from "../lib/dev-trait.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { formatPickInfo } from "./tradeblock.js";
 
@@ -26,12 +27,6 @@ type CombinedEntry =
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function devBadge(d: number) {
-  if (d >= 3) return " ⚡";
-  if (d === 2) return " ★★";
-  if (d === 1) return " ★";
-  return "";
-}
 
 function itemLine(item: TradeItem): string {
   if (item.type === "player") return `🏈 **${item.firstName} ${item.lastName}** (${item.position}) OVR ${item.overall}${devBadge(item.devTrait)}`;
