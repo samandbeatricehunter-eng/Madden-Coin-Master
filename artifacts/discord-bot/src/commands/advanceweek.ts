@@ -332,6 +332,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         }
       }
 
+      // Reverse map: discordId → MCA entry (used as final fallback for banner/breakdown
+      // when the schedule's team name string doesn't match any indexed key)
+      const discordIdToMca = new Map<string, typeof mcaTeams[0]>();
+      for (const t of mcaTeams) {
+        if (t.discordId) discordIdToMca.set(t.discordId, t);
+      }
 
       // Fallback: also include usersTable.team mappings for any teams not in
       // the MCA teams table yet (e.g. before /franchiseupdate has been run).
@@ -407,18 +413,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           // ── Matchup banner + AI breakdown (fire-and-forget so they don't block advance) ──
           (async () => {
             try {
-              const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim());
-              const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim());
+              // Primary: match by schedule team name string; fallback: match by discordId
+              // (handles cases where schedule stores a name variant not in teamToMca)
+              const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim()) ?? discordIdToMca.get(awayDiscordId);
+              const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim()) ?? discordIdToMca.get(homeDiscordId);
 
               // ── Banner: guild-specific GCS path > global default GCS path ──────
               const awayGcsPath = awayMca?.logoUrl ?? (awayMca?.teamId ? globalLogoPath(awayMca.teamId) : null);
               const homeGcsPath = homeMca?.logoUrl ?? (homeMca?.teamId ? globalLogoPath(homeMca.teamId) : null);
+
+              if (!awayMca || !homeMca) {
+                console.warn(`[advanceweek] No MCA entry for ${g.awayTeamName} or ${g.homeTeamName} — skipping banner/breakdown`);
+              }
 
               if (awayGcsPath && homeGcsPath) {
                 const [awayBuf, homeBuf] = await Promise.all([
                   resolveLogoBuf(awayGcsPath),
                   resolveLogoBuf(homeGcsPath),
                 ]);
+                if (!awayBuf || !homeBuf) {
+                  console.warn(`[advanceweek] Logo not found in GCS for ${chanName} — upload logos via /adminteamlogo setglobal`);
+                }
                 if (awayBuf && homeBuf) {
                   const bannerBuf  = await buildMatchupBanner(awayBuf, homeBuf);
                   const attachment = new AttachmentBuilder(bannerBuf, { name: "matchup-banner.png" });
