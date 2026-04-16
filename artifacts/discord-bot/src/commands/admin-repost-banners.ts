@@ -59,12 +59,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .from(franchiseMcaTeamsTable)
     .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
 
-  const mcaByName = new Map<string, typeof mcaTeams[0]>();
+  const mcaByName      = new Map<string, typeof mcaTeams[0]>();
+  const mcaByDiscordId = new Map<string, typeof mcaTeams[0]>();
   for (const t of mcaTeams) {
     mcaByName.set(t.fullName.toLowerCase().trim(), t);
     mcaByName.set(t.nickName.toLowerCase().trim(), t);
+    if (t.discordId) mcaByDiscordId.set(t.discordId, t);
   }
-  console.log(`[adminrepostbanners] MCA map keys (${mcaByName.size}):`, [...mcaByName.keys()].join(", "));
 
   // ── Global default logos (fallback when MCA lookup misses or no guild override) ─
   // These are uploaded via /adminteamlogo setglobal and stored in defaultTeamLogosTable
@@ -85,15 +86,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     defaultById.set(d.teamId, d.logoUrl);
   }
 
-  /** Resolve the best GCS logo path for a team name. Priority:
-   *  1. Guild-specific override (franchiseMcaTeamsTable.logoUrl)
-   *  2. Global default via MCA teamId (ensures correct numeric ID)
-   *  3. Exact name/nickname match in defaultTeamLogosTable
-   *  4. Partial: stored name contains a team's nickname (handles abbreviations)
+  /** Resolve the best GCS logo path for a team name.
+   *  Falls back to discordId lookup when the name isn't indexed in the MCA map
+   *  (happens when usersTable.team doesn't match the Madden CFM fullName/nickName).
    */
-  function resolveLogoPath(teamName: string): string | null {
+  function resolveLogoPath(teamName: string, discordId?: string): string | null {
     const key = teamName.toLowerCase().trim();
-    const mca = mcaByName.get(key);
+    const mca = mcaByName.get(key) ?? (discordId ? mcaByDiscordId.get(discordId) : undefined);
 
     // 1. Guild-specific logo override
     if (mca?.logoUrl) return mca.logoUrl;
@@ -174,8 +173,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     let postedBreakdown = false;
 
     // ── Banner ────────────────────────────────────────────────────────────────
-    const awayGcsPath = resolveLogoPath(gc.awayTeamName);
-    const homeGcsPath = resolveLogoPath(gc.homeTeamName);
+    const awayGcsPath = resolveLogoPath(gc.awayTeamName, awayDiscordId || undefined);
+    const homeGcsPath = resolveLogoPath(gc.homeTeamName, homeDiscordId || undefined);
 
     if (awayGcsPath && homeGcsPath) {
       try {
@@ -210,14 +209,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
 
     // ── AI breakdown ─────────────────────────────────────────────────────────
-    const awayKey = gc.awayTeamName.toLowerCase().trim();
-    const homeKey = gc.homeTeamName.toLowerCase().trim();
-    const awayMca = mcaByName.get(awayKey);
-    const homeMca = mcaByName.get(homeKey);
-
-    console.log(
-      `[adminrepostbanners] breakdown lookup — away="${awayKey}" found=${!!awayMca} teamId=${awayMca?.teamId ?? "null"} | home="${homeKey}" found=${!!homeMca} teamId=${homeMca?.teamId ?? "null"}`,
-    );
+    // Name lookup first; fall back to discordId when usersTable.team ≠ MCA fullName/nickName
+    const awayMca = mcaByName.get(gc.awayTeamName.toLowerCase().trim())
+      ?? (awayDiscordId ? mcaByDiscordId.get(awayDiscordId) : undefined);
+    const homeMca = mcaByName.get(gc.homeTeamName.toLowerCase().trim())
+      ?? (homeDiscordId ? mcaByDiscordId.get(homeDiscordId) : undefined);
 
     let breakdownStatus = "❌ no breakdown (no MCA roster data)";
     if (awayMca?.teamId != null && homeMca?.teamId != null) {
