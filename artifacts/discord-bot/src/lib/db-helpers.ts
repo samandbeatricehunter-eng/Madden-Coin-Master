@@ -117,6 +117,7 @@ export const DEFAULT_RULES: Record<string, string[]> = {
     "One User streaming in a H2H will provide a payout bonus to each user involved in the game. Posting up to 2 highlights after the game will provide a payout bonus per highlight to the provider.",
     "It is recommended that Users either Livestream their games to ensure fair play or save replays of violations to ensure visual proof is available for confirmation by the Commissioner. He said/She said won't be accepted as proof of violation. It is also recommended for users to save the VOD if twitch streaming.",
     "Streaming is required by at least one user in a GOTW H2H. Failure to do so will forfeit the GOTW bonus as well as any future chance at hosting a GOTW for that season.",
+    "Streaming is only required in the playoffs or GOTW — the home team is required to stream unless the away team agrees to stream instead. In a regular season game, if neither user streams you simply don't receive the streaming bonus; if one user streams, both players receive the bonus.",
     "In the post season, highlights can be posted for any game by any team and will still receive the max payout of 20 per highlight, up to 2 per week. Teams that do not make the playoffs may still benefit from this bonus.",
   ],
   settings: [
