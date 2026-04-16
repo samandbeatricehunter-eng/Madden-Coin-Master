@@ -179,10 +179,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             eq(franchiseScheduleTable.weekIndex, oldWeekIndex),
           ));
 
-        const gotwGame = scheduleGames.find(g =>
-          g.awayTeamName.toLowerCase().trim() === gotwRow.teamName1.toLowerCase().trim() &&
-          g.homeTeamName.toLowerCase().trim() === gotwRow.teamName2.toLowerCase().trim()
-        );
+        // Build discordId lookup map from MCA teams so we can match by discordId
+        // instead of team name (Madden sends short names like "Niners" which
+        // don't match what's stored in usersTable.team like "49ers").
+        const mcaForGotw = await db.select({
+          discordId: franchiseMcaTeamsTable.discordId,
+          fullName:  franchiseMcaTeamsTable.fullName,
+          nickName:  franchiseMcaTeamsTable.nickName,
+        })
+          .from(franchiseMcaTeamsTable)
+          .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+
+        const gotwNameToId = new Map<string, string>();
+        for (const t of mcaForGotw) {
+          if (t.discordId) {
+            gotwNameToId.set(t.fullName.toLowerCase().trim(), t.discordId);
+            gotwNameToId.set(t.nickName.toLowerCase().trim(), t.discordId);
+          }
+        }
+
+        const gotwGame = scheduleGames.find(g => {
+          const awayId = gotwNameToId.get(g.awayTeamName.toLowerCase().trim());
+          const homeId = gotwNameToId.get(g.homeTeamName.toLowerCase().trim());
+          if (awayId && homeId) {
+            return (
+              (awayId === gotwRow.discordId1 && homeId === gotwRow.discordId2) ||
+              (awayId === gotwRow.discordId2 && homeId === gotwRow.discordId1)
+            );
+          }
+          // Fallback: fuzzy name match
+          const away = g.awayTeamName.toLowerCase().trim();
+          const home = g.homeTeamName.toLowerCase().trim();
+          const t1   = gotwRow.teamName1.toLowerCase().trim();
+          const t2   = gotwRow.teamName2.toLowerCase().trim();
+          return (
+            (away.includes(t1) || t1.includes(away)) && (home.includes(t2) || t2.includes(home)) ||
+            (away.includes(t2) || t2.includes(away)) && (home.includes(t1) || t1.includes(home))
+          );
+        });
 
         // Only award if status = 3 (H2H user-played — not CPU-simmed)
         if (gotwGame && gotwGame.status === 3) {

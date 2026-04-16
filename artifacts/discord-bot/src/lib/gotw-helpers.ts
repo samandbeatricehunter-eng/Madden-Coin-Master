@@ -2,7 +2,7 @@ import { Client, Guild, TextChannel, EmbedBuilder, Colors } from "discord.js";
 import { db } from "@workspace/db";
 import {
   gotwHistoryTable, teamSeasonStatsTable, userRecordsTable,
-  franchiseScheduleTable, playoffGotwPollsTable,
+  franchiseScheduleTable, playoffGotwPollsTable, franchiseMcaTeamsTable,
 } from "@workspace/db";
 import { eq, and, gte, lt } from "drizzle-orm";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
@@ -367,19 +367,53 @@ export async function autoPayoutGotwVoters(
   const fmtVoters = (vs: VoterEntry[]) => vs.map(v => `• <@${v.id}>`);
 
   // 3. Determine winner from franchise_schedule
-  const scheduleRows = await db.select()
-    .from(franchiseScheduleTable)
-    .where(and(
-      eq(franchiseScheduleTable.seasonId,  seasonId),
-      eq(franchiseScheduleTable.weekIndex, weekIndex),
-    ));
+  //    Match by discordId (not team name) to avoid Madden short-name mismatches.
+  //    Build a scheduleName → discordId map from franchiseMcaTeamsTable, then
+  //    find the game where the two discordIds match the GOTW row.
+  const [scheduleRows, mcaTeams] = await Promise.all([
+    db.select()
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId,  seasonId),
+        eq(franchiseScheduleTable.weekIndex, weekIndex),
+      )),
+    db.select({
+      discordId: franchiseMcaTeamsTable.discordId,
+      fullName:  franchiseMcaTeamsTable.fullName,
+      nickName:  franchiseMcaTeamsTable.nickName,
+    })
+      .from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, seasonId)),
+  ]);
 
-  // Match the GOTW game by team names (fuzzy — handles "Vikings" vs "Minnesota Vikings")
+  // Map every known name variant → discordId
+  const nameToDiscordId = new Map<string, string>();
+  for (const t of mcaTeams) {
+    if (t.discordId) {
+      nameToDiscordId.set(t.fullName.toLowerCase().trim(), t.discordId);
+      nameToDiscordId.set(t.nickName.toLowerCase().trim(), t.discordId);
+    }
+  }
+
+  // Also fall back to fuzzy name-match in case MCA data is sparse
   const t1 = row.teamName1.toLowerCase().trim();
   const t2 = row.teamName2.toLowerCase().trim();
+
   const gotwGame = scheduleRows.find(g => {
     const away = g.awayTeamName.toLowerCase().trim();
     const home = g.homeTeamName.toLowerCase().trim();
+
+    // Primary: match via discordId (most reliable)
+    const awayId = nameToDiscordId.get(away);
+    const homeId = nameToDiscordId.get(home);
+    if (awayId && homeId) {
+      return (
+        (awayId === row.discordId1 && homeId === row.discordId2) ||
+        (awayId === row.discordId2 && homeId === row.discordId1)
+      );
+    }
+
+    // Fallback: fuzzy name match (handles cases where MCA data is missing)
     return (
       (nameMatch(away, t1) && nameMatch(home, t2)) ||
       (nameMatch(away, t2) && nameMatch(home, t1))
@@ -569,12 +603,30 @@ export async function autoPayoutPlayoffGotw(
   }
   const tc = ch as TextChannel;
 
-  const scheduleRows = await db.select()
-    .from(franchiseScheduleTable)
-    .where(and(
-      eq(franchiseScheduleTable.seasonId,  seasonId),
-      eq(franchiseScheduleTable.weekIndex, weekIndex),
-    ));
+  const [scheduleRows, mcaTeams] = await Promise.all([
+    db.select()
+      .from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId,  seasonId),
+        eq(franchiseScheduleTable.weekIndex, weekIndex),
+      )),
+    db.select({
+      discordId: franchiseMcaTeamsTable.discordId,
+      fullName:  franchiseMcaTeamsTable.fullName,
+      nickName:  franchiseMcaTeamsTable.nickName,
+    })
+      .from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, seasonId)),
+  ]);
+
+  // Map every known name variant → discordId (for schedule-game lookup by discordId)
+  const nameToDiscordId = new Map<string, string>();
+  for (const t of mcaTeams) {
+    if (t.discordId) {
+      nameToDiscordId.set(t.fullName.toLowerCase().trim(), t.discordId);
+      nameToDiscordId.set(t.nickName.toLowerCase().trim(), t.discordId);
+    }
+  }
 
   const playoffBonus = await getPayoutValue(PAYOUT_KEYS.GOTW_PLAYOFF_BONUS);
   const results: string[] = [];
@@ -590,12 +642,21 @@ export async function autoPayoutPlayoffGotw(
       continue;
     }
 
-    // Match the game by team names (fuzzy — handles "Raiders" vs "Las Vegas Raiders")
+    // Match the game by discordId (most reliable — avoids Madden short-name mismatches).
+    // Fall back to fuzzy name match if MCA data is missing.
     const t1 = poll.teamName1.toLowerCase().trim();
     const t2 = poll.teamName2.toLowerCase().trim();
     const game = scheduleRows.find(g => {
       const away = g.awayTeamName.toLowerCase().trim();
       const home = g.homeTeamName.toLowerCase().trim();
+      const awayId = nameToDiscordId.get(away);
+      const homeId = nameToDiscordId.get(home);
+      if (awayId && homeId) {
+        return (
+          (awayId === poll.discordId1 && homeId === poll.discordId2) ||
+          (awayId === poll.discordId2 && homeId === poll.discordId1)
+        );
+      }
       return (
         (nameMatch(away, t1) && nameMatch(home, t2)) ||
         (nameMatch(away, t2) && nameMatch(home, t1))
@@ -620,14 +681,15 @@ export async function autoPayoutPlayoffGotw(
       continue;
     }
 
-    // Determine which poll answer (1=teamName1/away, 2=teamName2/home) corresponds to the winner
-    const awayWon      = game.awayScore > game.homeScore;
-    const gameAwayName = game.awayTeamName.toLowerCase().trim();
+    // Determine which poll answer (1=discordId1, 2=discordId2) corresponds to the winner.
+    // Use discordId to identify which team was away in the actual game.
+    const awayWon  = game.awayScore > game.homeScore;
+    const gameAwayId = nameToDiscordId.get(game.awayTeamName.toLowerCase().trim());
 
-    // poll answer 1 = teamName1; figure out if teamName1 was the away or home team
     let winningAnswerId: number;
     let winnerName: string;
-    if (nameMatch(gameAwayName, t1)) {
+    // answer 1 = discordId1; check if discordId1 was the away team
+    if (gameAwayId ? gameAwayId === poll.discordId1 : nameMatch(game.awayTeamName.toLowerCase().trim(), t1)) {
       winningAnswerId = awayWon ? 1 : 2;
       winnerName      = awayWon ? poll.teamName1 : poll.teamName2;
     } else {
