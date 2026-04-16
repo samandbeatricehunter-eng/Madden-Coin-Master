@@ -64,6 +64,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     mcaByName.set(t.fullName.toLowerCase().trim(), t);
     mcaByName.set(t.nickName.toLowerCase().trim(), t);
   }
+  console.log(`[adminrepostbanners] MCA map keys (${mcaByName.size}):`, [...mcaByName.keys()].join(", "));
 
   // ── Global default logos (fallback when MCA lookup misses or no guild override) ─
   // These are uploaded via /adminteamlogo setglobal and stored in defaultTeamLogosTable
@@ -209,8 +210,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
 
     // ── AI breakdown ─────────────────────────────────────────────────────────
-    const awayMca = mcaByName.get(gc.awayTeamName.toLowerCase().trim());
-    const homeMca = mcaByName.get(gc.homeTeamName.toLowerCase().trim());
+    const awayKey = gc.awayTeamName.toLowerCase().trim();
+    const homeKey = gc.homeTeamName.toLowerCase().trim();
+    const awayMca = mcaByName.get(awayKey);
+    const homeMca = mcaByName.get(homeKey);
+
+    console.log(
+      `[adminrepostbanners] breakdown lookup — away="${awayKey}" found=${!!awayMca} teamId=${awayMca?.teamId ?? "null"} | home="${homeKey}" found=${!!homeMca} teamId=${homeMca?.teamId ?? "null"}`,
+    );
 
     let breakdownStatus = "❌ no breakdown (no MCA roster data)";
     if (awayMca?.teamId != null && homeMca?.teamId != null) {
