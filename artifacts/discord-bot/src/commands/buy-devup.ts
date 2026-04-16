@@ -22,25 +22,16 @@ export const data = new SlashCommandBuilder()
   .setName("buy-devup")
   .setDescription("Upgrade a player's dev trait — Normal→Star, Star→Superstar")
   .addStringOption(opt =>
-    opt.setName("position")
-      .setDescription("Player's position on the roster")
-      .setRequired(true)
-      .setAutocomplete(true),
-  )
-  .addStringOption(opt =>
     opt.setName("player")
-      .setDescription("Player to upgrade (autocomplete — excludes Superstar and X-Factor)")
+      .setDescription("Player to upgrade (Normal and Star only)")
       .setRequired(true)
       .setAutocomplete(true),
   )
   .addStringOption(opt =>
     opt.setName("dev_type")
-      .setDescription("Target development tier")
+      .setDescription("Target tier — auto-populated based on selected player")
       .setRequired(true)
-      .addChoices(
-        { name: "Star (from Normal)",     value: "Star"      },
-        { name: "Superstar (from Star)",  value: "Superstar" },
-      ),
+      .setAutocomplete(true),
   )
   .addUserOption(opt =>
     opt.setName("user")
@@ -51,45 +42,53 @@ export const data = new SlashCommandBuilder()
 // ── Autocomplete ───────────────────────────────────────────────────────────────
 export async function autocomplete(interaction: AutocompleteInteraction) {
   try {
-    const focused       = interaction.options.getFocused(true);
+    const focused        = interaction.options.getFocused(true);
     const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
 
-    if (focused.name === "position") {
-      const rows = await getRosterRows(interaction, rosterSeasonId, { position: franchiseRostersTable.position });
-      const positions = [...new Set(rows.map((r: any) => r.position as string).filter(Boolean))].sort();
+    // Load all eligible players once (Normal = 0, Star = 1 only — Superstar/XF not upgradeable)
+    const allRows = await getRosterRows(interaction, rosterSeasonId, {
+      firstName: franchiseRostersTable.firstName,
+      lastName:  franchiseRostersTable.lastName,
+      devTrait:  franchiseRostersTable.devTrait,
+      overall:   franchiseRostersTable.overall,
+      position:  franchiseRostersTable.position,
+    });
+    const eligible = (allRows as any[]).filter(r => r.devTrait <= 1);
+
+    if (focused.name === "player") {
       const q = focused.value.toLowerCase();
-      const choices = positions
-        .filter(p => p.toLowerCase().startsWith(q))
-        .slice(0, 25)
-        .map(p => ({ name: p, value: p }));
-      await interaction.respond(choices);
+      await interaction.respond(
+        eligible
+          .filter(r => `${r.firstName} ${r.lastName}`.toLowerCase().includes(q))
+          .slice(0, 25)
+          .map(r => ({
+            name:  `${r.firstName} ${r.lastName} (${r.overall} OVR • ${r.position} • ${DEV_LABEL[r.devTrait] ?? "?"})`,
+            value: `${r.firstName} ${r.lastName}`,
+          })),
+      );
       return;
     }
 
-    if (focused.name === "player") {
-      const positionFilter = interaction.options.getString("position");
-      const rows = await getRosterRows(interaction, rosterSeasonId, {
-        firstName: franchiseRostersTable.firstName,
-        lastName:  franchiseRostersTable.lastName,
-        devTrait:  franchiseRostersTable.devTrait,
-        overall:   franchiseRostersTable.overall,
-        position:  franchiseRostersTable.position,
-      });
-      const q = focused.value.toLowerCase();
-      const eligible = rows
-        .filter((r: any) => {
-          if (r.devTrait >= 3) return false;
-          if (positionFilter && r.position.toUpperCase() !== positionFilter.toUpperCase()) return false;
-          return true;
-        });
-      const choices = eligible
-        .filter((r: any) => `${r.firstName} ${r.lastName}`.toLowerCase().includes(q))
-        .slice(0, 25)
-        .map((r: any) => ({
-          name:  `${r.firstName} ${r.lastName} (${r.overall} OVR • ${DEV_LABEL[r.devTrait] ?? "?"})`,
-          value: `${r.firstName} ${r.lastName}`,
-        }));
-      await interaction.respond(choices);
+    if (focused.name === "dev_type") {
+      const playerInput = interaction.options.getString("player") ?? "";
+      const match = (allRows as any[]).find(
+        r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase(),
+      );
+      // If player is known, offer only the one valid next tier; otherwise offer both
+      if (match !== undefined) {
+        if (match.devTrait === 0) {
+          await interaction.respond([{ name: "Star (upgrade from Normal)", value: "Star" }]);
+        } else if (match.devTrait === 1) {
+          await interaction.respond([{ name: "Superstar (upgrade from Star)", value: "Superstar" }]);
+        } else {
+          await interaction.respond([]); // already Superstar or X-Factor, not upgradeable
+        }
+      } else {
+        await interaction.respond([
+          { name: "Star (from Normal)",    value: "Star"      },
+          { name: "Superstar (from Star)", value: "Superstar" },
+        ]);
+      }
       return;
     }
 
@@ -136,8 +135,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .from(franchiseRostersTable)
     .where(and(eq(franchiseRostersTable.seasonId, rosterSeasonId), eq(franchiseRostersTable.discordId, targetUser.id)));
 
-  const match          = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
-  const playerPosition = match?.position ?? interaction.options.getString("position", true);
+  const match           = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
+  const playerPosition  = match?.position ?? "Unknown";
   const currentDevLabel = DEV_LABEL[match?.devTrait ?? 0] ?? "Normal";
 
   await deductBalance(interaction.user.id, costPer, interaction.guildId!);
