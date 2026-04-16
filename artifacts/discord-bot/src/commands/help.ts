@@ -50,20 +50,19 @@ export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBui
   // Store — commands section (only if economy is on and at least one item type is enabled)
   const storeCommands: string[] = ["`/viewstore` — Browse available items with current season prices"];
   if (legends)      storeCommands.push("`/buy-legend [name]` — Buy a legend player");
-  if (attrUpgrades) storeCommands.push("`/buy-attribute [player] [attr] [qty]` — Boost a player attribute");
+  if (attrUpgrades) storeCommands.push("`/buy-attribute [player] [attr] [qty]` — Boost a player attribute *(core ⭐: 1 pt max, once per attr per player/season)*");
   if (devUpgrades)  storeCommands.push("`/buy-devup [player] [type]` — Dev upgrade (Star / Superstar / X-Factor)");
   if (ageResets)    storeCommands.push("`/buy-agereset [player]` — Reset a player's age");
   if (custom)       storeCommands.push("`/buy-customplayer` — Build and buy a custom player slot");
   storeCommands.push("`/inventory` — View your current season inventory");
-  storeCommands.push("`/availableupgrades` — See remaining upgrades for the season");
 
   if (economy) {
     embed.addFields({ name: "🛒 Store — Commands", value: storeCommands.join("\n") });
 
     const pricingLines: string[] = [];
     if (legends)      pricingLines.push("• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory");
-    if (attrUpgrades) pricingLines.push("• **Core Attributes** — 25 coins/pt | 16 pts/season");
-    if (attrUpgrades) pricingLines.push("• **Non-Core Attributes** — 10 coins/pt | 32 pts/season | Speed ≤5 pts/season");
+    if (attrUpgrades) pricingLines.push("• **Core Attributes** ⭐ — 25 coins/pt | 1 pt per attribute per player per season");
+    if (attrUpgrades) pricingLines.push("• **Non-Core Attributes** — 10 coins/pt | up to 10 pts per purchase");
     if (devUpgrades)  pricingLines.push("• **Dev Upgrades** — 250 coins | 2/season");
     if (ageResets)    pricingLines.push("• **Age Resets** — 250 coins | 2/season");
     if (custom)       pricingLines.push("• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins");
@@ -96,6 +95,9 @@ export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBui
         "`/recenth2h @user` — View recent H2H game history",
         "`/seasonpr` — Current season power rankings",
         "`/alltimepr` — All-time power rankings across all seasons",
+        "`/globalrecords` — This server's members ranked globally (W/L, PD, wallet, SB)",
+        "`/alltimeleaderboard` — Top 25 all-time players across every server ever",
+        "`/availableupgrades` — See remaining upgrades + which core attrs are locked per player",
       ].join("\n"),
     },
     {
@@ -267,6 +269,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             "`/admin-listuserteams` — List all registered users and linked teams",
             "`/seasonpr` — Post current season power rankings",
             "`/alltimepr` — Post all-time power rankings",
+            "`/globalrecords` — This server's players ranked globally (W/L, PD, SB, wallet)",
+            "`/alltimeleaderboard` — Top 25 all-time across every server (no team filter)",
             "📋 **PR Formula:** 60% × (W−L) + 40% × Point Differential",
           ].join("\n"),
         },

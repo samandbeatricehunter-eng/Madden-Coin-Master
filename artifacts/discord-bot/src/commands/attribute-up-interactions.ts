@@ -362,12 +362,8 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     const base    = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
     const current = lookupAttrValue(attrs, presetAttr);
 
-    // Core attributes: 1 point per purchase only
-    if (isCore && presetQuantity > 1) {
-      await interaction.editReply({ content: `❌ Core attributes (⭐) can only be upgraded **1 point at a time**.` });
-      aupSessions.delete(sKey);
-      return;
-    }
+    // Core attributes: silently cap to 1 point — quantity > 1 is not allowed
+    const effectiveQuantity = isCore ? 1 : presetQuantity;
 
     // Core attributes: one upgrade per attribute per player per season
     if (isCore && usedCoreAttrs.has(presetAttr)) {
@@ -384,7 +380,7 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
       return;
     }
 
-    const result = stackedCost(base, current, presetQuantity);
+    const result = stackedCost(base, current, effectiveQuantity);
     if (!result) {
       await interaction.editReply({ content: `❌ **${presetAttr}** cannot be upgraded (current value: ${current}).` });
       aupSessions.delete(sKey);
@@ -405,9 +401,12 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     const canAfford = invoker.balance >= total;
     const category  = isCore ? "Core ⭐" : "Non-core";
 
-    const capNote = qty < presetQuantity
-      ? `\n⚠️ Only **${qty}** point(s) upgradeable (would hit 99 at ${current + qty}).`
-      : "";
+    // Note if qty was silently capped (core attr) or 99-capped (any attr)
+    const capNote = isCore && presetQuantity > 1
+      ? `\n⭐ Core attributes are limited to **1 point per purchase** — quantity set to 1.`
+      : qty < effectiveQuantity
+        ? `\n⚠️ Only **${qty}** point(s) upgradeable (would hit 99 at ${current + qty}).`
+        : "";
 
     const embed = new EmbedBuilder()
       .setColor(canAfford ? Colors.Green : Colors.Red)
