@@ -347,10 +347,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     log.push(`🗓️ ${seasonNote}`);
 
     // ── Step 7: Server settings row + franchise length ─────────────────────────
-    await getServerSettings(); // ensures the row exists
+    await getServerSettings(guildId); // ensures a per-guild row exists
     await db.update(serverSettingsTable)
       .set({ maxSeasons: franchiseLength })
-      .where(eq(serverSettingsTable.guildId, "global"));
+      .where(eq(serverSettingsTable.guildId, guildId));
 
     // ── Step 8: Seed 32 NFL team placeholder slots ─────────────────────────────
     // Only seed teams that don't already have a real (non-placeholder) user.

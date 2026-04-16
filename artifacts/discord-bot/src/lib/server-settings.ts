@@ -15,29 +15,14 @@ export async function getServerSettings(guildId: string): Promise<ServerSettings
     .where(eq(serverSettingsTable.guildId, guildId)).limit(1);
   if (settings) return settings;
 
-  // No per-guild row yet. Seed from the "global" row (legacy primary-guild data)
-  // so previously configured settings aren't silently reset to defaults.
-  const [globalRow] = await db.select().from(serverSettingsTable)
-    .where(eq(serverSettingsTable.guildId, "global")).limit(1);
+  // No per-guild row yet — seed with defaults and return it.
+  // Using onConflictDoNothing to safely handle concurrent first-calls.
+  await db.insert(serverSettingsTable)
+    .values({ guildId })
+    .onConflictDoNothing();
 
-  const seed = globalRow
-    ? {
-        guildId,
-        coinEconomy:              globalRow.coinEconomy,
-        legendsEnabled:           globalRow.legendsEnabled,
-        customSuperstarsEnabled:  globalRow.customSuperstarsEnabled,
-        attributeUpgradesEnabled: globalRow.attributeUpgradesEnabled,
-        devUpgradesEnabled:       globalRow.devUpgradesEnabled,
-        ageResetsEnabled:         globalRow.ageResetsEnabled,
-        wagerEnabled:             globalRow.wagerEnabled,
-        tradeBlockEnabled:        globalRow.tradeBlockEnabled,
-        mcaImportEnabled:         globalRow.mcaImportEnabled,
-        legacyCoreAttrMode:       globalRow.legacyCoreAttrMode,
-        maxSeasons:               globalRow.maxSeasons,
-      }
-    : { guildId };
-
-  const [created] = await db.insert(serverSettingsTable).values(seed).returning();
+  const [created] = await db.select().from(serverSettingsTable)
+    .where(eq(serverSettingsTable.guildId, guildId)).limit(1);
   return created!;
 }
 
