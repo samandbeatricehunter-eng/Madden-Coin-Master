@@ -90,6 +90,53 @@ export async function mcaFileExists(key: string): Promise<boolean> {
   }
 }
 
+// ── Team logo helpers ─────────────────────────────────────────────────────────
+// Global defaults: team-logos/global/{teamId}.png
+// Guild overrides:  team-logos/guilds/{guildId}/{teamId}.png
+
+/** Upload a team logo image buffer to GCS at the given path. */
+export async function uploadTeamLogo(
+  gcsPath: string,
+  imageBuffer: Buffer,
+  contentType: string = "image/png",
+): Promise<void> {
+  const bucket = makeBucket();
+  if (!bucket) throw new Error("GCS bucket not configured");
+  const file = bucket.file(gcsPath);
+  await file.save(imageBuffer, { contentType, resumable: false });
+}
+
+/** Download a team logo from GCS and return as a Buffer. Returns null if not found. */
+export async function downloadTeamLogo(gcsPath: string): Promise<Buffer | null> {
+  try {
+    const bucket = makeBucket();
+    if (!bucket) return null;
+    const [exists] = await bucket.file(gcsPath).exists();
+    if (!exists) return null;
+    const [content] = await bucket.file(gcsPath).download();
+    return content;
+  } catch {
+    return null;
+  }
+}
+
+/** Delete a team logo from GCS. */
+export async function deleteTeamLogo(gcsPath: string): Promise<void> {
+  const bucket = makeBucket();
+  if (!bucket) return;
+  try { await bucket.file(gcsPath).delete(); } catch { /* ignore not-found */ }
+}
+
+/** Global default GCS path for a teamId. */
+export function globalLogoPath(teamId: number): string {
+  return `team-logos/global/${teamId}.png`;
+}
+
+/** Guild-specific GCS path for a teamId. */
+export function guildLogoPath(guildId: string, teamId: number): string {
+  return `team-logos/guilds/${guildId}/${teamId}.png`;
+}
+
 /** Delete all stored MCA payload files whose name starts with `prefix`.
  *  Defaults to "mca/week-" to wipe every week-stat JSON saved by the API server.
  *  Never throws — returns counts so callers can surface results to the user. */
