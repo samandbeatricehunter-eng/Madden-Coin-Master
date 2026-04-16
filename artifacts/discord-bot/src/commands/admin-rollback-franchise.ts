@@ -24,6 +24,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, h2hMatchupRecordsTable,
   franchiseProcessedGamesTable, franchiseGameParticipantsTable,
+  globalUserRecordsTable,
 } from "@workspace/db";
 import { eq, and, gte, sql, inArray } from "drizzle-orm";
 import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
@@ -111,7 +112,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   type RecordKey = string; // `${discordId}:${seasonId}`
   type MatchupKey = string; // `${id1}:${id2}` canonical
   const recordDeltas   = new Map<RecordKey,  { wins: number; losses: number; pd: number }>();
-  const allTimeDeltas  = new Map<string,     { wins: number; losses: number }>();
+  const allTimeDeltas  = new Map<string,     { wins: number; losses: number; pd: number }>();
   // wins1/wins2 to subtract per canonical pair
   const matchupDeltas  = new Map<MatchupKey, { wins1: number; wins2: number }>();
 
@@ -120,13 +121,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const isH2H = log.opponentDiscordId != null;
 
     if (!recordDeltas.has(key))            recordDeltas.set(key, { wins: 0, losses: 0, pd: 0 });
-    if (!allTimeDeltas.has(log.discordId)) allTimeDeltas.set(log.discordId, { wins: 0, losses: 0 });
+    if (!allTimeDeltas.has(log.discordId)) allTimeDeltas.set(log.discordId, { wins: 0, losses: 0, pd: 0 });
 
     if (isH2H) {
       const rd = recordDeltas.get(key)!;
       const at = allTimeDeltas.get(log.discordId)!;
-      if (log.result === "win")  { rd.wins++;   rd.pd += log.pointSpread; at.wins++; }
-      if (log.result === "loss") { rd.losses++; rd.pd += log.pointSpread; at.losses++; }
+      if (log.result === "win")  { rd.wins++;   rd.pd += log.pointSpread; at.wins++;   at.pd += log.pointSpread; }
+      if (log.result === "loss") { rd.losses++; rd.pd += log.pointSpread; at.losses++; at.pd += log.pointSpread; }
 
       // Build per-pair matchup delta (only count the "win" side to avoid double-counting)
       if (log.result === "win" && log.opponentDiscordId) {
@@ -229,7 +230,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ));
   }
 
-  // 5d. Correct all-time H2H counters
+  // 5d. Correct all-time H2H counters + global W/L/PD record
   for (const [discordId, delta] of allTimeDeltas) {
     if (!delta.wins && !delta.losses) continue;
     await db.update(usersTable)
@@ -239,6 +240,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         updatedAt: new Date(),
       })
       .where(eq(usersTable.discordId, discordId));
+
+    await db.update(globalUserRecordsTable)
+      .set({
+        wins:              sql`GREATEST(0, ${globalUserRecordsTable.wins}   - ${delta.wins})`,
+        losses:            sql`GREATEST(0, ${globalUserRecordsTable.losses} - ${delta.losses})`,
+        pointDifferential: sql`${globalUserRecordsTable.pointDifferential}  - ${delta.pd}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(globalUserRecordsTable.discordId, discordId));
   }
 
   // 5d.5. Correct per-opponent matchup records

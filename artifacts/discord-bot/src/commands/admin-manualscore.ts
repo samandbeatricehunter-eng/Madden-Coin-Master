@@ -5,7 +5,7 @@ import {
 import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, gameLogTable, h2hMatchupRecordsTable, coinTransactionsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { addBalance, logTransaction, getOrCreateActiveSeason, isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
+import { addBalance, logTransaction, getOrCreateActiveSeason, isAdminUser, getGuildChannel, CHANNEL_KEYS, upsertGlobalRecord } from "../lib/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 
@@ -234,6 +234,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       resultLines.push(`📋 Records: **${winner.team ?? "?"}** +1W, **${loser.team ?? "?"}** +1L, PD ${pointDiff > 0 ? "+" : ""}${pointDiff}`);
     }
   });
+
+  // Sync global cross-server records (H2H only — CPU wins excluded)
+  if (!isCpu) {
+    const pointDiff = Math.abs(homeScore - awayScore);
+    if (isTie) {
+      await upsertGlobalRecord(homeUser.discordId, "tie", 0);
+      await upsertGlobalRecord(awayUser!.discordId, "tie", 0);
+    } else {
+      const winnerDiscordId = homeWon ? homeUser.discordId : awayUser!.discordId;
+      const loserDiscordId  = homeWon ? awayUser!.discordId : homeUser.discordId;
+      await upsertGlobalRecord(winnerDiscordId, "win",   pointDiff);
+      await upsertGlobalRecord(loserDiscordId,  "loss", -pointDiff);
+    }
+  }
 
   const embed = new EmbedBuilder()
     .setColor(isTie ? Colors.Yellow : Colors.Green)

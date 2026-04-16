@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import {
   usersTable, userRecordsTable, gameLogTable,
   h2hMatchupRecordsTable, franchiseProcessedGamesTable,
+  globalUserRecordsTable,
 } from "@workspace/db";
 import { eq, and, sql, or } from "drizzle-orm";
 import { logTransaction, getOrCreateActiveSeason, isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
@@ -90,7 +91,7 @@ async function reverseOneRecord(
     warnings.push(`⚠️ \`${tag}\` H2H skipped — CPU game`);
   }
 
-  // 2. Season W/L + point differential
+  // 2. Season W/L + point differential (guild-scoped + global)
   if (doSeason) {
     await db.update(userRecordsTable)
       .set({
@@ -100,6 +101,14 @@ async function reverseOneRecord(
       })
       .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, seasonId)));
 
+    await db.update(globalUserRecordsTable)
+      .set({
+        wins:              sql`GREATEST(0, ${globalUserRecordsTable.wins} - 1)`,
+        pointDifferential: sql`${globalUserRecordsTable.pointDifferential} - ${pointDiff}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(globalUserRecordsTable.discordId, winnerId));
+
     if (loserId) {
       await db.update(userRecordsTable)
         .set({
@@ -108,6 +117,14 @@ async function reverseOneRecord(
           updatedAt: new Date(),
         })
         .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, seasonId)));
+
+      await db.update(globalUserRecordsTable)
+        .set({
+          losses:            sql`GREATEST(0, ${globalUserRecordsTable.losses} - 1)`,
+          pointDifferential: sql`${globalUserRecordsTable.pointDifferential} + ${pointDiff}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(globalUserRecordsTable.discordId, loserId));
     }
     actionLog.push(`✅ \`${tag}\` season W/L corrected`);
   }

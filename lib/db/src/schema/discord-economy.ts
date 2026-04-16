@@ -293,11 +293,12 @@ export const userSavingsTable = pgTable("user_savings", {
 // global: this W/L/tie record and user_savings.balance. Everything else
 // (balances, milestones, legends, seasons) is per-guild.
 export const globalUserRecordsTable = pgTable("global_user_records", {
-  discordId: text("discord_id").primaryKey(),
-  wins:      integer("wins").notNull().default(0),
-  losses:    integer("losses").notNull().default(0),
-  ties:      integer("ties").notNull().default(0),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  discordId:         text("discord_id").primaryKey(),
+  wins:              integer("wins").notNull().default(0),
+  losses:            integer("losses").notNull().default(0),
+  ties:              integer("ties").notNull().default(0),
+  pointDifferential: integer("point_differential").notNull().default(0),
+  updatedAt:         timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const wagersTable = pgTable("wagers", {

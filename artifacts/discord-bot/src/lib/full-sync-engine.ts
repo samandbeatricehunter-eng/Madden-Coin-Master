@@ -449,8 +449,8 @@ export async function runGcsScheduleProcessing(
         await upsertRecord(winnerId, winnerUser?.discordUsername ?? "", winnerUser?.team ?? null, seasonId, true,  spread);
         await upsertRecord(loserId,  loserUser?.discordUsername  ?? "", loserUser?.team  ?? null, seasonId, false, -spread);
 
-        await upsertGlobalRecord(winnerId, "win");
-        await upsertGlobalRecord(loserId,  "loss");
+        await upsertGlobalRecord(winnerId, "win",   spread);
+        await upsertGlobalRecord(loserId,  "loss", -spread);
 
         await db.update(usersTable)
           .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins} + 1`,   updatedAt: new Date() })

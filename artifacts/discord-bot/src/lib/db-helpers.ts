@@ -522,19 +522,21 @@ export async function computeStreak(discordId: string, h2hOnly: boolean, guildId
 export async function upsertGlobalRecord(
   discordId: string,
   result: "win" | "loss" | "tie",
+  pointSpread = 0,
 ): Promise<void> {
   const incWins   = result === "win"  ? 1 : 0;
   const incLosses = result === "loss" ? 1 : 0;
   const incTies   = result === "tie"  ? 1 : 0;
 
   await db.insert(globalUserRecordsTable)
-    .values({ discordId, wins: incWins, losses: incLosses, ties: incTies, updatedAt: new Date() })
+    .values({ discordId, wins: incWins, losses: incLosses, ties: incTies, pointDifferential: pointSpread, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: globalUserRecordsTable.discordId,
       set: {
-        wins:      sql`${globalUserRecordsTable.wins}   + ${incWins}`,
-        losses:    sql`${globalUserRecordsTable.losses} + ${incLosses}`,
-        ties:      sql`${globalUserRecordsTable.ties}   + ${incTies}`,
+        wins:              sql`${globalUserRecordsTable.wins}              + ${incWins}`,
+        losses:            sql`${globalUserRecordsTable.losses}            + ${incLosses}`,
+        ties:              sql`${globalUserRecordsTable.ties}              + ${incTies}`,
+        pointDifferential: sql`${globalUserRecordsTable.pointDifferential} + ${pointSpread}`,
         updatedAt: new Date(),
       },
     });
