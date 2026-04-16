@@ -20,7 +20,7 @@ import {
 
 export const data = new SlashCommandBuilder()
   .setName("buy-devup")
-  .setDescription("Upgrade a player's dev trait — Normal→Star, Star→Superstar, Superstar→X-Factor")
+  .setDescription("Upgrade a player's dev trait — Normal→Star, Star→Superstar")
   .addStringOption(opt =>
     opt.setName("position")
       .setDescription("Player's position on the roster")
