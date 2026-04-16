@@ -3,7 +3,7 @@ import {
   AutocompleteInteraction,
 } from "discord.js";
 import { franchiseRostersTable } from "@workspace/db";
-import { ATTRIBUTES } from "../lib/constants.js";
+import { ATTRIBUTES, CORE_ATTRIBUTES } from "../lib/constants.js";
 import { getRosterSeasonId } from "../lib/db-helpers.js";
 import { getRosterRows, DEV_LABEL } from "../lib/purchase-shared.js";
 import { startAttributeUp } from "./attribute-up-interactions.js";
@@ -31,7 +31,7 @@ export const data = new SlashCommandBuilder()
   )
   .addIntegerOption(opt =>
     opt.setName("quantity")
-      .setDescription("How many points to upgrade (default 1, max 10)")
+      .setDescription("How many points to upgrade (core ⭐ attrs: max 1 | non-core attrs: max 10)")
       .setRequired(false)
       .setMinValue(1)
       .setMaxValue(10),
@@ -53,7 +53,13 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       const choices = ATTRIBUTES
         .filter(a => a.toLowerCase().includes(q))
         .slice(0, 25)
-        .map(a => ({ name: a, value: a }));
+        .map(a => {
+          const isCore = CORE_ATTRIBUTES.has(a as any);
+          return {
+            name:  isCore ? `⭐ ${a} (Core — 1pt max, once per player/season)` : a,
+            value: a,
+          };
+        });
       await interaction.respond(choices);
       return;
     }

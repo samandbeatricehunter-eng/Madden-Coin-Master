@@ -3,11 +3,11 @@ import {
   PermissionFlagsBits, AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { usersTable, purchasesTable } from "@workspace/db";
+import { eq, and, ne } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
-  getLegendPurchaseHistory, getSeasonRules,
+  getLegendPurchaseHistory, getSeasonRules, getCoreAttributes,
 } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
 import { getServerSettings } from "../lib/server-settings.js";
@@ -17,7 +17,6 @@ import { NFL_TEAMS } from "../lib/constants.js";
 export const data = new SlashCommandBuilder()
   .setName("availableupgrades")
   .setDescription("Check how many upgrades you (or another user) have used this season")
-  // ── Optional admin lookup ─────────────────────────────────────────────────
   .addUserOption(opt =>
     opt.setName("user")
       .setDescription("Admin: look up another user's upgrade counts")
@@ -49,7 +48,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const targetUser = interaction.options.getUser("user");
   const teamName   = interaction.options.getString("team")?.trim();
 
-  // If looking up someone else, require admin
   const lookupOther = targetUser || teamName;
   if (lookupOther) {
     const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
@@ -61,7 +59,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   }
 
-  // Resolve the target
   let discordId = interaction.user.id;
   let username  = interaction.user.username;
 
@@ -82,10 +79,41 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await getOrCreateUser(discordId, username, interaction.guildId!);
   }
 
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const stats  = await getSeasonStats(discordId, season.id);
-  const rules  = await getSeasonRules(season);
+  const season  = await getOrCreateActiveSeason(interaction.guildId!);
+  const stats   = await getSeasonStats(discordId, season.id);
+  const rules   = await getSeasonRules(season);
+  const coreSet = getCoreAttributes(season);
   const legendHistory = await getLegendPurchaseHistory(discordId);
+
+  // ── Fetch all non-refunded attribute purchases for this user this season ────
+  const attrPurchases = await db
+    .select({
+      playerName:    purchasesTable.playerName,
+      playerPosition: purchasesTable.playerPosition,
+      attributeName: purchasesTable.attributeName,
+    })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.discordId, discordId),
+      eq(purchasesTable.seasonId, season.id),
+      eq(purchasesTable.purchaseType, "attribute"),
+      ne(purchasesTable.status, "refunded"),
+    ));
+
+  // ── Build per-player core attribute usage map ────────────────────────────────
+  // playerKey → Set of core attr names already used
+  const playerCoreUsed = new Map<string, { label: string; usedCores: Set<string> }>();
+  for (const row of attrPurchases) {
+    if (!row.playerName || !row.attributeName) continue;
+    if (!coreSet.has(row.attributeName as any)) continue;
+
+    const key   = `${row.playerName}||${row.playerPosition ?? ""}`;
+    const label = row.playerPosition ? `${row.playerName} (${row.playerPosition})` : row.playerName;
+    if (!playerCoreUsed.has(key)) {
+      playerCoreUsed.set(key, { label, usedCores: new Set() });
+    }
+    playerCoreUsed.get(key)!.usedCores.add(row.attributeName);
+  }
 
   const coreUsed    = stats.coreAttrPurchased;
   const coreLeft    = Math.max(0, rules.coreAttrCap - coreUsed);
@@ -99,23 +127,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                           season.nonCoreAttrCostOverride !== null || season.nonCoreAttrCapOverride !== null;
   const attrOverrideNote = hasAttrOverride ? "\n⚠️ *Custom attribute rules are active this season.*" : "";
 
-  const hasDevOverride     = season.devUpsCapOverride !== null || season.devUpsCostOverride !== null;
-  const hasAgeResOverride  = season.ageResetsCapOverride !== null || season.ageResetsCostOverride !== null;
+  const hasDevOverride    = season.devUpsCapOverride !== null || season.devUpsCostOverride !== null;
+  const hasAgeResOverride = season.ageResetsCapOverride !== null || season.ageResetsCostOverride !== null;
   const devNote    = hasDevOverride    ? " *(season override)*" : "";
   const ageResNote = hasAgeResOverride ? " *(season override)*" : "";
 
   const label = lookupOther ? `${username}'s` : "Your";
+
+  // ── Per-player core attr breakdown text ──────────────────────────────────────
+  let coreBreakdown = "";
+  if (playerCoreUsed.size > 0) {
+    const lines = [...playerCoreUsed.values()].map(({ label: pLabel, usedCores }) => {
+      const used = [...usedCores].join(", ");
+      return `> 📌 **${pLabel}**: ${used}`;
+    });
+    coreBreakdown = `\n\n**Already upgraded this season (locked):**\n${lines.join("\n")}`;
+  }
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blurple)
     .setTitle(`📊 ${label} Upgrades — Season ${season.seasonNumber}`)
     .addFields(
       {
-        name: "⚡ Core Attribute Upgrades",
+        name: "⭐ Core Attribute Upgrades",
         value:
           `Used: **${coreUsed}/${rules.coreAttrCap}** | Remaining: **${coreLeft}**\n` +
-          `Cost: **${rules.coreAttrCost} coins/pt**\n` +
-          `*(Speed, Acceleration, Agility, COD, Strength, Jumping, Throw Power, Awareness, Stamina)*${attrOverrideNote}`,
+          `Cost: **${rules.coreAttrCost} coins/pt** · Limit: **1pt per attribute per player per season**\n` +
+          `*(Speed, Accel, Agility, COD, Strength, Jumping, Throw Power, Awareness, Stamina)*` +
+          attrOverrideNote +
+          coreBreakdown,
         inline: false,
       },
       {
@@ -123,7 +163,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         value:
           `Used: **${nonCoreUsed}/${rules.nonCoreAttrCap}** | Remaining: **${nonCoreLeft}**\n` +
           `Cost: **${rules.nonCoreAttrCost} coins/pt**\n` +
-          `*(All other attributes)*`,
+          `*(All other attributes — up to 10 pts per purchase)*`,
         inline: false,
       },
       {
