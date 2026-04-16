@@ -173,8 +173,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
   }
 
-  // ── Guard: wins being set but milestone intent not specified ──────────────
-  const settingWins = wins !== null || playoffWins !== null || superbowlWins !== null;
+  // ── Guard: only regular-season wins affect H2H milestones ────────────────
+  // playoffWins and superbowlWins are postseason tracking only — no guard needed.
+  const settingWins = wins !== null;
   if (settingWins && milestonesAlreadyPaid === null) {
     return interaction.editReply({
       embeds: [
