@@ -92,23 +92,28 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
    */
   function resolveLogoPath(teamName: string): string | null {
     const key = teamName.toLowerCase().trim();
-
     const mca = mcaByName.get(key);
+
+    // 1. Guild-specific logo override
     if (mca?.logoUrl) return mca.logoUrl;
+
+    // 2. defaultTeamLogosTable match by MCA teamId (works for standard 0–31 range)
     if (mca?.teamId != null) {
-      const global = defaultById.get(mca.teamId);
-      if (global) return global;
-      return globalLogoPath(mca.teamId);
+      const byId = defaultById.get(mca.teamId);
+      if (byId) return byId;
     }
 
-    // Exact match against fullName or nickName
+    // 3. Exact name / nickname match in defaultTeamLogosTable
     const exact = defaultByName.get(key);
     if (exact) return exact;
 
-    // Partial fallback: find a default logo whose nickName appears in the stored team name
+    // 4. Partial: stored name contains a known nickname
     for (const d of defaultLogos) {
       if (key.includes(d.nickName.toLowerCase().trim())) return d.logoUrl;
     }
+
+    // 5. Last resort: constructed GCS path — only valid for standard teamIds 0–31
+    if (mca?.teamId != null && mca.teamId <= 31) return globalLogoPath(mca.teamId);
 
     return null;
   }
@@ -207,6 +212,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const awayMca = mcaByName.get(gc.awayTeamName.toLowerCase().trim());
     const homeMca = mcaByName.get(gc.homeTeamName.toLowerCase().trim());
 
+    let breakdownStatus = "❌ no breakdown (no MCA roster data)";
     if (awayMca?.teamId != null && homeMca?.teamId != null) {
       try {
         const breakdownEmbed = await generateMatchupBreakdown({
@@ -224,14 +230,17 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         await tc.send({ embeds: [breakdownEmbed] });
         postedBreakdown = true;
         breakdownOk++;
+        breakdownStatus = "🤖 breakdown";
       } catch (e) {
         console.error(`[adminrepostbanners] AI breakdown error for ${gc.awayTeamName} vs ${gc.homeTeamName}:`, e);
+        breakdownStatus = "❌ no breakdown (generation error)";
       }
     }
 
-    const statusBanner    = postedBanner    ? "🖼️ banner" : `❌ no banner (paths: ${awayGcsPath ?? "?"} / ${homeGcsPath ?? "?"})`;
-    const statusBreakdown = postedBreakdown ? "🤖 breakdown" : "❌ no breakdown";
-    results.push(`<#${gc.channelId}> — ${statusBanner} · ${statusBreakdown}`);
+    const statusBanner = postedBanner
+      ? "🖼️ banner"
+      : `❌ no banner (paths: ${awayGcsPath ?? "none"} / ${homeGcsPath ?? "none"})`;
+    results.push(`<#${gc.channelId}> — ${statusBanner} · ${breakdownStatus}`);
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────
