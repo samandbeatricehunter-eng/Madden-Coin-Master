@@ -21,7 +21,7 @@ async function deploy() {
 
   if (guildId) {
     // Load settings so disabled features are excluded from the primary guild too
-    const settings = await getServerSettings().catch(() => null);
+    const settings = await getServerSettings(guildId).catch(() => null);
     const commands = buildCommandJSON(settings);
     console.log(`Registering ${commands.length} commands to guild ${guildId}...`);
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });

@@ -10,39 +10,44 @@ import { isAdminUser } from "./db-helpers.js";
 
 export type { ServerSettings };
 
-const GUILD_KEY = "global";
-
-export async function getServerSettings(): Promise<ServerSettings> {
-  const [settings] = await db.select().from(serverSettingsTable)
-    .where(eq(serverSettingsTable.guildId, GUILD_KEY)).limit(1);
-  if (settings) return settings;
-  const [created] = await db.insert(serverSettingsTable)
-    .values({ guildId: GUILD_KEY }).returning();
-  return created!;
-}
-
-/**
- * Fetch settings for a specific guild. Falls back to creating a default row
- * for that guild if none exists yet.
- */
-export async function getGuildSettings(guildId: string): Promise<ServerSettings> {
+export async function getServerSettings(guildId: string): Promise<ServerSettings> {
   const [settings] = await db.select().from(serverSettingsTable)
     .where(eq(serverSettingsTable.guildId, guildId)).limit(1);
   if (settings) return settings;
-  // No per-guild row yet — create one with all defaults
-  const [created] = await db.insert(serverSettingsTable)
-    .values({ guildId }).returning();
+
+  // No per-guild row yet. Seed from the "global" row (legacy primary-guild data)
+  // so previously configured settings aren't silently reset to defaults.
+  const [globalRow] = await db.select().from(serverSettingsTable)
+    .where(eq(serverSettingsTable.guildId, "global")).limit(1);
+
+  const seed = globalRow
+    ? {
+        guildId,
+        coinEconomy:              globalRow.coinEconomy,
+        legendsEnabled:           globalRow.legendsEnabled,
+        customSuperstarsEnabled:  globalRow.customSuperstarsEnabled,
+        attributeUpgradesEnabled: globalRow.attributeUpgradesEnabled,
+        devUpgradesEnabled:       globalRow.devUpgradesEnabled,
+        ageResetsEnabled:         globalRow.ageResetsEnabled,
+        wagerEnabled:             globalRow.wagerEnabled,
+        tradeBlockEnabled:        globalRow.tradeBlockEnabled,
+        mcaImportEnabled:         globalRow.mcaImportEnabled,
+        maxSeasons:               globalRow.maxSeasons,
+      }
+    : { guildId };
+
+  const [created] = await db.insert(serverSettingsTable).values(seed).returning();
   return created!;
 }
 
 export type FeatureKey = keyof Omit<ServerSettings, "id" | "guildId" | "updatedAt">;
 
-export async function toggleFeature(feature: FeatureKey): Promise<ServerSettings> {
-  const current = await getServerSettings();
+export async function toggleFeature(feature: FeatureKey, guildId: string): Promise<ServerSettings> {
+  const current = await getServerSettings(guildId);
   const currentValue = current[feature] as boolean;
   const [updated] = await db.update(serverSettingsTable)
     .set({ [feature]: !currentValue, updatedAt: new Date() })
-    .where(eq(serverSettingsTable.guildId, GUILD_KEY))
+    .where(eq(serverSettingsTable.guildId, guildId))
     .returning();
   return updated!;
 }
@@ -55,7 +60,7 @@ export async function toggleFeature(feature: FeatureKey): Promise<ServerSettings
 export async function requireMcaEnabled(
   interaction: ChatInputCommandInteraction,
 ): Promise<boolean> {
-  const settings = await getServerSettings();
+  const settings = await getServerSettings(interaction.guildId!);
   if (settings.mcaImportEnabled) return true;
 
   // Admins bypass the gate

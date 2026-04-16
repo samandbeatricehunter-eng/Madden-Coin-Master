@@ -16,7 +16,7 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const settings = await getServerSettings();
+  const settings = await getServerSettings(interaction.guildId!);
   if (!settings.coinEconomy) {
     await interaction.editReply({ content: "❌ The coin economy is currently disabled by the commissioners." });
     return;

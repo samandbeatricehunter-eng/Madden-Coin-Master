@@ -336,7 +336,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 // ── Execute ───────────────────────────────────────────────────────────────────
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const settings = await getServerSettings();
+  const settings = await getServerSettings(interaction.guildId!);
   if (!settings.tradeBlockEnabled) {
     await interaction.reply({ content: "❌ The trade block is currently disabled by the commissioners.", ephemeral: true });
     return;

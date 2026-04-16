@@ -74,7 +74,7 @@ export const data = new SlashCommandBuilder()
 // ── Execute ────────────────────────────────────────────────────────────────────
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const settings = await getServerSettings();
+  const settings = await getServerSettings(interaction.guildId!);
 
   const sub = interaction.options.getSubcommand();
 

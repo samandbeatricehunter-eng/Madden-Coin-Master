@@ -16,7 +16,7 @@ export async function registerCommandsForGuild(guildId: string): Promise<void> {
   }
 
   try {
-    const settings = await getServerSettings();
+    const settings = await getServerSettings(guildId);
     const commands = buildCommandJSON(settings);
     const rest     = new REST().setToken(token);
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });

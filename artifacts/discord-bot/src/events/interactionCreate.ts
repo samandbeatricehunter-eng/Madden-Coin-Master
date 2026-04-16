@@ -1880,7 +1880,7 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── /initialize-server follow-up buttons ─────────────────────────────────────
   if (action === "init_settings") {
     await interaction.deferUpdate();
-    const settings = await getServerSettings();
+    const settings = await getServerSettings(interaction.guildId!);
     await interaction.followUp({
       ephemeral: true,
       content: "**⚙️ Server Feature Settings** — toggle any feature on or off:",
@@ -1977,7 +1977,7 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "init_post_help") {
     await interaction.deferUpdate();
     try {
-      const settings = await getServerSettings().catch(() => null);
+      const settings = await getServerSettings(interaction.guildId!).catch(() => null);
 
       // Find #help-and-faqs by name in the guild
       await interaction.guild?.channels.fetch().catch(() => null);
@@ -2088,7 +2088,7 @@ async function handleButton(interaction: ButtonInteraction) {
     if (!featureKey) { await interaction.reply({ content: "❌ Unknown feature key.", ephemeral: true }); return; }
 
     await interaction.deferUpdate();
-    const updated = await toggleFeature(featureKey as any);
+    const updated = await toggleFeature(featureKey as any, interaction.guildId!);
     const label   = FEATURE_LABELS[featureKey as keyof typeof FEATURE_LABELS] ?? featureKey;
     const state   = (updated as any)[featureKey] ? "✅ Enabled" : "❌ Disabled";
 

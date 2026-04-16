@@ -158,14 +158,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         });
         return;
       }
-      const settings = await getServerSettings().catch(() => null);
+      const settings = await getServerSettings(interaction.guildId!).catch(() => null);
       await interaction.reply({ embeds: [buildMemberHelpEmbed(settings)], ephemeral });
       return;
     }
 
     // ── Admin chose member section ─────────────────────────────────────────────
     if (section === "member") {
-      const settings = await getServerSettings().catch(() => null);
+      const settings = await getServerSettings(interaction.guildId!).catch(() => null);
       await interaction.reply({ embeds: [buildMemberHelpEmbed(settings)], ephemeral });
       return;
     }

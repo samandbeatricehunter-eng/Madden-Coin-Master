@@ -30,7 +30,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    const settings = await getServerSettings();
+    const settings = await getServerSettings(interaction.guildId!);
     await interaction.reply({
       embeds:     [buildSettingsEmbed(settings)],
       components: buildSettingsRows(settings),

@@ -255,7 +255,7 @@ function buildNavRow(session: AupSession, sKey: string) {
 export async function startAttributeUp(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const settings = await getServerSettings();
+  const settings = await getServerSettings(interaction.guildId!);
   if (!settings.coinEconomy) {
     await interaction.editReply({ content: "❌ The coin economy is currently disabled." });
     return;

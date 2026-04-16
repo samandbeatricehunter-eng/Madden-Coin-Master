@@ -12,7 +12,7 @@ import { eq, and, desc, sql, ne, inArray, or, isNull } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
 import { weekLabel } from "./advanceweek.js";
-import { requireMcaEnabled, getGuildSettings } from "../lib/server-settings.js";
+import { requireMcaEnabled, getServerSettings } from "../lib/server-settings.js";
 
 const MILESTONE_LABELS: Record<number, string> = {
   0: "None",
@@ -191,7 +191,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )),
 
     // Guild feature settings — determines which embed sections to render.
-    getGuildSettings(guildId),
+    getServerSettings(guildId),
   ]);
 
   const record      = recordRows[0];

@@ -118,22 +118,24 @@ function appendToHistory(userId: string, userMsg: string, botReply: string): voi
 // ── Simple caches (avoid hammering DB on every mention) ───────────────────────
 
 const CACHE_TTL = 5 * 60_000; // 5 minutes
-let rulesCache: { text: string; at: number } | null = null;
+// Per-guild rules caches — keyed by guildId
+const rulesCacheMap = new Map<string, { text: string; at: number }>();
 let adminCache: { ids: string[]; at: number } | null = null;
 
-async function getCachedRules(): Promise<string> {
-  if (rulesCache && Date.now() - rulesCache.at < CACHE_TTL) return rulesCache.text;
+async function getCachedRules(guildId: string): Promise<string> {
+  const cached = rulesCacheMap.get(guildId);
+  if (cached && Date.now() - cached.at < CACHE_TTL) return cached.text;
 
-  const sections = await getAllSections(PRIMARY_GUILD_ID);
+  const sections = await getAllSections(guildId);
   const parts: string[] = [];
   for (const [key, meta] of Object.entries(sections)) {
-    const rules = await getOrSeedRules(key, PRIMARY_GUILD_ID);
+    const rules = await getOrSeedRules(key, guildId);
     if (!rules.length) continue;
     parts.push(`== ${meta.title} ==`);
     rules.forEach((r, i) => parts.push(`${i + 1}. ${r}`));
   }
   const text = parts.join("\n") || "(no rules on file)";
-  rulesCache = { text, at: Date.now() };
+  rulesCacheMap.set(guildId, { text, at: Date.now() });
   return text;
 }
 
@@ -1713,7 +1715,7 @@ export async function execute(message: Message): Promise<void> {
   const [isAdmin, userStats, rulesText, adminIds, leagueContext, eosContext, mentionedUsersData] = await Promise.all([
     isAdminUser(message.author.id, message.guildId!).catch(() => false),
     fetchUserStats(message.author.id).catch(defaultStats),
-    getCachedRules().catch(() => "(rules unavailable)"),
+    getCachedRules(message.guildId!).catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
     fetchLeagueContext().catch(() => "(league context unavailable)"),
     fetchEosPayoutContext().catch(() => ""),
