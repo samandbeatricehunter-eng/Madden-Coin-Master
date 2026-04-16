@@ -422,6 +422,40 @@ export async function payoutPlayoffRoundResults(
       });
     }
 
+    // ── Super Bowl: also record SB win/loss (season + all-time) ────────
+    if (weekKey === "superbowl") {
+      // season SB W/L → userRecordsTable
+      if (existingWinner.length > 0) {
+        await db.update(userRecordsTable)
+          .set({ superbowlWins: sql`${userRecordsTable.superbowlWins} + 1`, updatedAt: new Date() })
+          .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+      } else {
+        // row was just inserted above with playoffWins=1 but superbowlWins defaulted to 0 — patch it now
+        await db.update(userRecordsTable)
+          .set({ superbowlWins: 1, updatedAt: new Date() })
+          .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
+      }
+
+      if (existingLoser.length > 0) {
+        await db.update(userRecordsTable)
+          .set({ superbowlLosses: sql`${userRecordsTable.superbowlLosses} + 1`, updatedAt: new Date() })
+          .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+      } else {
+        await db.update(userRecordsTable)
+          .set({ superbowlLosses: 1, updatedAt: new Date() })
+          .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
+      }
+
+      // all-time SB W/L → usersTable (per guild)
+      await db.update(usersTable)
+        .set({ allTimeSuperbowlWins: sql`${usersTable.allTimeSuperbowlWins} + 1`, updatedAt: new Date() })
+        .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId)));
+
+      await db.update(usersTable)
+        .set({ allTimeSuperbowlLosses: sql`${usersTable.allTimeSuperbowlLosses} + 1`, updatedAt: new Date() })
+        .where(and(eq(usersTable.discordId, loserId), eq(usersTable.guildId, guildId)));
+    }
+
     // ── Mark game as processed ──────────────────────────────────────────
     await db.insert(franchiseProcessedGamesTable).values({
       gameId,
