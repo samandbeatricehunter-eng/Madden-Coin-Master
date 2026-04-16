@@ -146,6 +146,11 @@ export const data = new SlashCommandBuilder()
   .setName("initialize-server")
   .setDescription("First-time server setup: creates channels, roles, team slots, and walks through configuration")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addStringOption(o =>
+    o.setName("password")
+      .setDescription("Authorization password required to run server initialization")
+      .setRequired(true),
+  )
   .addBooleanOption(o =>
     o.setName("confirm")
       .setDescription("Set to true to confirm you want to run first-time setup on this server")
@@ -199,10 +204,16 @@ export const data = new SlashCommandBuilder()
 
 // ── Execute ────────────────────────────────────────────────────────────────────
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const password            = interaction.options.getString("password", true);
   const confirm             = interaction.options.getBoolean("confirm", true);
   const startingWeek        = interaction.options.getString("starting_week")  ?? "training_camp";
   const franchiseLength     = interaction.options.getInteger("franchise_length") ?? 10;
   const currentSeasonNumber = interaction.options.getInteger("current_season")   ?? 1;
+
+  if (password !== "Initialize") {
+    await interaction.reply({ content: "❌ Incorrect password.", ephemeral: true });
+    return;
+  }
 
   if (!confirm) {
     await interaction.reply({
