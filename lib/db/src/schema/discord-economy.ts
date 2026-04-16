@@ -755,6 +755,7 @@ export const serverSettingsTable = pgTable("server_settings", {
   wagerEnabled:            boolean("wager_enabled").notNull().default(true),
   tradeBlockEnabled:       boolean("trade_block_enabled").notNull().default(true),
   mcaImportEnabled:        boolean("mca_import_enabled").notNull().default(true),
+  legacyCoreAttrMode:      boolean("legacy_core_attr_mode").notNull().default(false),
   maxSeasons:              integer("max_seasons").notNull().default(10),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

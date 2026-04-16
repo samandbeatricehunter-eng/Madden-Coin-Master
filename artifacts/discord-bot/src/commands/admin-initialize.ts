@@ -73,7 +73,7 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
     name: "🔒 MEMBERS ONLY",
     channels: [
       { name: "general-discussion",   topic: "General league discussion"                                              },
-      { name: "member-league-chat",   topic: "Member-only league chat"                                               },
+      { name: "member-league-ads",    topic: "Member-only league ads and classifieds"                                },
       { name: "league-announcements", topic: "Commissioner announcements",                    readOnly: true          },
       { name: "help-and-faqs",        topic: "Bot command guide and how-to resources for members", commissionerWrite: true },
     ],
@@ -116,7 +116,9 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
   },
   {
     name: "🏆 THE HALL OF FAME AND SHAME",
-    channels: [],
+    channels: [
+      { name: "quit-list", topic: "Members who have quit the league", readOnly: true },
+    ],
   },
   {
     name: "🎊 END OF SEASON PAYOUTS",

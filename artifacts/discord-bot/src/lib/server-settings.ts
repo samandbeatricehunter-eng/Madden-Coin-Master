@@ -32,6 +32,7 @@ export async function getServerSettings(guildId: string): Promise<ServerSettings
         wagerEnabled:             globalRow.wagerEnabled,
         tradeBlockEnabled:        globalRow.tradeBlockEnabled,
         mcaImportEnabled:         globalRow.mcaImportEnabled,
+        legacyCoreAttrMode:       globalRow.legacyCoreAttrMode,
         maxSeasons:               globalRow.maxSeasons,
       }
     : { guildId };
@@ -93,6 +94,7 @@ export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: 
   { key: "wagerEnabled",            label: "Wagers",             description: "Coin wager system" },
   { key: "tradeBlockEnabled",       label: "Trade Block",        description: "Trade block listings & ISO" },
   { key: "mcaImportEnabled",        label: "MCA Import",         description: "Stat/schedule commands for all users (off = admin-only)" },
+  { key: "legacyCoreAttrMode",      label: "Legacy Core Attrs",  description: "Allow multi-point & repeat core upgrades per player (off = strict 1pt/attr/player/season)" },
 ];
 
 export const FEATURE_LABELS: Record<FeatureKey, string> =
@@ -125,7 +127,7 @@ export function buildSettingsRows(s: ServerSettings): ActionRowBuilder<ButtonBui
 
   const chunks = [
     FEATURE_META.slice(0, 5),
-    FEATURE_META.slice(5, 9),
+    FEATURE_META.slice(5, 10),
   ];
 
   chunks[0]!.forEach(f => {

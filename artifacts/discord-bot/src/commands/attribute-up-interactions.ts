@@ -121,7 +121,8 @@ interface AupSession {
   scaledCost?: number;    // total cost for quantity upgrades
   isCore?: boolean;
   quantity?: number;      // number of points to upgrade (default 1)
-  usedCoreAttrs?: Set<string>; // core attrs already purchased for this player this season
+  usedCoreAttrs?: Set<string>;    // core attrs already purchased for this player this season
+  legacyCoreAttrMode?: boolean;   // when true: multi-point + repeat upgrades on same attr allowed
 }
 
 export const aupSessions = new Map<string, AupSession>();
@@ -341,8 +342,11 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
   const attrs = playerRow.attributes as Record<string, number>;
   const rules   = await getSeasonRules(season);
   const coreSet = getCoreAttributes(season);
-  const fullPlayerName = `${playerRow.firstName} ${playerRow.lastName}`;
-  const usedCoreAttrs  = await loadUsedCoreAttrs(season.id, fullPlayerName, playerRow.position, coreSet);
+  const fullPlayerName    = `${playerRow.firstName} ${playerRow.lastName}`;
+  const legacyCoreAttrMode = settings.legacyCoreAttrMode;
+  const usedCoreAttrs = legacyCoreAttrMode
+    ? new Set<string>()
+    : await loadUsedCoreAttrs(season.id, fullPlayerName, playerRow.position, coreSet);
   const sKey  = sessionKey(interaction.user.id, playerRow.playerId);
   const session: AupSession = {
     invokerId: interaction.user.id,
@@ -353,6 +357,7 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     attributes: attrs,
     page: 0,
     usedCoreAttrs,
+    legacyCoreAttrMode,
   };
   aupSessions.set(sKey, session);
 
@@ -362,11 +367,11 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     const base    = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
     const current = lookupAttrValue(attrs, presetAttr);
 
-    // Core attributes: silently cap to 1 point — quantity > 1 is not allowed
-    const effectiveQuantity = isCore ? 1 : presetQuantity;
+    // Core attributes: cap to 1 point unless legacy mode allows multi-point
+    const effectiveQuantity = (isCore && !legacyCoreAttrMode) ? 1 : presetQuantity;
 
-    // Core attributes: one upgrade per attribute per player per season
-    if (isCore && usedCoreAttrs.has(presetAttr)) {
+    // Core attributes: one upgrade per attribute per player per season (strict mode only)
+    if (isCore && !legacyCoreAttrMode && usedCoreAttrs.has(presetAttr)) {
       await interaction.editReply({
         content: `❌ **${presetAttr}** has already been upgraded for **${fullPlayerName}** this season. Choose a different core attribute.`,
       });
@@ -401,8 +406,8 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
     const canAfford = invoker.balance >= total;
     const category  = isCore ? "Core ⭐" : "Non-core";
 
-    // Note if qty was silently capped (core attr) or 99-capped (any attr)
-    const capNote = isCore && presetQuantity > 1
+    // Note if qty was silently capped (core attr in strict mode) or 99-capped (any attr)
+    const capNote = (isCore && !legacyCoreAttrMode && presetQuantity > 1)
       ? `\n⭐ Core attributes are limited to **1 point per purchase** — quantity set to 1.`
       : qty < effectiveQuantity
         ? `\n⚠️ Only **${qty}** point(s) upgradeable (would hit 99 at ${current + qty}).`
@@ -604,25 +609,28 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
     const remaining = cap - used;
 
     // Re-validate core attribute rules (race-condition / stale session protection)
-    if (isCore && qty > 1) {
-      await interaction.editReply({
-        embeds: [errorEmbed("Core Attribute Limit", "Core attributes ⭐ can only be upgraded **1 point at a time**.")],
-        components: [],
-      });
-      aupSessions.delete(sKey);
-      return;
-    }
-
-    if (isCore) {
-      const coreSet        = getCoreAttributes(season);
-      const freshUsedCores = await loadUsedCoreAttrs(season.id, session.playerName, session.playerPosition, coreSet);
-      if (freshUsedCores.has(session.selectedAttr)) {
+    // Skip when legacy mode is enabled — multi-point and repeat upgrades are allowed.
+    if (!session.legacyCoreAttrMode) {
+      if (isCore && qty > 1) {
         await interaction.editReply({
-          embeds: [errorEmbed("Already Upgraded", `**${session.selectedAttr}** ⭐ has already been upgraded for **${session.playerName}** this season.`)],
+          embeds: [errorEmbed("Core Attribute Limit", "Core attributes ⭐ can only be upgraded **1 point at a time**.")],
           components: [],
         });
         aupSessions.delete(sKey);
         return;
+      }
+
+      if (isCore) {
+        const coreSet        = getCoreAttributes(season);
+        const freshUsedCores = await loadUsedCoreAttrs(season.id, session.playerName, session.playerPosition, coreSet);
+        if (freshUsedCores.has(session.selectedAttr)) {
+          await interaction.editReply({
+            embeds: [errorEmbed("Already Upgraded", `**${session.selectedAttr}** ⭐ has already been upgraded for **${session.playerName}** this season.`)],
+            components: [],
+          });
+          aupSessions.delete(sKey);
+          return;
+        }
       }
     }
 
