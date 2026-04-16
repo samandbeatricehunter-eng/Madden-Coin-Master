@@ -105,6 +105,40 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const awayDiscordId = userByTeam.get(gc.awayTeamName.toLowerCase().trim()) ?? "";
     const homeDiscordId = userByTeam.get(gc.homeTeamName.toLowerCase().trim()) ?? "";
 
+    // ── Delete existing bot messages (banner + AI breakdown only) ────────────
+    try {
+      const botId    = interaction.client.user!.id;
+      const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+      let lastId: string | undefined;
+      let keepFetching = true;
+
+      while (keepFetching) {
+        const fetched = await tc.messages.fetch({ limit: 100, ...(lastId ? { before: lastId } : {}) });
+        if (fetched.size === 0) break;
+
+        const botMsgs = fetched.filter(m => m.author.id === botId);
+
+        // Split by age — bulk delete only works for messages < 14 days old
+        const fresh = botMsgs.filter(m => m.createdTimestamp > fourteenDaysAgo);
+        const stale = botMsgs.filter(m => m.createdTimestamp <= fourteenDaysAgo);
+
+        if (fresh.size === 1) {
+          await fresh.first()!.delete().catch(() => {});
+        } else if (fresh.size > 1) {
+          await tc.bulkDelete(fresh).catch(() => {});
+        }
+        for (const msg of stale.values()) {
+          await msg.delete().catch(() => {});
+        }
+
+        // Stop as soon as we've seen all messages or only user messages remain deep in history
+        lastId      = fetched.last()!.id;
+        keepFetching = fetched.size === 100;
+      }
+    } catch (e) {
+      console.error(`[adminrepostbanners] Cleanup error for ${gc.awayTeamName} vs ${gc.homeTeamName}:`, e);
+    }
+
     let postedBanner    = false;
     let postedBreakdown = false;
 
