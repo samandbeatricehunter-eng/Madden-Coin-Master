@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  gameChannelsTable, franchiseMcaTeamsTable, seasonsTable, usersTable,
+  gameChannelsTable, franchiseMcaTeamsTable, usersTable, defaultTeamLogosTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
@@ -28,12 +28,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
 
-  // Resolve the current weekIndex from the season's currentWeek string
-  const weekNum = parseInt(season.currentWeek ?? "1", 10);
-  // weekIndex is 0-based in the table
+  const weekNum   = parseInt(season.currentWeek ?? "1", 10);
   const weekIndex = isNaN(weekNum) ? 0 : weekNum - 1;
 
-  // Find all game channels stored for this season + week
   const channels = await db
     .select()
     .from(gameChannelsTable)
@@ -50,7 +47,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  // Build lookup maps from franchise MCA teams for this season
+  // ── MCA team lookup (guild-specific logo overrides + teamId for AI breakdown) ─
   const mcaTeams = await db
     .select({
       teamId:    franchiseMcaTeamsTable.teamId,
@@ -62,16 +59,49 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .from(franchiseMcaTeamsTable)
     .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
 
-  // Index by name and discordId
-  const teamByName = new Map<string, typeof mcaTeams[0]>();
-  const teamByDiscordId = new Map<string, typeof mcaTeams[0]>();
+  const mcaByName = new Map<string, typeof mcaTeams[0]>();
   for (const t of mcaTeams) {
-    teamByName.set(t.fullName.toLowerCase().trim(), t);
-    teamByName.set(t.nickName.toLowerCase().trim(), t);
-    if (t.discordId) teamByDiscordId.set(t.discordId, t);
+    mcaByName.set(t.fullName.toLowerCase().trim(), t);
+    mcaByName.set(t.nickName.toLowerCase().trim(), t);
   }
 
-  // Map user team names → discordId (for mention tags)
+  // ── Global default logos (fallback when MCA lookup misses or no guild override) ─
+  // These are uploaded via /adminteamlogo setglobal and stored in defaultTeamLogosTable
+  const defaultLogos = await db
+    .select({
+      teamId:   defaultTeamLogosTable.teamId,
+      fullName: defaultTeamLogosTable.fullName,
+      nickName: defaultTeamLogosTable.nickName,
+      logoUrl:  defaultTeamLogosTable.logoUrl,
+    })
+    .from(defaultTeamLogosTable);
+
+  const defaultByName = new Map<string, string>(); // name → GCS path
+  const defaultById   = new Map<number, string>(); // teamId → GCS path
+  for (const d of defaultLogos) {
+    defaultByName.set(d.fullName.toLowerCase().trim(), d.logoUrl);
+    defaultByName.set(d.nickName.toLowerCase().trim(), d.logoUrl);
+    defaultById.set(d.teamId, d.logoUrl);
+  }
+
+  /** Resolve the best GCS logo path for a team name. Priority:
+   *  1. Guild-specific override (franchiseMcaTeamsTable.logoUrl)
+   *  2. Global default via MCA teamId (ensures correct numeric ID)
+   *  3. Global default via name match in defaultTeamLogosTable (handles missing MCA data)
+   */
+  function resolveLogoPath(teamName: string): string | null {
+    const key = teamName.toLowerCase().trim();
+    const mca = mcaByName.get(key);
+    if (mca?.logoUrl) return mca.logoUrl;                  // guild override
+    if (mca?.teamId != null) {
+      const global = defaultById.get(mca.teamId);
+      if (global) return global;
+      return globalLogoPath(mca.teamId);                   // constructed path
+    }
+    return defaultByName.get(key) ?? null;                 // name-matched global default
+  }
+
+  // ── User team → discordId map (for mention tags) ──────────────────────────
   const userRows = await db
     .select({ discordId: usersTable.discordId, team: usersTable.team })
     .from(usersTable)
@@ -86,7 +116,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   let bannerOk = 0, breakdownOk = 0, skipped = 0;
 
   for (const gc of channels) {
-    // Fetch the Discord channel
     const ch = interaction.client.channels.cache.get(gc.channelId)
       ?? await interaction.client.channels.fetch(gc.channelId).catch(() => null);
 
@@ -97,43 +126,27 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
     const tc = ch as TextChannel;
 
-    // Resolve MCA entries — use stored proper names from gameChannelsTable
-    const awayMca = teamByName.get(gc.awayTeamName.toLowerCase().trim());
-    const homeMca = teamByName.get(gc.homeTeamName.toLowerCase().trim());
-
-    // Resolve discord mentions
     const awayDiscordId = userByTeam.get(gc.awayTeamName.toLowerCase().trim()) ?? "";
     const homeDiscordId = userByTeam.get(gc.homeTeamName.toLowerCase().trim()) ?? "";
 
-    // ── Delete existing bot messages (banner + AI breakdown only) ────────────
+    // ── Delete existing bot messages (banner + AI breakdown) ─────────────────
+    // Only scan the most recent 100 messages — bot posts are always recent
     try {
-      const botId    = interaction.client.user!.id;
+      const botId           = interaction.client.user!.id;
       const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-      let lastId: string | undefined;
-      let keepFetching = true;
+      const fetched         = await tc.messages.fetch({ limit: 100 });
+      const botMsgs         = fetched.filter(m => m.author.id === botId);
 
-      while (keepFetching) {
-        const fetched = await tc.messages.fetch({ limit: 100, ...(lastId ? { before: lastId } : {}) });
-        if (fetched.size === 0) break;
+      const fresh = botMsgs.filter(m => m.createdTimestamp > fourteenDaysAgo);
+      const stale = botMsgs.filter(m => m.createdTimestamp <= fourteenDaysAgo);
 
-        const botMsgs = fetched.filter(m => m.author.id === botId);
-
-        // Split by age — bulk delete only works for messages < 14 days old
-        const fresh = botMsgs.filter(m => m.createdTimestamp > fourteenDaysAgo);
-        const stale = botMsgs.filter(m => m.createdTimestamp <= fourteenDaysAgo);
-
-        if (fresh.size === 1) {
-          await fresh.first()!.delete().catch(() => {});
-        } else if (fresh.size > 1) {
-          await tc.bulkDelete(fresh).catch(() => {});
-        }
-        for (const msg of stale.values()) {
-          await msg.delete().catch(() => {});
-        }
-
-        // Stop as soon as we've seen all messages or only user messages remain deep in history
-        lastId      = fetched.last()!.id;
-        keepFetching = fetched.size === 100;
+      if (fresh.size === 1) {
+        await fresh.first()!.delete().catch(() => {});
+      } else if (fresh.size > 1) {
+        await tc.bulkDelete(fresh).catch(() => {});
+      }
+      for (const msg of stale.values()) {
+        await msg.delete().catch(() => {});
       }
     } catch (e) {
       console.error(`[adminrepostbanners] Cleanup error for ${gc.awayTeamName} vs ${gc.homeTeamName}:`, e);
@@ -143,8 +156,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     let postedBreakdown = false;
 
     // ── Banner ────────────────────────────────────────────────────────────────
-    const awayGcsPath = awayMca?.logoUrl ?? (awayMca?.teamId != null ? globalLogoPath(awayMca.teamId) : null);
-    const homeGcsPath = homeMca?.logoUrl ?? (homeMca?.teamId != null ? globalLogoPath(homeMca.teamId) : null);
+    const awayGcsPath = resolveLogoPath(gc.awayTeamName);
+    const homeGcsPath = resolveLogoPath(gc.homeTeamName);
 
     if (awayGcsPath && homeGcsPath) {
       try {
@@ -168,14 +181,21 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           await tc.send({ embeds: [bannerEmbed], files: [attachment] });
           postedBanner = true;
           bannerOk++;
+        } else {
+          console.warn(`[adminrepostbanners] Logo buffer null — away: ${awayGcsPath}, home: ${homeGcsPath}`);
         }
       } catch (e) {
         console.error(`[adminrepostbanners] Banner error for ${gc.awayTeamName} vs ${gc.homeTeamName}:`, e);
       }
+    } else {
+      console.warn(`[adminrepostbanners] No logo path — away: "${gc.awayTeamName}" (${awayGcsPath}), home: "${gc.homeTeamName}" (${homeGcsPath})`);
     }
 
     // ── AI breakdown ─────────────────────────────────────────────────────────
-    if (awayMca?.teamId && homeMca?.teamId) {
+    const awayMca = mcaByName.get(gc.awayTeamName.toLowerCase().trim());
+    const homeMca = mcaByName.get(gc.homeTeamName.toLowerCase().trim());
+
+    if (awayMca?.teamId != null && homeMca?.teamId != null) {
       try {
         const breakdownEmbed = await generateMatchupBreakdown({
           seasonId:       season.id,
@@ -197,7 +217,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       }
     }
 
-    const statusBanner    = postedBanner    ? "🖼️ banner" : "❌ no banner";
+    const statusBanner    = postedBanner    ? "🖼️ banner" : `❌ no banner (paths: ${awayGcsPath ?? "?"} / ${homeGcsPath ?? "?"})`;
     const statusBreakdown = postedBreakdown ? "🤖 breakdown" : "❌ no breakdown";
     results.push(`<#${gc.channelId}> — ${statusBanner} · ${statusBreakdown}`);
   }
@@ -206,13 +226,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const summaryEmbed = new EmbedBuilder()
     .setColor(Colors.Blurple)
     .setTitle(`📤 Repost Results — ${weekLabel}`)
-    .setDescription(results.join("\n"))
+    .setDescription(results.join("\n").slice(0, 4096))
     .addFields(
-      { name: "🖼️ Banners posted",     value: String(bannerOk),    inline: true },
-      { name: "🤖 Breakdowns posted",  value: String(breakdownOk), inline: true },
-      { name: "⚠️ Skipped",            value: String(skipped),     inline: true },
-    )
-    .setFooter({ text: bannerOk === 0 ? "No banners? Upload logos via /adminteamlogo setglobal" : "" });
+      { name: "🖼️ Banners posted",    value: String(bannerOk),    inline: true },
+      { name: "🤖 Breakdowns posted", value: String(breakdownOk), inline: true },
+      { name: "⚠️ Skipped",           value: String(skipped),     inline: true },
+    );
 
   await interaction.editReply({ embeds: [summaryEmbed] });
 }
