@@ -7,6 +7,7 @@ import { ATTRIBUTES, CORE_ATTRIBUTES } from "../lib/constants.js";
 import { getRosterSeasonId } from "../lib/db-helpers.js";
 import { getRosterRows, DEV_LABEL } from "../lib/purchase-shared.js";
 import { startAttributeUp } from "./attribute-up-interactions.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 export const data = new SlashCommandBuilder()
   .setName("buy-attribute")
@@ -49,16 +50,19 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
     const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
 
     if (focused.name === "attribute") {
+      const settings = await getServerSettings(interaction.guildId!);
+      const legacyMode = settings.legacyCoreAttrMode ?? false;
       const q = focused.value.toLowerCase();
       const choices = ATTRIBUTES
         .filter(a => a.toLowerCase().includes(q))
         .slice(0, 25)
         .map(a => {
           const isCore = CORE_ATTRIBUTES.has(a as any);
-          return {
-            name:  isCore ? `⭐ ${a} (Core — 1pt max, once per player/season)` : a,
-            value: a,
-          };
+          if (!isCore) return { name: a, value: a };
+          const label = legacyMode
+            ? `⭐ ${a} (Core)`
+            : `⭐ ${a} (Core — 1pt max, once per player/season)`;
+          return { name: label, value: a };
         });
       await interaction.respond(choices);
       return;
