@@ -12,7 +12,7 @@ import { db } from "@workspace/db";
 import {
   franchiseRostersTable, purchasesTable, inventoryTable, seasonStatsTable, usersTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, ne } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getCoreAttributes, getSeasonRules, deductBalance, logTransaction,
@@ -121,6 +121,7 @@ interface AupSession {
   scaledCost?: number;    // total cost for quantity upgrades
   isCore?: boolean;
   quantity?: number;      // number of points to upgrade (default 1)
+  usedCoreAttrs?: Set<string>; // core attrs already purchased for this player this season
 }
 
 export const aupSessions = new Map<string, AupSession>();
@@ -156,21 +157,54 @@ function stackedCost(base: number, current: number, qty: number): { total: numbe
   return { total, pointsUpgradeable: upgradeable };
 }
 
+// ── Helper: load core attrs already purchased for a player this season ────────
+async function loadUsedCoreAttrs(
+  seasonId: number,
+  playerName: string,
+  playerPosition: string,
+  coreSet: Set<string>,
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ attributeName: purchasesTable.attributeName })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.seasonId, seasonId),
+      eq(purchasesTable.playerName, playerName),
+      eq(purchasesTable.playerPosition, playerPosition),
+      eq(purchasesTable.purchaseType, "attribute"),
+      ne(purchasesTable.status, "refunded"),
+    ));
+  return new Set(
+    rows
+      .map(r => r.attributeName)
+      .filter((n): n is string => n !== null && coreSet.has(n as any)),
+  );
+}
+
 // ── Build paginated attribute embed ───────────────────────────────────────────
-function buildAttrPage(session: AupSession, rules: { coreAttrCost: number; nonCoreAttrCost: number }) {
-  const coreAttrs = new Set(ATTRIBUTES.slice(0, 10)); // placeholder — real check uses getCoreAttributes
+function buildAttrPage(
+  session: AupSession,
+  rules: { coreAttrCost: number; nonCoreAttrCost: number },
+  coreSet: Set<string>,
+) {
+  const usedCoreAttrs = session.usedCoreAttrs ?? new Set<string>();
   const pageAttrs = ATTRIBUTES.slice(session.page * ATTRS_PER_PAGE, (session.page + 1) * ATTRS_PER_PAGE);
   const totalPages = Math.ceil(ATTRIBUTES.length / ATTRS_PER_PAGE);
 
   const lines: string[] = [];
   for (const attr of pageAttrs) {
     const current = lookupAttrValue(session.attributes, attr);
-    const isCore = coreAttrs.has(attr as any);
+    const isCore = coreSet.has(attr as any);
     const base = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
     const cost = scaledCost(base, current);
-    const label = cost === null
-      ? `~~**${attr}**~~ (${current} — maxed out)`
-      : `**${attr}** — ${current} → ${current + 1} (**${cost.toLocaleString()} coins**)`;
+    let label: string;
+    if (isCore && usedCoreAttrs.has(attr)) {
+      label = `~~**${attr}**~~ ⭐ *(already upgraded this season)*`;
+    } else if (cost === null) {
+      label = `~~**${attr}**~~ (${current} — maxed out)`;
+    } else {
+      label = `**${attr}** — ${current} → ${current + 1} (**${cost.toLocaleString()} coins**)${isCore ? " ⭐" : ""}`;
+    }
     lines.push(label);
   }
 
@@ -187,24 +221,31 @@ function buildAttrPage(session: AupSession, rules: { coreAttrCost: number; nonCo
   return embed;
 }
 
-function buildAttrDropdown(session: AupSession, rules: { coreAttrCost: number; nonCoreAttrCost: number }, sKey: string) {
-  const coreAttrs = new Set(ATTRIBUTES.slice(0, 10));
+function buildAttrDropdown(
+  session: AupSession,
+  rules: { coreAttrCost: number; nonCoreAttrCost: number },
+  sKey: string,
+  coreSet: Set<string>,
+) {
+  const usedCoreAttrs = session.usedCoreAttrs ?? new Set<string>();
   const pageAttrs = ATTRIBUTES.slice(session.page * ATTRS_PER_PAGE, (session.page + 1) * ATTRS_PER_PAGE);
 
   const options = pageAttrs
     .filter(attr => {
       const cur = lookupAttrValue(session.attributes, attr);
-      return cur < 99;
+      if (cur >= 99) return false;
+      if (coreSet.has(attr as any) && usedCoreAttrs.has(attr)) return false;
+      return true;
     })
     .map(attr => {
       const cur = lookupAttrValue(session.attributes, attr);
-      const isCore = coreAttrs.has(attr as any);
+      const isCore = coreSet.has(attr as any);
       const base = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
       const cost = scaledCost(base, cur)!;
       return new StringSelectMenuOptionBuilder()
         .setLabel(`${attr} (${cur} → ${cur + 1})`)
         .setValue(`${attr}`)
-        .setDescription(`${cost.toLocaleString()} coins — ${isCore ? "Core" : "Non-core"}`);
+        .setDescription(`${cost.toLocaleString()} coins — ${isCore ? "Core ⭐" : "Non-core"}`);
     });
 
   if (options.length === 0) {
@@ -298,25 +339,44 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
   }
 
   const attrs = playerRow.attributes as Record<string, number>;
-  const rules = await getSeasonRules(season);
+  const rules   = await getSeasonRules(season);
+  const coreSet = getCoreAttributes(season);
+  const fullPlayerName = `${playerRow.firstName} ${playerRow.lastName}`;
+  const usedCoreAttrs  = await loadUsedCoreAttrs(season.id, fullPlayerName, playerRow.position, coreSet);
   const sKey  = sessionKey(interaction.user.id, playerRow.playerId);
   const session: AupSession = {
     invokerId: interaction.user.id,
     targetId: targetUser.id,
-    playerName: `${playerRow.firstName} ${playerRow.lastName}`,
+    playerName: fullPlayerName,
     playerPosition: playerRow.position,
     playerId: playerRow.playerId,
     attributes: attrs,
     page: 0,
+    usedCoreAttrs,
   };
   aupSessions.set(sKey, session);
 
   // ── Direct path: attribute was specified in the slash command ────────────────
   if (presetAttr) {
-    const coreSet = getCoreAttributes(season);
     const isCore  = coreSet.has(presetAttr as any);
     const base    = isCore ? rules.coreAttrCost : rules.nonCoreAttrCost;
     const current = lookupAttrValue(attrs, presetAttr);
+
+    // Core attributes: 1 point per purchase only
+    if (isCore && presetQuantity > 1) {
+      await interaction.editReply({ content: `❌ Core attributes (⭐) can only be upgraded **1 point at a time**.` });
+      aupSessions.delete(sKey);
+      return;
+    }
+
+    // Core attributes: one upgrade per attribute per player per season
+    if (isCore && usedCoreAttrs.has(presetAttr)) {
+      await interaction.editReply({
+        content: `❌ **${presetAttr}** has already been upgraded for **${fullPlayerName}** this season. Choose a different core attribute.`,
+      });
+      aupSessions.delete(sKey);
+      return;
+    }
 
     if (current >= 99) {
       await interaction.editReply({ content: `❌ **${presetAttr}** is already at max (99) — cannot upgrade further.` });
@@ -379,8 +439,8 @@ export async function startAttributeUp(interaction: ChatInputCommandInteraction)
   }
 
   // ── Interactive path: no attribute specified — show paginated browser ─────────
-  const embed    = buildAttrPage(session, rules);
-  const dropdown = buildAttrDropdown(session, rules, sKey);
+  const embed    = buildAttrPage(session, rules, coreSet);
+  const dropdown = buildAttrDropdown(session, rules, sKey, coreSet);
   const navRow   = buildNavRow(session, sKey);
 
   await interaction.editReply({ embeds: [embed], components: [dropdown, navRow] });
@@ -400,12 +460,13 @@ export async function handleAupPageNav(interaction: ButtonInteraction, direction
     ? Math.max(0, session.page - 1)
     : Math.min(totalPages - 1, session.page + 1);
 
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const rules  = await getSeasonRules(season);
+  const season  = await getOrCreateActiveSeason(interaction.guildId!);
+  const rules   = await getSeasonRules(season);
+  const coreSet = getCoreAttributes(season);
 
   await interaction.update({
-    embeds: [buildAttrPage(session, rules)],
-    components: [buildAttrDropdown(session, rules, sKey), buildNavRow(session, sKey)],
+    embeds: [buildAttrPage(session, rules, coreSet)],
+    components: [buildAttrDropdown(session, rules, sKey, coreSet), buildNavRow(session, sKey)],
   });
 }
 
@@ -430,6 +491,15 @@ export async function handleAupSel(interaction: StringSelectMenuInteraction): Pr
 
   if (cost === null) {
     await interaction.reply({ content: `❌ **${attrName}** is already at max (${current}/99) — cannot upgrade further.`, ephemeral: true });
+    return;
+  }
+
+  // Core attributes: one upgrade per attribute per player per season
+  if (isCore && (session.usedCoreAttrs ?? new Set()).has(attrName)) {
+    await interaction.reply({
+      content: `❌ **${attrName}** ⭐ has already been upgraded for **${session.playerName}** this season. Choose a different core attribute.`,
+      ephemeral: true,
+    });
     return;
   }
 
@@ -487,11 +557,12 @@ export async function handleAupBack(interaction: ButtonInteraction): Promise<voi
     return;
   }
   session.selectedAttr = undefined;
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const rules  = await getSeasonRules(season);
+  const season  = await getOrCreateActiveSeason(interaction.guildId!);
+  const rules   = await getSeasonRules(season);
+  const coreSet = getCoreAttributes(season);
   await interaction.update({
-    embeds: [buildAttrPage(session, rules)],
-    components: [buildAttrDropdown(session, rules, sKey), buildNavRow(session, sKey)],
+    embeds: [buildAttrPage(session, rules, coreSet)],
+    components: [buildAttrDropdown(session, rules, sKey, coreSet), buildNavRow(session, sKey)],
   });
 }
 
@@ -532,6 +603,29 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
     const cap     = isCore ? rules.coreAttrCap     : rules.nonCoreAttrCap;
     const used    = isCore ? stats.coreAttrPurchased : stats.nonCoreAttrPurchased;
     const remaining = cap - used;
+
+    // Re-validate core attribute rules (race-condition / stale session protection)
+    if (isCore && qty > 1) {
+      await interaction.editReply({
+        embeds: [errorEmbed("Core Attribute Limit", "Core attributes ⭐ can only be upgraded **1 point at a time**.")],
+        components: [],
+      });
+      aupSessions.delete(sKey);
+      return;
+    }
+
+    if (isCore) {
+      const coreSet        = getCoreAttributes(season);
+      const freshUsedCores = await loadUsedCoreAttrs(season.id, session.playerName, session.playerPosition, coreSet);
+      if (freshUsedCores.has(session.selectedAttr)) {
+        await interaction.editReply({
+          embeds: [errorEmbed("Already Upgraded", `**${session.selectedAttr}** ⭐ has already been upgraded for **${session.playerName}** this season.`)],
+          components: [],
+        });
+        aupSessions.delete(sKey);
+        return;
+      }
+    }
 
     if (user.balance < cost) {
       await interaction.editReply({
