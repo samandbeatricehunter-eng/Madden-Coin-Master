@@ -38,9 +38,8 @@ export const data = new SlashCommandBuilder()
       .setDescription("Target development tier")
       .setRequired(true)
       .addChoices(
-        { name: "Star (from Normal)",          value: "Star"      },
-        { name: "Superstar (from Star)",       value: "Superstar" },
-        { name: "X-Factor (from Superstar)",   value: "X-Factor"  },
+        { name: "Star (from Normal)",     value: "Star"      },
+        { name: "Superstar (from Star)",  value: "Superstar" },
       ),
   )
   .addUserOption(opt =>
