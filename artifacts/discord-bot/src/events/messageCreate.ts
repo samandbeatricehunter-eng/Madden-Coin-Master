@@ -12,8 +12,8 @@ import {
 } from "@workspace/db";
 import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
-  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules, PRIMARY_GUILD_ID,
-  getGuildChannel, CHANNEL_KEYS,
+  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules, getCoreAttributes,
+  PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
 import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -153,17 +153,18 @@ async function getCachedAdminIds(): Promise<string[]> {
 
 // ── League-wide context (standings + stats + roster quality) ──────────────────
 
-let leagueCtxCache: { text: string; at: number } | null = null;
+const leagueCtxCacheMap = new Map<string, { text: string; at: number }>();
 
 const DEV_LABEL: Record<number, string> = {
   0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
 };
 
-async function fetchLeagueContext(): Promise<string> {
-  if (leagueCtxCache && Date.now() - leagueCtxCache.at < CACHE_TTL) return leagueCtxCache.text;
+async function fetchLeagueContext(guildId: string): Promise<string> {
+  const cached = leagueCtxCacheMap.get(guildId);
+  if (cached && Date.now() - cached.at < CACHE_TTL) return cached.text;
 
   try {
-    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
+    const season = await getOrCreateActiveSeason(guildId);
 
     const [records, teamStats, rosterAvgs, topRosterPlayers, allPlayerStats] = await Promise.all([
 
@@ -303,7 +304,7 @@ async function fetchLeagueContext(): Promise<string> {
     }
 
     const text = lines.join("\n");
-    leagueCtxCache = { text, at: Date.now() };
+    leagueCtxCacheMap.set(guildId, { text, at: Date.now() });
     return text;
 
   } catch (err) {
@@ -317,13 +318,14 @@ async function fetchLeagueContext(): Promise<string> {
 // amounts, and each user-owned team's current stats with pre-evaluated tiers.
 // Cached for CACHE_TTL like the league context.
 
-let eosCtxCache: { text: string; at: number } | null = null;
+const eosCtxCacheMap = new Map<string, { text: string; at: number }>();
 
-async function fetchEosPayoutContext(): Promise<string> {
-  if (eosCtxCache && Date.now() - eosCtxCache.at < CACHE_TTL) return eosCtxCache.text;
+async function fetchEosPayoutContext(guildId: string): Promise<string> {
+  const cached = eosCtxCacheMap.get(guildId);
+  if (cached && Date.now() - cached.at < CACHE_TTL) return cached.text;
 
   try {
-    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
+    const season = await getOrCreateActiveSeason(guildId);
 
     const [allTierRows, payoutConfig, teamStats, playerAggs] = await Promise.all([
       db.select().from(seasonStatTierConfigsTable)
@@ -441,7 +443,7 @@ async function fetchEosPayoutContext(): Promise<string> {
     }
 
     const text = lines.join("\n");
-    eosCtxCache = { text, at: Date.now() };
+    eosCtxCacheMap.set(guildId, { text, at: Date.now() });
     return text;
 
   } catch (err) {
@@ -456,7 +458,7 @@ const DEV_TRAIT_LABEL: Record<number, string> = {
   0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
 };
 
-async function fetchUserStats(discordId: string) {
+async function fetchUserStats(discordId: string, guildId: string = PRIMARY_GUILD_ID) {
   const [user] = await db
     .select({
       team:             usersTable.team,
@@ -477,7 +479,7 @@ async function fetchUserStats(discordId: string) {
   let playerStatLines: string[] = [];
 
   try {
-    const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
+    const season = await getOrCreateActiveSeason(guildId);
 
     // Season record
     const [rec] = await db
@@ -869,17 +871,22 @@ type SeasonRulesShape = {
   ageResetsCap: number;
   ageResetCost: number;
   legacyCoreAttrMode?: boolean;
+  coreAttrList?: string[] | null;
 };
 
 function buildPricingBlock(rules: SeasonRulesShape): string {
   const coreAttrRule = rules.legacyCoreAttrMode
     ? "multi-point purchases · repeat upgrades per player allowed"
     : "max 1 point per purchase · once per attribute per player per season";
+  const coreAttrListLine = rules.coreAttrList?.length
+    ? `Current core attributes this season: ${rules.coreAttrList.join(", ")}`
+    : `Current core attributes this season: Speed, Acceleration, Change of Direction, Agility, Strength, Jumping, Throwing Power, Awareness, Stamina (default list — no overrides set)`;
   return [
     `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.maxLegendsInInventory} legends in inventory · max ${LIMITS.legendsAllTime} all-time`,
     `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · Legends + Custom combined max ${LIMITS.maxLegendsPlusCustomPlayers}/season`,
     `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season · ${coreAttrRule}`,
-    `Non-Core Attribute Upgrade: ${rules.nonCoreAttrCost} coins/point · max ${rules.nonCoreAttrCap} points/season`,
+    coreAttrListLine,
+    `Non-Core Attribute Upgrade: ${rules.nonCoreAttrCost} coins/point · max ${rules.nonCoreAttrCap} points/season · any attribute NOT in the core list above`,
     `Dev Upgrade: ${rules.devUpsCost} coins · max ${rules.devUpsCap}/season`,
     `Age Reset: ${rules.ageResetCost} coins · max ${rules.ageResetsCap}/season`,
   ].join("\n");
@@ -1717,27 +1724,29 @@ export async function execute(message: Message): Promise<void> {
     playerStatLines: [] as string[],
   });
 
+  const guildId = message.guildId!;
   const [isAdmin, userStats, rulesText, adminIds, leagueContext, eosContext, mentionedUsersData] = await Promise.all([
-    isAdminUser(message.author.id, message.guildId!).catch(() => false),
-    fetchUserStats(message.author.id).catch(defaultStats),
-    getCachedRules(message.guildId!).catch(() => "(rules unavailable)"),
+    isAdminUser(message.author.id, guildId).catch(() => false),
+    fetchUserStats(message.author.id, guildId).catch(defaultStats),
+    getCachedRules(guildId).catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
-    fetchLeagueContext().catch(() => "(league context unavailable)"),
-    fetchEosPayoutContext().catch(() => ""),
+    fetchLeagueContext(guildId).catch(() => "(league context unavailable)"),
+    fetchEosPayoutContext(guildId).catch(() => ""),
     Promise.all(otherMentioned.map(async u => {
       const member = message.mentions.members?.get(u.id) ?? message.guild?.members.cache.get(u.id);
       const displayName = member?.displayName ?? u.username;
-      const stats = await fetchUserStats(u.id).catch(defaultStats);
+      const stats = await fetchUserStats(u.id, guildId).catch(defaultStats);
       return { displayName, stats } as MentionedUser;
     })),
   ]);
 
   // Fetch live season rules + server settings so the AI always quotes commish-configured caps
   const [activeSeason, guildSettings] = await Promise.all([
-    getOrCreateActiveSeason(message.guildId!).catch(() => null),
-    getServerSettings(message.guildId!).catch(() => null),
+    getOrCreateActiveSeason(guildId).catch(() => null),
+    getServerSettings(guildId).catch(() => null),
   ]);
   const seasonRules   = activeSeason ? await getSeasonRules(activeSeason).catch(() => null) : null;
+  const coreAttrSet   = activeSeason ? getCoreAttributes(activeSeason) : null;
   const pricingBlock  = buildPricingBlock({
     coreAttrCost:       seasonRules?.coreAttrCost    ?? COSTS.core_attribute,
     coreAttrCap:        seasonRules?.coreAttrCap     ?? LIMITS.coreAttrPerSeason,
@@ -1748,6 +1757,7 @@ export async function execute(message: Message): Promise<void> {
     ageResetsCap:       seasonRules?.ageResetsCap     ?? LIMITS.ageResetsPerSeason,
     ageResetCost:       seasonRules?.ageResetCost     ?? COSTS.age_reset,
     legacyCoreAttrMode: guildSettings?.legacyCoreAttrMode ?? false,
+    coreAttrList:       coreAttrSet ? [...coreAttrSet] : null,
   });
 
   // Build the system prompt with current escalation level for this user
