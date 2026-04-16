@@ -3,7 +3,7 @@ import {
   EmbedBuilder, Colors, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
+import { usersTable, globalUserRecordsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { deleteAllUserData, findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
@@ -84,6 +84,11 @@ export async function executeAddNewUser(interaction: ChatInputCommandInteraction
     balance: startingBalance,
     totalLegendPurchases: 0,
   });
+
+  // Seed global record entry so this user is visible across all guilds
+  await db.insert(globalUserRecordsTable)
+    .values({ discordId: newUser.id, wins: 0, losses: 0, ties: 0 })
+    .onConflictDoNothing();
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)

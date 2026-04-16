@@ -18,6 +18,24 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { NFL_DIVISION_MAP } from "../lib/constants.js";
+import { DEV_EMOJI } from "../lib/dev-trait.js";
+
+// Division display order within each conference: East → North → South → West
+const DIV_ORDER: Record<string, number> = { East: 0, North: 1, South: 2, West: 3 };
+
+function sortByDivision<T extends { fullName: string; nickName: string }>(teams: T[]): T[] {
+  return [...teams].sort((a, b) => {
+    const divA = NFL_DIVISION_MAP[a.nickName]?.division
+      ?? NFL_DIVISION_MAP[a.fullName.split(" ").pop() ?? ""]?.division;
+    const divB = NFL_DIVISION_MAP[b.nickName]?.division
+      ?? NFL_DIVISION_MAP[b.fullName.split(" ").pop() ?? ""]?.division;
+    const orderA = DIV_ORDER[divA ?? ""] ?? 99;
+    const orderB = DIV_ORDER[divB ?? ""] ?? 99;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.fullName.localeCompare(b.fullName);
+  });
+}
 import { requireMcaEnabled } from "../lib/server-settings.js";
 import { CORE_ATTRIBUTES } from "../lib/constants.js";
 
@@ -28,9 +46,9 @@ function portraitUrl(playerId: number): string {
 
 // ── Dev trait display ────────────────────────────────────────────────────────
 function devLabel(trait: number): string {
-  if (trait >= 3) return "⚡ X-Factor";
-  if (trait === 2) return "★★★ Superstar";
-  if (trait === 1) return "★★ Star";
+  if (trait >= 3) return `${DEV_EMOJI.xfactor} X-Factor`;
+  if (trait === 2) return `${DEV_EMOJI.superstar} Superstar`;
+  if (trait === 1) return `${DEV_EMOJI.star} Star`;
   return "Normal";
 }
 
@@ -199,7 +217,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       new StringSelectMenuBuilder()
         .setCustomId(`viewps_team:${season.id}:nfc`)
         .setPlaceholder("🏈 Select NFC Team…")
-        .addOptions(nfcTeams.slice(0, 25).map(t =>
+        .addOptions(sortByDivision(nfcTeams).slice(0, 25).map(t =>
           new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.teamId)),
         )),
     ));
@@ -209,7 +227,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       new StringSelectMenuBuilder()
         .setCustomId(`viewps_team:${season.id}:afc`)
         .setPlaceholder("🏈 Select AFC Team…")
-        .addOptions(afcTeams.slice(0, 25).map(t =>
+        .addOptions(sortByDivision(afcTeams).slice(0, 25).map(t =>
           new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.teamId)),
         )),
     ));

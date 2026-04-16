@@ -35,8 +35,8 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  await requireMcaEnabled(interaction);
   await interaction.deferReply();
+  if (!await requireMcaEnabled(interaction)) return;
 
   const guildId = interaction.guildId!;
   const seasonId = await getRosterSeasonId(guildId);

@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  usersTable, franchiseMcaTeamsTable, franchiseRostersTable,
+  usersTable, globalUserRecordsTable, franchiseMcaTeamsTable, franchiseRostersTable,
   playerSeasonStatsTable, seasonsTable, waitlistTable,
 } from "@workspace/db";
 import { eq, and, or, ilike, isNotNull, sql } from "drizzle-orm";
@@ -334,6 +334,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       totalLegendPurchases: 0,
       ...(eaId ? { eaId } : {}),
     });
+
+    // Seed global record entry so this user is visible across all guilds
+    await db.insert(globalUserRecordsTable)
+      .values({ discordId: targetUser.id, wins: 0, losses: 0, ties: 0 })
+      .onConflictDoNothing();
   } else {
     await db.update(usersTable)
       .set({

@@ -56,7 +56,7 @@ export const data = new SlashCommandBuilder()
         { name: "📈 Top 10 — Point Differential (Team)",             value: "point_diff"      },
       )
     )
-    .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel (admin only)").setRequired(false))
+    .addBooleanOption(o => o.setName("public").setDescription("Post the result publicly in this channel?").setRequired(false))
   )
 
   // ── teamStats ──────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ export const data = new SlashCommandBuilder()
     )
     .addUserOption(o => o.setName("user").setDescription("(User Team mode) Look up by Discord user").setRequired(false))
     .addStringOption(o => o.setName("team").setDescription("(User Team mode) Look up by team name").setRequired(false).setAutocomplete(true))
-    .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel (admin only)").setRequired(false))
+    .addBooleanOption(o => o.setName("public").setDescription("Post the result publicly in this channel?").setRequired(false))
   )
 
   // ── store ──────────────────────────────────────────────────────────────────

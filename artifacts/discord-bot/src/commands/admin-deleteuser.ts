@@ -22,7 +22,6 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable,
-  userSavingsTable,
   inventoryTable,
   seasonStatsTable,
   userRecordsTable,
@@ -48,7 +47,7 @@ import { eq, or, and, inArray } from "drizzle-orm";
 
 // ── Category labels shown in the preview / summary ─────────────────────────────
 const CATEGORY_LABELS: Record<string, string> = {
-  economy:        "Economy (savings, inventory, season limits, transactions, purchases)",
+  economy:        "Economy (inventory, season limits, transactions, purchases)",
   records:        "Records (season records, H2H records, game log)",
   wagers:         "Wagers",
   trade_listings: "Trade listings (trade block & ISO)",
@@ -150,8 +149,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .where(eq(seasonsTable.guildId, guildId));
 
   if (flags.economy) {
-    // userSavingsTable is intentionally global — no guild filter
-    await del("savings",      db.delete(userSavingsTable)     .where(eq(userSavingsTable.discordId, discordId)).returning({ id: userSavingsTable.discordId }));
+    // userSavingsTable and globalUserRecordsTable are global — preserved intentionally
     await del("inventory",    db.delete(inventoryTable)       .where(and(eq(inventoryTable.discordId,        discordId), inArray(inventoryTable.seasonId,   guildSeasonIds))).returning({ id: inventoryTable.id }));
     await del("season_stats", db.delete(seasonStatsTable)     .where(and(eq(seasonStatsTable.discordId,      discordId), inArray(seasonStatsTable.seasonId, guildSeasonIds))).returning({ id: seasonStatsTable.id }));
     await del("transactions", db.delete(coinTransactionsTable).where(and(eq(coinTransactionsTable.discordId, discordId), eq(coinTransactionsTable.guildId, guildId))).returning({ id: coinTransactionsTable.id }));
