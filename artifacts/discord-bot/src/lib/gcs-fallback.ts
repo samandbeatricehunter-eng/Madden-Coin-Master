@@ -70,21 +70,35 @@ export async function getSeasonRecords(seasonId: number): Promise<{
     .where(eq(userRecordsTable.seasonId, seasonId));
 
   if (dbRows.length > 0) {
+    // Load all-time SB data from usersTable — this is the canonical source
+    // (set by admins via all_time_sb_wins and auto-incremented by playoff automation).
+    // userRecordsTable.superbowlWins may be 0 if the admin used the all_time field,
+    // so we take whichever is higher to ensure PR matches /userstats.
+    const userRows = await db.select({
+      discordId:              usersTable.discordId,
+      allTimeSuperbowlWins:   usersTable.allTimeSuperbowlWins,
+      allTimeSuperbowlLosses: usersTable.allTimeSuperbowlLosses,
+    }).from(usersTable);
+    const sbMap = new Map(userRows.map(u => [u.discordId, u]));
+
     return {
       source: "db",
-      records: dbRows.map(r => ({
-        discordId:         r.discordId,
-        discordUsername:   r.discordUsername,
-        team:              r.team ?? null,
-        wins:              r.wins,
-        losses:            r.losses,
-        pointDifferential: r.pointDifferential,
-        playoffWins:       r.playoffWins,
-        playoffLosses:     r.playoffLosses,
-        superbowlWins:     r.superbowlWins,
-        superbowlLosses:   r.superbowlLosses,
-        fromGcs:           false,
-      })),
+      records: dbRows.map(r => {
+        const sb = sbMap.get(r.discordId);
+        return {
+          discordId:         r.discordId,
+          discordUsername:   r.discordUsername,
+          team:              r.team ?? null,
+          wins:              r.wins,
+          losses:            r.losses,
+          pointDifferential: r.pointDifferential,
+          playoffWins:       r.playoffWins,
+          playoffLosses:     r.playoffLosses,
+          superbowlWins:     Math.max(r.superbowlWins, sb?.allTimeSuperbowlWins   ?? 0),
+          superbowlLosses:   Math.max(r.superbowlLosses, sb?.allTimeSuperbowlLosses ?? 0),
+          fromGcs:           false,
+        };
+      }),
     };
   }
 
@@ -160,6 +174,15 @@ export async function getAllTimeRecords(): Promise<{
   const dbRows = await db.select().from(userRecordsTable);
 
   if (dbRows.length > 0) {
+    // Load all-time SB data from usersTable — this is the canonical source
+    // matching what /userstats displays (allTimeSuperbowlWins / allTimeSuperbowlLosses).
+    const userRows = await db.select({
+      discordId:              usersTable.discordId,
+      allTimeSuperbowlWins:   usersTable.allTimeSuperbowlWins,
+      allTimeSuperbowlLosses: usersTable.allTimeSuperbowlLosses,
+    }).from(usersTable);
+    const sbMap = new Map(userRows.map(u => [u.discordId, u]));
+
     // Aggregate across seasons in JS (same as records.ts today)
     const agg = new Map<string, GcsSeasonRecord>();
     for (const r of dbRows) {
@@ -190,6 +213,17 @@ export async function getAllTimeRecords(): Promise<{
         });
       }
     }
+
+    // Overlay usersTable all-time SB values — take whichever is higher so that
+    // admins who used all_time_sb_wins (usersTable) see their data in /alltimepr.
+    for (const [id, rec] of agg) {
+      const sb = sbMap.get(id);
+      if (sb) {
+        rec.superbowlWins   = Math.max(rec.superbowlWins,   sb.allTimeSuperbowlWins   ?? 0);
+        rec.superbowlLosses = Math.max(rec.superbowlLosses, sb.allTimeSuperbowlLosses ?? 0);
+      }
+    }
+
     return { source: "db", records: [...agg.values()] };
   }
 
