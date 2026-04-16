@@ -87,18 +87,30 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   /** Resolve the best GCS logo path for a team name. Priority:
    *  1. Guild-specific override (franchiseMcaTeamsTable.logoUrl)
    *  2. Global default via MCA teamId (ensures correct numeric ID)
-   *  3. Global default via name match in defaultTeamLogosTable (handles missing MCA data)
+   *  3. Exact name/nickname match in defaultTeamLogosTable
+   *  4. Partial: stored name contains a team's nickname (handles abbreviations)
    */
   function resolveLogoPath(teamName: string): string | null {
     const key = teamName.toLowerCase().trim();
+
     const mca = mcaByName.get(key);
-    if (mca?.logoUrl) return mca.logoUrl;                  // guild override
+    if (mca?.logoUrl) return mca.logoUrl;
     if (mca?.teamId != null) {
       const global = defaultById.get(mca.teamId);
       if (global) return global;
-      return globalLogoPath(mca.teamId);                   // constructed path
+      return globalLogoPath(mca.teamId);
     }
-    return defaultByName.get(key) ?? null;                 // name-matched global default
+
+    // Exact match against fullName or nickName
+    const exact = defaultByName.get(key);
+    if (exact) return exact;
+
+    // Partial fallback: find a default logo whose nickName appears in the stored team name
+    for (const d of defaultLogos) {
+      if (key.includes(d.nickName.toLowerCase().trim())) return d.logoUrl;
+    }
+
+    return null;
   }
 
   // ── User team → discordId map (for mention tags) ──────────────────────────
