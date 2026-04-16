@@ -700,10 +700,20 @@ export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
   userName:   text("user_name").notNull(),       // Madden in-game username or "CPU"
   isHuman:    boolean("is_human").notNull().default(false),
   discordId:  text("discord_id"),               // null if CPU team or no match
+  logoUrl:    text("logo_url"),                 // guild-specific team logo URL (overrides default)
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),
 }));
+
+// Global default team logos — one row per NFL teamId, shared across all guilds as fallback
+export const defaultTeamLogosTable = pgTable("default_team_logos", {
+  teamId:    integer("team_id").primaryKey(),   // Madden teamId (consistent across franchises)
+  fullName:  text("full_name").notNull(),       // "Las Vegas Raiders" (for display/autocomplete)
+  nickName:  text("nick_name").notNull(),       // "Raiders"
+  logoUrl:   text("logo_url").notNull(),        // publicly accessible URL to the team image
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
 
 // ── Configurable payout amounts (key → integer coin value, per-guild) ────────
 // NOTE: key is the primary key to match the existing production schema.

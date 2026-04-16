@@ -23,6 +23,10 @@ import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } 
 import { autoPayoutPlayoffGotw, purgeChannel } from "../lib/gotw-helpers.js";
 import { triggerWeekAdvanceTweets } from "../lib/league-twitter.js";
 import { checkAndNotifyWaitlist } from "./waitlist.js";
+import { buildMatchupBanner } from "../lib/matchup-image.js";
+import { generateMatchupBreakdown } from "../lib/matchup-ai-breakdown.js";
+import { defaultTeamLogosTable } from "@workspace/db";
+import { AttachmentBuilder } from "discord.js";
 
 const MATCHUP_CATEGORY_ID  = "1478427821666861272";
 const ANNOUNCE_CHANNEL_ID  = "1484689142515368188"; // general announcements / rule-change channel
@@ -303,14 +307,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // This handles Madden CFM custom names like "G-Men", "Bolts", "Vikes", etc.
       const mcaTeams = await db.select({
         fullName:  franchiseMcaTeamsTable.fullName,
+        nickName:  franchiseMcaTeamsTable.nickName,
         discordId: franchiseMcaTeamsTable.discordId,
+        teamId:    franchiseMcaTeamsTable.teamId,
+        logoUrl:   franchiseMcaTeamsTable.logoUrl,
       }).from(franchiseMcaTeamsTable)
         .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
 
       const teamToDiscord = new Map<string, string>();
+      const teamToMca     = new Map<string, typeof mcaTeams[0]>();
       for (const t of mcaTeams) {
         if (t.discordId) teamToDiscord.set(t.fullName.toLowerCase().trim(), t.discordId);
+        teamToMca.set(t.fullName.toLowerCase().trim(), t);
       }
+
+      // Pre-fetch global default logos so we can resolve per-team fallbacks
+      const globalDefaults = await db.select().from(defaultTeamLogosTable);
+      const defaultLogoMap = new Map(globalDefaults.map(d => [d.teamId, d.logoUrl]));
 
       // Fallback: also include usersTable.team mappings for any teams not in
       // the MCA teams table yet (e.g. before /franchiseupdate has been run).
@@ -382,6 +395,49 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             awayTeamName: awayProper,
             homeTeamName: homeProper,
           });
+
+          // ── Matchup banner + AI breakdown (fire-and-forget so they don't block advance) ──
+          (async () => {
+            try {
+              const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim());
+              const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim());
+
+              // Resolve logos: guild-specific > global default > null
+              const awayLogo = awayMca?.logoUrl ?? (awayMca?.teamId ? defaultLogoMap.get(awayMca.teamId) : null) ?? null;
+              const homeLogo = homeMca?.logoUrl ?? (homeMca?.teamId ? defaultLogoMap.get(homeMca.teamId) : null) ?? null;
+
+              if (awayLogo && homeLogo) {
+                const bannerBuf = await buildMatchupBanner(awayLogo, homeLogo);
+                const attachment = new AttachmentBuilder(bannerBuf, { name: "matchup-banner.png" });
+                const bannerEmbed = new EmbedBuilder()
+                  .setColor(0x7c3aed)
+                  .setTitle(`${awayProper} @ ${homeProper}`)
+                  .setDescription(`<@${awayDiscordId}> **vs** <@${homeDiscordId}>`)
+                  .setImage("attachment://matchup-banner.png")
+                  .setFooter({ text: channelWeekDisplayLabel });
+                await newChannel.send({ embeds: [bannerEmbed], files: [attachment] });
+              }
+
+              // AI breakdown (always attempts regardless of logo availability)
+              if (awayMca?.teamId && homeMca?.teamId) {
+                const breakdownEmbed = await generateMatchupBreakdown({
+                  seasonId:       season.id,
+                  awayTeamName:   awayProper,
+                  homeTeamName:   homeProper,
+                  awayTeamId:     awayMca.teamId,
+                  homeTeamId:     homeMca.teamId,
+                  awayDiscordId,
+                  homeDiscordId,
+                  awayDiscordTag: `<@${awayDiscordId}>`,
+                  homeDiscordTag: `<@${homeDiscordId}>`,
+                  weekLabel:      channelWeekDisplayLabel,
+                });
+                await newChannel.send({ embeds: [breakdownEmbed] });
+              }
+            } catch (postErr) {
+              console.error(`[advanceweek] Failed to post banner/breakdown for ${chanName}:`, postErr);
+            }
+          })();
 
           created++;
         } catch (chErr) {
