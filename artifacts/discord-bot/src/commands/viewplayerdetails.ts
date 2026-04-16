@@ -5,9 +5,10 @@ import {
   EmbedBuilder,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { franchiseRostersTable, seasonsTable } from "@workspace/db";
-import { eq, and, asc, desc, ilike, or } from "drizzle-orm";
+import { franchiseRostersTable, seasonsTable, purchasesTable } from "@workspace/db";
+import { eq, and, asc, desc, ilike, or, ne } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
+import { CORE_ATTRIBUTES } from "../lib/constants.js";
 
 // ── Portrait URL ───────────────────────────────────────────────────────────────
 function portraitUrl(playerId: number): string {
@@ -355,6 +356,21 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   const attrs = (player.attributes ?? {}) as Record<string, unknown>;
 
+  // Load attribute upgrades used on this player this season
+  const attrPurchases = await db
+    .select({ attributeName: purchasesTable.attributeName })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.seasonId, season.id),
+      eq(purchasesTable.playerName, `${player.firstName} ${player.lastName}`.trim()),
+      eq(purchasesTable.playerPosition, player.position ?? ""),
+      eq(purchasesTable.purchaseType, "attribute"),
+      ne(purchasesTable.status, "refunded"),
+    ));
+  const usedCoreAttrs = attrPurchases
+    .map(p => p.attributeName)
+    .filter((n): n is string => !!n && CORE_ATTRIBUTES.has(n));
+
   // ── Bio ────────────────────────────────────────────────────────────────────
   const heightRaw = attrs["height"] ?? attrs["heightInches"];
   const weightRaw = attrs["weight"];
@@ -395,6 +411,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .setThumbnail(portraitUrl(player.playerId))
     .setFooter({ text: `Season ${season.seasonNumber} • Player ID ${player.playerId}${player.archetypeAbbrev ? ` • EA: ${player.archetypeAbbrev}` : ""}` })
     .setTimestamp();
+
+  // ── Core attribute upgrades used this season ───────────────────────────────
+  if (usedCoreAttrs.length > 0) {
+    embed.addFields({
+      name: "⭐ Core Upgrades Used This Season",
+      value: usedCoreAttrs.join(", "),
+      inline: false,
+    });
+  }
 
   // ── Position-specific key attribute groups ─────────────────────────────────
   const groups = POSITION_GROUPS[player.position] ?? [

@@ -14,11 +14,12 @@ import {
 import { db } from "@workspace/db";
 import {
   franchiseMcaTeamsTable, franchiseRostersTable,
-  playerSeasonStatsTable, playerXpLogTable, seasonsTable,
+  playerSeasonStatsTable, playerXpLogTable, seasonsTable, purchasesTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { requireMcaEnabled } from "../lib/server-settings.js";
+import { CORE_ATTRIBUTES } from "../lib/constants.js";
 
 // ── EA portrait CDN ─────────────────────────────────────────────────────────
 function portraitUrl(playerId: number): string {
@@ -326,6 +327,20 @@ export async function handlePlayerSelect(interaction: StringSelectMenuInteractio
     db.select({ seasonNumber: seasonsTable.seasonNumber }).from(seasonsTable).where(eq(seasonsTable.id, seasonId)).limit(1),
   ]);
 
+  // Fetch attribute upgrades used on this player this season (after we have roster data)
+  const roster0 = rosterRows[0];
+  const attrPurchases = roster0
+    ? await db.select({ attributeName: purchasesTable.attributeName })
+        .from(purchasesTable)
+        .where(and(
+          eq(purchasesTable.seasonId, seasonId),
+          eq(purchasesTable.playerName, `${roster0.firstName} ${roster0.lastName}`.trim()),
+          eq(purchasesTable.playerPosition, roster0.position ?? ""),
+          eq(purchasesTable.purchaseType, "attribute"),
+          ne(purchasesTable.status, "refunded"),
+        ))
+    : [];
+
   const roster   = rosterRows[0];
   const stats    = statRows[0];
   const xpEntry  = xpRows[0];
@@ -438,6 +453,18 @@ export async function handlePlayerSelect(interaction: StringSelectMenuInteractio
     if (xpEntry) xpParts.push(`+${xpEntry.xpEarned.toLocaleString()} XP (Week ${xpEntry.weekNum ?? "?"})`);
     if (xpTotalLive != null) xpParts.push(`**${xpTotalLive.toLocaleString()} total**`);
     embed.addFields({ name: "⚡ Experience", value: xpParts.join(" · "), inline: false });
+  }
+
+  // Core attribute upgrades used this season on this player
+  const usedCoreAttrs = attrPurchases
+    .map(p => p.attributeName)
+    .filter((n): n is string => !!n && CORE_ATTRIBUTES.has(n));
+  if (usedCoreAttrs.length > 0) {
+    embed.addFields({
+      name: "⭐ Core Upgrades Used This Season",
+      value: usedCoreAttrs.join(", "),
+      inline: false,
+    });
   }
 
   // Attribute ratings — position-specific groups

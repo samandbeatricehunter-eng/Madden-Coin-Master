@@ -14,8 +14,9 @@ import {
   franchiseScheduleTable, seasonsTable,
   pendingEosPayoutsTable, seasonStatTierConfigsTable,
   pendingChannelPayoutsTable,
-  statPaddingViolationsTable,
+  statPaddingViolationsTable, seasonStatsTable,
 } from "@workspace/db";
+import { CORE_ATTRIBUTES } from "../lib/constants.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
 import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-cocomm-actions.js";
 import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
@@ -513,6 +514,21 @@ async function handleButton(interaction: ButtonInteraction) {
       `Refund: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`,
       interaction.guildId!, interaction.user.id);
 
+    if (purchase.purchaseType === "attribute" && purchase.attributeName && purchase.seasonId) {
+      const qtyMatch = purchase.notes?.match(/qty:(\d+)/);
+      const attrQty  = qtyMatch ? parseInt(qtyMatch[1]!, 10) : 1;
+      const isCore   = CORE_ATTRIBUTES.has(purchase.attributeName);
+      if (isCore) {
+        await db.update(seasonStatsTable)
+          .set({ coreAttrPurchased: sql`GREATEST(0, ${seasonStatsTable.coreAttrPurchased} - ${attrQty})` })
+          .where(and(eq(seasonStatsTable.discordId, userId!), eq(seasonStatsTable.seasonId, purchase.seasonId)));
+      } else {
+        await db.update(seasonStatsTable)
+          .set({ nonCoreAttrPurchased: sql`GREATEST(0, ${seasonStatsTable.nonCoreAttrPurchased} - ${attrQty})` })
+          .where(and(eq(seasonStatsTable.discordId, userId!), eq(seasonStatsTable.seasonId, purchase.seasonId)));
+      }
+    }
+
     if (purchaseType === "legend") {
       await db.update(usersTable)
         .set({ totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`, updatedAt: new Date() })
@@ -566,6 +582,21 @@ async function handleButton(interaction: ButtonInteraction) {
     await logTransaction(buyerId, purchase.cost, "purchase_refund",
       `Draft revoked: ${purchase.purchaseType.replace(/_/g, " ")}${purchase.playerName ? ` — ${purchase.playerName}` : ""}`,
       interaction.guildId!, interaction.user.id);
+
+    if (purchase.purchaseType === "attribute" && purchase.attributeName && purchase.seasonId) {
+      const qtyMatch = purchase.notes?.match(/qty:(\d+)/);
+      const attrQty  = qtyMatch ? parseInt(qtyMatch[1]!, 10) : 1;
+      const isCore   = CORE_ATTRIBUTES.has(purchase.attributeName);
+      if (isCore) {
+        await db.update(seasonStatsTable)
+          .set({ coreAttrPurchased: sql`GREATEST(0, ${seasonStatsTable.coreAttrPurchased} - ${attrQty})` })
+          .where(and(eq(seasonStatsTable.discordId, buyerId), eq(seasonStatsTable.seasonId, purchase.seasonId)));
+      } else {
+        await db.update(seasonStatsTable)
+          .set({ nonCoreAttrPurchased: sql`GREATEST(0, ${seasonStatsTable.nonCoreAttrPurchased} - ${attrQty})` })
+          .where(and(eq(seasonStatsTable.discordId, buyerId), eq(seasonStatsTable.seasonId, purchase.seasonId)));
+      }
+    }
 
     // Restore legend to store if applicable
     if (purchase.purchaseType === "legend" && purchase.legendId) {
