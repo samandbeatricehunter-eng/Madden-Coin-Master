@@ -19,6 +19,7 @@ import { COSTS, LIMITS } from "../lib/constants.js";
 import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
 import { handleTwitterReply } from "../lib/league-twitter.js";
+import { getServerSettings } from "../lib/server-settings.js";
 
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 
@@ -867,13 +868,17 @@ type SeasonRulesShape = {
   devUpsCost: number;
   ageResetsCap: number;
   ageResetCost: number;
+  legacyCoreAttrMode?: boolean;
 };
 
 function buildPricingBlock(rules: SeasonRulesShape): string {
+  const coreAttrRule = rules.legacyCoreAttrMode
+    ? "multi-point purchases · repeat upgrades per player allowed"
+    : "max 1 point per purchase · once per attribute per player per season";
   return [
     `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.maxLegendsInInventory} legends in inventory · max ${LIMITS.legendsAllTime} all-time`,
     `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · Legends + Custom combined max ${LIMITS.maxLegendsPlusCustomPlayers}/season`,
-    `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season`,
+    `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season · ${coreAttrRule}`,
     `Non-Core Attribute Upgrade: ${rules.nonCoreAttrCost} coins/point · max ${rules.nonCoreAttrCap} points/season`,
     `Dev Upgrade: ${rules.devUpsCost} coins · max ${rules.devUpsCap}/season`,
     `Age Reset: ${rules.ageResetCost} coins · max ${rules.ageResetsCap}/season`,
@@ -1727,18 +1732,22 @@ export async function execute(message: Message): Promise<void> {
     })),
   ]);
 
-  // Fetch live season rules so the AI always quotes commish-configured caps
-  const activeSeason  = await getOrCreateActiveSeason(message.guildId!).catch(() => null);
+  // Fetch live season rules + server settings so the AI always quotes commish-configured caps
+  const [activeSeason, guildSettings] = await Promise.all([
+    getOrCreateActiveSeason(message.guildId!).catch(() => null),
+    getServerSettings(message.guildId!).catch(() => null),
+  ]);
   const seasonRules   = activeSeason ? await getSeasonRules(activeSeason).catch(() => null) : null;
-  const pricingBlock  = buildPricingBlock(seasonRules ?? {
-    coreAttrCost:    COSTS.core_attribute,
-    coreAttrCap:     LIMITS.coreAttrPerSeason,
-    nonCoreAttrCost: COSTS.non_core_attribute,
-    nonCoreAttrCap:  LIMITS.nonCoreAttrPerSeason,
-    devUpsCap:       LIMITS.devUpsPerSeason,
-    devUpsCost:      COSTS.dev_up,
-    ageResetsCap:    LIMITS.ageResetsPerSeason,
-    ageResetCost:    COSTS.age_reset,
+  const pricingBlock  = buildPricingBlock({
+    coreAttrCost:       seasonRules?.coreAttrCost    ?? COSTS.core_attribute,
+    coreAttrCap:        seasonRules?.coreAttrCap     ?? LIMITS.coreAttrPerSeason,
+    nonCoreAttrCost:    seasonRules?.nonCoreAttrCost ?? COSTS.non_core_attribute,
+    nonCoreAttrCap:     seasonRules?.nonCoreAttrCap  ?? LIMITS.nonCoreAttrPerSeason,
+    devUpsCap:          seasonRules?.devUpsCap        ?? LIMITS.devUpsPerSeason,
+    devUpsCost:         seasonRules?.devUpsCost       ?? COSTS.dev_up,
+    ageResetsCap:       seasonRules?.ageResetsCap     ?? LIMITS.ageResetsPerSeason,
+    ageResetCost:       seasonRules?.ageResetCost     ?? COSTS.age_reset,
+    legacyCoreAttrMode: guildSettings?.legacyCoreAttrMode ?? false,
   });
 
   // Build the system prompt with current escalation level for this user

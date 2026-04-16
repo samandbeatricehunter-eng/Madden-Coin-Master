@@ -2,8 +2,15 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   PermissionFlagsBits,
 } from "discord.js";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
 import { getServerSettings, type ServerSettings } from "../lib/server-settings.js";
+
+type SeasonRulesShape = {
+  coreAttrCost: number;
+  coreAttrCap: number;
+  nonCoreAttrCost: number;
+  nonCoreAttrCap: number;
+};
 
 export const data = new SlashCommandBuilder()
   .setName("help")
@@ -24,7 +31,10 @@ export const data = new SlashCommandBuilder()
   );
 
 // ── Shared embed builder (also used by init_post_help button to seed #help-and-faqs) ──
-export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBuilder {
+export function buildMemberHelpEmbed(
+  settings?: ServerSettings | null,
+  rules?: SeasonRulesShape | null,
+): EmbedBuilder {
   const economy       = settings?.coinEconomy           ?? true;
   const legends       = economy && (settings?.legendsEnabled            ?? true);
   const custom        = economy && (settings?.customSuperstarsEnabled   ?? true);
@@ -33,6 +43,15 @@ export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBui
   const ageResets     = economy && (settings?.ageResetsEnabled          ?? true);
   const wagers        = economy && (settings?.wagerEnabled              ?? true);
   const tradeBlock    = settings?.tradeBlockEnabled ?? true;
+  const legacyMode    = settings?.legacyCoreAttrMode ?? false;
+
+  const coreAttrCost    = rules?.coreAttrCost    ?? 25;
+  const coreAttrCap     = rules?.coreAttrCap     ?? 5;
+  const nonCoreAttrCost = rules?.nonCoreAttrCost ?? 10;
+  const nonCoreAttrCap  = rules?.nonCoreAttrCap  ?? 15;
+  const coreAttrRule    = legacyMode
+    ? "multi-point purchases, repeat upgrades allowed"
+    : "1 pt per attribute per player per season";
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
@@ -50,7 +69,7 @@ export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBui
   // Store — commands section (only if economy is on and at least one item type is enabled)
   const storeCommands: string[] = ["`/viewstore` — Browse available items with current season prices"];
   if (legends)      storeCommands.push("`/buy-legend [name]` — Buy a legend player");
-  if (attrUpgrades) storeCommands.push("`/buy-attribute [player] [attr] [qty]` — Boost a player attribute *(core ⭐: 1 pt max, once per attr per player/season)*");
+  if (attrUpgrades) storeCommands.push(`\`/buy-attribute [player] [attr] [qty]\` — Boost a player attribute *(core ⭐: ${coreAttrRule})*`);
   if (devUpgrades)  storeCommands.push("`/buy-devup [player] [type]` — Dev upgrade (Star / Superstar / X-Factor)");
   if (ageResets)    storeCommands.push("`/buy-agereset [player]` — Reset a player's age");
   if (custom)       storeCommands.push("`/buy-customplayer` — Build and buy a custom player slot");
@@ -61,8 +80,8 @@ export function buildMemberHelpEmbed(settings?: ServerSettings | null): EmbedBui
 
     const pricingLines: string[] = [];
     if (legends)      pricingLines.push("• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory");
-    if (attrUpgrades) pricingLines.push("• **Core Attributes** ⭐ — 25 coins/pt | 1 pt per attribute per player per season");
-    if (attrUpgrades) pricingLines.push("• **Non-Core Attributes** — 10 coins/pt | up to 10 pts per purchase");
+    if (attrUpgrades) pricingLines.push(`• **Core Attributes** ⭐ — ${coreAttrCost} coins/pt | ${coreAttrRule} | ${coreAttrCap}/season total`);
+    if (attrUpgrades) pricingLines.push(`• **Non-Core Attributes** — ${nonCoreAttrCost} coins/pt | up to 10 pts per purchase | ${nonCoreAttrCap}/season total`);
     if (devUpgrades)  pricingLines.push("• **Dev Upgrades** — 250 coins | 2/season");
     if (ageResets)    pricingLines.push("• **Age Resets** — 250 coins | 2/season");
     if (custom)       pricingLines.push("• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins");
@@ -151,6 +170,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const isDbAdmin      = await isAdminUser(interaction.user.id, interaction.guildId!);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
 
+    // ── Fetch guild-specific settings + season rules ──────────────────────────
+    const [settings, activeSeason] = await Promise.all([
+      getServerSettings(interaction.guildId!).catch(() => null),
+      getOrCreateActiveSeason(interaction.guildId!).catch(() => null),
+    ]);
+    const rules = activeSeason ? await getSeasonRules(activeSeason).catch(() => null) : null;
+
     // ── Non-admins always get member help ─────────────────────────────────────
     if (!isAdmin) {
       if (section === "admin") {
@@ -160,15 +186,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         });
         return;
       }
-      const settings = await getServerSettings(interaction.guildId!).catch(() => null);
-      await interaction.reply({ embeds: [buildMemberHelpEmbed(settings)], ephemeral });
+      await interaction.reply({ embeds: [buildMemberHelpEmbed(settings, rules)], ephemeral });
       return;
     }
 
     // ── Admin chose member section ─────────────────────────────────────────────
     if (section === "member") {
-      const settings = await getServerSettings(interaction.guildId!).catch(() => null);
-      await interaction.reply({ embeds: [buildMemberHelpEmbed(settings)], ephemeral });
+      await interaction.reply({ embeds: [buildMemberHelpEmbed(settings, rules)], ephemeral });
       return;
     }
 

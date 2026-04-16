@@ -41,7 +41,7 @@ import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
-  getGuildChannel, CHANNEL_KEYS,
+  getSeasonRules, getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { buildPageResponse } from "../commands/viewtradeblock.js";
 import { formatPickInfo, getMyTeam, sendOfferState, buildSendOfferPage } from "../commands/tradeblock.js";
@@ -2027,7 +2027,9 @@ async function handleButton(interaction: ButtonInteraction) {
       const path = await import("path");
       const ASSETS_DIR = path.join(process.cwd(), "artifacts/discord-bot/assets");
 
-      const helpMsg = await tc.send({ embeds: [buildMemberHelpEmbed(settings)] });
+      const faqSeason = await getOrCreateActiveSeason(interaction.guildId!).catch(() => null);
+      const faqRules  = faqSeason ? await getSeasonRules(faqSeason).catch(() => null) : null;
+      const helpMsg = await tc.send({ embeds: [buildMemberHelpEmbed(settings, faqRules)] });
       await helpMsg.pin().catch(() => null);
 
       const clipGuides: Array<{ caption: string; file: string }> = [
