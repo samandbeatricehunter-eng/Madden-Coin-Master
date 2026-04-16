@@ -9,6 +9,7 @@ import {
   gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable,
   playerSeasonStatsTable, playerStatWeekProcessedTable,
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
+  defaultTeamLogosTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason, addBalance, logTransaction, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
@@ -339,14 +340,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Build team name (lowercase) → discordId map using the MCA teams table,
       // which already has alias-resolved discordIds from the franchise import.
       // This handles Madden CFM custom names like "G-Men", "Bolts", "Vikes", etc.
-      const mcaTeams = await db.select({
-        fullName:  franchiseMcaTeamsTable.fullName,
-        nickName:  franchiseMcaTeamsTable.nickName,
-        discordId: franchiseMcaTeamsTable.discordId,
-        teamId:    franchiseMcaTeamsTable.teamId,
-        logoUrl:   franchiseMcaTeamsTable.logoUrl,
-      }).from(franchiseMcaTeamsTable)
-        .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+      const [mcaTeams, defaultLogos] = await Promise.all([
+        db.select({
+          fullName:  franchiseMcaTeamsTable.fullName,
+          nickName:  franchiseMcaTeamsTable.nickName,
+          discordId: franchiseMcaTeamsTable.discordId,
+          teamId:    franchiseMcaTeamsTable.teamId,
+          logoUrl:   franchiseMcaTeamsTable.logoUrl,
+        }).from(franchiseMcaTeamsTable)
+          .where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
+        db.select({
+          teamId:   defaultTeamLogosTable.teamId,
+          fullName: defaultTeamLogosTable.fullName,
+          nickName: defaultTeamLogosTable.nickName,
+          logoUrl:  defaultTeamLogosTable.logoUrl,
+        }).from(defaultTeamLogosTable),
+      ]);
+
+      // Logo resolution maps (same logic as /adminrepostbanners)
+      const defaultById   = new Map<number, string>();
+      const defaultByName = new Map<string, string>();
+      for (const d of defaultLogos) {
+        defaultById.set(d.teamId, d.logoUrl);
+        defaultByName.set(d.fullName.toLowerCase().trim(), d.logoUrl);
+        defaultByName.set(d.nickName.toLowerCase().trim(), d.logoUrl);
+      }
 
       const teamToDiscord = new Map<string, string>();
       const teamToMca     = new Map<string, typeof mcaTeams[0]>();
@@ -448,26 +466,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           (async () => {
             try {
               // Primary: match by schedule team name string; fallback: match by discordId
-              // (handles cases where schedule stores a name variant not in teamToMca)
               const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim()) ?? discordIdToMca.get(awayDiscordId);
               const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim()) ?? discordIdToMca.get(homeDiscordId);
 
-              // ── Banner: guild-specific GCS path > global default GCS path ──────
-              const awayGcsPath = awayMca?.logoUrl ?? (awayMca?.teamId ? globalLogoPath(awayMca.teamId) : null);
-              const homeGcsPath = homeMca?.logoUrl ?? (homeMca?.teamId ? globalLogoPath(homeMca.teamId) : null);
-
-              if (!awayMca || !homeMca) {
-                console.warn(`[advanceweek] No MCA entry for ${g.awayTeamName} or ${g.homeTeamName} — skipping banner/breakdown`);
+              // ── Logo path resolution: 5-tier fallback (same as /adminrepostbanners) ──
+              function resolveLogoPath(teamName: string, mca: typeof mcaTeams[0] | undefined): string | null {
+                const key = teamName.toLowerCase().trim();
+                // 1. Guild-specific logo override on the MCA record
+                if (mca?.logoUrl) return mca.logoUrl;
+                // 2. defaultTeamLogosTable match by MCA teamId (works for standard 0–31 range)
+                if (mca?.teamId != null) {
+                  const byId = defaultById.get(mca.teamId);
+                  if (byId) return byId;
+                }
+                // 3. Exact name / nickname match in defaultTeamLogosTable
+                const exact = defaultByName.get(key);
+                if (exact) return exact;
+                // 4. Partial: stored name contains a known nickname
+                for (const d of defaultLogos) {
+                  if (key.includes(d.nickName.toLowerCase().trim())) return d.logoUrl;
+                }
+                // 5. Last resort: constructed GCS path — only valid for standard teamIds 0–31
+                if (mca?.teamId != null && mca.teamId <= 31) return globalLogoPath(mca.teamId);
+                return null;
               }
 
+              const awayGcsPath = resolveLogoPath(awayProper, awayMca);
+              const homeGcsPath = resolveLogoPath(homeProper, homeMca);
+
+              if (!awayMca || !homeMca) {
+                console.warn(`[advanceweek] No MCA entry for ${g.awayTeamName} or ${g.homeTeamName} — skipping breakdown`);
+              }
+
+              // ── Banner FIRST ──────────────────────────────────────────────────
               if (awayGcsPath && homeGcsPath) {
                 const [awayBuf, homeBuf] = await Promise.all([
                   resolveLogoBuf(awayGcsPath),
                   resolveLogoBuf(homeGcsPath),
                 ]);
-                if (!awayBuf || !homeBuf) {
-                  console.warn(`[advanceweek] Logo not found in GCS for ${chanName} — upload logos via /adminteamlogo setglobal`);
-                }
                 if (awayBuf && homeBuf) {
                   const bannerBuf  = await buildMatchupBanner(awayBuf, homeBuf);
                   const attachment = new AttachmentBuilder(bannerBuf, { name: "matchup-banner.png" });
@@ -478,10 +514,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     .setImage("attachment://matchup-banner.png")
                     .setFooter({ text: channelWeekDisplayLabel });
                   await newChannel.send({ embeds: [bannerEmbed], files: [attachment] });
+                } else {
+                  console.warn(`[advanceweek] Logo buffer null for ${chanName} — paths: ${awayGcsPath} / ${homeGcsPath}`);
                 }
+              } else {
+                console.warn(`[advanceweek] No logo path resolved for ${chanName} — upload logos via /adminteamlogo setglobal`);
               }
 
-              // ── AI breakdown (always, regardless of logo availability) ────────
+              // ── AI breakdown AFTER banner ─────────────────────────────────────
               if (awayMca?.teamId && homeMca?.teamId) {
                 const breakdownEmbed = await generateMatchupBreakdown({
                   seasonId:       season.id,
