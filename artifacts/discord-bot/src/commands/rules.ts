@@ -91,10 +91,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
     const ruleText = rules[ruleNumber - 1]!;
+    const descText = `**${ruleNumber}.** ${ruleText}`.slice(0, 4096);
     const embed = new EmbedBuilder()
       .setColor(meta.color)
       .setTitle(`${meta.title} — Rule #${ruleNumber}`)
-      .setDescription(`**${ruleNumber}.** ${ruleText}`)
+      .setDescription(descText)
       .setFooter({ text: `REC League • Rule ${ruleNumber} of ${rules.length} in this section` })
       .setTimestamp();
 
@@ -107,18 +108,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Full section ─────────────────────────────────────────────────────────────
-  const rulesText = rules.map((r, i) => `**${i + 1}.** ${r}`).join("\n") || "_No rules have been set for this section yet._";
-  const embed = new EmbedBuilder()
-    .setColor(meta.color)
-    .setTitle(meta.title)
-    .setDescription(rulesText)
-    .setFooter({ text: "REC League • Use /rules to view any section" })
-    .setTimestamp();
+  // ── Full section — chunked into multiple embeds if needed (4096 char limit) ──
+  const LIMIT = 4096;
+  const lines  = rules.length
+    ? rules.map((r, i) => `**${i + 1}.** ${r}`)
+    : ["_No rules have been set for this section yet._"];
+
+  // Pack lines into pages where each page stays under LIMIT
+  const pages: string[] = [];
+  let current = "";
+  for (const line of lines) {
+    const appended = current ? `${current}\n${line}` : line;
+    if (appended.length > LIMIT) {
+      if (current) pages.push(current);
+      // If a single line itself exceeds LIMIT, hard-truncate it
+      current = line.length > LIMIT ? line.slice(0, LIMIT) : line;
+    } else {
+      current = appended;
+    }
+  }
+  if (current) pages.push(current);
+
+  const embeds = pages.map((page, idx) => {
+    const b = new EmbedBuilder()
+      .setColor(meta.color)
+      .setDescription(page)
+      .setTimestamp();
+    if (idx === 0) b.setTitle(meta.title);
+    else b.setTitle(`${meta.title} (cont.)`);
+    if (idx === pages.length - 1)
+      b.setFooter({ text: "REC League • Use /rules to view any section" });
+    return b;
+  });
 
   await interaction.reply({
     content:         leadIn,
-    embeds:          [embed],
+    embeds,
     ephemeral,
     allowedMentions,
   });
