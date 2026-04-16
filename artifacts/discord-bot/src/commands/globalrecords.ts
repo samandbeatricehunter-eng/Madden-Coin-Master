@@ -3,7 +3,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, userSavingsTable, userRecordsTable } from "@workspace/db";
-import { eq, and, isNotNull, inArray, sum } from "drizzle-orm";
+import { eq, and, isNotNull, ne, inArray, sum, max } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
   .setName("globalrecords")
@@ -15,12 +15,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const guildId = interaction.guildId!;
 
   // ── 1. Fetch all users in this guild that have a team linked ───────────────
-  const serverUsers = await db
+  // Exclude null AND empty-string teams at the DB level so unlinked users never appear.
+  const filteredUsers = await db
     .select({ discordId: usersTable.discordId, team: usersTable.team, serverWallet: usersTable.balance })
     .from(usersTable)
-    .where(and(eq(usersTable.guildId, guildId), isNotNull(usersTable.team)));
-
-  const filteredUsers = serverUsers.filter(u => u.team !== null && u.team !== "");
+    .where(and(
+      eq(usersTable.guildId, guildId),
+      isNotNull(usersTable.team),
+      ne(usersTable.team, ""),
+    ));
 
   if (filteredUsers.length === 0) {
     await interaction.editReply({ content: "📭 No linked teams found in this server yet." });
@@ -54,14 +57,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .from(userSavingsTable)
       .where(inArray(userSavingsTable.discordId, allIds)),
 
-    // All-time SB data from usersTable — canonical source matching /userstats
+    // All-time SB data from usersTable — MAX across all guilds per user
+    // (usersTable has one row per guild; a user in 2 guilds would otherwise
+    //  have the last row overwrite the first in a plain Map)
     db.select({
       discordId:              usersTable.discordId,
-      allTimeSuperbowlWins:   usersTable.allTimeSuperbowlWins,
-      allTimeSuperbowlLosses: usersTable.allTimeSuperbowlLosses,
+      allTimeSuperbowlWins:   max(usersTable.allTimeSuperbowlWins),
+      allTimeSuperbowlLosses: max(usersTable.allTimeSuperbowlLosses),
     })
       .from(usersTable)
-      .where(inArray(usersTable.discordId, allIds)),
+      .where(inArray(usersTable.discordId, allIds))
+      .groupBy(usersTable.discordId),
   ]);
 
   // ── 3. Build lookup maps ───────────────────────────────────────────────────
@@ -111,7 +117,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const serverWallet = serverMap.get(u.discordId)?.serverWallet ?? 0;
     const globalW      = globalWallet.get(u.discordId) ?? 0;
     const savings      = savingsMap.get(u.discordId) ?? 0;
-    const displayName  = displayNames.get(u.discordId) ?? u.team ?? `<@${u.discordId}>`;
+    const displayName  = displayNames.get(u.discordId) ?? u.team ?? "Unknown";
     const teamStr      = u.team ? ` — ${u.team}` : "";
 
     const postseasonParts = [
@@ -120,7 +126,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ].filter(Boolean).join("  ·  ");
 
     return [
-      `**#${i + 1} ${displayName}**${teamStr}`,
+      `**#${i + 1} ${displayName}** (<@${u.discordId}>)${teamStr}`,
       `┣ 🌐 **${gWins}W – ${gLosses}L** (${winPct} global)${postseasonParts ? `  ·  ${postseasonParts}` : ""}`,
       `┣ 💰 Server: **${serverWallet.toLocaleString()} 🪙**  ·  Global: **${globalW.toLocaleString()} 🪙**`,
       `┗ 🏦 Savings: **${savings.toLocaleString()} 🪙**`,
