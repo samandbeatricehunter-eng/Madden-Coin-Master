@@ -27,7 +27,11 @@ export const data = new SlashCommandBuilder()
       .setName("team")
       .setDescription("NFL team name")
       .setRequired(true)
-      .setAutocomplete(true)))
+      .setAutocomplete(true))
+    .addStringOption(o => o
+      .setName("ea_id")
+      .setDescription("Player's EA / PSN / Xbox gamertag used in CFM (optional)")
+      .setRequired(false)))
   .addSubcommand(sub => sub
     .setName("view")
     .setDescription("Show all current player → team assignments and any unlinked players"))
@@ -318,6 +322,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .where(and(eq(usersTable.discordId, targetUser.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
 
   const oldTeam = existing[0]?.team ?? null;
+  const eaId    = interaction.options.getString("ea_id")?.trim() ?? null;
 
   if (existing.length === 0) {
     await db.insert(usersTable).values({
@@ -327,10 +332,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       team:                 teamName,
       balance:              0,
       totalLegendPurchases: 0,
+      ...(eaId ? { eaId } : {}),
     });
   } else {
     await db.update(usersTable)
-      .set({ team: teamName, discordUsername: targetUser.username, updatedAt: new Date() })
+      .set({
+        team:            teamName,
+        discordUsername: targetUser.username,
+        updatedAt:       new Date(),
+        ...(eaId ? { eaId } : {}),
+      })
       .where(and(eq(usersTable.discordId, targetUser.id), eq(usersTable.guildId, interaction.guildId!)));
   }
 

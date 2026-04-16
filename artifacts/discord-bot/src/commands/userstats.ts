@@ -228,6 +228,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .addFields(
       { name: "Discord",               value: `<@${target.id}>`,                              inline: true },
       { name: "Team",                  value: user.team ?? "*Not set*",                        inline: true },
+      { name: "🎮 EA ID",             value: user.eaId ?? "*Not set*",                         inline: true },
       { name: "📅 Current Week",       value: weekDisplay,                                     inline: true },
       { name: "💰 Wallet",             value: `**${user.balance.toLocaleString()} coins**`,   inline: true },
       { name: "🏦 Savings",            value: `**${savingsBalance.toLocaleString()} coins**`, inline: true },

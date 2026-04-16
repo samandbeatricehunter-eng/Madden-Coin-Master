@@ -85,6 +85,10 @@ export const data = new SlashCommandBuilder()
       .setDescription("Have H2H win milestone bonuses already been paid out to this user before this bot?")
       .setRequired(false)
   )
+  // ── EA / Gamertag ──────────────────────────────────────────────────────────
+  .addStringOption(opt =>
+    opt.setName("ea_id").setDescription("Set player's EA / PSN / Xbox gamertag used in CFM").setRequired(false)
+  )
   // ── Season upgrade usage ───────────────────────────────────────────────────
   .addIntegerOption(opt =>
     opt.setName("core_attr_used").setDescription("Set core attribute points purchased this season (cap 16)").setRequired(false).setMinValue(0)
@@ -141,6 +145,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── Read all options ───────────────────────────────────────────────────────
+  const eaId             = interaction.options.getString("ea_id")?.trim() ?? null;
   const coins            = interaction.options.getInteger("coins");
   const legendTotal      = interaction.options.getInteger("legend_total");
   const wins             = interaction.options.getInteger("wins");
@@ -159,6 +164,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const ageResetsUsed    = interaction.options.getInteger("age_resets_used");
 
   const noFieldProvided =
+    eaId === null &&
     coins === null && legendTotal === null &&
     wins === null && losses === null && pointDiff === null &&
     playoffWins === null && playoffLosses === null &&
@@ -198,6 +204,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Update economy_users ───────────────────────────────────────────────────
   const userUpdates: Record<string, any> = { updatedAt: new Date() };
+  if (eaId !== null)        { userUpdates.eaId = eaId;                          changes.push(`🎮 **EA ID** → \`${eaId}\``); }
   if (coins !== null)       { userUpdates.balance = coins;                      changes.push(`💰 **Coins** → ${coins.toLocaleString()}`); }
   if (legendTotal !== null) { userUpdates.totalLegendPurchases = legendTotal;   changes.push(`🏆 **All-Time Legend Total** → ${legendTotal}`); }
   if (allTimeSbWins   !== null) { userUpdates.allTimeSuperbowlWins   = allTimeSbWins;   changes.push(`🏆 **All-Time SB Wins** → ${allTimeSbWins}`); }

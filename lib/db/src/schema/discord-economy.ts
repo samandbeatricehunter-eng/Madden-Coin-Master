@@ -42,6 +42,7 @@ export const usersTable = pgTable("economy_users", {
   // Playoff seeding for current season (set by admin when advancing to wildcard)
   playoffSeed: integer("playoff_seed"),         // 1–7 within their conference; null = not in playoffs
   playoffConference: text("playoff_conference"), // "NFC" | "AFC" | null
+  eaId: text("ea_id"),                                                    // EA/PSN/Xbox gamertag for CFM
   isAdmin: boolean("is_admin").notNull().default(false),
   botEscalationLevel: integer("bot_escalation_level").notNull().default(0), // persistent rudeness memory
   createdAt: timestamp("created_at").notNull().defaultNow(),

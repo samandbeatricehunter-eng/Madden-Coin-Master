@@ -29,10 +29,15 @@ export async function fetchImageBuffer(url: string): Promise<Buffer> {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/** Resize a logo to fill exactly one half of the banner (200×300). */
+/** Shrink a logo to fit within one half of the banner (200×300), preserving aspect ratio.
+ *  Empty space is transparent so the dark background layer shows through. */
 async function resizeHalf(buf: Buffer): Promise<Buffer> {
   return sharp(buf)
-    .resize(HALF_W, BANNER_H, { fit: "cover", position: "centre" })
+    .resize(HALF_W, BANNER_H, {
+      fit:        "contain",
+      position:   "centre",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
     .png()
     .toBuffer();
 }
