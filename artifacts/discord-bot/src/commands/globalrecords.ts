@@ -9,20 +9,19 @@ export const data = new SlashCommandBuilder()
   .setName("globalrecords")
   .setDescription("Leaderboard: every team's cross-server cumulative W/L, playoff, SB records, wallet, and savings");
 
+// Per-embed page size — kept small so each embed stays well under 6000 chars
+const PAGE_SIZE = 10;
+
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: false });
 
   const guildId = interaction.guildId!;
 
   // ── 1. Fetch ALL linked users across every guild (global ranking pool) ───────
-  // A user counts as "linked" if they have a non-empty team in at least one guild.
   const allLinkedRows = await db
     .select({ discordId: usersTable.discordId })
     .from(usersTable)
-    .where(and(
-      isNotNull(usersTable.team),
-      ne(usersTable.team, ""),
-    ))
+    .where(and(isNotNull(usersTable.team), ne(usersTable.team, "")))
     .groupBy(usersTable.discordId);
 
   const allGlobalIds = allLinkedRows.map(r => r.discordId);
@@ -32,12 +31,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── 2. Fetch this guild's linked users (for display & wallet) ────────────────
+  // ── 2. Fetch this guild's linked users ───────────────────────────────────────
   const thisGuildUsers = await db
     .select({
-      discordId:     usersTable.discordId,
-      team:          usersTable.team,
-      serverWallet:  usersTable.balance,
+      discordId:    usersTable.discordId,
+      team:         usersTable.team,
+      serverWallet: usersTable.balance,
     })
     .from(usersTable)
     .where(and(
@@ -51,12 +50,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const thisGuildIds  = thisGuildUsers.map(u => u.discordId);
-  const thisGuildSet  = new Set(thisGuildIds);
+  const thisGuildIds = thisGuildUsers.map(u => u.discordId);
 
-  // ── 3. Parallel fetches for global data ─────────────────────────────────────
+  // ── 3. Parallel fetches ──────────────────────────────────────────────────────
   const [globalRecordAgg, allServerBalances, savingsRows, sbRows] = await Promise.all([
-    // Aggregate W/L/PD/playoff across ALL seasons and ALL guilds — global pool
     db.select({
       discordId:     userRecordsTable.discordId,
       totalWins:     sum(userRecordsTable.wins),
@@ -69,7 +66,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .where(inArray(userRecordsTable.discordId, allGlobalIds))
       .groupBy(userRecordsTable.discordId),
 
-    // Sum wallet across every guild (for this guild's users)
     db.select({ discordId: usersTable.discordId, totalBalance: sum(usersTable.balance) })
       .from(usersTable)
       .where(inArray(usersTable.discordId, thisGuildIds))
@@ -79,7 +75,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .from(userSavingsTable)
       .where(inArray(userSavingsTable.discordId, thisGuildIds)),
 
-    // All-time SB data — MAX across all guild rows to avoid double-counting
     db.select({
       discordId:              usersTable.discordId,
       allTimeSuperbowlWins:   max(usersTable.allTimeSuperbowlWins),
@@ -97,108 +92,93 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sbMap        = new Map(sbRows.map(r => [r.discordId, r]));
   const serverMap    = new Map(thisGuildUsers.map(u => [u.discordId, u]));
 
-  // ── 5. Build global sorted ranking (all linked users everywhere) ─────────────
-  // Sort: wins desc → losses asc → PD desc
-  const globalSorted = allGlobalIds.sort((a, b) => {
+  // ── 5. Sort all global IDs by wins → losses → PD ────────────────────────────
+  const globalSorted = [...allGlobalIds].sort((a, b) => {
     const recA = recordMap.get(a);
     const recB = recordMap.get(b);
-    const wA = Number(recA?.totalWins   ?? 0);
-    const wB = Number(recB?.totalWins   ?? 0);
+    const wA = Number(recA?.totalWins   ?? 0), wB = Number(recB?.totalWins   ?? 0);
     if (wB !== wA) return wB - wA;
-    const lA = Number(recA?.totalLosses ?? 0);
-    const lB = Number(recB?.totalLosses ?? 0);
+    const lA = Number(recA?.totalLosses ?? 0), lB = Number(recB?.totalLosses ?? 0);
     if (lA !== lB) return lA - lB;
-    const pdA = Number(recA?.totalPD ?? 0);
-    const pdB = Number(recB?.totalPD ?? 0);
-    return pdB - pdA;
+    return Number(recB?.totalPD ?? 0) - Number(recA?.totalPD ?? 0);
   });
 
-  // Assign each user their 1-based global rank
   const globalRankMap = new Map<string, number>();
   globalSorted.forEach((id, idx) => globalRankMap.set(id, idx + 1));
 
-  // ── 6. Filter to only this guild's users, sorted by their global rank ────────
+  // ── 6. Filter to this guild, sorted by global rank ───────────────────────────
   const displayUsers = thisGuildUsers
     .slice()
     .sort((a, b) => (globalRankMap.get(a.discordId) ?? 9999) - (globalRankMap.get(b.discordId) ?? 9999));
 
-  // ── 7. Fetch guild member display names ─────────────────────────────────────
+  // ── 7. Fetch display names ───────────────────────────────────────────────────
   const displayNames = new Map<string, string>();
   try {
     const members = await interaction.guild!.members.fetch({ user: thisGuildIds });
-    for (const [id, member] of members) {
-      displayNames.set(id, member.displayName);
-    }
-  } catch {
-    // Fallback to stored team name
-  }
+    for (const [id, member] of members) displayNames.set(id, member.displayName);
+  } catch { /* fallback to team name */ }
 
-  // ── 8. Build display lines ───────────────────────────────────────────────────
+  // ── 8. Build compact 2-line entries ─────────────────────────────────────────
   const lines = displayUsers.map(u => {
-    const globalRank = globalRankMap.get(u.discordId) ?? "?";
-    const rec        = recordMap.get(u.discordId);
-    const sb         = sbMap.get(u.discordId);
+    const rank = globalRankMap.get(u.discordId) ?? "?";
+    const rec  = recordMap.get(u.discordId);
+    const sb   = sbMap.get(u.discordId);
 
-    const gWins      = Number(rec?.totalWins     ?? 0);
-    const gLosses    = Number(rec?.totalLosses   ?? 0);
-    const gPD        = Number(rec?.totalPD       ?? 0);
-    const poWins     = Number(rec?.totalPOWins   ?? 0);
-    const poLosses   = Number(rec?.totalPOLosses ?? 0);
-    const sbWins     = sb?.allTimeSuperbowlWins   ?? 0;
-    const sbLosses   = sb?.allTimeSuperbowlLosses ?? 0;
+    const gW  = Number(rec?.totalWins     ?? 0);
+    const gL  = Number(rec?.totalLosses   ?? 0);
+    const gPD = Number(rec?.totalPD       ?? 0);
+    const poW = Number(rec?.totalPOWins   ?? 0);
+    const poL = Number(rec?.totalPOLosses ?? 0);
+    const sbW = sb?.allTimeSuperbowlWins   ?? 0;
+    const sbL = sb?.allTimeSuperbowlLosses ?? 0;
 
-    const gamesPlayed = gWins + gLosses;
-    const winPct      = gamesPlayed > 0
-      ? ((gWins / gamesPlayed) * 100).toFixed(1) + "%"
-      : "—";
-    const pdStr       = gPD >= 0 ? `+${gPD}` : `${gPD}`;
+    const pct      = gW + gL > 0 ? `${((gW / (gW + gL)) * 100).toFixed(0)}%` : "—";
+    const pdStr    = gPD >= 0 ? `+${gPD}` : `${gPD}`;
+    const savings  = (savingsMap.get(u.discordId) ?? 0).toLocaleString();
+    const wallet   = (serverMap.get(u.discordId)?.serverWallet ?? 0).toLocaleString();
+    const name     = displayNames.get(u.discordId) ?? u.team ?? "Unknown";
 
-    const serverWallet = serverMap.get(u.discordId)?.serverWallet ?? 0;
-    const globalW      = globalWallet.get(u.discordId) ?? 0;
-    const savings      = savingsMap.get(u.discordId) ?? 0;
-    const displayName  = displayNames.get(u.discordId) ?? u.team ?? "Unknown";
-    const teamStr      = u.team ? ` — ${u.team}` : "";
+    const extra: string[] = [];
+    if (poW + poL > 0) extra.push(`PO: ${poW}-${poL}`);
+    if (sbW + sbL > 0) extra.push(`🏆 ${sbW}-${sbL}`);
 
-    const postseasonParts = [
-      poWins + poLosses > 0 ? `PO: ${poWins}W-${poLosses}L` : "",
-      sbWins + sbLosses > 0 ? `🏆SB: ${sbWins}W-${sbLosses}L` : "",
-    ].filter(Boolean).join("  ·  ");
+    const row1 = `**#${rank} ${name}** — ${u.team ?? "?"} · **${gW}W-${gL}L** (${pct}) · PD: ${pdStr}${extra.length ? ` · ${extra.join(" · ")}` : ""}`;
+    const row2 = `> 💰 ${wallet}🪙 wallet · 🏦 ${savings}🪙 savings`;
 
-    return [
-      `**#${globalRank} ${displayName}** (<@${u.discordId}>)${teamStr}`,
-      `┣ 🌐 **${gWins}W – ${gLosses}L** (${winPct})  ·  📊 PD: **${pdStr}**${postseasonParts ? `  ·  ${postseasonParts}` : ""}`,
-      `┣ 💰 Server: **${serverWallet.toLocaleString()} 🪙**  ·  Global: **${globalW.toLocaleString()} 🪙**`,
-      `┗ 🏦 Savings: **${savings.toLocaleString()} 🪙**`,
-    ].join("\n");
+    return `${row1}\n${row2}`;
   });
 
-  // ── 9. Paginate at 8 users per embed ────────────────────────────────────────
-  const pageSize = 8;
-  const pages    = Math.ceil(lines.length / pageSize);
-  const embeds   = [];
+  // ── 9. Paginate and send — first page as editReply, rest as followUps ────────
+  const pages = Math.ceil(lines.length / PAGE_SIZE);
 
   for (let p = 0; p < pages; p++) {
-    const chunk = lines.slice(p * pageSize, (p + 1) * pageSize);
-    embeds.push(
-      new EmbedBuilder()
-        .setColor(Colors.Gold)
-        .setTitle(
-          p === 0
-            ? `🌐 Global Records — ${interaction.guild!.name} (${displayUsers.length} players)`
-            : "🌐 Global Records (continued)",
-        )
-        .setDescription(chunk.join("\n\n"))
-        .setFooter({
-          text: [
-            "Rank is global across all REC League servers",
-            "W/L + PD + playoff + SB totals across all seasons",
-            "Global Wallet = coins across all servers · Savings = cross-server account",
-            pages > 1 ? `Page ${p + 1}/${pages}` : "",
-          ].filter(Boolean).join("  ·  "),
-        })
-        .setTimestamp(),
-    );
-  }
+    const chunk = lines.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
+    const description = chunk.join("\n\n");
 
-  await interaction.editReply({ embeds: embeds.slice(0, 10) });
+    // Safety: trim description to 4000 chars if somehow still too long
+    const safeDesc = description.slice(0, 4000);
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle(
+        p === 0
+          ? `🌐 Global Records — ${interaction.guild!.name} (${displayUsers.length} players)`
+          : `🌐 Global Records — continued (${p + 1}/${pages})`,
+      )
+      .setDescription(safeDesc)
+      .setFooter({
+        text: [
+          "Ranked globally across all REC League servers",
+          "W/L · PD · PO · SB totals across every season",
+          pages > 1 ? `Page ${p + 1}/${pages}` : "",
+        ].filter(Boolean).join("  ·  "),
+      })
+      .setTimestamp();
+
+    if (p === 0) {
+      await interaction.editReply({ embeds: [embed] });
+    } else {
+      await interaction.followUp({ embeds: [embed] });
+    }
+  }
 }
