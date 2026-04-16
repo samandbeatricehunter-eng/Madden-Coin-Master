@@ -317,8 +317,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const teamToDiscord = new Map<string, string>();
       const teamToMca     = new Map<string, typeof mcaTeams[0]>();
       for (const t of mcaTeams) {
-        if (t.discordId) teamToDiscord.set(t.fullName.toLowerCase().trim(), t.discordId);
-        teamToMca.set(t.fullName.toLowerCase().trim(), t);
+        // Index by every name variant the game might send:
+        //   fullName  → "Las Vegas Raiders"
+        //   nickName  → "Raiders"
+        //   teamId    → "1" (numeric string, last resort)
+        const keys = [
+          t.fullName.toLowerCase().trim(),
+          t.nickName.toLowerCase().trim(),
+          String(t.teamId),
+        ];
+        for (const key of keys) {
+          if (!teamToMca.has(key)) teamToMca.set(key, t);
+          if (t.discordId && !teamToDiscord.has(key)) teamToDiscord.set(key, t.discordId);
+        }
       }
 
 

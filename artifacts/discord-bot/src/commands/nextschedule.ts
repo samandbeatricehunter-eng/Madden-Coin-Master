@@ -98,13 +98,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Build team → Discord mention map ────────────────────────────────────────
   const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team }).from(usersTable)
     .where(eq(usersTable.guildId, interaction.guildId!));
-  const mcaTeams = await db.select({ discordId: franchiseMcaTeamsTable.discordId, fullName: franchiseMcaTeamsTable.fullName })
-    .from(franchiseMcaTeamsTable)
+  const mcaTeams = await db.select({
+    discordId: franchiseMcaTeamsTable.discordId,
+    fullName:  franchiseMcaTeamsTable.fullName,
+    nickName:  franchiseMcaTeamsTable.nickName,
+  }).from(franchiseMcaTeamsTable)
     .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
 
   const teamToDiscord = new Map<string, string>();
   for (const t of mcaTeams) {
-    if (t.discordId) teamToDiscord.set(t.fullName.toLowerCase().trim(), t.discordId);
+    if (!t.discordId) continue;
+    // Index all name variants the game might send
+    for (const key of [t.fullName, t.nickName]) {
+      const k = key.toLowerCase().trim();
+      if (!teamToDiscord.has(k)) teamToDiscord.set(k, t.discordId);
+    }
   }
   for (const u of allUsers) {
     if (u.team && !teamToDiscord.has(u.team.toLowerCase().trim())) {
