@@ -108,10 +108,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── Parallel batch 2: inventory + purchases + transactions + interviews + customs + settings ─
   const [inventory, seasonStatsRows, seasonPurchases, transactions, interviews, customPlayers, permCustomPlayers, permanentLegendsFromVault, guildSettings] = await Promise.all([
     // Current-season non-permanent items only (dev ups, age resets, attributes, this season's legends/customs).
-    // Use OR isNull to catch legend rows that pre-date the legendCategory column being set at approval time.
+    // Legend/custom-player entries are stamped with the team name at creation time so they follow the
+    // franchise across ownership changes. Fall back to discordId for older rows that pre-date that stamp.
     db.select().from(inventoryTable)
       .where(and(
-        eq(inventoryTable.discordId, target.id),
+        teamName
+          ? or(eq(inventoryTable.team, teamName), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, target.id)))
+          : eq(inventoryTable.discordId, target.id),
         eq(inventoryTable.seasonId, season.id),
         or(isNull(inventoryTable.legendCategory), sql`${inventoryTable.legendCategory} != 'permanent'`),
       )),
@@ -145,7 +148,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .orderBy(desc(interviewRequestsTable.createdAt))
       .limit(5),
 
-    // Current season custom players (in builder / pending draft)
+    // Current season custom players — use team-based lookup when user has a team so inventory
+    // follows the franchise. Fall back to discordId for rows created before team stamping.
     db.select({
       id:           customPlayersTable.id,
       firstName:    customPlayersTable.firstName,
@@ -157,7 +161,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       status:       customPlayersTable.status,
     }).from(customPlayersTable)
       .where(and(
-        eq(customPlayersTable.discordId, target.id),
+        teamName
+          ? or(eq(customPlayersTable.teamName, teamName), and(isNull(customPlayersTable.teamName), eq(customPlayersTable.discordId, target.id)))
+          : eq(customPlayersTable.discordId, target.id),
         eq(customPlayersTable.seasonId, season.id),
       ))
       .orderBy(desc(customPlayersTable.createdAt)),

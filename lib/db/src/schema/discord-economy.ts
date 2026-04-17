@@ -901,6 +901,7 @@ export const customPlayersTable = pgTable("custom_players", {
   appearanceHead:       text("appearance_head"),           // "any" or a numeric string
   totalCost:            integer("total_cost").notNull().default(0),
   status:               text("status").notNull().default("pending"),   // pending|applied|refunded
+  teamName:             text("team_name"),                              // Franchise team name — set so inventory follows the team, not the user
   commissionerMessageId: text("commissioner_message_id"),
   commissionerChannelId: text("commissioner_channel_id"),
   appliedAt:            timestamp("applied_at"),

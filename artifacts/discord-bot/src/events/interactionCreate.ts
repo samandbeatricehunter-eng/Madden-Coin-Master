@@ -388,11 +388,21 @@ async function handleButton(interaction: ButtonInteraction) {
     await db.update(purchasesTable).set({ status: "approved", approvedAt: new Date() }).where(eq(purchasesTable.id, purchaseId));
 
     if (purchaseType === "legend" && purchase.legendId) {
+      // Look up the owner's current team so the inventory entry is stamped with the team,
+      // not the user — this makes the inventory follow the franchise across ownership changes.
+      const ownerTeamRows = await db
+        .select({ team: usersTable.team })
+        .from(usersTable)
+        .where(and(eq(usersTable.discordId, userId!), eq(usersTable.guildId, interaction.guildId!)))
+        .limit(1);
+      const ownerTeam = ownerTeamRows[0]?.team ?? null;
+
       await db.insert(inventoryTable).values({
         discordId: userId!, seasonId: purchase.seasonId, purchaseId: purchase.id,
         itemType: "legend", legendId: purchase.legendId,
         legendName: purchase.playerName, playerPosition: purchase.playerPosition,
         legendCategory: "current",
+        team: ownerTeam,
       });
       await db.update(legendsTable).set({ isAvailable: false }).where(eq(legendsTable.id, purchase.legendId));
     }

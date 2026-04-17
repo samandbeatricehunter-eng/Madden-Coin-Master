@@ -13,7 +13,7 @@ import { db } from "@workspace/db";
 import {
   customArchetypesTable, customPlayersTable, usersTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import {
   getSession, purgeExpiredSessions,
   customPlayerSessions,
@@ -730,10 +730,20 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
     );
   }
 
+  // Look up the owner's current team so the record is stamped with the franchise,
+  // not the individual user — inventory follows the team across ownership changes.
+  const [ownerRow] = await db
+    .select({ team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, session.userId), eq(usersTable.guildId, session.guildId)))
+    .limit(1);
+  const ownerTeam = ownerRow?.team ?? null;
+
   // Save to DB
   const [savedPlayer] = await db.insert(customPlayersTable).values({
     discordId:           session.userId,
     seasonId:            session.seasonId,
+    teamName:            ownerTeam,
     position:            session.position!,
     archetypeName:       session.archetypeName!,
     devTrait:            session.devTrait ?? "normal",
