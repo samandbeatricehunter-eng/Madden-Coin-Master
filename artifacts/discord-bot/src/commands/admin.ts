@@ -94,6 +94,21 @@ export const data = new SlashCommandBuilder()
     .addIntegerOption(o => o.setName("non_core_attr_used").setDescription("Set non-core attribute points purchased this season").setRequired(false).setMinValue(0))
     .addIntegerOption(o => o.setName("dev_ups_used").setDescription("Set dev upgrades purchased this season").setRequired(false).setMinValue(0))
     .addIntegerOption(o => o.setName("age_resets_used").setDescription("Set age resets purchased this season").setRequired(false).setMinValue(0))
+    .addStringOption(o => o.setName("ea_id").setDescription("EA / PSN / Xbox gamertag to add or update").setRequired(false))
+    .addStringOption(o => o.setName("ea_console").setDescription("Which console this EA ID is linked to").setRequired(false)
+      .addChoices(
+        { name: "🖥️ PC",   value: "pc"   },
+        { name: "🔵 PS5",  value: "ps5"  },
+        { name: "🟢 Xbox", value: "xbox" },
+      )
+    )
+    .addIntegerOption(o => o.setName("ea_slot").setDescription("Slot to store this EA ID in (1 = primary, 2 = secondary, 3 = tertiary)").setRequired(false)
+      .addChoices(
+        { name: "Slot 1 (primary)",   value: 1 },
+        { name: "Slot 2 (secondary)", value: 2 },
+        { name: "Slot 3 (tertiary)",  value: 3 },
+      )
+    )
   )
 
   // ── admin role management ──────────────────────────────────────────────────
