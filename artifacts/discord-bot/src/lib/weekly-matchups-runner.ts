@@ -136,20 +136,21 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
 
   let payoutSummary = "";
 
-  // ── Parallel: payout previous week voters + clear GOTW channel ─────────────
-  const [payout] = await Promise.all([
-    payoutWeekIndex != null && payoutWeekIndex >= 0
-      ? autoPayoutGotwVoters(client, guild, season.id, payoutWeekIndex, payoutWeekIndex + 1, isPlayoff)
-          .catch((err: unknown) => {
-            console.error("[weekly-runner] GOTW auto-payout error:", err);
-            return `❌ GOTW auto-payout failed`;
-          })
-      : Promise.resolve(""),
-    purgeGotwChannel(client, resolvedGuildId).catch((err: unknown) =>
-      console.error("[weekly-runner] GOTW purge error:", err),
-    ),
-  ]);
-  payoutSummary = payout ?? "";
+  // ── Step 1: Payout previous-week voters FIRST (reads poll voters from GOTW channel) ──
+  // IMPORTANT: payout must complete before we purge the GOTW channel, otherwise the
+  // Discord poll message (and its voter list) is deleted before we can read who voted.
+  if (payoutWeekIndex != null && payoutWeekIndex >= 0) {
+    payoutSummary = await autoPayoutGotwVoters(client, guild, season.id, payoutWeekIndex, payoutWeekIndex + 1, isPlayoff)
+      .catch((err: unknown) => {
+        console.error("[weekly-runner] GOTW auto-payout error:", err);
+        return `❌ GOTW auto-payout failed: ${err}`;
+      });
+  }
+
+  // ── Step 2: Clear GOTW channel AFTER voters have been read and paid ──────────
+  await purgeGotwChannel(client, resolvedGuildId).catch((err: unknown) =>
+    console.error("[weekly-runner] GOTW purge error:", err),
+  );
 
   // ── Fetch schedule for display week ────────────────────────────────────────
   const games = await db.select()
