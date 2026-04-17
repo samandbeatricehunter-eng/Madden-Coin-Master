@@ -16,6 +16,14 @@ async function checkAdmin(interaction: ChatInputCommandInteraction | Autocomplet
   return isAdminUser(interaction.user.id, interaction.guildId!);
 }
 
+// Build a WHERE clause that matches either by team (preferred) or by discordId fallback.
+// Used so team-owned inventory items are found even after a team changes Discord accounts.
+function ownerWhere(teamName: string | null, discordId: string) {
+  return teamName
+    ? or(eq(inventoryTable.team, teamName), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, discordId)))
+    : eq(inventoryTable.discordId, discordId);
+}
+
 export const data = new SlashCommandBuilder()
   .setName("admin-legendvault")
   .setDescription("Manage a user's current-season and permanent legend vault (admin only)")
@@ -66,42 +74,41 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub    = interaction.options.getSubcommand();
   const target = interaction.options.getUser("user", false);
   const season = await getOrCreateActiveSeason(interaction.guildId!);
+  const guildId = interaction.guildId!;
 
-  // "add_to_user_vault", "vault_view", and "move_in_inventory" all require a target user
-  if (!target && sub !== "remove_from_inventory") {
+  if (!target) {
     await interaction.editReply({ content: "❌ Please provide a **user** for this command." });
     return;
   }
-  // After the guard above, target is guaranteed non-null for all subs except vaultRemove
-  const t = target!;
+  const t = target;
+
+  // Resolve user's current team — all vault operations are team-scoped so the vault
+  // follows the FRANCHISE across Discord account changes, not the individual user.
+  const [userRow] = await db.select({ team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, guildId)))
+    .limit(1);
+  const teamName = userRow?.team ?? null;
 
   // ── ADD (retroactive) ───────────────────────────────────────────────────────
-  if (sub === "add_to_user_vault") {
-    const legendName = interaction.options.getString("legend_name", true).trim();
-    const position   = interaction.options.getString("position", true).trim().toUpperCase();
+  if (sub === "add") {
+    const legendName  = interaction.options.getString("legend_name", true).trim();
+    const position    = interaction.options.getString("position", true).trim().toUpperCase();
     const description = interaction.options.getString("description") ?? undefined;
 
-    // Guard: user must exist in the system
-    const userRows = await db.select().from(usersTable).where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
-    if (!userRows[0]) {
+    if (!userRow) {
       await interaction.editReply({ content: `❌ <@${t.id}> doesn't have an economy account yet. Add them first.` });
       return;
     }
 
-    // Resolve the team this user controls (permanent vault belongs to the franchise)
-    const teamName = userRows[0]!.team ?? null;
-
-    // Guard: permanent vault cap — count by team if available, else by discordId
-    const capWhere = and(
-      teamName
-        ? or(eq(inventoryTable.team, teamName), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, t.id)))
-        : eq(inventoryTable.discordId, t.id),
-      eq(inventoryTable.itemType, "legend"),
-      sql`${inventoryTable.legendCategory} = 'permanent'`,
-    );
+    // Guard: permanent vault cap — count by team (preferred) or discordId fallback
     const countRows = await db.select({ c: sql<string>`COUNT(*)` })
       .from(inventoryTable)
-      .where(capWhere);
+      .where(and(
+        ownerWhere(teamName, t.id),
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'permanent'`,
+      ));
     const permanentCount = parseInt(countRows[0]?.c ?? "0", 10);
     if (permanentCount >= PERMANENT_CAP) {
       await interaction.editReply({
@@ -117,10 +124,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (existing[0]) {
       legendId = existing[0].id;
-      // Make sure it's marked unavailable (it's being assigned to someone)
       await db.update(legendsTable).set({ isAvailable: false }).where(eq(legendsTable.id, legendId));
     } else {
-      // Create a new store entry for this legend
       const [created] = await db.insert(legendsTable).values({
         name: legendName,
         position,
@@ -131,20 +136,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       wasCreated = true;
     }
 
-    // Add to permanent vault — stamp with team so the vault follows the franchise
+    // Insert into permanent vault — always stamp team so vault follows the franchise
     await db.insert(inventoryTable).values({
       discordId:      t.id,
       seasonId:       season.id,
-      purchaseId:     0,            // 0 = admin-granted, no purchase record
+      purchaseId:     0,
       itemType:       "legend",
       legendId,
       legendName,
       playerPosition: position,
       legendCategory: "permanent",
-      ...(teamName ? { team: teamName } : {}),
+      team:           teamName,
     });
 
-    // Increment all-time legend purchase count
     await db.update(usersTable)
       .set({ totalLegendPurchases: sql`${usersTable.totalLegendPurchases} + 1`, updatedAt: new Date() })
       .where(eq(usersTable.discordId, t.id));
@@ -153,7 +157,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setColor(Colors.Gold)
       .setTitle("🏅 Legend Added to Permanent Vault")
       .addFields(
-        { name: "User",           value: `<@${t.id}>`, inline: true },
+        { name: "Team / User",    value: teamName ? `**${teamName}** (<@${t.id}>)` : `<@${t.id}>`, inline: true },
         { name: "Legend",         value: `**${legendName}** (${position})`, inline: true },
         { name: "Vault",          value: `${permanentCount + 1}/${PERMANENT_CAP}`, inline: true },
         { name: "Store Entry",    value: wasCreated ? `✅ Created (ID ${legendId})` : `Existing (ID ${legendId})` },
@@ -165,13 +169,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── VIEW ────────────────────────────────────────────────────────────────────
-  if (sub === "vault_view") {
-    // Resolve the user's team so we can show team-owned permanent items
-    const [viewUserRow] = await db.select({ team: usersTable.team }).from(usersTable)
-      .where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
-    const viewTeam = viewUserRow?.team ?? null;
-
-    // Current-season legends: always by discordId
+  if (sub === "view") {
+    // Current-season legends: always by discordId (current items are per-user)
     const currentItems = await db.select().from(inventoryTable)
       .where(and(
         eq(inventoryTable.discordId, t.id),
@@ -180,14 +179,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ))
       .orderBy(inventoryTable.addedAt);
 
-    // Permanent legends: by team (or discordId fallback for pre-team rows)
+    // Permanent legends: team-based (falls back to discordId for pre-team rows)
     const permanentItems = await db.select().from(inventoryTable)
       .where(and(
+        ownerWhere(teamName, t.id),
         eq(inventoryTable.itemType, "legend"),
         sql`${inventoryTable.legendCategory} = 'permanent'`,
-        viewTeam
-          ? or(eq(inventoryTable.team, viewTeam), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, t.id)))
-          : eq(inventoryTable.discordId, t.id),
       ))
       .orderBy(inventoryTable.addedAt);
 
@@ -198,7 +195,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Blurple)
-      .setTitle(`🏅 Legend Vault — ${t.username}${viewTeam ? ` (${viewTeam})` : ""}`)
+      .setTitle(`🏅 Legend Vault — ${t.username}${teamName ? ` (${teamName})` : ""}`)
       .addFields(
         { name: `⚡ Current Season (${currentItems.length})`,                    value: fmt(currentItems)   },
         { name: `🔒 Permanent Vault (${permanentItems.length}/${PERMANENT_CAP})`, value: fmt(permanentItems) },
@@ -210,17 +207,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── MOVE ────────────────────────────────────────────────────────────────────
-  if (sub === "move_in_inventory") {
+  if (sub === "move") {
     const itemId = interaction.options.getInteger("item_id", true);
     const to     = interaction.options.getString("to", true) as "current" | "permanent";
 
+    // Look up by team (preferred) or discordId fallback so team-owned items are
+    // found even when a team has changed Discord accounts since the item was created.
     const rows = await db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.id, itemId), eq(inventoryTable.discordId, t.id), eq(inventoryTable.itemType, "legend")))
+      .where(and(
+        eq(inventoryTable.id, itemId),
+        ownerWhere(teamName, t.id),
+        eq(inventoryTable.itemType, "legend"),
+      ))
       .limit(1);
     const item = rows[0];
 
     if (!item) {
-      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found for <@${t.id}>.` });
+      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found for <@${t.id}>${teamName ? ` (${teamName})` : ""}.` });
       return;
     }
 
@@ -229,44 +232,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Enforce permanent cap when moving to permanent (count by team if available)
+    // Enforce permanent cap when moving to permanent
     if (to === "permanent") {
-      const [moveUserRow] = await db.select({ team: usersTable.team }).from(usersTable)
-        .where(and(eq(usersTable.discordId, t.id), eq(usersTable.guildId, interaction.guildId!))).limit(1);
-      const moveTeam = moveUserRow?.team ?? null;
-
-      const capWhere = and(
-        moveTeam
-          ? or(eq(inventoryTable.team, moveTeam), and(isNull(inventoryTable.team), eq(inventoryTable.discordId, t.id)))
-          : eq(inventoryTable.discordId, t.id),
-        eq(inventoryTable.itemType, "legend"),
-        sql`${inventoryTable.legendCategory} = 'permanent'`,
-      );
       const permanentCount = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(inventoryTable).where(capWhere);
+        .from(inventoryTable)
+        .where(and(
+          ownerWhere(teamName, t.id),
+          eq(inventoryTable.itemType, "legend"),
+          sql`${inventoryTable.legendCategory} = 'permanent'`,
+        ));
       const count = Number(permanentCount[0]?.count ?? 0);
       if (count >= PERMANENT_CAP) {
         await interaction.editReply({
-          content: `❌ <@${t.id}> already has **${count}/${PERMANENT_CAP}** permanent legends. Remove one first before moving another in.`,
+          content: `❌ <@${t.id}>${teamName ? ` (${teamName})` : ""} already has **${count}/${PERMANENT_CAP}** permanent legends. Remove one first before moving another in.`,
         });
         return;
       }
-
-      // Stamp with team so item follows the franchise going forward
-      await db.update(inventoryTable)
-        .set({ legendCategory: "permanent", ...(moveTeam ? { team: moveTeam } : {}) })
-        .where(eq(inventoryTable.id, itemId));
-    } else {
-      await db.update(inventoryTable)
-        .set({ legendCategory: to })
-        .where(eq(inventoryTable.id, itemId));
     }
+
+    // Always stamp the current team when moving — this re-syncs ownership to
+    // the franchise even if the item predates team stamping or the team changed hands.
+    await db.update(inventoryTable)
+      .set({ legendCategory: to, team: teamName })
+      .where(eq(inventoryTable.id, itemId));
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ Legend Moved")
       .setDescription(
-        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) moved to **${to === "permanent" ? "Permanent Vault 🔒" : "Current Season ⚡"}** for <@${t.id}>.`
+        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) → **${to === "permanent" ? "Permanent Vault 🔒" : "Current Season ⚡"}** for ${teamName ? `**${teamName}**` : `<@${t.id}>`}.`
       );
 
     await interaction.editReply({ embeds: [embed] });
@@ -274,42 +268,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   // ── REMOVE ──────────────────────────────────────────────────────────────────
-  if (sub === "remove_from_inventory") {
+  if (sub === "remove") {
     const itemId = interaction.options.getInteger("item_id", true);
 
+    // Look up by item ID; allow finding team-owned items even under a different discord account
     const rows = await db.select().from(inventoryTable)
-      .where(and(eq(inventoryTable.id, itemId), eq(inventoryTable.itemType, "legend")))
+      .where(and(
+        eq(inventoryTable.id, itemId),
+        ownerWhere(teamName, t.id),
+        eq(inventoryTable.itemType, "legend"),
+      ))
       .limit(1);
     const item = rows[0];
 
     if (!item) {
-      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found.` });
+      await interaction.editReply({ content: `❌ Legend item ID **${itemId}** not found for <@${t.id}>${teamName ? ` (${teamName})` : ""}.` });
       return;
     }
-
-    const ownerId = item.discordId;
 
     // Return legend to store
     if (item.legendId) {
       await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, item.legendId));
     }
 
-    // Remove from inventory
     await db.delete(inventoryTable).where(eq(inventoryTable.id, itemId));
 
-    // Decrement all-time legend count
+    // Decrement legend count on the current user (the team's active account)
     await db.update(usersTable)
       .set({
         totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`,
         updatedAt: new Date(),
       })
-      .where(eq(usersTable.discordId, ownerId));
+      .where(eq(usersTable.discordId, t.id));
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Orange)
       .setTitle("🗑️ Legend Removed")
       .setDescription(
-        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) removed from <@${ownerId}>'s inventory and returned to the store.`
+        `**${item.legendName ?? item.playerName ?? "?"}** (ID ${itemId}) removed from ${teamName ? `**${teamName}**` : `<@${t.id}>`}'s vault and returned to the store.`
       );
 
     await interaction.editReply({ embeds: [embed] });

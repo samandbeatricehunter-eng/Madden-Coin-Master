@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { legendsTable, inventoryTable, franchiseRostersTable } from "@workspace/db";
-import { eq, and, ilike } from "drizzle-orm";
+import { eq, and, ilike, isNull, or } from "drizzle-orm";
 
 const PERMANENT_CAP = 4;
 
@@ -52,15 +52,20 @@ export async function assignRosterLegends(
     roster.map(p => `${p.firstName} ${p.lastName}`.toLowerCase().trim()),
   );
 
-  // Fetch ALL permanent legends already in this user's vault across any season
-  // (permanent legends survive season resets, so no seasonId filter here).
+  // Fetch ALL permanent legends already in this team's vault across any season.
+  // Use team-based lookup (preferred) so the cap and duplicate check work correctly
+  // even when a team has changed Discord accounts since the legend was vaulted.
+  const teamOwnerWhere = or(
+    eq(inventoryTable.team, teamName),
+    and(isNull(inventoryTable.team), eq(inventoryTable.discordId, discordId)),
+  );
   const existingVault = await db.select({
     legendId:   inventoryTable.legendId,
     legendName: inventoryTable.legendName,
   })
     .from(inventoryTable)
     .where(and(
-      eq(inventoryTable.discordId,      discordId),
+      teamOwnerWhere,
       eq(inventoryTable.itemType,       "legend"),
       eq(inventoryTable.legendCategory, "permanent"),
     ));
