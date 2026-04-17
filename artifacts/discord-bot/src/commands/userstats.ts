@@ -232,9 +232,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const totalCoins  = user.balance + savingsBalance;
 
   // ── Build EA ID field value (up to 3 entries) ─────────────────────────────
-  const CONSOLE_ICON: Record<string, string> = { pc: "🖥️ PC", ps5: "🔵 PS5", xbox: "🟢 Xbox" };
+  // Prefer custom server emoji (:PC: / :PS: / :XBOX:) — look them up by name
+  // from the guild cache so no hardcoded numeric ID is needed. Falls back to
+  // text labels if the emoji isn't found (e.g. different server or dev mode).
+  const CONSOLE_EMOJI_NAME: Record<string, string> = { pc: "PC", ps5: "PS", xbox: "XBOX" };
+  const CONSOLE_FALLBACK:   Record<string, string> = { pc: "🖥️ PC", ps5: "🔵 PS5", xbox: "🟢 Xbox" };
+  const getConsoleIcon = (consoleKey: string): string => {
+    const emojiName = CONSOLE_EMOJI_NAME[consoleKey];
+    if (emojiName && interaction.guild) {
+      const found = interaction.guild.emojis.cache.find(e => e.name === emojiName);
+      if (found) return found.toString(); // renders as <:PC:123456789>
+    }
+    return CONSOLE_FALLBACK[consoleKey] ?? "🎮";
+  };
   const eaIdValue = eaIds.length > 0
-    ? eaIds.map(r => `${CONSOLE_ICON[r.console] ?? "🎮"} \`${r.eaId}\``).join("\n")
+    ? eaIds.map(r => `${getConsoleIcon(r.console)} \`${r.eaId}\``).join("\n")
     : "*Not set*";
 
   // Embed 1: Overview

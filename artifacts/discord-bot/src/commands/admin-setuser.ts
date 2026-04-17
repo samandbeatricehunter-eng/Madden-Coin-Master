@@ -235,7 +235,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // Each user can have up to 3 EA IDs across different consoles/accounts.
   // The slot (1/2/3) determines which row to create or overwrite.
   if (eaId !== null && eaConsole !== null) {
-    const consoleLabel = eaConsole === "ps5" ? "🔵 PS5" : eaConsole === "xbox" ? "🟢 Xbox" : "🖥️ PC";
+    const CONSOLE_EMOJI_NAME: Record<string, string> = { pc: "PC", ps5: "PS", xbox: "XBOX" };
+    const CONSOLE_FALLBACK:   Record<string, string> = { pc: "🖥️ PC", ps5: "🔵 PS5", xbox: "🟢 Xbox" };
+    const emojiName = CONSOLE_EMOJI_NAME[eaConsole];
+    const guildEmoji = emojiName ? interaction.guild?.emojis.cache.find(e => e.name === emojiName) : undefined;
+    const consoleLabel = guildEmoji ? guildEmoji.toString() : (CONSOLE_FALLBACK[eaConsole] ?? "🎮");
     await db.insert(playerEaIdsTable).values({
       discordId,
       eaId,
