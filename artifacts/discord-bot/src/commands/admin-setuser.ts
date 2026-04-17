@@ -3,7 +3,7 @@ import {
   EmbedBuilder, Colors, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, seasonStatsTable, userRecordsTable } from "@workspace/db";
+import { usersTable, seasonStatsTable, userRecordsTable, playerEaIdsTable } from "@workspace/db";
 import { eq, and, sum, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason, getOrCreateUser, logTransaction } from "../lib/db-helpers.js";
 import { findUserByTeam } from "../lib/user-data.js";
@@ -85,9 +85,29 @@ export const data = new SlashCommandBuilder()
       .setDescription("Have H2H win milestone bonuses already been paid out to this user before this bot?")
       .setRequired(false)
   )
-  // ── EA / Gamertag ──────────────────────────────────────────────────────────
+  // ── EA / Gamertag (up to 3 slots, each with a console type) ───────────────
   .addStringOption(opt =>
-    opt.setName("ea_id").setDescription("Set player's EA / PSN / Xbox gamertag used in CFM").setRequired(false)
+    opt.setName("ea_id").setDescription("EA / PSN / Xbox gamertag to add or update").setRequired(false)
+  )
+  .addStringOption(opt =>
+    opt.setName("ea_console")
+      .setDescription("Which console this EA ID is linked to")
+      .setRequired(false)
+      .addChoices(
+        { name: "🖥️ PC",    value: "pc"   },
+        { name: "🔵 PS5",   value: "ps5"  },
+        { name: "🟢 Xbox",  value: "xbox" },
+      )
+  )
+  .addIntegerOption(opt =>
+    opt.setName("ea_slot")
+      .setDescription("Slot to store this EA ID in (1 = primary, 2 = secondary, 3 = tertiary)")
+      .setRequired(false)
+      .addChoices(
+        { name: "Slot 1 (primary)",   value: 1 },
+        { name: "Slot 2 (secondary)", value: 2 },
+        { name: "Slot 3 (tertiary)",  value: 3 },
+      )
   )
   // ── Season upgrade usage ───────────────────────────────────────────────────
   .addIntegerOption(opt =>
@@ -146,6 +166,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Read all options ───────────────────────────────────────────────────────
   const eaId             = interaction.options.getString("ea_id")?.trim() ?? null;
+  const eaConsole        = interaction.options.getString("ea_console") as "pc" | "ps5" | "xbox" | null;
+  const eaSlot           = interaction.options.getInteger("ea_slot") ?? 1;
   const coins            = interaction.options.getInteger("coins");
   const legendTotal      = interaction.options.getInteger("legend_total");
   const wins             = interaction.options.getInteger("wins");
@@ -162,6 +184,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const nonCoreAttrUsed  = interaction.options.getInteger("non_core_attr_used");
   const devUpsUsed       = interaction.options.getInteger("dev_ups_used");
   const ageResetsUsed    = interaction.options.getInteger("age_resets_used");
+
+  // Validate EA ID — console type is required when setting an EA ID
+  if (eaId !== null && eaConsole === null) {
+    return interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ Console Required").setDescription("Please also select an **ea_console** (PC, PS5, or Xbox) when setting an EA ID.")],
+    });
+  }
 
   const noFieldProvided =
     eaId === null &&
@@ -202,9 +231,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season  = await getOrCreateActiveSeason(interaction.guildId!);
   const changes: string[] = [];
 
+  // ── EA ID: upsert into player_ea_ids (global, no guild scope) ───────────────
+  // Each user can have up to 3 EA IDs across different consoles/accounts.
+  // The slot (1/2/3) determines which row to create or overwrite.
+  if (eaId !== null && eaConsole !== null) {
+    const consoleLabel = eaConsole === "ps5" ? "🔵 PS5" : eaConsole === "xbox" ? "🟢 Xbox" : "🖥️ PC";
+    await db.insert(playerEaIdsTable).values({
+      discordId,
+      eaId,
+      console:   eaConsole,
+      slot:      eaSlot,
+      updatedAt: new Date(),
+    }).onConflictDoUpdate({
+      target:  [playerEaIdsTable.discordId, playerEaIdsTable.slot],
+      set:     { eaId, console: eaConsole, updatedAt: new Date() },
+    });
+    changes.push(`🎮 **EA ID (Slot ${eaSlot})** → \`${eaId}\` ${consoleLabel}`);
+  }
+
   // ── Update economy_users ───────────────────────────────────────────────────
   const userUpdates: Record<string, any> = { updatedAt: new Date() };
-  if (eaId !== null)        { userUpdates.eaId = eaId;                          changes.push(`🎮 **EA ID** → \`${eaId}\``); }
   if (coins !== null)       { userUpdates.balance = coins;                      changes.push(`💰 **Coins** → ${coins.toLocaleString()}`); }
   if (legendTotal !== null) { userUpdates.totalLegendPurchases = legendTotal;   changes.push(`🏆 **All-Time Legend Total** → ${legendTotal}`); }
   if (allTimeSbWins   !== null) { userUpdates.allTimeSuperbowlWins   = allTimeSbWins;   changes.push(`🏆 **All-Time SB Wins** → ${allTimeSbWins}`); }

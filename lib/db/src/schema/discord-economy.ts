@@ -1034,6 +1034,21 @@ export const guildChannelsTable = pgTable("guild_channels", {
   uniq: uniqueIndex("guild_channels_guild_key_idx").on(t.guildId, t.channelKey),
 }));
 
+// ── Player EA IDs — up to 3 per player, stored globally (no guild scope) ────
+// Each row is one EA/gamertag linked to a console. Queried by discordId only
+// so the same IDs surface in every server that user belongs to.
+export const playerEaIdsTable = pgTable("player_ea_ids", {
+  id:        serial("id").primaryKey(),
+  discordId: text("discord_id").notNull(),
+  eaId:      text("ea_id").notNull(),                 // the actual gamertag / EA username
+  console:   text("console").notNull(),               // 'pc' | 'ps5' | 'xbox'
+  slot:      integer("slot").notNull(),               // 1, 2, or 3
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqDiscordSlot: uniqueIndex("player_ea_ids_discord_slot_idx").on(t.discordId, t.slot),
+}));
+
 // ── League Twitter — AI-generated "reporter tweets" posted every 3 hours ────
 export const leagueTwitterTable = pgTable("league_twitter_tweets", {
   id:           serial("id").primaryKey(),

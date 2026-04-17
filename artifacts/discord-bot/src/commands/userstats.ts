@@ -6,7 +6,7 @@ import {
   usersTable, userRecordsTable, coinTransactionsTable,
   inventoryTable, purchasesTable, interviewRequestsTable,
   seasonStatsTable, userSavingsTable,
-  customPlayersTable, seasonsTable,
+  customPlayersTable, seasonsTable, playerEaIdsTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, ne, inArray, or, isNull } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
@@ -62,8 +62,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Parallel batch 1: records + savings + streaks ─────────────────────────
-  const [recordRows, allTimeRows, savingsBalance, overallStreak] = await Promise.all([
+  // ── Parallel batch 1: records + savings + streaks + EA IDs ───────────────
+  const [recordRows, allTimeRows, savingsBalance, overallStreak, eaIds] = await Promise.all([
     db.select().from(userRecordsTable)
       .where(and(eq(userRecordsTable.discordId, target.id), eq(userRecordsTable.seasonId, season.id)))
       .limit(1),
@@ -83,6 +83,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     getSavings(target.id),
     computeStreak(target.id, false, interaction.guildId!),
+
+    // EA IDs — global (no guild scope), up to 3 slots per player
+    db.select().from(playerEaIdsTable)
+      .where(eq(playerEaIdsTable.discordId, target.id))
+      .orderBy(playerEaIdsTable.slot),
   ]);
 
   // Build the team-aware WHERE clause for permanent vault items.
@@ -226,6 +231,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const totalCoins  = user.balance + savingsBalance;
 
+  // ── Build EA ID field value (up to 3 entries) ─────────────────────────────
+  const CONSOLE_ICON: Record<string, string> = { pc: "🖥️ PC", ps5: "🔵 PS5", xbox: "🟢 Xbox" };
+  const eaIdValue = eaIds.length > 0
+    ? eaIds.map(r => `${CONSOLE_ICON[r.console] ?? "🎮"} \`${r.eaId}\``).join("\n")
+    : "*Not set*";
+
   // Embed 1: Overview
   const overviewEmbed = new EmbedBuilder()
     .setColor(Colors.Blurple)
@@ -234,7 +245,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .addFields(
       { name: "Discord",               value: `<@${target.id}>`,                              inline: true },
       { name: "Team",                  value: user.team ?? "*Not set*",                        inline: true },
-      { name: "🎮 EA ID",             value: user.eaId ?? "*Not set*",                         inline: true },
+      { name: "\u200b",                value: "\u200b",                                        inline: true },
+      { name: "🎮 EA ID(s)",           value: eaIdValue,                                       inline: false },
       { name: "📅 Current Week",       value: weekDisplay,                                     inline: true },
       { name: "💰 Wallet",             value: `**${user.balance.toLocaleString()} coins**`,   inline: true },
       { name: "🏦 Savings",            value: `**${savingsBalance.toLocaleString()} coins**`, inline: true },

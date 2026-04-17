@@ -53,6 +53,7 @@ import * as adminSetStatTiers       from "../commands/admin-set-stat-tiers.js";
 import * as adminStatTiers          from "../commands/admin-stat-tiers.js";
 import * as adminSetMilestoneTier   from "../commands/admin-setmilestonetier.js";
 import * as adminLegendVault        from "../commands/admin-legendvault.js";
+import * as adminResyncTeams        from "../commands/admin-resync-teams.js";
 import * as adminCustomArcetypes    from "../commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "../commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames     from "../commands/admin-fixplayernames.js";
@@ -162,6 +163,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [wager,                      wagersOn],
     [tradeBlock,                 tradeBlockOn],
     [adminLegendVault,           legends],
+    [adminResyncTeams,           true],
     [adminCustomArcetypes,       custom],
     [adminCustomPlayerSettings,  custom],
     [adminFixPlayerNames,        custom],
