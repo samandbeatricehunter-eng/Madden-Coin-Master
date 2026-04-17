@@ -195,9 +195,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (!await requireMcaEnabled(interaction)) return;
 
   // ── Find the active season and the season that has roster data ────────────
+  // MUST scope to this guild — in multi-server setups every guild has its own
+  // active season; without the guildId filter we'd randomly get another
+  // guild's season and return that guild's rosters instead.
   const [activeSeason] = await db.select()
     .from(seasonsTable)
-    .where(eq(seasonsTable.isActive, true))
+    .where(and(eq(seasonsTable.isActive, true), eq(seasonsTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!activeSeason) {

@@ -64,6 +64,7 @@ import * as adminStatTiers           from "./commands/admin-stat-tiers.js";
 import * as adminSetMilestoneTier    from "./commands/admin-setmilestonetier.js";
 import * as adminLegendVault         from "./commands/admin-legendvault.js";
 import * as adminResyncTeams         from "./commands/admin-resync-teams.js";
+import * as adminMilestoneAudit      from "./commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
@@ -189,6 +190,7 @@ if (!isProduction && !devBotEnabled) {
     adminSetMilestoneTier,
     adminLegendVault,
     adminResyncTeams,
+    adminMilestoneAudit,
     adminCustomArcetypes,
     adminCustomPlayerSettings,
     adminFixPlayerNames,
