@@ -118,7 +118,10 @@ export async function runEosAutoPost(
 
   // ── 5. Get commissioner channel ───────────────────────────────────────────────
   let commChannel: TextChannel | null = null;
-  const commChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+  // EOS approval embeds are pending — send to transactions log.
+  const commChannelId =
+    await getGuildChannel(guildId, CHANNEL_KEYS.TRANSACTIONS)
+    ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
   if (commChannelId) {
     try {
       const ch = await client.channels.fetch(commChannelId);

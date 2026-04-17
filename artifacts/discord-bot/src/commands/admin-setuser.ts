@@ -1,11 +1,11 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction,
-  EmbedBuilder, Colors, PermissionFlagsBits,
+  EmbedBuilder, Colors, PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, seasonStatsTable, userRecordsTable, playerEaIdsTable } from "@workspace/db";
 import { eq, and, sum, sql } from "drizzle-orm";
-import { getOrCreateActiveSeason, getOrCreateUser, logTransaction } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason, getOrCreateUser, logTransaction, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { findUserByTeam } from "../lib/user-data.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
@@ -369,14 +369,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const label = team ? `${team} (${username})` : username;
-  return interaction.editReply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Green)
-        .setTitle(`✅ Stats Updated — ${label}`)
-        .setDescription(changes.join("\n"))
-        .setFooter({ text: `Season ${season.seasonNumber}` })
-        .setTimestamp(),
-    ],
-  });
+  const resultEmbed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle(`✅ Stats Updated — ${label}`)
+    .setDescription(changes.join("\n"))
+    .addFields({ name: "Changed by", value: `<@${interaction.user.id}>`, inline: true })
+    .setFooter({ text: `Season ${season.seasonNumber}` })
+    .setTimestamp();
+
+  // Log all stat/team changes to commissioner channel
+  try {
+    const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+      ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+    const commChannel = commChannelId
+      ? await interaction.client.channels.fetch(commChannelId).catch(() => null)
+      : null;
+    if (commChannel instanceof TextChannel) {
+      await commChannel.send({ embeds: [resultEmbed] });
+    }
+  } catch (err) {
+    console.error("[admin-setuser] Failed to log to commissioner channel:", err);
+  }
+
+  return interaction.editReply({ embeds: [resultEmbed] });
 }

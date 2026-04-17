@@ -1,12 +1,11 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits,
+  PermissionFlagsBits, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
-import { getOrCreateUser, logTransaction } from "../lib/db-helpers.js";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { getOrCreateUser, logTransaction, isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
 const MAX_USERS = 32;
 
@@ -115,7 +114,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   }));
 
-  // ── Reply ─────────────────────────────────────────────────────────────────
+  // ── Build summary embed ───────────────────────────────────────────────────
   const description = [
     ...successLines,
     ...(failedIds.length > 0
@@ -127,10 +126,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setColor(Colors.Green)
     .setTitle(`✅ Coins Added — ${userIds.length} user${userIds.length !== 1 ? "s" : ""}`)
     .setDescription(description.length > 4000 ? description.slice(0, 3997) + "..." : description)
-    .addFields({ name: "Amount each", value: `${amount.toLocaleString()} coins`, inline: true })
+    .addFields(
+      { name: "Amount each",  value: `${amount.toLocaleString()} coins`, inline: true },
+      { name: "Issued by",    value: `<@${interaction.user.id}>`,         inline: true },
+    )
     .setTimestamp();
 
   if (reason) embed.addFields({ name: "Reason", value: reason, inline: true });
+
+  // ── Log to commissioner channel ───────────────────────────────────────────
+  try {
+    const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+      ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+    const commChannel = commChannelId
+      ? await interaction.client.channels.fetch(commChannelId).catch(() => null)
+      : null;
+    if (commChannel instanceof TextChannel) {
+      await commChannel.send({ embeds: [embed] });
+    }
+  } catch (err) {
+    console.error("[addcoins] Failed to log to commissioner channel:", err);
+  }
 
   return interaction.editReply({ embeds: [embed] });
 }

@@ -46,6 +46,20 @@ const PRIMARY_CHANNEL_FALLBACKS: Record<string, string> = {
   transactions:   "1493360346382209224",
 };
 
+// Known channel IDs for guilds that predate /initialize-server.
+// Keyed by guildId so the startup migration can seed guild_channels without
+// duplicating logic in multiple places.
+export const KNOWN_GUILD_CHANNELS: Record<string, Partial<Record<string, string>>> = {
+  // Primary guild — transactions log
+  "1476251181524189438": {
+    transactions: "1493360346382209224",
+  },
+  // Secondary guild — transactions log
+  "1493688089883971735": {
+    transactions: "1494083828866879638",
+  },
+};
+
 /**
  * Look up a per-guild channel ID by key.
  * Checks the guild_channels table first; falls back to PRIMARY_CHANNEL_FALLBACKS

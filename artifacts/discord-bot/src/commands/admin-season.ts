@@ -1,11 +1,11 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  PermissionFlagsBits, AutocompleteInteraction,
+  PermissionFlagsBits, AutocompleteInteraction, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable, seasonStatsTable, inventoryTable, usersTable, legendsTable, userRecordsTable, gameLogTable, serverSettingsTable, customPlayersTable, franchiseMcaTeamsTable, franchiseRostersTable, playerStatWeekProcessedTable, playerSeasonStatsTable } from "@workspace/db";
 import { eq, and, sql, ne } from "drizzle-orm";
-import { logTransaction } from "../lib/db-helpers.js";
+import { logTransaction, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { ATTRIBUTES } from "../lib/constants.js";
 
 const PERMANENT_CAP = 4;
@@ -480,15 +480,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await logTransaction(target.id, amount, "season_adjustment", "Season coin adjustment by commissioner", interaction.guildId!, interaction.user.id);
 
-    return interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Coins Added")
-          .setDescription(`Added **${amount.toLocaleString()} coins** to ${target.toString()}.`)
-          .setTimestamp(),
-      ],
-    });
+    const adjustEmbed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Season Coin Adjustment")
+      .setDescription(`Added **${amount.toLocaleString()} coins** to ${target.toString()}.`)
+      .addFields({ name: "Issued by", value: `<@${interaction.user.id}>`, inline: true })
+      .setTimestamp();
+
+    try {
+      const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+        ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+      const commCh = commChannelId
+        ? await interaction.client.channels.fetch(commChannelId).catch(() => null)
+        : null;
+      if (commCh instanceof TextChannel) await commCh.send({ embeds: [adjustEmbed] });
+    } catch (err) {
+      console.error("[admin-season addcoins] Failed to log to commissioner channel:", err);
+    }
+
+    return interaction.editReply({ embeds: [adjustEmbed] });
   }
 
   if (sub === "set_limits") {

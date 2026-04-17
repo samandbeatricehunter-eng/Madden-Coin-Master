@@ -256,7 +256,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Post to commissioner channel ──────────────────────────────────────────────
   let commMessageId: string | null = null;
-  const eosCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+  // EOS payout approval embeds are "pending" — route to transactions log.
+  // The commissioner confirms from there; confirmed payouts land in the
+  // commissioner log via advanceweek / the approval interaction handler.
+  const eosCommChannelId =
+    await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.TRANSACTIONS)
+    ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+    ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
   if (eosCommChannelId) {
     try {
       const ch = await interaction.client.channels.fetch(eosCommChannelId);

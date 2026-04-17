@@ -771,7 +771,9 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
   let commMsgId: string | undefined;
   let commChanId: string | undefined;
   try {
-    const commId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
+    const commId =
+      await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.TRANSACTIONS)
+      ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
     const ch = commId ? await interaction.client.channels.fetch(commId).catch(() => null) : null;
     if (ch?.isTextBased()) {
       const tc        = ch as TextChannel;

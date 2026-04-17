@@ -703,7 +703,10 @@ export async function handleAupConfirm(interaction: ButtonInteraction): Promise<
 
     // Commissioner notification
     try {
-      const channelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+      const channelId =
+        await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.TRANSACTIONS)
+        ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+        ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
       const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
       if (channel?.isTextBased()) {
         const category = isCore ? "Core ⭐" : "Non-core";

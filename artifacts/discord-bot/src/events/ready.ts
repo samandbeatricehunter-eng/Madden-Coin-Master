@@ -2,6 +2,7 @@ import { Client } from "discord.js";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
+import { setGuildChannel, KNOWN_GUILD_CHANNELS } from "../lib/db-helpers.js";
 
 export const name = "clientReady";
 export const once = true;
@@ -34,11 +35,29 @@ async function backfillPermanentVaultTeams(): Promise<void> {
   }
 }
 
+// ── Seed known guild channels ─────────────────────────────────────────────────
+// Ensures channel IDs that predate /initialize-server (or were provisioned
+// manually) are always present in guild_channels. Runs on every startup but
+// is a no-op once the rows exist (upsert with same values).
+async function seedKnownGuildChannels(): Promise<void> {
+  try {
+    for (const [guildId, channels] of Object.entries(KNOWN_GUILD_CHANNELS)) {
+      for (const [key, channelId] of Object.entries(channels)) {
+        if (channelId) await setGuildChannel(guildId, key, channelId);
+      }
+    }
+    console.log("[startup-migration] Known guild channels seeded.");
+  } catch (err) {
+    console.error("[startup-migration] Failed to seed known guild channels:", err);
+  }
+}
+
 export async function execute(client: Client) {
   console.log(`✅ Bot logged in as ${client.user?.tag}`);
 
   // Run data migrations before serving any interactions
   await backfillPermanentVaultTeams();
+  await seedKnownGuildChannels();
 
   const guilds = client.guilds.cache;
   if (guilds.size === 0) return;
