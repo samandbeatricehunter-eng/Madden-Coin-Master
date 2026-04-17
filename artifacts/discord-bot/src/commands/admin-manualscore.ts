@@ -6,7 +6,15 @@ import { db } from "@workspace/db";
 import { usersTable, userRecordsTable, gameLogTable, h2hMatchupRecordsTable, coinTransactionsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { addBalance, logTransaction, getOrCreateActiveSeason, isAdminUser, getGuildChannel, CHANNEL_KEYS, upsertGlobalRecord } from "../lib/db-helpers.js";
+
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
+
+const WIN_MILESTONES = [
+  { tier: 4, wins: 50, bonus: 1000, label: "50 All-Time H2H Wins" },
+  { tier: 3, wins: 25, bonus:  500, label: "25 All-Time H2H Wins" },
+  { tier: 2, wins: 12, bonus:  250, label: "12 All-Time H2H Wins" },
+  { tier: 1, wins:  5, bonus:  100, label:  "5 All-Time H2H Wins" },
+] as const;
 
 
 export const data = new SlashCommandBuilder()
@@ -189,13 +197,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           updatedAt: new Date(),
         },
       });
-      // All-time H2H counters
+      // All-time H2H counters — scoped to this guild so multi-server users
+      // accumulate independent win counts per server.
       await tx.update(usersTable)
         .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, winner.discordId));
+        .where(and(eq(usersTable.discordId, winner.discordId), eq(usersTable.guildId, season.guildId)));
       await tx.update(usersTable)
         .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, loser.discordId));
+        .where(and(eq(usersTable.discordId, loser.discordId), eq(usersTable.guildId, season.guildId)));
 
       // Per-opponent matchup record
       {
@@ -246,6 +255,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const loserDiscordId  = homeWon ? awayUser!.discordId : homeUser.discordId;
       await upsertGlobalRecord(winnerDiscordId, "win",   pointDiff);
       await upsertGlobalRecord(loserDiscordId,  "loss", -pointDiff);
+    }
+  }
+
+  // ── H2H milestone payout (automatic, runs after transaction so new win count
+  //    is committed and readable). Milestones are per-guild — a user can earn
+  //    the same tier again in a different server.
+  if (!isCpu && !isTie) {
+    const guildId         = interaction.guildId!;
+    const winnerDiscordId = homeWon ? homeUser.discordId : awayUser!.discordId;
+    const winnerTeam      = (homeWon ? homeUser : awayUser!).team;
+
+    const [winnerRow] = await db.select({
+      allTimeH2HWins:      usersTable.allTimeH2HWins,
+      milestoneTierAwarded: usersTable.milestoneTierAwarded,
+    }).from(usersTable)
+      .where(and(eq(usersTable.discordId, winnerDiscordId), eq(usersTable.guildId, guildId)))
+      .limit(1);
+
+    const currentWins = winnerRow?.allTimeH2HWins ?? 0;
+    const currentTier = winnerRow?.milestoneTierAwarded ?? 0;
+
+    const owedMilestones = [...WIN_MILESTONES]
+      .reverse() // ascending: tier 1 → 4
+      .filter(m => currentWins >= m.wins && currentTier < m.tier);
+
+    if (owedMilestones.length > 0) {
+      let newTier = currentTier;
+      for (const m of owedMilestones) {
+        await addBalance(winnerDiscordId, m.bonus, guildId);
+        await logTransaction(winnerDiscordId, m.bonus, "addcoins", `Career milestone: ${m.label}`, guildId);
+        resultLines.push(`🎯 **Career Milestone — ${m.label}**: +${m.bonus} coins awarded to ${winnerTeam ?? "winner"}!`);
+        newTier = m.tier;
+      }
+      await db.update(usersTable)
+        .set({ milestoneTierAwarded: newTier, updatedAt: new Date() })
+        .where(and(eq(usersTable.discordId, winnerDiscordId), eq(usersTable.guildId, guildId)));
     }
   }
 

@@ -15,6 +15,7 @@ import {
   franchiseMcaTeamsTable,
   franchiseProcessedGamesTable,
   gameLogTable,
+  seasonsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason, PRIMARY_GUILD_ID, upsertGlobalRecord } from "./db-helpers.js";
@@ -118,10 +119,10 @@ function resolveTeamToMcaNames(standardName: string): string[] {
   return [...names];
 }
 
-async function addBalance(discordId: string, amount: number) {
+async function addBalance(discordId: string, amount: number, guildId: string) {
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, discordId));
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
 }
 
 async function logTx(discordId: string, amount: number, desc: string) {
@@ -441,9 +442,9 @@ export async function runGcsScheduleProcessing(
         const winnerUser = userMap.get(winnerId);
         const loserUser  = userMap.get(loserId);
 
-        await addBalance(winnerId, h2hWin);
+        await addBalance(winnerId, h2hWin, PRIMARY_GUILD_ID);
         await logTx(winnerId, h2hWin, `H2H win vs ${loserTeam} Wk${weekNum} (${hiScore}–${loScore}) [sync]`);
-        await addBalance(loserId, h2hLoss);
+        await addBalance(loserId, h2hLoss, PRIMARY_GUILD_ID);
         await logTx(loserId, h2hLoss, `H2H loss vs ${winnerTeam} Wk${weekNum} (${loScore}–${hiScore}) [sync]`);
 
         await upsertRecord(winnerId, winnerUser?.discordUsername ?? "", winnerUser?.team ?? null, seasonId, true,  spread);
@@ -454,10 +455,10 @@ export async function runGcsScheduleProcessing(
 
         await db.update(usersTable)
           .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins} + 1`,   updatedAt: new Date() })
-          .where(eq(usersTable.discordId, winnerId));
+          .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, PRIMARY_GUILD_ID)));
         await db.update(usersTable)
           .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-          .where(eq(usersTable.discordId, loserId));
+          .where(and(eq(usersTable.discordId, loserId), eq(usersTable.guildId, PRIMARY_GUILD_ID)));
 
         await db.insert(gameLogTable).values([
           { discordId: winnerId, seasonId, result: "win",  pointSpread:  spread, opponentLabel: loserTeam,  gameType: "regular_season" },
@@ -501,7 +502,7 @@ export async function runGcsScheduleProcessing(
         const humanWon   = humanScore > cpuScore && !isTie;
 
         if (humanWon && humanData.discordId) {
-          await addBalance(humanData.discordId, cpuWin);
+          await addBalance(humanData.discordId, cpuWin, PRIMARY_GUILD_ID);
           await logTx(humanData.discordId, cpuWin, `CPU win vs ${cpuData.fullName} Wk${weekNum} [sync]`);
           await db.insert(gameLogTable).values({
             discordId: humanData.discordId, seasonId, result: "win",
@@ -597,21 +598,28 @@ export async function runStandingsFallback(seasonId: number, report: FullSyncRep
 // Uses MAX(allTimeH2HWins, SUM(user_records.wins)) — same as /admin-syncmilestones.
 // This ensures milestones are caught even when the MCA webhook never ran.
 
-export async function runMilestoneSync(report: FullSyncReport) {
+export async function runMilestoneSync(report: FullSyncReport, guildId: string) {
+  // Query only users belonging to this guild — milestones are per-guild so the
+  // same user can earn the same tier again in a different server.
   const allUsers = await db.select({
     discordId:            usersTable.discordId,
     discordUsername:      usersTable.discordUsername,
     team:                 usersTable.team,
     trackedWins:          usersTable.allTimeH2HWins,
     milestoneTierAwarded: usersTable.milestoneTierAwarded,
-  }).from(usersTable);
+  }).from(usersTable).where(eq(usersTable.guildId, guildId));
 
-  // Sum wins across every season from user_records (the authoritative source
-  // when MCA hasn't populated allTimeH2HWins directly)
+  // Sum wins from user_records scoped to this guild only (via seasons join).
+  // Without this scope, a user in two servers would appear to have double the wins.
   const recordTotals = await db.select({
     discordId: userRecordsTable.discordId,
     totalWins: sql<number>`COALESCE(SUM(${userRecordsTable.wins}), 0)`.as("total_wins"),
-  }).from(userRecordsTable).groupBy(userRecordsTable.discordId);
+  }).from(userRecordsTable)
+    .innerJoin(seasonsTable, and(
+      eq(userRecordsTable.seasonId, seasonsTable.id),
+      eq(seasonsTable.guildId, guildId),
+    ))
+    .groupBy(userRecordsTable.discordId);
 
   const totalsMap = new Map(recordTotals.map(r => [r.discordId, Number(r.totalWins)]));
 
@@ -623,11 +631,11 @@ export async function runMilestoneSync(report: FullSyncReport) {
     const currentTier = user.milestoneTierAwarded ?? 0;
     const teamLabel   = user.team ?? user.discordUsername;
 
-    // Backfill allTimeH2HWins if user_records has a higher value
+    // Backfill allTimeH2HWins if user_records has a higher value (guild-scoped)
     if (trueWins > trackedWins) {
       await db.update(usersTable)
         .set({ allTimeH2HWins: trueWins, updatedAt: new Date() })
-        .where(eq(usersTable.discordId, user.discordId));
+        .where(and(eq(usersTable.discordId, user.discordId), eq(usersTable.guildId, guildId)));
       report.winBackfillLines.push(
         `🔧 **${teamLabel}** all-time wins: ${trackedWins} → **${trueWins}** (from season records)`,
       );
@@ -641,7 +649,7 @@ export async function runMilestoneSync(report: FullSyncReport) {
 
     let newTier = currentTier;
     for (const m of owedMilestones) {
-      await addBalance(user.discordId, m.bonus);
+      await addBalance(user.discordId, m.bonus, guildId);
       await logTx(user.discordId, m.bonus, `Career milestone: ${m.label} (full sync)`);
       report.milestoneLines.push(`🎯 **${teamLabel}** — **${m.label}** → +${m.bonus} coins`);
       newTier = m.tier;
@@ -649,7 +657,7 @@ export async function runMilestoneSync(report: FullSyncReport) {
 
     await db.update(usersTable)
       .set({ milestoneTierAwarded: newTier, updatedAt: new Date() })
-      .where(eq(usersTable.discordId, user.discordId));
+      .where(and(eq(usersTable.discordId, user.discordId), eq(usersTable.guildId, guildId)));
   }
 }
 
@@ -681,7 +689,7 @@ export async function runFullSync(
   await runTeamAutoLink(guildMembers, report);
   await runGcsScheduleProcessing(season.id, report);
   await runStandingsFallback(season.id, report);
-  await runMilestoneSync(report);
+  await runMilestoneSync(report, PRIMARY_GUILD_ID);
 
   return report;
 }
