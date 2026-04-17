@@ -309,7 +309,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 
   // ── Post to commissioner log ──────────────────────────────────────────────
-  const manualScoreCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+  const manualScoreCommChannelId =
+    await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+    ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
   if (manualScoreCommChannelId) {
     try {
       const ch = await interaction.client.channels.fetch(manualScoreCommChannelId);

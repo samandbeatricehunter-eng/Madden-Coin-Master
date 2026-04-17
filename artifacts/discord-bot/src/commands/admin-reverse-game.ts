@@ -461,7 +461,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 
   // ── Commissioner channel log ──────────────────────────────────────────────────
-  const reverseGameCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
+  const reverseGameCommChannelId =
+    await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+    ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
   if (reverseGameCommChannelId) {
     try {
       const ch = await interaction.client.channels.fetch(reverseGameCommChannelId);

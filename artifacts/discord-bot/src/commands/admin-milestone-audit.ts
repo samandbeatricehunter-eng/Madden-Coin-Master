@@ -160,7 +160,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (paid.length === 0) return;
 
   try {
-    const commChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER)
+    const commChannelId =
+      await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG)
+      ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER)
       ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]
       ?? "";
 

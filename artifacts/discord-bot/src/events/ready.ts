@@ -2,7 +2,7 @@ import { Client } from "discord.js";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
-import { setGuildChannel, KNOWN_GUILD_CHANNELS } from "../lib/db-helpers.js";
+import { setGuildChannel, getGuildChannel, KNOWN_GUILD_CHANNELS, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
 export const name = "clientReady";
 export const once = true;
@@ -52,12 +52,42 @@ async function seedKnownGuildChannels(): Promise<void> {
   }
 }
 
+// ── Auto-discover commissioners-log by channel name ───────────────────────────
+// For guilds that ran /initialize-server before commissioners-log was added to
+// the CHANNEL_KEY_MAP, we scan each guild's channel list and register it.
+async function autoDiscoverCommissionerLog(client: Client): Promise<void> {
+  try {
+    for (const [guildId, guild] of client.guilds.cache) {
+      const existing = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG);
+      if (existing) continue; // already registered
+
+      // Fetch full channel list if not cached
+      const channels = guild.channels.cache.size > 0
+        ? guild.channels.cache
+        : await guild.channels.fetch().catch(() => null);
+      if (!channels) continue;
+
+      const logCh = [...channels.values()].find(
+        (c): c is NonNullable<typeof c> =>
+          c !== null && c.name === "commissioners-log" && c.isTextBased(),
+      );
+      if (logCh) {
+        await setGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG, logCh.id);
+        console.log(`[startup-migration] Registered commissioners-log for guild ${guildId}: ${logCh.id}`);
+      }
+    }
+  } catch (err) {
+    console.error("[startup-migration] Failed to auto-discover commissioners-log:", err);
+  }
+}
+
 export async function execute(client: Client) {
   console.log(`✅ Bot logged in as ${client.user?.tag}`);
 
   // Run data migrations before serving any interactions
   await backfillPermanentVaultTeams();
   await seedKnownGuildChannels();
+  await autoDiscoverCommissionerLog(client);
 
   const guilds = client.guilds.cache;
   if (guilds.size === 0) return;

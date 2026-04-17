@@ -136,7 +136,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Log to commissioner channel ───────────────────────────────────────────
   try {
-    const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
+    const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER_LOG)
+      ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER)
       ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? "";
     const commChannel = commChannelId
       ? await interaction.client.channels.fetch(commChannelId).catch(() => null)

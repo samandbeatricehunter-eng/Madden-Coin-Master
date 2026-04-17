@@ -67,9 +67,11 @@ async function handleGotyPollExpiry(
     .limit(1);
   const guildId = seasonRow?.guildId ?? PRIMARY_GUILD_ID;
 
-  const commChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+  const commChannelId =
+    await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
   if (!commChannelId) {
-    console.warn("[pollChecker] Commissioner channel not configured — cannot post GOTY results");
+    console.warn("[pollChecker] Commissioner log channel not configured — cannot post GOTY results");
     return;
   }
 

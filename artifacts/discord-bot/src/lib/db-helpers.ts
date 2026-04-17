@@ -14,7 +14,8 @@ export const PRIMARY_GUILD_ID = "1476251181524189438";
 // ── Channel keys used across the bot ─────────────────────────────────────────
 export const CHANNEL_KEYS = {
   GENERAL:        "general",
-  COMMISSIONER:   "commissioner",
+  COMMISSIONER:     "commissioner",
+  COMMISSIONER_LOG: "commissioner_log",
   MATCHUPS:       "matchups",
   SCHEDULE:       "schedule",
   GOTW:           "gotw",

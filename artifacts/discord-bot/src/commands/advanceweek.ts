@@ -805,11 +805,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         console.error("[advanceweek] Failed to clear playoff seeds:", err);
       }
 
-      // Remove "Refund" buttons from legend & custom player commissioner log
-      // messages — once a new season begins (draft occurred), these purchases
-      // are non-refundable so the Refund action should no longer be visible.
+      // Remove "Refund" buttons from legend & custom player purchase embeds —
+      // once a new season begins (draft occurred), these are non-refundable.
+      // Purchase embeds are routed to the transactions-log channel (not the
+      // commissioner office), so scan there.
       try {
-        const commId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
+        const commId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.TRANSACTIONS)
+          ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
         if (commId) {
           const commCh = interaction.client.channels.cache.get(commId)
             ?? await interaction.client.channels.fetch(commId).catch(() => null);

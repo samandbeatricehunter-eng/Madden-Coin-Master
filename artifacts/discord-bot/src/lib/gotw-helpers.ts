@@ -30,7 +30,9 @@ async function sendGotwCommLog(
   embed:   EmbedBuilder,
 ): Promise<void> {
   try {
-    const commId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+    const commId =
+      await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG)
+      ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
     if (!commId) return;
     const ch = await client.channels.fetch(commId).catch(() => null);
     if (!ch?.isTextBased()) return;
