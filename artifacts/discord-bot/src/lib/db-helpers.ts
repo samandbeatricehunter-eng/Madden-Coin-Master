@@ -28,6 +28,7 @@ export const CHANNEL_KEYS = {
   TRANSACTIONS:   "transactions",
   WELCOME:        "welcome",
   ANNOUNCEMENTS:  "announcements",
+  TRADE_BLOCK:    "trade_block",
 } as const;
 
 // Hardcoded fallback IDs for the primary guild (backward compatibility).
@@ -51,13 +52,15 @@ const PRIMARY_CHANNEL_FALLBACKS: Record<string, string> = {
 // Keyed by guildId so the startup migration can seed guild_channels without
 // duplicating logic in multiple places.
 export const KNOWN_GUILD_CHANNELS: Record<string, Partial<Record<string, string>>> = {
-  // Primary guild — transactions log
+  // Primary guild (season 3 / old server)
   "1476251181524189438": {
     transactions: "1493360346382209224",
+    trade_block:  "1476321282868908052",   // #general / announcements channel
   },
-  // Secondary guild — transactions log
+  // Secondary guild (season 4 / new server)
   "1493688089883971735": {
     transactions: "1494083828866879638",
+    // trade_block: set this via /admin-initialize or add the channel ID here
   },
 };
 

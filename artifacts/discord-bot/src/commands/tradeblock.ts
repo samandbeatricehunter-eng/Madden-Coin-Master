@@ -9,14 +9,13 @@ import {
   usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable,
 } from "@workspace/db";
 import { eq, and, count, desc } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { getOrCreateActiveSeason, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { logTradeEvent } from "../lib/league-twitter.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const ANNOUNCEMENT_CHANNEL_ID = "1476321282868908052";
-const MAX_ACTIVE_LISTINGS      = 3;
+const MAX_ACTIVE_LISTINGS = 3;
 
 const MADDEN_POSITIONS = [
   "QB","HB","FB","WR","TE","LT","LG","C","RG","RT",
@@ -96,6 +95,7 @@ async function getActiveListingCount(discordId: string, seasonId: number): Promi
 
 async function postAnnouncement(
   client: ChatInputCommandInteraction["client"],
+  guildId: string,
   teamName: string,
   items: TradeItem[],
   notes: string | null,
@@ -103,7 +103,11 @@ async function postAnnouncement(
   isoSeeking?: string,
 ) {
   try {
-    const ch = await client.channels.fetch(ANNOUNCEMENT_CHANNEL_ID);
+    const channelId =
+      await getGuildChannel(guildId, CHANNEL_KEYS.TRADE_BLOCK) ??
+      await getGuildChannel(guildId, CHANNEL_KEYS.GENERAL);
+    if (!channelId) return;
+    const ch = await client.channels.fetch(channelId);
     if (!ch?.isTextBased()) return;
 
     let description: string;
@@ -412,8 +416,8 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
     teamA:     teamName,
   });
 
-  // Announce to general channel
-  await postAnnouncement(interaction.client, teamName, items, notes ?? null, false);
+  // Announce to trade block channel (falls back to general)
+  await postAnnouncement(interaction.client, interaction.guildId!, teamName, items, notes ?? null, false);
 }
 
 // ── /tradeblock remove ────────────────────────────────────────────────────────
@@ -582,8 +586,8 @@ async function handleISO(interaction: ChatInputCommandInteraction) {
     teamA:     teamName,
   });
 
-  // Announce to general channel
-  await postAnnouncement(interaction.client, teamName, offeringItems, notes ?? null, true, seekingSummary);
+  // Announce to trade block channel (falls back to general)
+  await postAnnouncement(interaction.client, interaction.guildId!, teamName, offeringItems, notes ?? null, true, seekingSummary);
 }
 
 // ── /tradeblock send-offer — shared state & page builder ─────────────────────
