@@ -274,6 +274,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     log.push(`🗑️ Removed ${deleted} pre-existing channel(s)`);
 
     // ── Step 3: Standalone channels ────────────────────────────────────────────
+    let registeredCount = 0;
     for (const chDef of STANDALONE_CHANNELS) {
       const perms = buildPerms(guild, commRole, coCommRole, approvedRole, chDef, false);
       const created = await guild.channels.create({
@@ -284,6 +285,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       });
       channelMentions[chDef.name] = `<#${created.id}>`;
       channelIds[chDef.name]      = created.id;
+      const dbKey = CHANNEL_KEY_MAP[chDef.name];
+      if (dbKey) { await setGuildChannel(guildId, dbKey, created.id); registeredCount++; }
     }
 
     // ── Step 4: Categories and their channels ──────────────────────────────────
@@ -330,18 +333,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           });
           channelMentions[chDef.name] = `<#${created.id}>`;
           channelIds[chDef.name]      = created.id;
+          // Register immediately so the key is saved even if a later channel fails
+          const dbKey = CHANNEL_KEY_MAP[chDef.name];
+          if (dbKey) { await setGuildChannel(guildId, dbKey, created.id); registeredCount++; }
         }
       }
     }
 
-    // ── Step 5: Save channel IDs to DB ─────────────────────────────────────────
-    const saves: Promise<void>[] = [];
-    for (const [name, id] of Object.entries(channelIds)) {
-      const key = CHANNEL_KEY_MAP[name];
-      if (key) saves.push(setGuildChannel(guildId, key, id));
-    }
-    await Promise.all(saves);
-    log.push(`💾 Saved ${saves.length} channel IDs to database`);
+    // ── Step 5: Log channel registration summary ───────────────────────────────
+    log.push(`💾 Registered ${registeredCount} channel(s) to database`);
 
     // ── Step 6: Season 1 ───────────────────────────────────────────────────────
     const existingSeasons = await db
