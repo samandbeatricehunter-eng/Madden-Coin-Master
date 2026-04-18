@@ -135,6 +135,20 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((s) =>
     s
+      .setName("purge-schedule")
+      .setDescription("⚠️ Delete stale completed rows from the schedule (keeps correct upcoming matchups)")
+      .addIntegerOption((o) =>
+        o.setName("week_from").setDescription("First week to purge (default: 1)").setRequired(false).setMinValue(1).setMaxValue(18),
+      )
+      .addIntegerOption((o) =>
+        o.setName("week_to").setDescription("Last week to purge (default: 18)").setRequired(false).setMinValue(1).setMaxValue(18),
+      )
+      .addBooleanOption((o) =>
+        o.setName("keep_upcoming").setDescription("Keep upcoming rows, only delete completed/fake ones (default: true — safe default)").setRequired(false),
+      ),
+  )
+  .addSubcommand((s) =>
+    s
       .setName("purge-preseason")
       .setDescription("⚠️ Delete preseason-tainted stats for a season so it can be cleanly re-imported")
       .addIntegerOption((o) =>
@@ -155,6 +169,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "full-schedule")    return handleFullSchedule(interaction);
   if (sub === "rosters")          return handleRosters(interaction);
   if (sub === "check-api")        return handleCheckApi(interaction);
+  if (sub === "purge-schedule")   return handlePurgeSchedule(interaction);
   if (sub === "purge-preseason")  return handlePurgePreseason(interaction);
 }
 
@@ -736,6 +751,78 @@ async function handleRosters(interaction: ChatInputCommandInteraction): Promise<
 // ── /admin_ea_export check-api ────────────────────────────────────────────────
 // POSTs a health check to the API server to verify the webhook key and URL are
 // correct. Shows the exact webhook base URL so you can verify it matches MCA.
+async function handlePurgeSchedule(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const conn = await loadEAConnection(interaction.guildId!);
+  if (!conn) {
+    await interaction.editReply({ content: "❌ **No EA connection.** Run `/admin_ea_connect start` first." });
+    return;
+  }
+
+  const { token, eaLeagueId } = conn;
+  const weekFrom    = interaction.options.getInteger("week_from")    ?? 1;
+  const weekTo      = interaction.options.getInteger("week_to")      ?? 18;
+  const keepUpcoming = interaction.options.getBoolean("keep_upcoming") ?? true;
+  const apiBase     = getApiBase();
+  const key         = getWebhookKey();
+  const platform    = token.platform;
+
+  const params = new URLSearchParams({
+    week_from:     String(weekFrom),
+    week_to:       String(weekTo),
+    keep_upcoming: String(keepUpcoming),
+  });
+
+  const url = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/schedule-purge?${params}`;
+
+  let deleted = 0;
+  try {
+    const res  = await fetch(url, { method: "DELETE" }).catch(() => null);
+    if (!res?.ok) {
+      const body = await res?.json().catch(() => ({})) as any;
+      await interaction.editReply({
+        content: `❌ Purge failed (HTTP ${res?.status ?? "no response"}): ${body?.error ?? "unknown error"}`,
+      });
+      return;
+    }
+    const json = await res.json().catch(() => ({})) as any;
+    deleted = Number(json?.deleted ?? 0);
+  } catch (err: any) {
+    await interaction.editReply({ content: `❌ Purge error: ${err?.message ?? String(err)}` });
+    return;
+  }
+
+  const rangeLabel = weekFrom === 1 && weekTo === 18 ? "all weeks" : `weeks ${weekFrom}–${weekTo}`;
+  const modeLabel  = keepUpcoming
+    ? "completed/stale rows only (upcoming rows preserved)"
+    : "ALL rows including upcoming";
+
+  const embed = new EmbedBuilder()
+    .setColor(deleted > 0 ? Colors.Orange : Colors.Grey)
+    .setTitle("🗑️ Schedule Purge Complete")
+    .addFields(
+      { name: "Rows Deleted", value: String(deleted), inline: true },
+      { name: "Range",        value: rangeLabel,       inline: true },
+      { name: "Mode",         value: modeLabel,        inline: false },
+    );
+
+  if (keepUpcoming && deleted > 0) {
+    embed.setDescription(
+      "Stale completed rows removed. Your correct upcoming matchups are intact.\n" +
+      "If the channel schedule still looks wrong, run `/postfullseasonschedule` to refresh it.",
+    );
+  } else if (!keepUpcoming && deleted > 0) {
+    embed.setDescription(
+      "⚠️ All rows for the specified weeks were deleted. Run `/admin_ea_export full-schedule` to re-import from EA.",
+    );
+  } else {
+    embed.setDescription("No matching rows found — nothing was deleted.");
+  }
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 async function handleCheckApi(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 

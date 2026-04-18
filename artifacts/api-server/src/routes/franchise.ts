@@ -14,11 +14,12 @@ import {
   processStandingsSeedings,
   processLeagueNews,
   repairTeamLinks,
+  getOrCreateActiveSeason,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaStorage.js";
-import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable, guildChannelsTable, eaConnectionsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable, guildChannelsTable, eaConnectionsTable, franchiseScheduleTable } from "@workspace/db";
+import { eq, and, sql } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
 
 const router: IRouter = Router();
@@ -312,6 +313,47 @@ function weekLabel(weekType: string, weekNum: number): string {
   };
   return ROUNDS[weekNum] ?? `Playoff Round ${weekNum}`;
 }
+
+// ── /schedule-purge — delete stale/completed rows by week range ───────────────
+// Used by /admin_ea_export purge-schedule. Deletes rows from franchise_schedule
+// for a given season and week range. By default removes only rows with status >= 2
+// (fake completed) while preserving upcoming rows. Set keep_upcoming=false to
+// remove ALL rows (full wipe). Returns count of deleted rows.
+router.delete("/madden/:leagueKey/:platform/:leagueId/schedule-purge", validateKey, async (req, res) => {
+  const leagueId    = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const weekFrom    = parseInt(String(req.query["week_from"] ?? "1"),  10);
+  const weekTo      = parseInt(String(req.query["week_to"]   ?? "18"), 10);
+  const keepUpcoming = String(req.query["keep_upcoming"] ?? "true").toLowerCase() !== "false";
+
+  if (leagueId <= 0 || weekFrom < 1 || weekTo > 18 || weekFrom > weekTo) {
+    return res.status(400).json({ ok: false, error: "Invalid parameters" });
+  }
+
+  try {
+    const season = await getOrCreateActiveSeason(leagueId);
+
+    const conditions = [
+      eq(franchiseScheduleTable.seasonId, season.id),
+      sql`${franchiseScheduleTable.weekIndex} >= ${weekFrom - 1}`,
+      sql`${franchiseScheduleTable.weekIndex} <= ${weekTo - 1}`,
+    ];
+    if (keepUpcoming) {
+      // Only delete rows that are marked as completed (fake/stale simulated scores)
+      conditions.push(sql`${franchiseScheduleTable.status} >= 2`);
+    }
+
+    const deleted = await db
+      .delete(franchiseScheduleTable)
+      .where(and(...conditions))
+      .returning({ id: franchiseScheduleTable.id });
+
+    console.log(`[schedule-purge] Deleted ${deleted.length} rows for seasonId=${season.id} weeks ${weekFrom}–${weekTo} (keepUpcoming=${keepUpcoming})`);
+    return res.status(200).json({ ok: true, deleted: deleted.length, seasonId: season.id });
+  } catch (err) {
+    console.error("[schedule-purge] Error:", err);
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
 
 // ── /week/:weekType/:weekNum/schedule-import — schedule-only, no payouts ──────
 // Used by /admin_ea_export full-schedule. Stores matchup structure only — all
