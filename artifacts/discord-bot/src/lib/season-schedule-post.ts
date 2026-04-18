@@ -7,15 +7,14 @@ import { Client, EmbedBuilder, Colors, TextChannel } from "discord.js";
 import { db } from "@workspace/db";
 import { franchiseScheduleTable, franchiseMcaTeamsTable, usersTable } from "@workspace/db";
 import { eq, and, asc, isNotNull } from "drizzle-orm";
-import { getRosterSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
+import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 /**
  * Build a map of team name (lower) → Discord mention string.
  * Indexes by MCA fullName + nickName so schedule names match correctly.
+ * Uses the passed seasonId directly so each guild resolves its own team→user mappings.
  */
-async function buildMentionMap(seasonId: number): Promise<Map<string, string>> {
-  const rosterSeasonId = await getRosterSeasonId(PRIMARY_GUILD_ID);
-
+async function buildMentionMap(seasonId: number, guildId: string): Promise<Map<string, string>> {
   const mcaTeams = await db
     .select({
       fullName:  franchiseMcaTeamsTable.fullName,
@@ -24,7 +23,7 @@ async function buildMentionMap(seasonId: number): Promise<Map<string, string>> {
     })
     .from(franchiseMcaTeamsTable)
     .where(and(
-      eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId),
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
       isNotNull(franchiseMcaTeamsTable.discordId),
     ));
 
@@ -36,11 +35,12 @@ async function buildMentionMap(seasonId: number): Promise<Map<string, string>> {
     }
   }
 
-  // Fallback: economy_users short names
+  // Fallback: economy_users short names — scoped to the correct guild
   if (map.size === 0) {
     const allUsers = await db
       .select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable);
+      .from(usersTable)
+      .where(eq(usersTable.guildId, guildId));
     for (const u of allUsers) {
       if (u.team) map.set(u.team.toLowerCase().trim(), `<@${u.discordId}>`);
     }
@@ -114,7 +114,7 @@ export async function postFullSeasonScheduleToChannel(
 
   if (regularGames.length === 0) return 0;
 
-  const mentionMap = await buildMentionMap(seasonId);
+  const mentionMap = await buildMentionMap(seasonId, guildId);
 
   // Collect all teams in schedule (for bye detection)
   const allTeamsInSchedule = new Set<string>();

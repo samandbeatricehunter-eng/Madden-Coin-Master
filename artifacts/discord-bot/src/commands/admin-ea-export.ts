@@ -111,6 +111,14 @@ export const data = new SlashCommandBuilder()
           .setName("reset")
           .setDescription("Clear wrong/simulated scores first — use when games show as played incorrectly (default: false)")
           .setRequired(false),
+      )
+      .addIntegerOption((o) =>
+        o
+          .setName("start_week")
+          .setDescription("Reset/import from this week onward; earlier completed weeks are left untouched")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(18),
       ),
   )
   .addSubcommand((s) =>
@@ -569,16 +577,20 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
   const { token, eaLeagueId } = conn;
   const totalWeeks = interaction.options.getInteger("weeks") ?? 18;
   const doReset    = interaction.options.getBoolean("reset") ?? false;
+  const startWeek  = interaction.options.getInteger("start_week") ?? 1;
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
 
-  await interaction.editReply({ content: `⏳ Opening EA session and pulling all ${totalWeeks} weeks…` });
+  const weekRange = startWeek > 1
+    ? `weeks ${startWeek}–${totalWeeks}`
+    : `all ${totalWeeks} weeks`;
+  await interaction.editReply({ content: `⏳ Opening EA session and pulling ${weekRange}…` });
 
   // ── Single session fetch ──────────────────────────────────────────────────
   let weekResults: Array<{ weekNum: number; data: unknown }>;
   let freshToken:  typeof token;
   try {
-    const out = await fetchAllWeekSchedules(token, eaLeagueId, totalWeeks);
+    const out = await fetchAllWeekSchedules(token, eaLeagueId, totalWeeks, 1, startWeek);
     weekResults = out.weekResults;
     freshToken  = out.token;
   } catch (err: any) {
@@ -603,7 +615,8 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
   //  · Simulated/CPU game results from EA are ignored
   //  · processWeekScores (payouts) is NOT triggered
   //  · Response is synchronous and includes game count per week
-  await interaction.editReply({ content: `⏳ Sending ${totalWeeks} weeks to schedule processor…` });
+  const processedCount = weekResults.length;
+  await interaction.editReply({ content: `⏳ Sending ${weekRange} to schedule processor…` });
 
   const apiResults: Array<{ week: number; ok: boolean; count: number; status: number }> = [];
   for (const { weekNum, data } of weekResults) {
@@ -622,7 +635,7 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
     }
 
     if (weekNum % 6 === 0 || weekNum === totalWeeks) {
-      await interaction.editReply({ content: `⏳ Sent ${weekNum}/${totalWeeks} weeks to processor…` });
+      await interaction.editReply({ content: `⏳ Sent week ${weekNum}/${totalWeeks} to processor…` });
     }
   }
 
@@ -670,10 +683,10 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
       {
         name:  "Result",
         value: failed.length === 0
-          ? `✅ ${totalWeeks} weeks processed · **${totalGames} games** stored as upcoming`
-          : `⚠️ ${succeeded}/${totalWeeks} weeks succeeded · ${totalGames} games stored`,
+          ? `✅ ${weekRange} processed · **${totalGames} games** stored as upcoming`
+          : `⚠️ ${succeeded}/${processedCount} weeks succeeded · ${totalGames} games stored`,
       },
-      ...(doReset ? [{ name: "🔄 Reset Mode", value: "All existing schedule data was overwritten — games reset to upcoming" }] : []),
+      ...(doReset ? [{ name: "🔄 Reset Mode", value: startWeek > 1 ? `Existing data for ${weekRange} was overwritten — completed weeks 1–${startWeek - 1} were left untouched` : "All existing schedule data was overwritten — games reset to upcoming" }] : []),
       { name: "ℹ️ Note", value: "⚪ weeks had no data from EA (league hasn't advanced there yet)" },
       ...(channelNote ? [{ name: "📣 Schedule Channel", value: channelNote }] : []),
     )

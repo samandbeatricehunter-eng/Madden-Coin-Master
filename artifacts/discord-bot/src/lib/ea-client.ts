@@ -539,12 +539,13 @@ export async function fetchAllWeekSchedules(
   eaLeagueId:  number,
   totalWeeks:  number = 18,
   stageIndex:  number = 1,   // 1 = regular season
+  startWeek:   number = 1,   // first week to fetch (skips earlier weeks entirely)
 ): Promise<{ weekResults: Array<{ weekNum: number; data: unknown }>; token: TokenInfo }> {
   const refreshed = await refreshTokenIfNeeded(token);
   const session   = await createBlazeSession(refreshed);
 
   const weekResults: Array<{ weekNum: number; data: unknown }> = [];
-  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
+  for (let weekNum = startWeek; weekNum <= totalWeeks; weekNum++) {
     const body = { leagueId: eaLeagueId, stageIndex, weekIndex: weekNum - 1 };
     const data = await fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!, body);
     weekResults.push({ weekNum, data });
