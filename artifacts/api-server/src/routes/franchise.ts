@@ -120,7 +120,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, a
   saveMcaPayload("mca/leagueteams.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/leagueteams] Received payload, processing async...");
-  const result = await processLeagueTeams(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processLeagueTeams(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leagueteams] Result:", result.message);
 });
 
@@ -141,7 +141,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, asy
   saveMcaPayload("mca/teamstats.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/teamstats] Received payload, processing async...");
-  const result = await processTeamStats(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processTeamStats(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/teamstats] Result:", result.message);
 });
 
@@ -153,7 +153,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, asyn
   saveMcaPayload("mca/seedings-latest.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/seedings] Received playoff seedings payload, processing...");
-  const result = await processPlayoffSeedings(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processPlayoffSeedings(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/seedings] Result:", result.message);
   if (!result.ok && COMMISSIONER_CHANNEL_ID) {
     sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
@@ -189,7 +189,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
   saveMcaPayload("mca/schedules.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/schedules] Received payload, processing async...");
-  const result = await processSchedules(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processSchedules(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/schedules] Result:", result.message);
   if (!result.ok && COMMISSIONER_CHANNEL_ID) {
     sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
@@ -204,7 +204,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
 router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validateKey, async (req, res) => {
   saveMcaPayload("mca/freeagents-roster.json", req.body);
   res.status(200).json({ status: "received" });
-  const result = await processFreeAgentRoster(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processFreeAgentRoster(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/freeagents/roster]", result.message);
 });
 
@@ -215,7 +215,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-team.json`, req.body);
   res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/team] Received team stats (weekType=${weekType}), processing...`);
-  const result = await processTeamWeekStats(req.body, weekType, weekNum).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processTeamWeekStats(req.body, weekType, weekNum, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log(`[mca/week${weekNum}/team] Result:`, result.message);
 });
 
@@ -229,7 +229,7 @@ for (const statType of ["passing", "rushing", "receiving", "defense", "kicking",
       const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
       saveMcaPayload(`mca/week-${weekType}-${weekNum}-${statType}.json`, req.body);
       res.status(200).json({ status: "received" });
-      const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum).catch(err => ({
+      const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({
         ok: false, message: String(err), violations: [] as ViolationRecord[],
       }));
       if (result.ok) {
@@ -270,8 +270,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing...`);
   // Write completed scores to franchise_schedule immediately so /seasonschedule
   // reflects results regardless of whether /schedules is sent before or after this.
-  await syncWeekScoresToSchedule(req.body, weekNum, weekType);
-  const result = await processWeekScores(req.body, weekNum, weekType).catch(err => ({
+  await syncWeekScoresToSchedule(req.body, weekNum, weekType, parseInt(String(req.params.leagueId ?? "0"), 10));
+  const result = await processWeekScores(req.body, weekNum, weekType, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -381,14 +381,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 router.post("/madden/:leagueKey/:platform/:leagueId/draftpicks", validateKey, async (req, res) => {
   saveMcaPayload("mca/draftpicks.json", req.body);
   res.status(200).json({ status: "received" });
-  const result = await processDraftPicks(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processDraftPicks(req.body, undefined, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/draftpicks]", result.message);
 });
 
 router.post("/madden/:leagueKey/:platform/:leagueId/leaguedraftpicks", validateKey, async (req, res) => {
   saveMcaPayload("mca/draftpicks.json", req.body);
   res.status(200).json({ status: "received" });
-  const result = await processDraftPicks(req.body).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processDraftPicks(req.body, undefined, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leaguedraftpicks]", result.message);
 });
 
@@ -401,7 +401,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/draftpicks", va
   const mcaTeamId = parseInt(teamIdStr, 10);
   saveMcaPayload(`mca/team-${teamIdStr}-draftpicks.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processDraftPicks(req.body, isNaN(mcaTeamId) ? undefined : mcaTeamId)
+  const result = await processDraftPicks(req.body, isNaN(mcaTeamId) ? undefined : mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10))
     .catch(err => ({ ok: false, message: String(err) }));
   console.log(`[mca/team/${teamIdStr}/draftpicks]`, result.message);
 });
@@ -455,7 +455,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
     console.warn(`[mca/team/${teamIdStr}/roster] Invalid teamId — skipping`);
     return;
   }
-  const result = await processTeamRoster(req.body, mcaTeamId).catch(err => ({ ok: false, message: String(err), details: undefined }));
+  const result = await processTeamRoster(req.body, mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err), details: undefined }));
   console.log(`[mca/team/${teamIdStr}/roster] ${result.message}`);
 
   // Post detected transactions to the transactions channel
@@ -478,7 +478,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
   res.status(200).json({ status: "received" });
 
   console.log(`[mca/week${weekNum}/scores] Received (weekType=${weekType}), processing payouts...`);
-  const result = await processWeekScores(req.body, weekNum, weekType).catch(err => ({
+  const result = await processWeekScores(req.body, weekNum, weekType, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -585,7 +585,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/news", validateKey, async (r
   const body = req.body as Record<string, unknown>;
   const keys = Object.keys(body ?? {});
   console.log("[mca/news] Received. Top-level keys:", keys.join(", "));
-  const result = await processLeagueNews(req.body);
+  const result = await processLeagueNews(req.body, parseInt(String(req.params.leagueId ?? "0"), 10));
   console.log("[mca/news]", result.message);
   res.status(result.ok ? 200 : 500).json({ status: result.ok ? "ok" : "error", message: result.message });
 });

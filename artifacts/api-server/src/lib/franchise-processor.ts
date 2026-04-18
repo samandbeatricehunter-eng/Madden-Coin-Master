@@ -2,6 +2,7 @@ import { db } from "@workspace/db";
 import {
   usersTable,
   seasonsTable,
+  eaConnectionsTable,
   userRecordsTable,
   coinTransactionsTable,
   gameLogTable,
@@ -139,7 +140,26 @@ async function upsertH2HMatchup(winnerId: string, loserId: string): Promise<void
     });
 }
 
-export async function getOrCreateActiveSeason() {
+export async function getOrCreateActiveSeason(eaLeagueId = 0) {
+  // When a league ID is provided, scope to the guild that owns it.
+  if (eaLeagueId > 0) {
+    const [conn] = await db
+      .select({ guildId: eaConnectionsTable.guildId })
+      .from(eaConnectionsTable)
+      .where(eq(eaConnectionsTable.eaLeagueId, eaLeagueId))
+      .limit(1);
+    if (conn?.guildId) {
+      const [existing] = await db
+        .select()
+        .from(seasonsTable)
+        .where(and(eq(seasonsTable.isActive, true), eq(seasonsTable.guildId, conn.guildId)))
+        .limit(1);
+      if (existing) return existing;
+      const [s] = await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true, guildId: conn.guildId }).returning();
+      return s!;
+    }
+  }
+  // Fallback: global (MCA manual imports or internal routes that don't carry a league ID)
   const existing = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
   if (existing[0]) return existing[0]!;
   const [s] = await db.insert(seasonsTable).values({ seasonNumber: 1, isActive: true }).returning();
@@ -177,9 +197,9 @@ export interface ProcessResult {
 
 // ── /leagueteams → populate franchiseMcaTeamsTable ───────────────────────────
 
-export async function processLeagueTeams(body: unknown): Promise<ProcessResult> {
+export async function processLeagueTeams(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
     const teams = extractList(body, "leagueTeamInfoList", "teamInfoList", "teams");
     if (teams.length === 0) {
       return { ok: false, message: "No teams found in payload — expected leagueTeamInfoList" };
@@ -354,9 +374,9 @@ export async function processLeagueTeams(body: unknown): Promise<ProcessResult> 
 
 // ── /teamstats → update teamSeasonStatsTable ─────────────────────────────────
 
-export async function processTeamStats(body: unknown): Promise<ProcessResult> {
+export async function processTeamStats(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
     const stats  = extractList(body, "teamStatInfoList", "teamStatsInfoList", "teamStats");
     if (stats.length === 0) {
       return { ok: false, message: "No team stats found in payload — expected teamStatInfoList" };
@@ -472,6 +492,7 @@ export async function processTeamWeekStats(
   body: unknown,
   weekType: string,
   weekNum: number,
+  eaLeagueId = 0,
 ): Promise<ProcessResult> {
   // Preseason stats don't count toward season totals
   if (weekType === "pre") {
@@ -480,7 +501,7 @@ export async function processTeamWeekStats(
   }
 
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
     const stats  = extractList(body, "teamStatInfoList", "teamStatsInfoList", "teamStats");
     if (stats.length === 0) {
       return { ok: true, message: "No team stats in payload" };
@@ -657,9 +678,9 @@ export async function processTeamWeekStats(
 // This function is called by the /reseed-from-standings endpoint which reads
 // mca/standings.json from GCS without needing a new EA export.
 
-export async function processStandingsSeedings(body: unknown): Promise<ProcessResult> {
+export async function processStandingsSeedings(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season   = await getOrCreateActiveSeason();
+    const season   = await getOrCreateActiveSeason(eaLeagueId);
     const standings: any[] = (body as any)?.teamStandingInfoList ?? [];
     if (standings.length === 0) {
       return { ok: false, message: "No teamStandingInfoList entries in payload" };
@@ -717,9 +738,9 @@ export async function processStandingsSeedings(body: unknown): Promise<ProcessRe
 //   conferenceRank | confRank | conferencestanding | confStanding | confPlace
 //   conferenceId   | confId
 
-export async function processPlayoffSeedings(body: unknown): Promise<ProcessResult> {
+export async function processPlayoffSeedings(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
     const stats  = extractList(body, "teamStatInfoList", "teamStatsInfoList", "teamStats");
     if (stats.length === 0) {
       return { ok: true, message: "No team stat entries — nothing to seed" };
@@ -820,6 +841,7 @@ export async function processPlayerWeekStats(
   statType: WeekStatType,
   weekType: string,
   weekNum: number,
+  eaLeagueId = 0,
 ): Promise<ProcessResult> {
   // Preseason stats don't count toward season totals
   if (weekType === "pre") {
@@ -828,7 +850,7 @@ export async function processPlayerWeekStats(
   }
 
   try {
-    const season  = await getOrCreateActiveSeason();
+    const season  = await getOrCreateActiveSeason(eaLeagueId);
     const listKeys = STAT_LIST_KEYS[statType];
     const players = extractList(body, ...listKeys);
 
@@ -1110,9 +1132,9 @@ export async function processPlayerWeekStats(
 
 // ── /schedules → sync franchiseScheduleTable ─────────────────────────────────
 
-export async function processSchedules(body: unknown): Promise<ProcessResult> {
+export async function processSchedules(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
     const games  = extractList(body, "scheduleInfoList", "gameScheduleInfoList", "schedules");
     if (games.length === 0) {
       return { ok: false, message: "No schedule data found — expected scheduleInfoList" };
@@ -1273,6 +1295,7 @@ export async function syncWeekScoresToSchedule(
   body: unknown,
   weekNum: number,
   weekType = "reg",
+  eaLeagueId = 0,
 ): Promise<void> {
   // Preseason games don't count toward records or schedule display
   if (weekType === "pre") {
@@ -1281,7 +1304,7 @@ export async function syncWeekScoresToSchedule(
   }
 
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
 
     // MCA may send playoff rounds as weekType="reg" weekNum>=19 (Format A) OR
     // weekType="post" weekNum=1-5 (Format B). resolvePlayoffWeekIndex normalises
@@ -1356,6 +1379,7 @@ export async function processWeekScores(
   body: unknown,
   weekNum: number,
   weekType = "reg",
+  eaLeagueId = 0,
 ): Promise<WeekScoresResult> {
   const zero: WeekScoresResult = {
     ok: false, message: "", gamesProcessed: 0, gamesDuplicate: 0,
@@ -1371,7 +1395,7 @@ export async function processWeekScores(
   }
 
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
     zero.seasonId = season.id;
 
     const games = extractList(body, "gameScheduleInfoList", "scheduleInfoList", "games");
@@ -1973,9 +1997,9 @@ function friendlyAttrName(key: string): string {
 
 // ── /team/:teamId/roster → upsert active 53-man roster for one team ───────────
 
-export async function processTeamRoster(body: unknown, mcaTeamId: number): Promise<ProcessResult> {
+export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
 
     let [teamEntry] = await db.select()
       .from(franchiseMcaTeamsTable)
@@ -2284,9 +2308,9 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number): Promi
 // perTeamId: when set (per-team endpoint), only delete/replace that team's
 // existing picks instead of nuking the whole season — this lets 32 individual
 // team payloads accumulate without each one wiping the previous teams' data.
-export async function processDraftPicks(body: unknown, perTeamId?: number): Promise<ProcessResult> {
+export async function processDraftPicks(body: unknown, perTeamId?: number, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
 
     // Pull the current team roster so we can match teamId → name + discordId
     const mcaTeams = await db.select().from(franchiseMcaTeamsTable)
@@ -2410,9 +2434,9 @@ export async function processDraftPicks(body: unknown, perTeamId?: number): Prom
 
 const FA_TEAM_ID = 999;
 
-export async function processFreeAgentRoster(body: unknown): Promise<ProcessResult> {
+export async function processFreeAgentRoster(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season    = await getOrCreateActiveSeason();
+    const season    = await getOrCreateActiveSeason(eaLeagueId);
     const rawPlayers = normalizePlayers(body);
 
     if (rawPlayers.length === 0) {
@@ -2458,9 +2482,9 @@ export async function processFreeAgentRoster(body: unknown): Promise<ProcessResu
 // EA returns a list of news items (headlines, body text, category).
 // We upsert by eaNewsId so re-importing the same week never creates duplicates.
 // The Twitter bot reads these to inform tweet topics and context.
-export async function processLeagueNews(body: unknown): Promise<ProcessResult> {
+export async function processLeagueNews(body: unknown, eaLeagueId = 0): Promise<ProcessResult> {
   try {
-    const season = await getOrCreateActiveSeason();
+    const season = await getOrCreateActiveSeason(eaLeagueId);
 
     if (!body || typeof body !== "object") {
       return { ok: true, message: "League news payload empty or invalid" };
