@@ -51,10 +51,10 @@ function checkMilestone(totalWins: number, currentTier: number) {
 
 // ── Duplicated DB helpers (keeps API server free of discord.js dependency) ────
 
-async function addBalance(discordId: string, amount: number): Promise<void> {
+async function addBalance(discordId: string, amount: number, guildId: string): Promise<void> {
   await db.update(usersTable)
     .set({ balance: sql`${usersTable.balance} + ${amount}`, updatedAt: new Date() })
-    .where(eq(usersTable.discordId, discordId));
+    .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
 }
 
 async function logTransaction(
@@ -62,11 +62,13 @@ async function logTransaction(
   amount: number,
   type: "addcoins" | "removecoins",
   description: string,
+  guildId: string,
 ): Promise<void> {
   await db.insert(coinTransactionsTable).values({
     discordId, amount,
     type,
     description,
+    guildId,
     relatedUserId: null,
   });
 }
@@ -76,9 +78,10 @@ async function upsertH2HRecord(
   seasonId: number,
   won: boolean,
   pointSpread: number,
+  guildId: string,
 ): Promise<void> {
   const userInfo = await db.select({ discordUsername: usersTable.discordUsername, team: usersTable.team })
-    .from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
+    .from(usersTable).where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId))).limit(1);
   if (!userInfo[0]) return;
 
   const existing = await db.select({ id: userRecordsTable.id })
@@ -112,10 +115,12 @@ async function appendGameLog(
   result: "win" | "loss",
   pointSpread: number,
   opponentLabel: string,
-  opponentDiscordId?: string,
+  opponentDiscordId: string | undefined,
+  guildId: string,
 ): Promise<void> {
   await db.insert(gameLogTable).values({
     discordId, seasonId, result, pointSpread, opponentLabel,
+    guildId,
     opponentDiscordId: opponentDiscordId ?? null,
     gameType: "regular_season",
   });
@@ -123,17 +128,18 @@ async function appendGameLog(
 
 // Upsert per-opponent H2H matchup record.
 // Pair is stored in canonical (alphabetically ascending) order.
-async function upsertH2HMatchup(winnerId: string, loserId: string): Promise<void> {
+async function upsertH2HMatchup(winnerId: string, loserId: string, guildId: string): Promise<void> {
   const [id1, id2] = winnerId < loserId ? [winnerId, loserId] : [loserId, winnerId];
   const winnerIsId1 = winnerId === id1;
   await db.insert(h2hMatchupRecordsTable)
     .values({
+      guildId,
       discordId1: id1, discordId2: id2,
       wins1: winnerIsId1 ? 1 : 0,
       wins2: winnerIsId1 ? 0 : 1,
     })
     .onConflictDoUpdate({
-      target: [h2hMatchupRecordsTable.discordId1, h2hMatchupRecordsTable.discordId2],
+      target: [h2hMatchupRecordsTable.guildId, h2hMatchupRecordsTable.discordId1, h2hMatchupRecordsTable.discordId2],
       set: winnerIsId1
         ? { wins1: sql`${h2hMatchupRecordsTable.wins1} + 1`, updatedAt: new Date() }
         : { wins2: sql`${h2hMatchupRecordsTable.wins2} + 1`, updatedAt: new Date() },
@@ -716,7 +722,7 @@ export async function processStandingsSeedings(body: unknown, eaLeagueId = 0): P
       ops.push(
         db.update(usersTable)
           .set({ playoffSeed: confSeed, playoffConference: conferenceName, updatedAt: new Date() })
-          .where(eq(usersTable.discordId, teamEntry.discordId)),
+          .where(and(eq(usersTable.discordId, teamEntry.discordId), eq(usersTable.guildId, season.guildId ?? ""))),
       );
       applied++;
     }
@@ -795,7 +801,7 @@ export async function processPlayoffSeedings(body: unknown, eaLeagueId = 0): Pro
       ops.push(
         db.update(usersTable)
           .set({ playoffSeed: confRank, playoffConference: conference, updatedAt: new Date() })
-          .where(eq(usersTable.discordId, teamEntry.discordId)),
+          .where(and(eq(usersTable.discordId, teamEntry.discordId), eq(usersTable.guildId, season.guildId ?? ""))),
       );
       applied++;
     }
@@ -1565,30 +1571,33 @@ export async function processWeekScores(
           const blowoutFlag = detectH2HBlowout(winnerTeam, loserTeam, hiScore, loScore, roundLabel, winnerId);
           if (blowoutFlag) violations.push(blowoutFlag);
 
-          await addBalance(winnerId, H2H_WIN_PAYOUT);
+          const guildId = season.guildId ?? "";
+          await addBalance(winnerId, H2H_WIN_PAYOUT, guildId);
           await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
-            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} win vs ${loserTeam} (${hiScore}–${loScore})${gameRoundLabel}`);
-          await addBalance(loserId, H2H_LOSS_PAYOUT);
+            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} win vs ${loserTeam} (${hiScore}–${loScore})${gameRoundLabel}`,
+            guildId);
+          await addBalance(loserId, H2H_LOSS_PAYOUT, guildId);
           await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
-            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} loss vs ${winnerTeam} (${loScore}–${hiScore})${gameRoundLabel}`);
+            `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} loss vs ${winnerTeam} (${loScore}–${hiScore})${gameRoundLabel}`,
+            guildId);
 
           const resultPrefix = isPlayoff ? "🏆🏈" : "🏆";
           payoutLines.push(`${resultPrefix} **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
           resultLines.push(`${resultPrefix} **${winnerTeam}** ${hiScore} — ${loScore} **${loserTeam}**`);
 
-          await upsertH2HRecord(winnerId, season.id, true,    spread);
-          await upsertH2HRecord(loserId,  season.id, false, -spread);
-          await appendGameLog(winnerId, season.id, "win",  spread,  loserTeam,   loserId);
-          await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam,  winnerId);
+          await upsertH2HRecord(winnerId, season.id, true,    spread, guildId);
+          await upsertH2HRecord(loserId,  season.id, false, -spread, guildId);
+          await appendGameLog(winnerId, season.id, "win",  spread,  loserTeam,   loserId,   guildId);
+          await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam,  winnerId,  guildId);
 
           await db.update(usersTable)
             .set({ allTimeH2HWins: sql`${usersTable.allTimeH2HWins} + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, winnerId));
+            .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId)));
           await db.update(usersTable)
             .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-            .where(eq(usersTable.discordId, loserId));
+            .where(and(eq(usersTable.discordId, loserId), eq(usersTable.guildId, guildId)));
           try {
-            await upsertH2HMatchup(winnerId, loserId);
+            await upsertH2HMatchup(winnerId, loserId, guildId);
           } catch (h2hErr) {
             console.error(`[mca/week${weekNum}/schedules] H2H record update failed for game ${gameId} — payout still issued:`, h2hErr);
           }
@@ -1612,21 +1621,21 @@ export async function processWeekScores(
                 .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
               await db.update(usersTable)
                 .set({ allTimeSuperbowlWins: sql`${usersTable.allTimeSuperbowlWins} + 1`, updatedAt: new Date() })
-                .where(eq(usersTable.discordId, winnerId));
+                .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId)));
             }
           }
 
           const winnerRow = await db.select({ allTimeH2HWins: usersTable.allTimeH2HWins, milestoneTierAwarded: usersTable.milestoneTierAwarded })
-            .from(usersTable).where(eq(usersTable.discordId, winnerId)).limit(1);
+            .from(usersTable).where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId))).limit(1);
           const prevMilestoneTier = winnerRow[0]?.milestoneTierAwarded ?? 0;
           const milestone = checkMilestone(winnerRow[0]?.allTimeH2HWins ?? 0, prevMilestoneTier);
           let milestoneBonusAwarded: number | null = null;
           if (milestone) {
-            await addBalance(winnerId, milestone.bonus);
-            await logTransaction(winnerId, milestone.bonus, "addcoins", `Career milestone: ${milestone.label} (MCA webhook)`);
+            await addBalance(winnerId, milestone.bonus, guildId);
+            await logTransaction(winnerId, milestone.bonus, "addcoins", `Career milestone: ${milestone.label} (MCA webhook)`, guildId);
             await db.update(usersTable)
               .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
-              .where(eq(usersTable.discordId, winnerId));
+              .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId)));
             milestoneLines.push(`🎯 **${winnerTeam}** hit **${milestone.label}** → +${milestone.bonus} coins`);
             milestoneBonusAwarded = milestone.bonus;
           }
@@ -1646,8 +1655,8 @@ export async function processWeekScores(
             ]).onConflictDoNothing();
 
         } else {
-          await appendGameLog(hData.discordId!, season.id, "loss", 0, aData.fullName);
-          await appendGameLog(aData.discordId!, season.id, "loss", 0, hData.fullName);
+          await appendGameLog(hData.discordId!, season.id, "loss", 0, aData.fullName, undefined, season.guildId ?? "");
+          await appendGameLog(aData.discordId!, season.id, "loss", 0, hData.fullName, undefined, season.guildId ?? "");
           payoutLines.push(`🤝 **${hData.fullName}** vs **${aData.fullName}** — Tie *(no payout)*`);
           resultLines.push(`🤝 **${hData.fullName}** ${homeScore} — ${awayScore} **${aData.fullName}** *(tie)*`);
         }
@@ -1661,12 +1670,12 @@ export async function processWeekScores(
         const spread     = Math.abs(homeScore - awayScore);
 
         if (!isTie) {
-          await addBalance(winnerId, CPU_WIN_PAYOUT);
+          await addBalance(winnerId, CPU_WIN_PAYOUT, season.guildId ?? "");
           await logTransaction(winnerId, CPU_WIN_PAYOUT, "addcoins",
-            `MCA webhook: CPU win vs ${loserTeam} (${hiScore}–${loScore})`);
+            `MCA webhook: CPU win vs ${loserTeam} (${hiScore}–${loScore})`, season.guildId ?? "");
           payoutLines.push(`🤖 **${winnerTeam}** +${CPU_WIN_PAYOUT} *(force/autopilot vs ${loserTeam} ${hiScore}–${loScore})*`);
           resultLines.push(`🤖 **${winnerTeam}** ${hiScore} — ${loScore} **${loserTeam}** *(force/autopilot)*`);
-          await appendGameLog(winnerId, season.id, "win", spread, `[CPU] ${loserTeam}`);
+          await appendGameLog(winnerId, season.id, "win", spread, `[CPU] ${loserTeam}`, undefined, season.guildId ?? "");
           payoutMeta = {
             payoutType: "cpu",
             winnerDiscordId: winnerId, loserDiscordId: null,
@@ -1696,9 +1705,9 @@ export async function processWeekScores(
         if (cpuFlag) violations.push(cpuFlag);
 
         if (humanWon) {
-          await addBalance(humanData.discordId!, CPU_WIN_PAYOUT);
+          await addBalance(humanData.discordId!, CPU_WIN_PAYOUT, season.guildId ?? "");
           await logTransaction(humanData.discordId!, CPU_WIN_PAYOUT, "addcoins",
-            `MCA webhook: CPU win vs ${cpuData.fullName} (${humanScore}–${cpuScore})`);
+            `MCA webhook: CPU win vs ${cpuData.fullName} (${humanScore}–${cpuScore})`, season.guildId ?? "");
           payoutLines.push(`🤖 **${humanData.fullName}** +${CPU_WIN_PAYOUT} *(CPU win vs ${cpuData.fullName} ${humanScore}–${cpuScore})*`);
           resultLines.push(`🤖 **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU)*`);
           payoutMeta = {
@@ -1710,7 +1719,7 @@ export async function processWeekScores(
         } else {
           resultLines.push(`❌ **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU loss)*`);
         }
-        await appendGameLog(humanData.discordId!, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuData.fullName}`);
+        await appendGameLog(humanData.discordId!, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuData.fullName}`, undefined, season.guildId ?? "");
         await db.insert(franchiseGameParticipantsTable)
           .values({ seasonId: season.id, week: String(weekNum), discordId: humanData.discordId!, gameType: "cpu" })
           .onConflictDoNothing();

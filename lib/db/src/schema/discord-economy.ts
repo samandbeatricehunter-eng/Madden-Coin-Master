@@ -191,7 +191,7 @@ export const h2hMatchupRecordsTable = pgTable("h2h_matchup_records", {
   wins2:      integer("wins_2").notNull().default(0),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
-  uniquePair: uniqueIndex("h2h_matchup_pair_idx").on(t.discordId1, t.discordId2),
+  uniquePair: uniqueIndex("h2h_matchup_guild_pair_idx").on(t.guildId, t.discordId1, t.discordId2),
 }));
 
 export const rulesTable = pgTable("rules", {
