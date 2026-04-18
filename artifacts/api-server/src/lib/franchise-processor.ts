@@ -1501,6 +1501,19 @@ export async function syncWeekScoresToSchedule(
       .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
     const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
 
+    if (scheduleOnly && resetScores) {
+      // Hard reset: DELETE all rows for this week first, then insert fresh from EA.
+      // onConflictDoUpdate cannot remove stale rows that have different homeTeamId/awayTeamId
+      // pairs (e.g. when a previous import stored wrong simulated opponents). A DELETE is the
+      // only way to guarantee the week contains exactly what EA currently reports.
+      await db.delete(franchiseScheduleTable)
+        .where(and(
+          eq(franchiseScheduleTable.seasonId, season.id),
+          eq(franchiseScheduleTable.weekIndex, weekIndex),
+        ));
+      console.log(`[syncWeekScores] Deleted existing rows for seasonId=${season.id} weekIndex=${weekIndex} before reset-import`);
+    }
+
     const upserts: Promise<any>[] = [];
     for (const g of games) {
       if (!g || typeof g !== "object") continue;
@@ -1527,27 +1540,8 @@ export async function syncWeekScoresToSchedule(
         };
 
         if (resetScores) {
-          // Reset mode: overwrite existing rows — wipe simulated/wrong scores back to upcoming.
-          upserts.push(
-            db.insert(franchiseScheduleTable)
-              .values(row)
-              .onConflictDoUpdate({
-                target: [
-                  franchiseScheduleTable.seasonId,
-                  franchiseScheduleTable.weekIndex,
-                  franchiseScheduleTable.homeTeamId,
-                  franchiseScheduleTable.awayTeamId,
-                ],
-                set: {
-                  homeTeamName: sql`excluded.home_team_name`,
-                  awayTeamName: sql`excluded.away_team_name`,
-                  homeScore:    null,
-                  awayScore:    null,
-                  status:       0,
-                  importedAt:   new Date(),
-                },
-              })
-          );
+          // Rows for this week were already deleted above — just insert without conflict checks.
+          upserts.push(db.insert(franchiseScheduleTable).values(row));
         } else {
           // Default schedule-only mode: create new rows only, never touch existing data.
           // Safe to run at any time — won't overwrite scores already imported via week export.
