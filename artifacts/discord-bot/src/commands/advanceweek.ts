@@ -29,21 +29,8 @@ import { generateMatchupBreakdown } from "../lib/matchup-ai-breakdown.js";
 import { globalLogoPath, guildLogoPath } from "../lib/gcs-reader.js";
 import { AttachmentBuilder } from "discord.js";
 
-const MATCHUP_CATEGORY_ID  = "1478427821666861272";
-const ANNOUNCE_CHANNEL_ID  = "1484689142515368188"; // general announcements / rule-change channel
-
-// Channels wiped completely when advancing to offseason (excludes ANNOUNCE_CHANNEL_ID which is posted to, not just wiped)
-const OFFSEASON_WIPE_CHANNEL_IDS = [
-  "1486034589808853114",
-  "1477507190104527011",
-  "1485643704206229638",
-  "1486369417309978644",
-  "1477717664804896899",
-  "1478777175128932463",
-  "1478947361014288445",
-  "1484689142515368188",
-  "1492213174697726033", // league-twitter channel
-];
+// These used to be hardcoded to the old guild — now resolved dynamically per-guild
+// inside execute() using getGuildChannel() and guild.channels.cache.
 
 export const WEEK_SEQUENCE = [
   "1","2","3","4","5","6","7","8","9","10",
@@ -117,8 +104,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
+  const guildId    = interaction.guildId!;
+  const season     = await getOrCreateActiveSeason(guildId);
   const chosenWeek = interaction.options.getString("week");
+
+  // ── Per-guild channel resolution (replaces old hardcoded IDs) ───────────────
+  const announceChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.ANNOUNCEMENTS);
+  const offseasonWipeIds  = (await Promise.all([
+    getGuildChannel(guildId, CHANNEL_KEYS.PAYOUTS),
+    getGuildChannel(guildId, CHANNEL_KEYS.HIGHLIGHTS),
+    getGuildChannel(guildId, CHANNEL_KEYS.STREAM),
+    getGuildChannel(guildId, CHANNEL_KEYS.HEADLINES),
+    getGuildChannel(guildId, CHANNEL_KEYS.MATCHUPS),
+    getGuildChannel(guildId, CHANNEL_KEYS.SCHEDULE),
+    getGuildChannel(guildId, CHANNEL_KEYS.ANNOUNCEMENTS),
+    getGuildChannel(guildId, CHANNEL_KEYS.LEAGUE_TWITTER),
+  ])).filter((id): id is string => !!id);
 
   let newWeek: string;
   if (chosenWeek) {
@@ -423,8 +424,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         channelLines.push("📭 No schedule data found for this week — run `/franchiseupdate` first");
       }
 
+      // Resolve the GAMEDAY CENTER category for THIS guild dynamically
+      await guild.channels.fetch();
+      const matchupCategory = guild.channels.cache.find(
+        c => c.type === ChannelType.GuildCategory && c.name.toUpperCase().includes("GAMEDAY"),
+      );
+      const resolvedCategoryId = matchupCategory?.id ?? null;
+
+      if (!resolvedCategoryId) {
+        channelLines.push("⚠️ Could not find a GAMEDAY CENTER category in this server — matchup channels not created. Make sure the category exists.");
+      }
+
       let created = 0;
-      for (const g of h2hGames) {
+      for (const g of resolvedCategoryId ? h2hGames : []) {
         const awayDiscordId = teamToDiscord.get(g.awayTeamName.toLowerCase().trim())!;
         const homeDiscordId = teamToDiscord.get(g.homeTeamName.toLowerCase().trim())!;
 
@@ -436,11 +448,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const chanName = `${toChannelName(awayProper)}-vs-${toChannelName(homeProper)}`;
 
         try {
-          // Create the channel under the matchup category
+          // Create the channel under the matchup category for this guild
           const newChannel = await guild.channels.create({
             name:   chanName,
             type:   ChannelType.GuildText,
-            parent: MATCHUP_CATEGORY_ID,
+            parent: resolvedCategoryId!,
           });
 
           // Sync permissions with the parent category
@@ -550,7 +562,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       if (created > 0) {
-        channelLines.push(`✅ Created **${created}** matchup channel${created !== 1 ? "s" : ""} under <#${MATCHUP_CATEGORY_ID}>`);
+        channelLines.push(`✅ Created **${created}** matchup channel${created !== 1 ? "s" : ""}${resolvedCategoryId ? ` under <#${resolvedCategoryId}>` : ""}`);
       }
     }
   }
@@ -713,7 +725,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       // Wipe all specified channels (old messages need 1-by-1 delete due to Discord 14-day limit)
-      for (const chId of OFFSEASON_WIPE_CHANNEL_IDS) {
+      for (const chId of offseasonWipeIds) {
         try {
           const ch = interaction.client.channels.cache.get(chId)
             ?? await interaction.client.channels.fetch(chId).catch(() => null);
@@ -736,8 +748,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       // Post rule-change voting announcement to the announce channel
       try {
-        const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
-          ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
+        const announceCh = announceChannelId
+          ? (interaction.client.channels.cache.get(announceChannelId)
+              ?? await interaction.client.channels.fetch(announceChannelId).catch(() => null))
+          : null;
         if (announceCh?.isTextBased()) {
           await (announceCh as TextChannel).send({
             content:
@@ -758,8 +772,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (newWeek === "training_camp") {
     (async () => {
       try {
-        const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
-          ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
+        const announceCh = announceChannelId
+          ? (interaction.client.channels.cache.get(announceChannelId)
+              ?? await interaction.client.channels.fetch(announceChannelId).catch(() => null))
+          : null;
         if (announceCh?.isTextBased()) {
           await (announceCh as TextChannel).send({
             content:
@@ -781,8 +797,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     (async () => {
       // Season start announcement
       try {
-        const announceCh = interaction.client.channels.cache.get(ANNOUNCE_CHANNEL_ID)
-          ?? await interaction.client.channels.fetch(ANNOUNCE_CHANNEL_ID).catch(() => null);
+        const announceCh = announceChannelId
+          ? (interaction.client.channels.cache.get(announceChannelId)
+              ?? await interaction.client.channels.fetch(announceChannelId).catch(() => null))
+          : null;
         if (announceCh?.isTextBased()) {
           await (announceCh as TextChannel).send({
             content:
