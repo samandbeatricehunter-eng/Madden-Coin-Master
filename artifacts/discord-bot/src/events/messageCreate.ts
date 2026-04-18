@@ -1230,8 +1230,6 @@ If the commissioner is NOT giving an admin action order (just chatting), use the
 
 // ── Channel-based payout monitors ─────────────────────────────────────────────
 
-const STREAM_CHANNEL_ID        = "1486369417309978644";
-const HIGHLIGHTS_CHANNEL_ID    = "1485643704206229638";
 // Matches any twitch.tv URL (including clips.twitch.tv, www.twitch.tv, etc.)
 const TWITCH_URL_RE         = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
 
@@ -1658,13 +1656,22 @@ export async function execute(message: Message): Promise<void> {
   }
 
   // ── Channel-based payout monitors (run before @mention guard) ─────────────
-  if (message.channelId === STREAM_CHANNEL_ID) {
-    await handleStreamPost(message);
-    return;
-  }
-  if (message.channelId === HIGHLIGHTS_CHANNEL_ID) {
-    await handleHighlightPost(message);
-    return;
+  // Channel IDs are resolved per-guild from guildChannelsTable so both servers
+  // post to their own configured #stream and #highlights channels.
+  {
+    const guildId = message.guildId ?? PRIMARY_GUILD_ID;
+    const [streamCh, highlightsCh] = await Promise.all([
+      getGuildChannel(guildId, CHANNEL_KEYS.STREAM).catch(() => null),
+      getGuildChannel(guildId, CHANNEL_KEYS.HIGHLIGHTS).catch(() => null),
+    ]);
+    if (streamCh && message.channelId === streamCh) {
+      await handleStreamPost(message);
+      return;
+    }
+    if (highlightsCh && message.channelId === highlightsCh) {
+      await handleHighlightPost(message);
+      return;
+    }
   }
 
   // Only respond to @mentions from here on

@@ -38,6 +38,8 @@ const CHANNEL_KEY_MAP: Record<string, string> = {
   "violation-log":         CHANNEL_KEYS.VIOLATION_LOG,
   "transactions-log":      CHANNEL_KEYS.TRANSACTIONS,
   "end-of-season-payouts": CHANNEL_KEYS.PAYOUTS,
+  "highlights":            CHANNEL_KEYS.HIGHLIGHTS,
+  "streams":               CHANNEL_KEYS.STREAM,
 };
 
 // ── Type definitions ───────────────────────────────────────────────────────────

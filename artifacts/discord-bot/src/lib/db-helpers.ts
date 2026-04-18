@@ -29,6 +29,8 @@ export const CHANNEL_KEYS = {
   WELCOME:        "welcome",
   ANNOUNCEMENTS:  "announcements",
   TRADE_BLOCK:    "trade_block",
+  STREAM:         "stream",
+  HIGHLIGHTS:     "highlights",
 } as const;
 
 // Hardcoded fallback IDs for the primary guild (backward compatibility).
@@ -46,6 +48,8 @@ const PRIMARY_CHANNEL_FALLBACKS: Record<string, string> = {
   violation_log:  "1491529826060734524",
   goty:           "1485394206863392848",
   transactions:   "1493360346382209224",
+  stream:         "1486369417309978644",
+  highlights:     "1485643704206229638",
 };
 
 // Known channel IDs for guilds that predate /initialize-server.

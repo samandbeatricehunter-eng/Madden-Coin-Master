@@ -52,32 +52,41 @@ async function seedKnownGuildChannels(): Promise<void> {
   }
 }
 
-// ── Auto-discover commissioners-log by channel name ───────────────────────────
-// For guilds that ran /initialize-server before commissioners-log was added to
-// the CHANNEL_KEY_MAP, we scan each guild's channel list and register it.
-async function autoDiscoverCommissionerLog(client: Client): Promise<void> {
+// ── Auto-discover channels by name ────────────────────────────────────────────
+// For guilds that ran /initialize-server before a channel key was added to the
+// CHANNEL_KEY_MAP, scan the guild's channel list and register any that match.
+// Only registers keys that aren't already in the DB.
+const CHANNEL_NAME_AUTODISCOVER: Array<{ channelName: string; key: string; label: string }> = [
+  { channelName: "commissioners-log", key: CHANNEL_KEYS.COMMISSIONER_LOG, label: "commissioners-log" },
+  { channelName: "streams",           key: CHANNEL_KEYS.STREAM,           label: "streams"           },
+  { channelName: "highlights",        key: CHANNEL_KEYS.HIGHLIGHTS,       label: "highlights"        },
+];
+
+async function autoDiscoverChannelsByName(client: Client): Promise<void> {
   try {
     for (const [guildId, guild] of client.guilds.cache) {
-      const existing = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG);
-      if (existing) continue; // already registered
-
-      // Fetch full channel list if not cached
+      // Fetch full channel list once per guild
       const channels = guild.channels.cache.size > 0
         ? guild.channels.cache
         : await guild.channels.fetch().catch(() => null);
       if (!channels) continue;
 
-      const logCh = [...channels.values()].find(
-        (c): c is NonNullable<typeof c> =>
-          c !== null && c.name === "commissioners-log" && c.isTextBased(),
-      );
-      if (logCh) {
-        await setGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG, logCh.id);
-        console.log(`[startup-migration] Registered commissioners-log for guild ${guildId}: ${logCh.id}`);
+      for (const { channelName, key, label } of CHANNEL_NAME_AUTODISCOVER) {
+        const existing = await getGuildChannel(guildId, key);
+        if (existing) continue; // already registered
+
+        const found = [...channels.values()].find(
+          (c): c is NonNullable<typeof c> =>
+            c !== null && c.name === channelName && c.isTextBased(),
+        );
+        if (found) {
+          await setGuildChannel(guildId, key, found.id);
+          console.log(`[startup-migration] Registered ${label} for guild ${guildId}: ${found.id}`);
+        }
       }
     }
   } catch (err) {
-    console.error("[startup-migration] Failed to auto-discover commissioners-log:", err);
+    console.error("[startup-migration] Failed to auto-discover channels by name:", err);
   }
 }
 
@@ -87,7 +96,7 @@ export async function execute(client: Client) {
   // Run data migrations before serving any interactions
   await backfillPermanentVaultTeams();
   await seedKnownGuildChannels();
-  await autoDiscoverCommissionerLog(client);
+  await autoDiscoverChannelsByName(client);
 
   const guilds = client.guilds.cache;
   if (guilds.size === 0) return;
