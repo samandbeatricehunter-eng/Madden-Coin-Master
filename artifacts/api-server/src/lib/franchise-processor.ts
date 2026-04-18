@@ -1077,7 +1077,7 @@ export async function processPlayerWeekStats(
       return { ok: true, message: `Week ${weekNum} ${statType} already recorded — skipped` };
     }
 
-    const [mcaTeams, rosterRows] = await Promise.all([
+    const [mcaTeams, rosterRows, priorStatRows] = await Promise.all([
       db.select().from(franchiseMcaTeamsTable)
         .where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
       db.select({
@@ -1087,11 +1087,23 @@ export async function processPlayerWeekStats(
         position:  franchiseRostersTable.position,
       }).from(franchiseRostersTable)
         .where(eq(franchiseRostersTable.seasonId, season.id)),
+      // Secondary fallback: names already resolved in prior weeks this season
+      // (handles players traded/signed after the last roster import)
+      db.select({
+        playerId:  playerSeasonStatsTable.playerId,
+        firstName: playerSeasonStatsTable.firstName,
+        lastName:  playerSeasonStatsTable.lastName,
+        position:  playerSeasonStatsTable.position,
+      }).from(playerSeasonStatsTable)
+        .where(eq(playerSeasonStatsTable.seasonId, season.id)),
     ]);
 
     const teamMap   = new Map(mcaTeams.map(t => [t.teamId, t]));
     // Roster map: playerId → name/position (MCA stats don't include names, only roster IDs)
     const rosterMap = new Map(rosterRows.map(r => [r.playerId, r]));
+    // Prior-stats map: fallback for players not in the current roster snapshot
+    // (e.g. traded/signed after the last /admin_ea_export rosters run)
+    const priorStatsMap = new Map(priorStatRows.map(r => [r.playerId, r]));
 
     const ops: Promise<any>[] = [];
     let upserted = 0;
@@ -1125,15 +1137,28 @@ export async function processPlayerWeekStats(
       const discordId = mcaTeam?.discordId ?? null;
 
       // MCA stat payloads typically only include the rosterId, not the player's name.
-      // Cross-reference with the franchise roster table (populated by /franchiseupdate)
-      // and fall back to any name fields the MCA payload might happen to include.
-      const rosterEntry = rosterMap.get(playerId);
+      // Resolution priority:
+      //   1. franchise_rosters for this season (most accurate, kept fresh by /admin_ea_export rosters)
+      //   2. player_season_stats from prior weeks this season (handles post-roster-import trades)
+      //   3. Name fields in the raw payload (some EA formats include them)
+      //   4. Fallback to "Player <id>" so violations are always identifiable
+      const rosterEntry    = rosterMap.get(playerId);
+      const priorStatEntry = !rosterEntry ? priorStatsMap.get(playerId) : undefined;
       const firstName = rosterEntry?.firstName
-        || String(p.firstName ?? p.firstname ?? p.first_name ?? p.playerFirstName ?? "");
+        ?? priorStatEntry?.firstName
+        ?? String(p.firstName ?? p.firstname ?? p.first_name ?? p.playerFirstName ?? p.playerName?.split(" ")[0] ?? "");
       const lastName  = rosterEntry?.lastName
-        || String(p.lastName  ?? p.lastname  ?? p.last_name  ?? p.playerLastName  ?? "");
-      const position  = rosterEntry?.position
+        ?? priorStatEntry?.lastName
+        ?? String(p.lastName  ?? p.lastname  ?? p.last_name  ?? p.playerLastName  ?? p.playerName?.split(" ").slice(1).join(" ") ?? "");
+      const position  = (rosterEntry?.position ?? priorStatEntry?.position)
         || String(p.position  ?? p.pos       ?? p.playerPosition ?? "");
+      // If name is still empty after all fallbacks, log so devs can add the missing player
+      if (!firstName && !lastName) {
+        console.warn(`[mca/week${weekNum}/${statType}] Player ID ${playerId} on team ${teamName} not in roster or prior stats — run /admin_ea_export rosters to refresh`);
+      }
+
+      // Display name used for violation alerts — never shows a blank "Unknown Player"
+      const displayName = `${firstName} ${lastName}`.trim() || `Player ${playerId}`;
 
       // MCA sends per-week stats (not cumulative season totals), so we ACCUMULATE
       // each week's export on top of the existing season total.
@@ -1158,7 +1183,7 @@ export async function processPlayerWeekStats(
           timesSacked: sql`${playerSeasonStatsTable.timesSacked} + ${timesSacked}`,
         };
         const pViolations = detectPlayerStatViolations(
-          `${firstName} ${lastName}`.trim(), position, teamName,
+          displayName, position, teamName,
           { passYds: Number(passYds), passTDs: Number(passTDs) }, wkLabel,
         );
         statViolations.push(...pViolations);
@@ -1175,7 +1200,7 @@ export async function processPlayerWeekStats(
           fumbles: sql`${playerSeasonStatsTable.fumbles} + ${fumbles}`,
         };
         const rViolations = detectPlayerStatViolations(
-          `${firstName} ${lastName}`.trim(), position, teamName,
+          displayName, position, teamName,
           { rushYds: Number(rushYds) }, wkLabel,
         );
         statViolations.push(...rViolations);
