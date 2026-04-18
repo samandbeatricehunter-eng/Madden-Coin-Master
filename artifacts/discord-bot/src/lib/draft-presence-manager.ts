@@ -32,12 +32,12 @@ import {
   franchiseMcaTeamsTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { getOrCreateActiveSeason, PRIMARY_GUILD_ID } from "./db-helpers.js";
+import { getOrCreateActiveSeason } from "./db-helpers.js";
 
 export const DRAFT_TOGGLE_PREFIX   = "draft_toggle";   // full id: draft_toggle:DISCORD_ID
 export const DRAFT_CLOSE_BUTTON_ID = "draft_presence_close";
 
-const DRAFT_CATEGORY_ID  = "1476321184311414978";
+// DRAFT_CATEGORY_ID used to be hardcoded; now resolved per-guild inside startDraftSession.
 const MAX_BUTTONS_PER_PANEL = 20; // rows 1-4 × 5 = 20; row 5 reserved for close
 const MAX_TEAMS_PER_FIELD   = 15; // embed field value stays safely under 1024 chars
 
@@ -68,10 +68,17 @@ export async function startDraftSession(
     .set({ isActive: false })
     .where(and(eq(draftSessionsTable.guildId, guildId), eq(draftSessionsTable.isActive, true)));
 
+  // Find the draft / front-office category dynamically for this guild
+  await guild.channels.fetch().catch(() => {});
+  const draftCategory = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildCategory &&
+         (c.name.toUpperCase().includes("DRAFT") || c.name.toUpperCase().includes("FRONT OFFICE")),
+  );
+
   const channel = await guild.channels.create({
     name:   "draft-room",
     type:   ChannelType.GuildText,
-    parent: DRAFT_CATEGORY_ID,
+    parent: draftCategory?.id ?? null,
   }) as TextChannel;
 
   await channel.lockPermissions().catch(() => {});
@@ -91,10 +98,11 @@ export async function startDraftSession(
  * covered by a registered user get a synthetic "cpu:TEAMNAME" discordId so
  * they appear in the embed without a toggle button.
  */
-export async function populatePresence(sessionId: number): Promise<void> {
-  // 1. Registered Discord users
+export async function populatePresence(sessionId: number, guildId: string): Promise<void> {
+  // 1. Registered Discord users — scoped to this guild
   const leagueUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
-    .from(usersTable);
+    .from(usersTable)
+    .where(eq(usersTable.guildId, guildId));
 
   for (const u of leagueUsers) {
     await db.insert(draftPresenceTable)
@@ -103,7 +111,7 @@ export async function populatePresence(sessionId: number): Promise<void> {
   }
 
   // 2. All MCA teams (32 teams in the franchise)
-  const season   = await getOrCreateActiveSeason(PRIMARY_GUILD_ID).catch(() => null);
+  const season   = await getOrCreateActiveSeason(guildId).catch(() => null);
   if (!season) return;
 
   const mcaTeams = await db.select()

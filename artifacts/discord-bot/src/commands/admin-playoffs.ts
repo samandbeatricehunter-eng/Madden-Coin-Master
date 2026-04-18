@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { usersTable, seasonsTable } from "@workspace/db";
-import { eq, inArray, desc } from "drizzle-orm";
+import { eq, inArray, desc, and } from "drizzle-orm";
 import { isAdminUser, addBalance, logTransaction } from "../lib/db-helpers.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "../lib/playoff-matchups-runner.js";
 import axios from "axios";
@@ -199,7 +199,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    const [season] = await db.select().from(seasonsTable).orderBy(desc(seasonsTable.id)).limit(1);
+    const [season] = await db.select().from(seasonsTable)
+      .where(and(eq(seasonsTable.guildId, interaction.guildId!), eq(seasonsTable.isActive, true)))
+      .orderBy(desc(seasonsTable.id)).limit(1);
     if (!season) {
       await interaction.editReply({ content: "❌ No active season found." });
       return;
@@ -226,7 +228,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    const [season] = await db.select().from(seasonsTable).orderBy(desc(seasonsTable.id)).limit(1);
+    const [season] = await db.select().from(seasonsTable)
+      .where(and(eq(seasonsTable.guildId, interaction.guildId!), eq(seasonsTable.isActive, true)))
+      .orderBy(desc(seasonsTable.id)).limit(1);
     if (!season) {
       await interaction.editReply({ content: "❌ No active season found." });
       return;

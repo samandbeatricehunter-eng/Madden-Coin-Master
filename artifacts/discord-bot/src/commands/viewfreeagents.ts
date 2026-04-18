@@ -98,7 +98,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
     const [season] = await db
       .select({ id: seasonsTable.id })
       .from(seasonsTable)
-      .where(eq(seasonsTable.isActive, true))
+      .where(and(eq(seasonsTable.isActive, true), eq(seasonsTable.guildId, interaction.guildId!)))
       .limit(1);
 
     if (!season) { await interaction.respond([]); return; }
@@ -143,7 +143,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const [season] = await db.select()
     .from(seasonsTable)
-    .where(eq(seasonsTable.isActive, true))
+    .where(and(eq(seasonsTable.isActive, true), eq(seasonsTable.guildId, interaction.guildId!)))
     .limit(1);
 
   if (!season) {

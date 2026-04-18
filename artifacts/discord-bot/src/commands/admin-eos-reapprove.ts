@@ -103,8 +103,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const teamLabel = payout.teamName ? ` (${payout.teamName})` : "";
 
   try {
-    const reapprovePayoutsChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS) ?? process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
-    const ch = await interaction.client.channels.fetch(reapprovePayoutsChannelId).catch(() => null);
+    const reapprovePayoutsChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS);
+    const ch = reapprovePayoutsChannelId
+      ? await interaction.client.channels.fetch(reapprovePayoutsChannelId).catch(() => null)
+      : null;
     if (ch?.isTextBased()) {
       const publicEmbed = new EmbedBuilder()
         .setColor(Colors.Gold)

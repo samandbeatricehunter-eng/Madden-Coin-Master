@@ -72,7 +72,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     try {
       const { sessionId, channel } = await startDraftSession(interaction.client, guildId, guild);
-      await populatePresence(sessionId);
+      await populatePresence(sessionId, guildId);
 
       // @everyone announcement
       await channel.send({
@@ -113,7 +113,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    await populatePresence(session.id);
+    await populatePresence(session.id, guildId);
     await refreshPresence(interaction.client, session.id);
     await interaction.editReply({ content: "✅ Presence list refreshed with the latest league roster." });
     return;

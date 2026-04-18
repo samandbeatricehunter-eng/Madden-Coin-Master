@@ -2276,9 +2276,11 @@ async function handleButton(interaction: ButtonInteraction) {
     });
 
     // ── Post to public payouts channel ─────────────────────────────────────────
-    const PAYOUTS_CHANNEL_ID = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS) ?? process.env["DISCORD_PAYOUTS_CHANNEL_ID"] ?? "1486034589808853114";
+    const PAYOUTS_CHANNEL_ID = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS);
     try {
-      const payoutsCh = await interaction.client.channels.fetch(PAYOUTS_CHANNEL_ID);
+      const payoutsCh = PAYOUTS_CHANNEL_ID
+        ? await interaction.client.channels.fetch(PAYOUTS_CHANNEL_ID)
+        : null;
       if (payoutsCh?.isTextBased()) {
         const publicEmbed = new EmbedBuilder()
           .setColor(Colors.Gold)

@@ -30,8 +30,7 @@ import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { postSeasonRecap } from "./season-recap.js";
 
-// ── Category ID (not a user-facing channel — stays hardcoded for primary guild) ─
-const HISTORICAL_CATEGORY_ID = "1480912009120841841";
+// HISTORICAL_CATEGORY_ID used to be hardcoded; now resolved per-guild inside the function.
 
 // ── Award key mapping (Madden 25 CFM) ─────────────────────────────────────────
 // conferenceId: 0=AFC, 1=NFC, 2 or 3 = League-wide (varies by Madden version)
@@ -200,13 +199,18 @@ export async function runWildcardAutomation(
       historicalChannel = existing as TextChannel;
       console.log(`[wildcard] Historical channel already exists: ${existing.id}`);
     } else {
+      // Find the "Hall of Fame" or similar historical/records category for this guild
+      const historicalCategory = resolvedGuild.channels.cache.find(
+        c => c.type === ChannelType.GuildCategory &&
+             (c.name.toUpperCase().includes("HALL OF FAME") || c.name.toUpperCase().includes("HISTORICAL")),
+      );
       const newChannel = await resolvedGuild.channels.create({
         name:   chanName,
         type:   ChannelType.GuildText,
-        parent: HISTORICAL_CATEGORY_ID,
+        parent: historicalCategory?.id ?? null,
       });
       historicalChannel = newChannel as TextChannel;
-      console.log(`[wildcard] Created historical channel: ${newChannel.id}`);
+      console.log(`[wildcard] Created historical channel: ${newChannel.id} (category: ${historicalCategory?.name ?? "none"})`);
     }
 
     await db.insert(seasonHistoricalChannelsTable)
@@ -920,11 +924,15 @@ export async function rebuildHistoricalChannel(
   const byName = guild.channels.cache.find(c => c.name === chanName);
   if (byName) await byName.delete("Rebuilding historical records channel").catch(() => {});
 
-  // Create fresh channel
+  // Create fresh channel under the guild's historical/hall-of-fame category (resolved dynamically)
+  const historicalCat = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildCategory &&
+         (c.name.toUpperCase().includes("HALL OF FAME") || c.name.toUpperCase().includes("HISTORICAL")),
+  );
   const newChannel = await guild.channels.create({
     name:   chanName,
     type:   ChannelType.GuildText,
-    parent: HISTORICAL_CATEGORY_ID,
+    parent: historicalCat?.id ?? null,
   }) as TextChannel;
 
   await db.insert(seasonHistoricalChannelsTable)
