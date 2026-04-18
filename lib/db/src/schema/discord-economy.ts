@@ -30,6 +30,7 @@ export const usersTable = pgTable("economy_users", {
   guildId:   text("guild_id").notNull().default("1476251181524189438"),
   discordUsername: text("discord_username").notNull(),
   team: text("team"),
+  serverNickname: text("server_nickname"), // Discord server display name (nickname ?? username), kept in sync by the bot
   balance: integer("balance").notNull().default(0),
   totalLegendPurchases: integer("total_legend_purchases").notNull().default(0),
   // All-time tracking for milestone payouts (per-guild)

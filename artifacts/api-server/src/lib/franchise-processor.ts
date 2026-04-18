@@ -215,13 +215,32 @@ export async function processLeagueTeams(body: unknown, eaLeagueId = 0): Promise
     // different guilds; a global query would let the wrong guild's team
     // assignment overwrite this season's correct mapping.
     const registeredUsers = await db.select({
-      discordId: usersTable.discordId,
-      team: usersTable.team,
+      discordId:      usersTable.discordId,
+      team:           usersTable.team,
+      serverNickname: usersTable.serverNickname,
     }).from(usersTable).where(eq(usersTable.guildId, season.guildId ?? ""));
 
+    // Map 1: team name (manually registered) → discordId
     const teamToUser = new Map<string, string>();
     for (const u of registeredUsers) {
       if (u.team) teamToUser.set(u.team.toLowerCase().trim(), u.discordId);
+    }
+
+    // Map 2: server nickname tokens → discordId
+    // e.g. "Bills | MrSix" → tokens ["bills", "mrsix"] each map to that user.
+    // This lets EA team name "Buffalo Bills" / nick "Bills" match a member
+    // whose server display name is "Bills" or "Bills | Username".
+    const nicknameToUser = new Map<string, string>();
+    for (const u of registeredUsers) {
+      if (!u.serverNickname) continue;
+      const tokens = u.serverNickname
+        .toLowerCase()
+        .split(/[\s|,\-\/\\·•]+/)
+        .map(t => t.trim())
+        .filter(t => t.length >= 2);
+      for (const token of tokens) {
+        if (!nicknameToUser.has(token)) nicknameToUser.set(token, u.discordId);
+      }
     }
 
     // Madden CFM uses abbreviated / custom team names that differ from what
@@ -291,7 +310,7 @@ export async function processLeagueTeams(body: unknown, eaLeagueId = 0): Promise
       const fn = fullName.toLowerCase().trim();
       const nk = nick.toLowerCase().trim();
 
-      // 1. Direct match on full name or nick
+      // 1. Direct match on full name or nick (against manually-set usersTable.team)
       const direct = teamToUser.get(fn) ?? teamToUser.get(nk);
       if (direct) return direct;
 
@@ -309,6 +328,18 @@ export async function processLeagueTeams(body: unknown, eaLeagueId = 0): Promise
       if (city) {
         const cityMatches = [...teamToUser.entries()].filter(([k]) => k.startsWith(city));
         if (cityMatches.length === 1) return cityMatches[0]![1];
+      }
+
+      // 4. Server nickname token matching — member's display name contains or
+      //    equals the team's nickName or fullName (handles "Bills", "Bills | MrSix", etc.)
+      //    nickName (e.g. "Bills") checked first as it's the shortest / most specific.
+      const nickVia = nicknameToUser.get(nk) ?? nicknameToUser.get(fn);
+      if (nickVia) return nickVia;
+
+      // 4b. Partial: any token in nicknameToUser that starts with nk, or nk starts with token
+      for (const [token, dId] of nicknameToUser) {
+        if (token.length < 3) continue;
+        if (nk.startsWith(token) || token.startsWith(nk)) return dId;
       }
 
       return null;
@@ -377,6 +408,146 @@ export async function processLeagueTeams(body: unknown, eaLeagueId = 0): Promise
     return { ok: true, message: `${upserted} teams imported`, details: { seasonId: season.id, teamCount: upserted } };
   } catch (err) {
     console.error("[mca/leagueteams] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── Re-link teams to Discord users using stored team names + server nicknames ──
+// Runs the same matching logic as processLeagueTeams but against data already in
+// the DB — no EA re-export needed.  Use after fixing the guild-scoping bug or
+// after members update their server nicknames.
+export async function repairTeamLinks(eaLeagueId = 0): Promise<ProcessResult & { details?: Record<string, unknown> }> {
+  try {
+    const season = await getOrCreateActiveSeason(eaLeagueId);
+
+    // Load all stored teams for this season
+    const storedTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    if (storedTeams.length === 0) {
+      return { ok: false, message: "No teams found for this season — run EA export first." };
+    }
+
+    // Load guild-scoped users (same as processLeagueTeams)
+    const registeredUsers = await db.select({
+      discordId:      usersTable.discordId,
+      team:           usersTable.team,
+      serverNickname: usersTable.serverNickname,
+    }).from(usersTable).where(eq(usersTable.guildId, season.guildId ?? ""));
+
+    const teamToUser = new Map<string, string>();
+    for (const u of registeredUsers) {
+      if (u.team) teamToUser.set(u.team.toLowerCase().trim(), u.discordId);
+    }
+
+    const nicknameToUser = new Map<string, string>();
+    for (const u of registeredUsers) {
+      if (!u.serverNickname) continue;
+      const tokens = u.serverNickname
+        .toLowerCase()
+        .split(/[\s|,\-\/\\·•]+/)
+        .map(t => t.trim())
+        .filter(t => t.length >= 2);
+      for (const token of tokens) {
+        if (!nicknameToUser.has(token)) nicknameToUser.set(token, u.discordId);
+      }
+    }
+
+    // Inline alias map (mirrors processLeagueTeams)
+    const MCA_ALIASES: Record<string, string[]> = {
+      "niners": ["49ers", "san francisco 49ers"], "san francisco niners": ["san francisco 49ers", "49ers"],
+      "rams": ["rams", "los angeles rams"],
+      "g-men": ["giants", "new york giants"], "new york g-men": ["new york giants", "giants"],
+      "big blue": ["giants", "new york giants"],
+      "pack": ["packers", "green bay packers"], "green bay pack": ["green bay packers", "packers"],
+      "vikes": ["vikings", "minnesota vikings"], "minnesota vikes": ["minnesota vikings", "vikings"],
+      "bucs": ["buccaneers", "tampa bay buccaneers"], "tampa bay bucs": ["tampa bay buccaneers", "buccaneers"],
+      "aints": ["saints", "new orleans saints"],
+      "phins": ["dolphins", "miami dolphins"], "miami phins": ["miami dolphins", "dolphins"],
+      "fins": ["dolphins", "miami dolphins"], "miami fins": ["miami dolphins", "dolphins"],
+      "pats": ["patriots", "new england patriots"], "new england pats": ["new england patriots", "patriots"],
+      "jags": ["jaguars", "jacksonville jaguars"], "jacksonville jags": ["jacksonville jaguars", "jaguars"],
+      "bolts": ["chargers", "los angeles chargers"], "los angeles bolts": ["los angeles chargers", "chargers"],
+      "la bolts": ["los angeles chargers", "chargers"], "sd bolts": ["los angeles chargers", "chargers"],
+      "silver and black": ["raiders", "las vegas raiders"],
+      "chiefs": ["chiefs", "kansas city chiefs"], "bears": ["bears", "chicago bears"],
+      "lions": ["lions", "detroit lions"], "falcons": ["falcons", "atlanta falcons"],
+      "panthers": ["panthers", "carolina panthers"], "saints": ["saints", "new orleans saints"],
+      "seahawks": ["seahawks", "seattle seahawks"], "cardinals": ["cardinals", "arizona cardinals"],
+      "cowboys": ["cowboys", "dallas cowboys"], "eagles": ["eagles", "philadelphia eagles"],
+      "commanders": ["commanders", "washington commanders"], "redskins": ["commanders", "washington commanders"],
+      "bengals": ["bengals", "cincinnati bengals"], "ravens": ["ravens", "baltimore ravens"],
+      "browns": ["browns", "cleveland browns"], "steelers": ["steelers", "pittsburgh steelers"],
+      "texans": ["texans", "houston texans"], "colts": ["colts", "indianapolis colts"],
+      "titans": ["titans", "tennessee titans"], "broncos": ["broncos", "denver broncos"],
+      "bills": ["bills", "buffalo bills"], "jets": ["jets", "new york jets"],
+    };
+
+    function findDiscordIdRepair(fullName: string, nick: string): string | null {
+      const fn = fullName.toLowerCase().trim();
+      const nk = nick.toLowerCase().trim();
+      const direct = teamToUser.get(fn) ?? teamToUser.get(nk);
+      if (direct) return direct;
+      for (const key of [fn, nk]) {
+        for (const alias of MCA_ALIASES[key] ?? []) {
+          const via = teamToUser.get(alias.toLowerCase().trim());
+          if (via) return via;
+        }
+      }
+      const city = fn.includes(" ") ? fn.split(" ").slice(0, -1).join(" ") : "";
+      if (city) {
+        const cityMatches = [...teamToUser.entries()].filter(([k]) => k.startsWith(city));
+        if (cityMatches.length === 1) return cityMatches[0]![1];
+      }
+      const nickVia = nicknameToUser.get(nk) ?? nicknameToUser.get(fn);
+      if (nickVia) return nickVia;
+      for (const [token, dId] of nicknameToUser) {
+        if (token.length < 3) continue;
+        if (nk.startsWith(token) || token.startsWith(nk)) return dId;
+      }
+      return null;
+    }
+
+    let updated = 0;
+    let unchanged = 0;
+    const ops: Promise<any>[] = [];
+
+    for (const team of storedTeams) {
+      if (!team.isHuman) continue;
+      const newDiscordId = findDiscordIdRepair(team.fullName, team.nickName);
+      if (newDiscordId === team.discordId) { unchanged++; continue; }
+
+      console.log(`[repair-teamlinks] ${team.fullName}: ${team.discordId ?? "null"} → ${newDiscordId ?? "null"}`);
+      ops.push(
+        db.update(franchiseMcaTeamsTable)
+          .set({ discordId: newDiscordId, updatedAt: new Date() })
+          .where(and(
+            eq(franchiseMcaTeamsTable.seasonId, season.id),
+            eq(franchiseMcaTeamsTable.teamId, team.teamId),
+          ))
+      );
+      // Cascade to roster rows
+      if (newDiscordId) {
+        ops.push(
+          db.update(franchiseRostersTable)
+            .set({ discordId: newDiscordId })
+            .where(and(
+              eq(franchiseRostersTable.seasonId, season.id),
+              eq(franchiseRostersTable.teamId, team.teamId),
+            ))
+        );
+      }
+      updated++;
+    }
+
+    await Promise.all(ops);
+    console.log(`[repair-teamlinks] Done — ${updated} updated, ${unchanged} already correct`);
+    return {
+      ok: true,
+      message: `Team links repaired: ${updated} updated, ${unchanged} already correct`,
+      details: { seasonId: season.id, updated, unchanged },
+    };
+  } catch (err) {
+    console.error("[repair-teamlinks] Error:", err);
     return { ok: false, message: String(err) };
   }
 }

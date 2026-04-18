@@ -13,6 +13,7 @@ import {
   processPlayoffSeedings,
   processStandingsSeedings,
   processLeagueNews,
+  repairTeamLinks,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaStorage.js";
@@ -122,6 +123,15 @@ router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, a
   console.log("[mca/leagueteams] Received payload, processing async...");
   const result = await processLeagueTeams(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leagueteams] Result:", result.message);
+});
+
+// ── Repair team-to-user links using stored team names + server nicknames ──────
+// Safe to call at any time — only updates franchiseMcaTeams rows + roster rows
+// whose discordId changed.  The bot calls this via /admin-repair-teamlinks.
+router.post("/madden/:leagueKey/:platform/:leagueId/repair-teamlinks", validateKey, async (req, res) => {
+  const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const result = await repairTeamLinks(leagueId).catch(err => ({ ok: false, message: String(err) }));
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 // ── /standings — league standings; log structure so we know what fields arrive ─

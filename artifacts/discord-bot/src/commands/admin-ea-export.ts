@@ -4,7 +4,11 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   Colors,
+  Guild,
 } from "discord.js";
+import { db } from "@workspace/db";
+import { usersTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 import {
   loadEAConnection,
   fetchWeeklyStats,
@@ -176,11 +180,34 @@ async function postToApiServer(
 async function runRosterSync(
   token:      Parameters<typeof fetchLeagueTeamsAndRosters>[0],
   eaLeagueId: number,
+  guild?:     Guild | null,
 ): Promise<{ summaryLine: string; allOk: boolean }> {
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
   const platform   = token.platform;
   const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+
+  // ── Sync Discord server nicknames before leagueteams so the processor has
+  // fresh display names to match EA teams against.
+  if (guild) {
+    try {
+      const members = await guild.members.fetch();
+      const guildId = guild.id;
+      const ops: Promise<any>[] = [];
+      for (const [memberId, member] of members) {
+        const nick = member.displayName; // server nickname ?? global username
+        ops.push(
+          db.update(usersTable)
+            .set({ serverNickname: nick, updatedAt: new Date() })
+            .where(and(eq(usersTable.discordId, memberId), eq(usersTable.guildId, guildId))),
+        );
+      }
+      await Promise.all(ops);
+      console.log(`[ea-export/nicknames] Synced ${members.size} server nicknames for guild ${guildId}`);
+    } catch (err) {
+      console.error("[ea-export/nicknames] Failed to sync nicknames (non-fatal):", err);
+    }
+  }
 
   let rosterData: RostersExportData;
   try {
@@ -281,7 +308,7 @@ async function exportWeek(
   // the stat payloads, franchise_mca_teams already has all 32 teams and their names.
   await interaction.editReply({ content: `⏳ Fetching rosters from EA (~60s)...` });
 
-  const { summaryLine: rosterSummary, allOk: rostersAllOk } = await runRosterSync(token, eaLeagueId);
+  const { summaryLine: rosterSummary, allOk: rostersAllOk } = await runRosterSync(token, eaLeagueId, interaction.guild);
 
   // ── PHASE 3: Post to API (rosters already posted inside runRosterSync, now post stats)
   const apiBase  = getApiBase();
@@ -640,7 +667,7 @@ async function handleRosters(interaction: ChatInputCommandInteraction): Promise<
 
   await interaction.editReply({ content: "⏳ Fetching league teams + all rosters from EA (this takes ~60s)..." });
 
-  const { summaryLine, allOk } = await runRosterSync(token, eaLeagueId);
+  const { summaryLine, allOk } = await runRosterSync(token, eaLeagueId, interaction.guild);
 
   const embed = new EmbedBuilder()
     .setColor(allOk ? Colors.Green : Colors.Yellow)
