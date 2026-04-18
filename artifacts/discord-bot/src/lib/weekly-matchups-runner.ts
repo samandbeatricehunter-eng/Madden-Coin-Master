@@ -57,14 +57,17 @@ export async function buildTeamToDiscord(guildId: string = PRIMARY_GUILD_ID): Pr
     }
   }
 
-  // Also add economy_users short names as a secondary fallback (scoped to guild)
-  if (map.size === 0) {
-    const allUsers = await db
-      .select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable)
-      .where(eq(usersTable.guildId, guildId));
-    for (const u of allUsers) {
-      if (u.team) map.set(u.team.toLowerCase().trim(), u.discordId);
+  // Always supplement MCA data with economy_users team names (guild-scoped).
+  // MCA entries take priority; economy_users only fill slots not already mapped.
+  // This covers partial MCA setups where some teams have no discord ID assigned.
+  const allUsers = await db
+    .select({ discordId: usersTable.discordId, team: usersTable.team })
+    .from(usersTable)
+    .where(eq(usersTable.guildId, guildId));
+  for (const u of allUsers) {
+    if (u.team) {
+      const key = u.team.toLowerCase().trim();
+      if (!map.has(key)) map.set(key, u.discordId);
     }
   }
 
@@ -218,7 +221,17 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
     : null;
 
   if (!targetCh?.isTextBased()) {
-    await replyFn({ content: `❌ Cannot find matchups channel. Run \`/initialize-server\` or configure this server's channel IDs.` });
+    await replyFn({ content: `❌ Cannot find matchups channel. Run \`/initialize-server\` or use \`/adminserver link_channel\` to configure this server's channels.` });
+    return;
+  }
+
+  // Guard: ensure the resolved channel actually belongs to THIS guild,
+  // not another server the bot is also in.
+  const chGuildId = "guild" in targetCh ? (targetCh as { guild?: { id: string } }).guild?.id : undefined;
+  if (chGuildId && chGuildId !== resolvedGuildId) {
+    await replyFn({
+      content: `❌ The registered matchups channel belongs to a different server. Run \`/adminserver link_channel channel:#weekly-matchups key:matchups\` in THIS server to point it to the right channel.`,
+    });
     return;
   }
 
