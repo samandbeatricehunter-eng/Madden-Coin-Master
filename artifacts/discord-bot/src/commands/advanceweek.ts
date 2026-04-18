@@ -867,6 +867,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           interaction.client,
           season.id,
           season.seasonNumber ?? season.id,
+          { guildId: interaction.guildId! },
         );
         if (postedWeeks > 0) {
           await interaction.followUp({

@@ -17,8 +17,8 @@ import {
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaStorage.js";
-import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable, guildChannelsTable, eaConnectionsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
 
 const router: IRouter = Router();
@@ -27,6 +27,45 @@ const COMMISSIONER_CHANNEL_ID  = process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] 
 const GENERAL_CHANNEL_ID       = process.env["DISCORD_GENERAL_CHANNEL_ID"]      ?? "1476321282868908052";
 const VIOLATION_LOG_CHANNEL_ID = "1491529826060734524";
 const TRANSACTIONS_CHANNEL_ID  = process.env["DISCORD_TRANSACTIONS_CHANNEL_ID"] ?? "";
+
+// ── Guild-scoped channel resolution ──────────────────────────────────────────
+// Looks up the correct Discord channel IDs for a given EA league.
+// Falls back to the env-var defaults (primary/old server) if the guild hasn't
+// configured the channel or the lookup fails — so the old server still works.
+interface LeagueChannels {
+  commCh: string;   // commissioner log
+  genCh:  string;   // general / results
+  txCh:   string;   // transactions
+}
+async function resolveLeagueChannels(eaLeagueId: number): Promise<LeagueChannels> {
+  const defaults: LeagueChannels = {
+    commCh: COMMISSIONER_CHANNEL_ID,
+    genCh:  GENERAL_CHANNEL_ID,
+    txCh:   TRANSACTIONS_CHANNEL_ID,
+  };
+  try {
+    const [conn] = await db
+      .select({ guildId: eaConnectionsTable.guildId })
+      .from(eaConnectionsTable)
+      .where(eq(eaConnectionsTable.eaLeagueId, eaLeagueId))
+      .limit(1);
+    if (!conn?.guildId) return defaults;
+
+    const rows = await db
+      .select({ key: guildChannelsTable.channelKey, id: guildChannelsTable.channelId })
+      .from(guildChannelsTable)
+      .where(eq(guildChannelsTable.guildId, conn.guildId));
+
+    const chMap = new Map(rows.map(r => [r.key, r.id]));
+    return {
+      commCh: chMap.get("commissioner_log") ?? chMap.get("commissioner") ?? COMMISSIONER_CHANNEL_ID,
+      genCh:  chMap.get("general")          ?? GENERAL_CHANNEL_ID,
+      txCh:   chMap.get("transactions")     ?? TRANSACTIONS_CHANNEL_ID,
+    };
+  } catch {
+    return defaults;
+  }
+}
 
 // ── Per-violation commissioner posting (with Confirm/Deny buttons) ────────────
 async function postViolationMessages(
@@ -160,13 +199,17 @@ router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, asy
 // payload shape as /week/:weekType/:weekNum/team but bypasses the dedup guard
 // so it can be re-run any time to refresh seeds from the latest EA data.
 router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, async (req, res) => {
+  const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
   saveMcaPayload("mca/seedings-latest.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/seedings] Received playoff seedings payload, processing...");
-  const result = await processPlayoffSeedings(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const [result, channels] = await Promise.all([
+    processPlayoffSeedings(req.body, leagueId).catch(err => ({ ok: false, message: String(err) })),
+    resolveLeagueChannels(leagueId),
+  ]);
   console.log("[mca/seedings] Result:", result.message);
-  if (!result.ok && COMMISSIONER_CHANNEL_ID) {
-    sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+  if (!result.ok && channels.commCh) {
+    sendDiscordEmbed(channels.commCh, {
       title: "⚠️ Playoff Seedings Import Issue",
       description: result.message,
       color: 0xed4245,
@@ -196,13 +239,17 @@ router.post("/internal/reseed-from-standings", async (req: Request, res: Respons
 
 // ── /schedules — full season schedule ─────────────────────────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, async (req, res) => {
+  const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
   saveMcaPayload("mca/schedules.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/schedules] Received payload, processing async...");
-  const result = await processSchedules(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const [result, channels] = await Promise.all([
+    processSchedules(req.body, leagueId).catch(err => ({ ok: false, message: String(err) })),
+    resolveLeagueChannels(leagueId),
+  ]);
   console.log("[mca/schedules] Result:", result.message);
-  if (!result.ok && COMMISSIONER_CHANNEL_ID) {
-    sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+  if (!result.ok && channels.commCh) {
+    sendDiscordEmbed(channels.commCh, {
       title: "⚠️ MCA Schedule Import Issue",
       description: result.message,
       color: 0xed4245,
@@ -247,13 +294,10 @@ for (const statType of ["passing", "rushing", "receiving", "defense", "kicking",
       } else {
         console.error(`[mca/week${weekNum}/${statType}] Error: ${result.message}`);
       }
-      if (COMMISSIONER_CHANNEL_ID && result.violations && result.violations.length > 0) {
-        postViolationMessages(
-          result.violations,
-          weekLabel(weekType, weekNum),
-          (result as any).seasonId ?? 0,
-          COMMISSIONER_CHANNEL_ID,
-        ).catch(() => {});
+      if (result.violations && result.violations.length > 0) {
+        resolveLeagueChannels(parseInt(String(req.params.leagueId ?? "0"), 10))
+          .then(ch => ch.commCh ? postViolationMessages(result.violations!, weekLabel(weekType, weekNum), (result as any).seasonId ?? 0, ch.commCh) : Promise.resolve())
+          .catch(() => {});
       }
     },
   );
@@ -291,15 +335,21 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 // The MCA sends scores here (NOT /scores). This is the primary payout trigger.
 // Handles both regular season (weekType=reg) and playoffs (weekType=post, etc.)
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/schedules", validateKey, async (req, res) => {
-  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
-  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const weekNum   = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType  = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const leagueId  = parseInt(String(req.params.leagueId ?? "0"), 10);
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-schedules.json`, req.body);
   res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing...`);
-  // Write completed scores to franchise_schedule immediately so /seasonschedule
-  // reflects results regardless of whether /schedules is sent before or after this.
-  await syncWeekScoresToSchedule(req.body, weekNum, weekType, parseInt(String(req.params.leagueId ?? "0"), 10));
-  const result = await processWeekScores(req.body, weekNum, weekType, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({
+
+  // Resolve guild-scoped channels and sync schedule concurrently.
+  const [, channels] = await Promise.all([
+    syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId),
+    resolveLeagueChannels(leagueId),
+  ]);
+  const { commCh, genCh } = channels;
+
+  const result = await processWeekScores(req.body, weekNum, weekType, leagueId).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -310,8 +360,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
   if (!result.ok) {
     console.error(`[mca/week${weekNum}/schedules] Processing failed:`, result.message);
-    if (COMMISSIONER_CHANNEL_ID) {
-      sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+    if (commCh) {
+      sendDiscordEmbed(commCh, {
         title: `❌ Week ${weekNum} Import Failed`,
         description: result.message,
         color: 0xed4245,
@@ -322,20 +372,20 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
   const roundLabel = weekLabel(weekType, weekNum);
 
-  if (COMMISSIONER_CHANNEL_ID) {
+  if (commCh) {
     // ── Catchup mode: send a minimal commissioner-only confirmation, no payouts ──
     if (result.catchupMode) {
       const gameLines = result.resultLines.length > 0
         ? result.resultLines.slice(0, 15).join("\n")
         : "No completed games found";
-      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+      await sendDiscordEmbed(commCh, {
         title: `📋 ${roundLabel} — MCA Import (Catchup Mode)`,
         description: `Scores logged — no payouts issued\n\n${gameLines}`,
         color: 0x5865f2,
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
       }).catch(() => {});
       if (result.violations.length > 0) {
-        await postViolationMessages(result.violations, roundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
+        await postViolationMessages(result.violations, roundLabel, result.seasonId, commCh).catch(() => {});
       }
       return;
     }
@@ -371,7 +421,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
     fields.push({ name: "📊 Summary", value: summaryParts.join("\n") || "Nothing to process", inline: false });
 
-    await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+    await sendDiscordEmbed(commCh, {
       title: `✅ ${roundLabel} — MCA Import`,
       color: result.gamesProcessed > 0 ? 0x57f287 : 0x5865f2,
       fields,
@@ -380,12 +430,12 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
     // ── Violation alerts — individual messages with Confirm/Deny ─────────────
     if (result.violations.length > 0) {
-      await postViolationMessages(result.violations, roundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
+      await postViolationMessages(result.violations, roundLabel, result.seasonId, commCh).catch(() => {});
     }
   }
 
   // Only post results to the general channel in normal (non-catchup) mode
-  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0 && !result.catchupMode) {
+  if (genCh && result.payoutLines.length > 0 && !result.catchupMode) {
     const lines = result.payoutLines
       .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
       .map(l => {
@@ -394,7 +444,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
         return l;
       });
     if (lines.length > 0) {
-      await sendDiscordEmbed(GENERAL_CHANNEL_ID, {
+      await sendDiscordEmbed(genCh, {
         title: `🏈 ${roundLabel} Results`,
         description: lines.join("\n"),
         color: 0xf0b132,
@@ -486,12 +536,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
   const result = await processTeamRoster(req.body, mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err), details: undefined }));
   console.log(`[mca/team/${teamIdStr}/roster] ${result.message}`);
 
-  // Post detected transactions to the transactions channel
+  // Post detected transactions to the guild-scoped transactions channel
   const txList: any[] = result.details?.["transactions"] ?? [];
-  if (result.ok && TRANSACTIONS_CHANNEL_ID && txList.length > 0) {
+  if (result.ok && txList.length > 0) {
     const txEmbeds = buildTransactionEmbeds(txList);
-    for (const embed of txEmbeds) {
-      sendDiscordEmbed(TRANSACTIONS_CHANNEL_ID, embed).catch(() => {});
+    if (txEmbeds.length > 0) {
+      resolveLeagueChannels(parseInt(String(req.params.leagueId ?? "0"), 10))
+        .then(ch => { for (const embed of txEmbeds) sendDiscordEmbed(ch.txCh, embed).catch(() => {}); })
+        .catch(() => {});
     }
   }
 });
@@ -502,24 +554,29 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-scores.json`, req.body);
   res.status(200).json({ status: "received" });
 
   console.log(`[mca/week${weekNum}/scores] Received (weekType=${weekType}), processing payouts...`);
-  const result = await processWeekScores(req.body, weekNum, weekType, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({
-    ok: false, message: String(err),
-    gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
-    payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as ViolationRecord[],
-    weekNum, seasonId: 0, catchupMode: false,
-  }));
+  const [result, channels] = await Promise.all([
+    processWeekScores(req.body, weekNum, weekType, leagueId).catch(err => ({
+      ok: false, message: String(err),
+      gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
+      payoutLines: [] as string[], milestoneLines: [] as string[],
+      resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as ViolationRecord[],
+      weekNum, seasonId: 0, catchupMode: false,
+    })),
+    resolveLeagueChannels(leagueId),
+  ]);
+  const { commCh, genCh } = channels;
 
   const scoresRoundLabel = weekLabel(weekType, weekNum);
 
   if (!result.ok) {
     console.error(`[mca/week${weekNum}/scores] Processing failed:`, result.message);
-    if (COMMISSIONER_CHANNEL_ID) {
-      sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+    if (commCh) {
+      sendDiscordEmbed(commCh, {
         title: `❌ ${scoresRoundLabel} Import Failed`,
         description: result.message,
         color: 0xed4245,
@@ -528,19 +585,19 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     return;
   }
 
-  if (COMMISSIONER_CHANNEL_ID) {
+  if (commCh) {
     if (result.catchupMode) {
       const gameLines = result.resultLines.length > 0
         ? result.resultLines.slice(0, 15).join("\n")
         : "No completed games found";
-      await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+      await sendDiscordEmbed(commCh, {
         title: `📋 ${scoresRoundLabel} — MCA Import (Catchup Mode)`,
         description: `Scores logged — no payouts issued\n\n${gameLines}`,
         color: 0x5865f2,
         footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
       }).catch(() => {});
       if (result.violations.length > 0) {
-        await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
+        await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
       }
       return;
     }
@@ -574,7 +631,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       inline: false,
     });
 
-    await sendDiscordEmbed(COMMISSIONER_CHANNEL_ID, {
+    await sendDiscordEmbed(commCh, {
       title: `✅ ${scoresRoundLabel} — MCA Import Complete`,
       color: 0x57f287,
       fields,
@@ -582,11 +639,11 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     }).catch(() => {});
 
     if (result.violations.length > 0) {
-      await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, COMMISSIONER_CHANNEL_ID).catch(() => {});
+      await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
     }
   }
 
-  if (GENERAL_CHANNEL_ID && result.payoutLines.length > 0 && !result.catchupMode) {
+  if (genCh && result.payoutLines.length > 0 && !result.catchupMode) {
     const lines = result.payoutLines
       .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
       .map(l => {
@@ -596,7 +653,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       });
 
     if (lines.length > 0) {
-      await sendDiscordEmbed(GENERAL_CHANNEL_ID, {
+      await sendDiscordEmbed(genCh, {
         title: `🏈 ${scoresRoundLabel} Results`,
         description: lines.join("\n"),
         color: 0xf0b132,
