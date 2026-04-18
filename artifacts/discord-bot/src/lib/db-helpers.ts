@@ -71,7 +71,9 @@ export const KNOWN_GUILD_CHANNELS: Record<string, Partial<Record<string, string>
 /**
  * Look up a per-guild channel ID by key.
  * Checks the guild_channels table first; falls back to PRIMARY_CHANNEL_FALLBACKS
- * for any guild that hasn't been initialized yet (e.g. the original server).
+ * ONLY for the primary guild (backward compatibility for pre-initialize channels).
+ * Non-primary guilds return null when the key isn't in the DB — prevents routing
+ * messages from a new guild into the old guild's channels.
  */
 export async function getGuildChannel(guildId: string, key: string): Promise<string | null> {
   try {
@@ -82,9 +84,11 @@ export async function getGuildChannel(guildId: string, key: string): Promise<str
       .limit(1);
     if (row) return row.channelId;
   } catch {
-    // DB unavailable — fall through to hardcoded fallback
+    // DB unavailable — fall through to hardcoded fallback (primary guild only)
   }
-  return PRIMARY_CHANNEL_FALLBACKS[key] ?? null;
+  // Only use hardcoded fallbacks for the original primary guild
+  if (guildId === PRIMARY_GUILD_ID) return PRIMARY_CHANNEL_FALLBACKS[key] ?? null;
+  return null;
 }
 
 /**
