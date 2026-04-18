@@ -2,7 +2,7 @@ import axios from "axios";
 import https from "https";
 import crypto from "crypto";
 import { db, eaConnectionsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 
 // ── Madden 26 EA API constants ────────────────────────────────────────────────
 const AUTH_SOURCE   = 317239;
@@ -635,9 +635,18 @@ export async function saveEAConnection(opts: {
   token:       TokenInfo;
   connectedBy: string;
 }): Promise<void> {
-  // Delete any existing connection for this guild first — handles league switches
-  // and avoids conflicts with the eaLeagueId unique constraint.
-  await db.delete(eaConnectionsTable).where(eq(eaConnectionsTable.guildId, opts.guildId));
+  // Delete any existing connection for this guild OR this exact league ID.
+  // Covers two cases:
+  //   1. Same guild reconnecting (possibly to a different league)
+  //   2. League was previously connected to a different guild (old row had the
+  //      wrong guildId default) — without this, the unique constraint on
+  //      ea_league_id would fire even after deleting by guildId.
+  await db.delete(eaConnectionsTable).where(
+    or(
+      eq(eaConnectionsTable.guildId,    opts.guildId),
+      eq(eaConnectionsTable.eaLeagueId, opts.eaLeagueId),
+    ),
+  );
 
   await db
     .insert(eaConnectionsTable)
