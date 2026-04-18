@@ -352,7 +352,7 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect, guil
   // reference a player as being on a team if they are not listed here.
   // Uses getRosterSeasonId(interaction.guildId!) so a fresh season without imported rosters yet
   // transparently falls back to the most recent season that does have data.
-  const rosterSeasonId = await getRosterSeasonId(PRIMARY_GUILD_ID);
+  const rosterSeasonId = await getRosterSeasonId(guildId);
   const rosterRows = await db.select({
     teamName:  franchiseRostersTable.teamName,
     firstName: franchiseRostersTable.firstName,
@@ -506,10 +506,13 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect, guil
   // Only loaded when a prior season actually exists (seasonNumber > 1).
   if (season.seasonNumber > 1) {
     try {
-      // Look up the previous season row
+      // Look up the previous season row — scoped to the same guild
       const [prevSeason] = await db.select()
         .from(seasonsTable)
-        .where(eq(seasonsTable.seasonNumber, season.seasonNumber - 1))
+        .where(and(
+          eq(seasonsTable.guildId,      guildId),
+          eq(seasonsTable.seasonNumber, season.seasonNumber - 1),
+        ))
         .limit(1);
 
       if (prevSeason) {
