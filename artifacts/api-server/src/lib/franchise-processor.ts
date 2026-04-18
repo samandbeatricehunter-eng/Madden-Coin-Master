@@ -2374,7 +2374,7 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     const existingMap = new Map(existingRows.map(r => [r.playerId, r]));
     const DEV_LABELS: Record<number, string> = {
-      0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor",
+      0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor",
     };
     const transactions: Array<typeof rosterTransactionsTable.$inferInsert> = [];
 

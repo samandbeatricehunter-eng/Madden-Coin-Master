@@ -40,7 +40,7 @@ type Roster   = Awaited<ReturnType<typeof fetchRoster>>;
 type TeamStat = Awaited<ReturnType<typeof fetchTeamStats>>;
 type Record_  = Awaited<ReturnType<typeof fetchRecord>>;
 
-const DEV: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "X-Factor" };
+const DEV: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
 
 function rosterBlock(teamName: string, players: Roster): string {
   if (!players.length) return `${teamName}: No roster data`;

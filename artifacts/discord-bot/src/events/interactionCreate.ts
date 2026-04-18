@@ -1883,7 +1883,7 @@ async function handleButton(interaction: ButtonInteraction) {
       : [];
 
     // Build team → Discord ID map using full MCA names (same logic as /weeklymatchups)
-    const teamToDiscord = await buildTeamToDiscord();
+    const teamToDiscord = await buildTeamToDiscord(interaction.guildId ?? undefined);
 
     const scored = await scoreH2HMatchups(seasonId, weekIndex, games, teamToDiscord);
 

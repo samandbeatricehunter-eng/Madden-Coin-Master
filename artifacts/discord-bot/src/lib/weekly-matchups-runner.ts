@@ -35,8 +35,8 @@ export interface RunWeeklyMatchupsOpts {
  * has no MCA team entries yet (e.g. right after a new-season advance).
  * Exported so the GOTW decline handler can use the same map-building logic.
  */
-export async function buildTeamToDiscord(): Promise<Map<string, string>> {
-  const rosterSeasonId = await getRosterSeasonId(PRIMARY_GUILD_ID);
+export async function buildTeamToDiscord(guildId: string = PRIMARY_GUILD_ID): Promise<Map<string, string>> {
+  const rosterSeasonId = await getRosterSeasonId(guildId);
   const mcaTeams = await db
     .select({
       fullName:  franchiseMcaTeamsTable.fullName,
@@ -57,11 +57,12 @@ export async function buildTeamToDiscord(): Promise<Map<string, string>> {
     }
   }
 
-  // Also add economy_users short names as a secondary fallback
+  // Also add economy_users short names as a secondary fallback (scoped to guild)
   if (map.size === 0) {
     const allUsers = await db
       .select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable);
+      .from(usersTable)
+      .where(eq(usersTable.guildId, guildId));
     for (const u of allUsers) {
       if (u.team) map.set(u.team.toLowerCase().trim(), u.discordId);
     }
@@ -140,7 +141,7 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   // IMPORTANT: payout must complete before we purge the GOTW channel, otherwise the
   // Discord poll message (and its voter list) is deleted before we can read who voted.
   if (payoutWeekIndex != null && payoutWeekIndex >= 0) {
-    payoutSummary = await autoPayoutGotwVoters(client, guild, season.id, payoutWeekIndex, payoutWeekIndex + 1, isPlayoff)
+    payoutSummary = await autoPayoutGotwVoters(client, guild, season.id, payoutWeekIndex, payoutWeekIndex + 1, isPlayoff, resolvedGuildId)
       .catch((err: unknown) => {
         console.error("[weekly-runner] GOTW auto-payout error:", err);
         return `❌ GOTW auto-payout failed: ${err}`;
@@ -170,7 +171,7 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
 
   // ── Build team → Discord ID from franchise_mca_teams ──────────────────────
   // Uses fullName + nickName so MCA schedule names match correctly.
-  const teamToDiscord = await buildTeamToDiscord();
+  const teamToDiscord = await buildTeamToDiscord(resolvedGuildId);
 
   function mention(teamName: string): string {
     const id = teamToDiscord.get(teamName.toLowerCase().trim());

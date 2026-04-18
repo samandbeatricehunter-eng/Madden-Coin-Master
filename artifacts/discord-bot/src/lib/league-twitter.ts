@@ -141,19 +141,18 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect, guil
   // ── Season info ────────────────────────────────────────────────────────────
   parts.push(`SEASON: Season ${season.seasonNumber}, current week: ${season.currentWeek ?? "pre-season"}`);
 
-  // ── Standings — derived from actual scored games in franchise_schedule ────────
-  // We tally wins/losses directly from the schedule table (where homeScore IS NOT NULL)
-  // rather than trusting the accumulated teamSeasonStatsTable columns, which can
-  // double-count if the EA export sends cumulative totals on each weekly export.
-  // This guarantees the record exactly matches what games have actually been scored.
+  // ── Standings ─────────────────────────────────────────────────────────────────
+  // Primary source: team_season_stats.wins/losses, which are set via GREATEST()
+  // on each MCA team-stats export — accurate and cannot double-count.
+  // Secondary source: franchise_schedule scored games (used to cross-check and
+  // fill in any team not yet represented in team_season_stats).
   const mcaStandings = await db.select({
     teamName:      teamSeasonStatsTable.teamName,
     discordId:     teamSeasonStatsTable.discordId,
     offPtsPerGame: teamSeasonStatsTable.offPtsPerGame,
     turnoverDiff:  teamSeasonStatsTable.turnoverDiff,
-    // Keep the raw accumulated columns only for other stat highlights (not for W/L)
-    wins:    teamSeasonStatsTable.wins,
-    losses:  teamSeasonStatsTable.losses,
+    wins:          teamSeasonStatsTable.wins,
+    losses:        teamSeasonStatsTable.losses,
   })
     .from(teamSeasonStatsTable)
     .where(eq(teamSeasonStatsTable.seasonId, season.id));
@@ -163,7 +162,16 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect, guil
     mcaStandings.filter(t => t.discordId).map(t => t.teamName),
   );
 
-  // Tally wins/losses per team from the schedule — regular season only (weekIndex < 1000)
+  // Build a name→{wins,losses} map from team_season_stats (primary)
+  const statsWins:   Map<string, number> = new Map();
+  const statsLosses: Map<string, number> = new Map();
+  for (const t of mcaStandings) {
+    if (t.wins   != null) statsWins.set(t.teamName,   t.wins);
+    if (t.losses != null) statsLosses.set(t.teamName, t.losses);
+  }
+
+  // Also tally from franchise_schedule scored games (regular season only) as
+  // a cross-reference — used for teams missing from team_season_stats.
   const scoredGames = await db.select({
     homeTeamName: franchiseScheduleTable.homeTeamName,
     awayTeamName: franchiseScheduleTable.awayTeamName,
@@ -174,40 +182,42 @@ async function buildLeagueContext(season: typeof seasonsTable.$inferSelect, guil
     .where(and(
       eq(franchiseScheduleTable.seasonId, season.id),
       isNotNull(franchiseScheduleTable.homeScore),
-      lt(franchiseScheduleTable.weekIndex, 1000),   // regular season only
+      lt(franchiseScheduleTable.weekIndex, 1000),
     ));
 
   const schedWins:   Map<string, number> = new Map();
   const schedLosses: Map<string, number> = new Map();
   for (const g of scoredGames) {
-    const home  = g.homeTeamName;
-    const away  = g.awayTeamName;
-    const hScore = g.homeScore ?? 0;
-    const aScore = g.awayScore ?? 0;
-    const homeWon = hScore > aScore;
+    const home = g.homeTeamName, away = g.awayTeamName;
+    const homeWon = (g.homeScore ?? 0) > (g.awayScore ?? 0);
     schedWins.set(home,   (schedWins.get(home)   ?? 0) + (homeWon ? 1 : 0));
     schedLosses.set(home, (schedLosses.get(home) ?? 0) + (homeWon ? 0 : 1));
     schedWins.set(away,   (schedWins.get(away)   ?? 0) + (homeWon ? 0 : 1));
     schedLosses.set(away, (schedLosses.get(away) ?? 0) + (homeWon ? 1 : 0));
   }
 
-  // Build sorted standings for human teams that have played at least one game
+  // Merge: prefer team_season_stats (most complete); fall back to schedule tally
   const activeStandings = [...humanTeamNames]
-    .map(name => ({
-      teamName: name,
-      wins:     schedWins.get(name)   ?? 0,
-      losses:   schedLosses.get(name) ?? 0,
-    }))
+    .map(name => {
+      const statsW = statsWins.get(name)   ?? 0;
+      const statsL = statsLosses.get(name) ?? 0;
+      const schedW = schedWins.get(name)   ?? 0;
+      const schedL = schedLosses.get(name) ?? 0;
+      // Use whichever source shows more games played (more complete)
+      const useStats = (statsW + statsL) >= (schedW + schedL);
+      return {
+        teamName: name,
+        wins:     useStats ? statsW : schedW,
+        losses:   useStats ? statsL : schedL,
+      };
+    })
     .filter(t => t.wins + t.losses > 0)
     .sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses));
 
   if (activeStandings.length > 0) {
-    // Show ONLY win-loss records — no other numbers, to avoid the AI mis-reading
-    // any parenthetical stats as part of the record.
     const lines = activeStandings.map(r => `  ${r.teamName}: ${r.wins}W-${r.losses}L`);
-    parts.push(`\nCURRENT STANDINGS (computed from scored games — wins and losses only):\n${lines.join("\n")}`);
+    parts.push(`\nCURRENT STANDINGS (wins and losses only):\n${lines.join("\n")}`);
   } else {
-    // No valid standings data — explicitly tell the model not to invent records.
     parts.push(`\nCURRENT STANDINGS: Data not available this cycle. Do NOT invent, assume, or quote any team's record. Avoid any mention of win-loss records entirely.`);
   }
 

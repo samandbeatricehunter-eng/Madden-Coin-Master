@@ -327,6 +327,35 @@ export async function autoPayoutGotwVoters(
     .limit(1);
 
   if (!row) {
+    // No DB row — but the poll may still exist in the GOTW channel (e.g. if the
+    // GOTW confirmation failed to save to DB). Scan the channel for active polls
+    // so the commissioner can pay manually before the channel is purged.
+    const _gotwChanId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
+    const _gotwCh = _gotwChanId ? await client.channels.fetch(_gotwChanId).catch(() => null) : null;
+    const _gotwTc  = _gotwCh?.isTextBased() ? (_gotwCh as TextChannel) : null;
+    if (_gotwTc) {
+      try {
+        const recent = await _gotwTc.messages.fetch({ limit: 20 });
+        const pollMsgs = recent.filter(m => m.poll != null);
+        if (pollMsgs.size > 0) {
+          const voterLines: string[] = [
+            `⚠️ No GOTW was recorded for Week ${weekNum}, but **${pollMsgs.size} poll(s)** found in the GOTW channel. Voter lists below — use \`/admin-gotw payout\` to pay correct voters manually.`,
+          ];
+          for (const pollMsg of pollMsgs.values()) {
+            const q = pollMsg.poll!.question.text;
+            voterLines.push(`\n📊 **Poll:** ${q}`);
+            for (const [, answer] of pollMsg.poll!.answers) {
+              const voters = await answer.fetchVoters().catch(() => null);
+              const names = voters ? [...voters.values()].map(u => `• <@${u.id}>`).join("\n") : "_Could not fetch_";
+              voterLines.push(`**${answer.text}** (${voters?.size ?? "?"}): \n${names || "_No votes_"}`);
+            }
+          }
+          return voterLines.join("\n");
+        }
+      } catch {
+        // Best-effort — fall through to the default message
+      }
+    }
     return `⚠️ No GOTW was set for Week ${weekNum} — skipping payout.`;
   }
 
