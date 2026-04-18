@@ -236,7 +236,7 @@ async function exportWeek(
   await interaction.deferReply({ ephemeral: true });
 
   // Load stored EA connection
-  const conn = await loadEAConnection();
+  const conn = await loadEAConnection(interaction.guildId!);
   if (!conn) {
     await interaction.editReply({
       content:
@@ -401,7 +401,7 @@ async function handlePlayoffs(interaction: ChatInputCommandInteraction): Promise
 async function handleStandings(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const conn = await loadEAConnection();
+  const conn = await loadEAConnection(interaction.guildId!);
   if (!conn) {
     await interaction.editReply({
       content: "❌ **No EA connection.** Run `/admin_ea_connect start` first to link your franchise.",
@@ -466,7 +466,7 @@ async function handleStandings(interaction: ChatInputCommandInteraction): Promis
 async function handleAwards(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const conn = await loadEAConnection();
+  const conn = await loadEAConnection(interaction.guildId!);
   if (!conn) {
     await interaction.editReply({
       content: "❌ **No EA connection.** Run `/admin_ea_connect start` first to link your franchise.",
@@ -527,7 +527,7 @@ async function handleAwards(interaction: ChatInputCommandInteraction): Promise<v
 async function handleFullSchedule(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const conn = await loadEAConnection();
+  const conn = await loadEAConnection(interaction.guildId!);
   if (!conn) {
     await interaction.editReply({ content: "❌ **No EA connection.** Run `/admin_ea_connect start` first." });
     return;
@@ -629,7 +629,7 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
 async function handleRosters(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const conn = await loadEAConnection();
+  const conn = await loadEAConnection(interaction.guildId!);
   if (!conn) {
     await interaction.editReply({ content: "❌ **No EA connection.** Run `/admin_ea_connect start` first." });
     return;
@@ -685,7 +685,7 @@ async function handleCheckApi(interaction: ChatInputCommandInteraction): Promise
     console.error("[ea-export/check-api] Health check error:", err?.message);
   }
 
-  const conn     = await loadEAConnection();
+  const conn     = await loadEAConnection(interaction.guildId!);
   const platform = conn?.token.platform ?? "<platform>";
   const leagueId = conn?.eaLeagueId     ?? "<leagueId>";
   const mcaBase  = `${apiBase}/madden/${key}/${platform}/${leagueId}`;

@@ -150,6 +150,7 @@ async function handleCode(interaction: ChatInputCommandInteraction): Promise<voi
       // Auto-connect the only league
       const league = leagues[0]!;
       await saveEAConnection({
+        guildId:     interaction.guildId!,
         eaLeagueId:  league.leagueId,
         leagueName:  league.leagueName,
         token:       scopedToken,
@@ -234,6 +235,7 @@ async function handleConnect(interaction: ChatInputCommandInteraction): Promise<
 
   try {
     await saveEAConnection({
+      guildId:     interaction.guildId!,
       eaLeagueId:  league.leagueId,
       leagueName:  league.leagueName,
       token:       pending.tokens,
@@ -266,7 +268,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const conn = await loadEAConnection();
+    const conn = await loadEAConnection(interaction.guildId!);
     if (!conn) {
       await interaction.editReply({
         content:
@@ -303,13 +305,13 @@ async function handleDisconnect(interaction: ChatInputCommandInteraction): Promi
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const conn = await loadEAConnection();
+    const conn = await loadEAConnection(interaction.guildId!);
     if (!conn) {
       await interaction.editReply({ content: "No EA connection to remove." });
       return;
     }
 
-    await deleteEAConnection();
+    await deleteEAConnection(interaction.guildId!);
 
     await interaction.editReply({
       content:

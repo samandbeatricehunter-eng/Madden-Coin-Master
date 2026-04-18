@@ -629,44 +629,41 @@ export async function fetchLeagueTeamsAndRosters(
 
 // ── DB operations ─────────────────────────────────────────────────────────────
 export async function saveEAConnection(opts: {
+  guildId:     string;
   eaLeagueId:  number;
   leagueName:  string;
   token:       TokenInfo;
   connectedBy: string;
 }): Promise<void> {
+  // Delete any existing connection for this guild first — handles league switches
+  // and avoids conflicts with the eaLeagueId unique constraint.
+  await db.delete(eaConnectionsTable).where(eq(eaConnectionsTable.guildId, opts.guildId));
+
   await db
     .insert(eaConnectionsTable)
     .values({
-      eaLeagueId:  opts.eaLeagueId,
-      leagueName:  opts.leagueName,
-      blazeId:     opts.token.blazeId,
-      accessToken: opts.token.accessToken,
+      guildId:      opts.guildId,
+      eaLeagueId:   opts.eaLeagueId,
+      leagueName:   opts.leagueName,
+      blazeId:      opts.token.blazeId,
+      accessToken:  opts.token.accessToken,
       refreshToken: opts.token.refreshToken,
-      expiry:      opts.token.expiry,
-      platform:    opts.token.platform,
-      connectedBy: opts.connectedBy,
-    })
-    .onConflictDoUpdate({
-      target: eaConnectionsTable.eaLeagueId,
-      set: {
-        blazeId:      opts.token.blazeId,
-        accessToken:  opts.token.accessToken,
-        refreshToken: opts.token.refreshToken,
-        expiry:       opts.token.expiry,
-        platform:     opts.token.platform,
-        connectedAt:  new Date(),
-        connectedBy:  opts.connectedBy,
-        leagueName:   opts.leagueName,
-      },
+      expiry:       opts.token.expiry,
+      platform:     opts.token.platform,
+      connectedBy:  opts.connectedBy,
     });
 }
 
-export async function loadEAConnection(): Promise<{
+export async function loadEAConnection(guildId: string): Promise<{
   token:       TokenInfo;
   eaLeagueId:  number;
   leagueName:  string;
 } | null> {
-  const rows = await db.select().from(eaConnectionsTable).limit(1);
+  const rows = await db
+    .select()
+    .from(eaConnectionsTable)
+    .where(eq(eaConnectionsTable.guildId, guildId))
+    .limit(1);
   if (rows.length === 0) return null;
   const row = rows[0]!;
   return {
@@ -682,8 +679,8 @@ export async function loadEAConnection(): Promise<{
   };
 }
 
-export async function deleteEAConnection(): Promise<void> {
-  await db.delete(eaConnectionsTable);
+export async function deleteEAConnection(guildId: string): Promise<void> {
+  await db.delete(eaConnectionsTable).where(eq(eaConnectionsTable.guildId, guildId));
 }
 
 export async function updateStoredToken(eaLeagueId: number, token: TokenInfo): Promise<void> {
