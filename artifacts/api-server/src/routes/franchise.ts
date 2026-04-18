@@ -269,6 +269,24 @@ function weekLabel(weekType: string, weekNum: number): string {
   return ROUNDS[weekNum] ?? `Playoff Round ${weekNum}`;
 }
 
+// ── /week/:weekType/:weekNum/schedule-import — schedule-only, no payouts ──────
+// Used by /admin_ea_export full-schedule. Stores matchup structure only — all
+// games are forced to upcoming (status=0, no scores) regardless of what EA
+// reports. This prevents simulated/CPU games from appearing as "played".
+// Responds SYNCHRONOUSLY with game count so the bot can report per-week results.
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/schedule-import", validateKey, async (req, res) => {
+  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const leagueId  = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const doReset   = String(req.query["reset"] ?? "false").toLowerCase() === "true";
+  try {
+    const count = await syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, true, doReset);
+    res.status(200).json({ ok: true, count, week: weekNum });
+  } catch (err) {
+    res.status(500).json({ ok: false, count: 0, week: weekNum, error: String(err) });
+  }
+});
+
 // ── /week/:weekType/:weekNum/schedules — per-week game results → payouts ──────
 // The MCA sends scores here (NOT /scores). This is the primary payout trigger.
 // Handles both regular season (weekType=reg) and playoffs (weekType=post, etc.)

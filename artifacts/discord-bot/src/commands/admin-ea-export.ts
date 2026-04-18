@@ -105,6 +105,12 @@ export const data = new SlashCommandBuilder()
           .setRequired(false)
           .setMinValue(1)
           .setMaxValue(18),
+      )
+      .addBooleanOption((o) =>
+        o
+          .setName("reset")
+          .setDescription("Clear wrong/simulated scores first — use when games show as played incorrectly (default: false)")
+          .setRequired(false),
       ),
   )
   .addSubcommand((s) =>
@@ -562,6 +568,7 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
 
   const { token, eaLeagueId } = conn;
   const totalWeeks = interaction.options.getInteger("weeks") ?? 18;
+  const doReset    = interaction.options.getBoolean("reset") ?? false;
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
 
@@ -590,24 +597,42 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
 
   const platform = freshToken.platform;
 
-  // ── Post each week to the API server ─────────────────────────────────────
-  await interaction.editReply({ content: `⏳ Sending ${totalWeeks} weeks to processor…` });
+  // ── Post each week to the schedule-import endpoint ────────────────────────
+  // Uses /schedule-import (not /schedules) so:
+  //  · All games are stored as upcoming (status=0, no scores)
+  //  · Simulated/CPU game results from EA are ignored
+  //  · processWeekScores (payouts) is NOT triggered
+  //  · Response is synchronous and includes game count per week
+  await interaction.editReply({ content: `⏳ Sending ${totalWeeks} weeks to schedule processor…` });
 
-  const apiResults: Array<{ week: number; ok: boolean; status: number }> = [];
+  const apiResults: Array<{ week: number; ok: boolean; count: number; status: number }> = [];
   for (const { weekNum, data } of weekResults) {
-    const weekUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${weekNum}/schedules`;
-    const res     = await postToApiServer(weekUrl, data);
-    apiResults.push({ week: weekNum, ...res });
+    const weekUrl = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/reg/${weekNum}/schedule-import${doReset ? "?reset=true" : ""}`;
+    const res     = await fetch(weekUrl, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(data),
+    }).catch(() => null);
+
+    if (!res) {
+      apiResults.push({ week: weekNum, ok: false, count: 0, status: 0 });
+    } else {
+      const json = await res.json().catch(() => ({})) as any;
+      apiResults.push({ week: weekNum, ok: res.ok, count: Number(json?.count ?? 0), status: res.status });
+    }
 
     if (weekNum % 6 === 0 || weekNum === totalWeeks) {
       await interaction.editReply({ content: `⏳ Sent ${weekNum}/${totalWeeks} weeks to processor…` });
     }
   }
 
-  const succeeded = apiResults.filter(r => r.ok).length;
-  const failed    = apiResults.filter(r => !r.ok);
-  const lines     = apiResults.map(r =>
-    r.ok ? `✅ Week ${r.week}` : `❌ Week ${r.week} (HTTP ${r.status})`,
+  const succeeded  = apiResults.filter(r => r.ok).length;
+  const failed     = apiResults.filter(r => !r.ok);
+  const totalGames = apiResults.reduce((s, r) => s + r.count, 0);
+  const lines      = apiResults.map(r =>
+    r.ok
+      ? r.count > 0 ? `✅ Week ${r.week} — ${r.count} games` : `⚪ Week ${r.week} — no games from EA`
+      : `❌ Week ${r.week} (HTTP ${r.status})`,
   );
 
   // ── Post to schedule channel if all weeks succeeded ───────────────────────
@@ -619,6 +644,7 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
         interaction.client,
         season.id,
         season.seasonNumber ?? season.id,
+        { guildId: interaction.guildId! },
       );
       channelNote = postedWeeks > 0
         ? `✅ Season schedule posted.`
@@ -629,17 +655,26 @@ async function handleFullSchedule(interaction: ChatInputCommandInteraction): Pro
     }
   }
 
+  // Chunk lines to stay within Discord's 4096-char embed limit
+  const MAX = 3800;
+  let description = lines.join("\n");
+  if (description.length > MAX) {
+    description = description.slice(0, MAX) + "\n…(truncated)";
+  }
+
   const schedEmbed = new EmbedBuilder()
     .setColor(failed.length === 0 ? Colors.Green : succeeded > 0 ? Colors.Yellow : Colors.Red)
     .setTitle(`📅 Full Season Schedule — EA Export`)
-    .setDescription(lines.join("\n"))
+    .setDescription(description)
     .addFields(
       {
         name:  "Result",
         value: failed.length === 0
-          ? `✅ All ${totalWeeks} weeks synced`
-          : `⚠️ ${succeeded}/${totalWeeks} weeks succeeded`,
+          ? `✅ ${totalWeeks} weeks processed · **${totalGames} games** stored as upcoming`
+          : `⚠️ ${succeeded}/${totalWeeks} weeks succeeded · ${totalGames} games stored`,
       },
+      ...(doReset ? [{ name: "🔄 Reset Mode", value: "All existing schedule data was overwritten — games reset to upcoming" }] : []),
+      { name: "ℹ️ Note", value: "⚪ weeks had no data from EA (league hasn't advanced there yet)" },
       ...(channelNote ? [{ name: "📣 Schedule Channel", value: channelNote }] : []),
     )
     .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()} · 1 EA session used` })
