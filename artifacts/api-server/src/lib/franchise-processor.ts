@@ -205,10 +205,13 @@ export async function processLeagueTeams(body: unknown, eaLeagueId = 0): Promise
       return { ok: false, message: "No teams found in payload — expected leagueTeamInfoList" };
     }
 
+    // Scope to this guild only — the same user can have different teams in
+    // different guilds; a global query would let the wrong guild's team
+    // assignment overwrite this season's correct mapping.
     const registeredUsers = await db.select({
       discordId: usersTable.discordId,
       team: usersTable.team,
-    }).from(usersTable);
+    }).from(usersTable).where(eq(usersTable.guildId, season.guildId ?? ""));
 
     const teamToUser = new Map<string, string>();
     for (const u of registeredUsers) {
