@@ -66,12 +66,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── 5. Take top 25 ───────────────────────────────────────────────────────────
   const top25 = sorted.slice(0, 25);
 
-  // ── 6. Try to resolve display names for those in this guild ─────────────────
+  // ── 6. Try to resolve display names (3-second timeout — hanging = fallback) ──
   const displayNames = new Map<string, string>();
   try {
-    const members = await interaction.guild!.members.fetch({ user: top25.map(u => u.discordId) });
-    for (const [id, member] of members) {
-      displayNames.set(id, member.displayName);
+    const membersOrTimeout = await Promise.race([
+      interaction.guild!.members.fetch({ user: top25.map(u => u.discordId) }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (membersOrTimeout) {
+      for (const [id, member] of membersOrTimeout) displayNames.set(id, member.displayName);
     }
   } catch {
     // Fallback — will show "Unknown User" for those not in this server

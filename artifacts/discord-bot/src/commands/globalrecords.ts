@@ -34,9 +34,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── 2. Fetch this guild's linked users ───────────────────────────────────────
   const thisGuildUsers = await db
     .select({
-      discordId:    usersTable.discordId,
-      team:         usersTable.team,
-      serverWallet: usersTable.balance,
+      discordId:       usersTable.discordId,
+      team:            usersTable.team,
+      discordUsername: usersTable.discordUsername,
+      serverWallet:    usersTable.balance,
     })
     .from(usersTable)
     .where(and(
@@ -111,12 +112,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .slice()
     .sort((a, b) => (globalRankMap.get(a.discordId) ?? 9999) - (globalRankMap.get(b.discordId) ?? 9999));
 
-  // ── 7. Fetch display names ───────────────────────────────────────────────────
+  // ── 7. Fetch display names (3-second timeout — hanging API call = fallback) ───
   const displayNames = new Map<string, string>();
   try {
-    const members = await interaction.guild!.members.fetch({ user: thisGuildIds });
-    for (const [id, member] of members) displayNames.set(id, member.displayName);
-  } catch { /* fallback to team name */ }
+    const membersOrTimeout = await Promise.race([
+      interaction.guild!.members.fetch({ user: thisGuildIds }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (membersOrTimeout) {
+      for (const [id, member] of membersOrTimeout) displayNames.set(id, member.displayName);
+    }
+  } catch { /* fallback to DB username/team name */ }
 
   // ── 8. Build compact 2-line entries ─────────────────────────────────────────
   const lines = displayUsers.map(u => {
@@ -136,7 +142,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const pdStr    = gPD >= 0 ? `+${gPD}` : `${gPD}`;
     const savings  = (savingsMap.get(u.discordId) ?? 0).toLocaleString();
     const wallet   = (serverMap.get(u.discordId)?.serverWallet ?? 0).toLocaleString();
-    const name     = displayNames.get(u.discordId) ?? u.team ?? "Unknown";
+    const name     = displayNames.get(u.discordId) ?? u.discordUsername ?? u.team ?? "Unknown";
 
     const extra: string[] = [];
     if (poW + poL > 0) extra.push(`PO: ${poW}-${poL}`);
