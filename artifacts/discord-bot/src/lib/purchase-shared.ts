@@ -144,6 +144,7 @@ export async function getRosterRows<T extends Record<string, any>>(
   const userId = interaction.user.id;
   const guildId = interaction.guildId!;
 
+  // Primary: direct discord_id match on roster rows (fastest, works after cascade)
   const baseWhere = and(
     eq(franchiseRostersTable.seasonId, seasonId),
     eq(franchiseRostersTable.discordId, userId),
@@ -151,7 +152,27 @@ export async function getRosterRows<T extends Record<string, any>>(
   const direct = await (db.select(fields).from(franchiseRostersTable).where(baseWhere) as any) as T[];
   if (direct.length > 0) return direct;
 
-  // Fallback: resolve via team name stored in economy_users
+  // Fallback 1: look up team via discord_id on MCA teams — reliable, no name-matching needed.
+  // Handles cases where roster rows weren't cascaded yet (e.g. team linked after roster import).
+  const [teamByDiscord] = await db
+    .select({ teamId: franchiseMcaTeamsTable.teamId })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      eq(franchiseMcaTeamsTable.discordId, userId),
+    ))
+    .limit(1);
+
+  if (teamByDiscord) {
+    const byTeam = await (db.select(fields).from(franchiseRostersTable).where(and(
+      eq(franchiseRostersTable.seasonId, seasonId),
+      eq(franchiseRostersTable.teamId, teamByDiscord.teamId),
+    )) as any) as T[];
+    if (byTeam.length > 0) return byTeam;
+  }
+
+  // Fallback 2: resolve via team name stored in economy_users (handles edge cases
+  // where the user's discord_id is not yet linked in franchise_mca_teams)
   const [userRow] = await db
     .select({ team: usersTable.team })
     .from(usersTable)
