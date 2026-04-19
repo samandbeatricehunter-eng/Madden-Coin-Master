@@ -1656,36 +1656,44 @@ async function reconcileRecordsFromSchedule(
 
     const hData = teamMap.get(hId);
     const aData = teamMap.get(aId);
-    if (!hData?.isHuman || !aData?.isHuman) continue;
-    if (!hData.discordId || !aData.discordId) continue;
+    if (!hData || !aData) continue;
 
-    const hasForceFlag = !!(
-      g.isForceWin     || g.isForced      || g.forceWin    ||
-      g.homeForceWin   || g.awayForceWin  ||
-      g.homeAutoPilot  || g.awayAutoPilot ||
-      g.isSimulated    || g.wasSimulated   || g.isAutopilot  ||
-      g.homeIsForceWin || g.awayIsForceWin
-    );
-    if (hasForceFlag) continue;
+    // Skip games with no linked players on either side
+    if (!hData.discordId && !aData.discordId) continue;
 
     const homeScore = Number(g.homeScore ?? 0);
     const awayScore = Number(g.awayScore ?? 0);
     const isTie     = homeScore === awayScore;
     const homeWon   = homeScore > awayScore;
 
-    const hRec = computed.get(hData.discordId) ?? { wins: 0, losses: 0, ties: 0 };
-    const aRec = computed.get(aData.discordId) ?? { wins: 0, losses: 0, ties: 0 };
-
-    if (isTie) {
-      hRec.ties++; aRec.ties++;
-    } else if (homeWon) {
-      hRec.wins++; aRec.losses++;
+    if (hData.discordId && aData.discordId) {
+      // H2H — both sides count
+      const hRec = computed.get(hData.discordId) ?? { wins: 0, losses: 0, ties: 0 };
+      const aRec = computed.get(aData.discordId) ?? { wins: 0, losses: 0, ties: 0 };
+      if (isTie) {
+        hRec.ties++; aRec.ties++;
+      } else if (homeWon) {
+        hRec.wins++; aRec.losses++;
+      } else {
+        hRec.losses++; aRec.wins++;
+      }
+      computed.set(hData.discordId, hRec);
+      computed.set(aData.discordId, aRec);
     } else {
-      hRec.losses++; aRec.wins++;
+      // CPU game — only the linked player's record counts
+      const linkedId    = hData.discordId ?? aData.discordId!;
+      const linkedScore = hData.discordId ? homeScore : awayScore;
+      const oppScore    = hData.discordId ? awayScore : homeScore;
+      const rec = computed.get(linkedId) ?? { wins: 0, losses: 0, ties: 0 };
+      if (linkedScore === oppScore) {
+        rec.ties++;
+      } else if (linkedScore > oppScore) {
+        rec.wins++;
+      } else {
+        rec.losses++;
+      }
+      computed.set(linkedId, rec);
     }
-
-    computed.set(hData.discordId, hRec);
-    computed.set(aData.discordId, aRec);
   }
 
   if (computed.size === 0) return [];
@@ -1849,13 +1857,15 @@ export async function processWeekScores(
       const homeIsHuman = hData.isHuman;
       const awayIsHuman = aData.isHuman;
 
-      if ((homeIsHuman && !hData.discordId) || (awayIsHuman && !aData.discordId)) {
+      // Skip only when neither team has a linked Discord user — games where
+      // one side is unregistered still count for the linked side (CPU payout).
+      if (!hData.discordId && !aData.discordId) {
         gamesUnregistered++;
         const hiScore = Math.max(homeScore, awayScore);
         const loScore = Math.min(homeScore, awayScore);
         const unregTeams: string[] = [];
-        if (homeIsHuman && !hData.discordId) unregTeams.push(`**${hData.fullName}** (userName: \`${hData.userName}\`)`);
-        if (awayIsHuman && !aData.discordId) unregTeams.push(`**${aData.fullName}** (userName: \`${aData.userName}\`)`);
+        if (homeIsHuman) unregTeams.push(`**${hData.fullName}** (userName: \`${hData.userName}\`)`);
+        if (awayIsHuman) unregTeams.push(`**${aData.fullName}** (userName: \`${aData.userName}\`)`);
         unregisteredLines.push(`⚠️ ${unregTeams.join(" & ")} — not linked to Discord *(${hiScore}–${loScore})*`);
         resultLines.push(`⚠️ **${hData.fullName}** ${homeScore} — ${awayScore} **${aData.fullName}** *(unregistered)*`);
         continue;
@@ -1864,12 +1874,13 @@ export async function processWeekScores(
       const isTie   = homeScore === awayScore;
       const homeWon = homeScore > awayScore;
       const status  = Number(g.scheduleStatus ?? g.status ?? 2);
-      const bothReg = homeIsHuman && awayIsHuman;
 
-      // Detect force/autopilot games via explicit MCA fields.
-      // NOTE: Madden 24/25 MCA sends scheduleStatus=2 for ALL completed games
-      // (both legit H2H and simulated), so status alone cannot reliably
-      // distinguish them. Prefer explicit force fields when present.
+      // H2H = both teams have a linked Discord user in-server.
+      // Payout type is determined solely by this — force/autopilot flags no
+      // longer route games to CPU; they are kept for diagnostics only.
+      const isH2H = Boolean(hData.discordId && aData.discordId);
+
+      // Keep force flag detection for logging/diagnostics — no longer affects routing.
       const hasForceFlag = !!(
         g.isForceWin        || g.isForced        || g.forceWin    ||
         g.homeForceWin      || g.awayForceWin    ||
@@ -1878,19 +1889,13 @@ export async function processWeekScores(
         g.homeIsForceWin    || g.awayIsForceWin
       );
 
-      // Log status + force fields to help diagnose mismatches
-      if (bothReg) {
+      if (isH2H) {
         console.log(
           `[h2h-detect] ${hData.fullName} vs ${aData.fullName}` +
           ` status=${status} hasForceFlag=${hasForceFlag}` +
           ` keys=[${Object.keys(g as Record<string,unknown>).join(",")}]`
         );
       }
-
-      // When both teams are registered humans, default to H2H unless an
-      // explicit force indicator is present on the game object.
-      const isTrueH2H   = bothReg && !hasForceFlag;
-      const isForcedCPU = bothReg && hasForceFlag;
 
       // ── Catchup mode: log result + mark processed, skip all payouts/coins ──
       if (season.catchupMode) {
@@ -1928,7 +1933,7 @@ export async function processWeekScores(
         milestonePrevTier?: number | null;
       } = { payoutType: "none" };
 
-      if (isTrueH2H) {
+      if (isH2H) {
         if (!isTie) {
           const winnerId   = homeWon ? hData.discordId!  : aData.discordId!;
           const loserId    = homeWon ? aData.discordId!  : hData.discordId!;
@@ -2036,67 +2041,58 @@ export async function processWeekScores(
           resultLines.push(`🤝 **${hData.fullName}** ${homeScore} — ${awayScore} **${aData.fullName}** *(tie)*`);
         }
 
-      } else if (isForcedCPU) {
-        const hiScore    = Math.max(homeScore, awayScore);
-        const loScore    = Math.min(homeScore, awayScore);
-        const winnerId   = homeWon ? hData.discordId! : aData.discordId!;
-        const winnerTeam = homeWon ? hData.fullName   : aData.fullName;
-        const loserTeam  = homeWon ? aData.fullName   : hData.fullName;
-        const spread     = Math.abs(homeScore - awayScore);
-
-        if (!isTie) {
-          await addBalance(winnerId, CPU_WIN_PAYOUT, season.guildId ?? "");
-          await logTransaction(winnerId, CPU_WIN_PAYOUT, "addcoins",
-            `MCA webhook: CPU win vs ${loserTeam} (${hiScore}–${loScore})`, season.guildId ?? "");
-          payoutLines.push(`🤖 **${winnerTeam}** +${CPU_WIN_PAYOUT} *(force/autopilot vs ${loserTeam} ${hiScore}–${loScore})*`);
-          resultLines.push(`🤖 **${winnerTeam}** ${hiScore} — ${loScore} **${loserTeam}** *(force/autopilot)*`);
-          await appendGameLog(winnerId, season.id, "win", spread, `[CPU] ${loserTeam}`, undefined, season.guildId ?? "");
-          payoutMeta = {
-            payoutType: "cpu",
-            winnerDiscordId: winnerId, loserDiscordId: null,
-            winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0,
-            appliedPointDiff: spread,
-          };
-          for (const uid of [hData.discordId!, aData.discordId!]) {
-            await db.insert(franchiseGameParticipantsTable)
-              .values({ seasonId: season.id, week: String(weekNum), discordId: uid, gameType: "cpu" })
-              .onConflictDoNothing();
-          }
-        } else {
-          payoutLines.push(`🤖 **${hData.fullName}** vs **${aData.fullName}** — Tie *(force/autopilot, no payout)*`);
-          resultLines.push(`🤖 **${hData.fullName}** ${homeScore} — ${awayScore} **${aData.fullName}** *(force/autopilot tie)*`);
-        }
-
       } else {
-        const humanData  = homeIsHuman ? hData : aData;
-        const cpuData    = homeIsHuman ? aData : hData;
-        const humanScore = homeIsHuman ? homeScore : awayScore;
-        const cpuScore   = homeIsHuman ? awayScore : homeScore;
+        // CPU game: one team has a linked Discord user, the other does not.
+        // This covers standard CPU opponents, unregistered human opponents,
+        // and (formerly) force/autopilot games — all now treated identically.
+        // Both wins AND losses now count towards the linked player's W/L record.
+        const humanData  = hData.discordId ? hData : aData;
+        const cpuData    = hData.discordId ? aData : hData;
+        const humanScore = hData.discordId ? homeScore : awayScore;
+        const cpuScore   = hData.discordId ? awayScore : homeScore;
         const humanWon   = humanScore > cpuScore && !isTie;
         const spread     = humanScore - cpuScore;
+        const guildId    = season.guildId ?? "";
+        const humanId    = humanData.discordId!;
 
-        // ── CPU score anomaly detection ────────────────────────────────────
-        const cpuFlag = detectCpuScoreAnomaly(humanData.fullName, cpuData.fullName, humanScore, cpuScore, roundLabel, humanData.discordId ?? undefined);
+        // ── CPU score anomaly detection ──────────────────────────────────
+        const cpuFlag = detectCpuScoreAnomaly(humanData.fullName, cpuData.fullName, humanScore, cpuScore, roundLabel, humanId);
         if (cpuFlag) violations.push(cpuFlag);
 
-        if (humanWon) {
-          await addBalance(humanData.discordId!, CPU_WIN_PAYOUT, season.guildId ?? "");
-          await logTransaction(humanData.discordId!, CPU_WIN_PAYOUT, "addcoins",
-            `MCA webhook: CPU win vs ${cpuData.fullName} (${humanScore}–${cpuScore})`, season.guildId ?? "");
-          payoutLines.push(`🤖 **${humanData.fullName}** +${CPU_WIN_PAYOUT} *(CPU win vs ${cpuData.fullName} ${humanScore}–${cpuScore})*`);
-          resultLines.push(`🤖 **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU)*`);
-          payoutMeta = {
-            payoutType: "cpu",
-            winnerDiscordId: humanData.discordId!, loserDiscordId: null,
-            winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0,
-            appliedPointDiff: Math.abs(spread),
-          };
+        if (!isTie) {
+          if (humanWon) {
+            await addBalance(humanId, CPU_WIN_PAYOUT, guildId);
+            await logTransaction(humanId, CPU_WIN_PAYOUT, "addcoins",
+              `MCA webhook: CPU win vs ${cpuData.fullName} (${humanScore}–${cpuScore})`, guildId);
+            payoutLines.push(`🤖 **${humanData.fullName}** +${CPU_WIN_PAYOUT} *(CPU win vs ${cpuData.fullName} ${humanScore}–${cpuScore})*`);
+            resultLines.push(`🤖 **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU)*`);
+            payoutMeta = {
+              payoutType: "cpu",
+              winnerDiscordId: humanId, loserDiscordId: null,
+              winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0,
+              appliedPointDiff: Math.abs(spread),
+            };
+          } else {
+            // CPU loss — no coin payout, but still counts as a loss
+            resultLines.push(`❌ **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU loss)*`);
+            payoutMeta = { payoutType: "cpu", winnerDiscordId: null, loserDiscordId: humanId };
+          }
+
+          // W/L record update applies to all CPU games (win or loss)
+          await upsertH2HRecord(humanId, season.id, humanWon, spread, guildId);
+          await db.update(usersTable)
+            .set(humanWon
+              ? { allTimeH2HWins:   sql`${usersTable.allTimeH2HWins}   + 1`, updatedAt: new Date() }
+              : { allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
+            .where(and(eq(usersTable.discordId, humanId), eq(usersTable.guildId, guildId)));
         } else {
-          resultLines.push(`❌ **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU loss)*`);
+          payoutLines.push(`🤖 **${humanData.fullName}** vs **${cpuData.fullName}** — Tie *(CPU, no payout)*`);
+          resultLines.push(`🤖 **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU tie)*`);
         }
-        await appendGameLog(humanData.discordId!, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuData.fullName}`, undefined, season.guildId ?? "");
+
+        await appendGameLog(humanId, season.id, humanWon ? "win" : "loss", spread, `[CPU] ${cpuData.fullName}`, undefined, guildId);
         await db.insert(franchiseGameParticipantsTable)
-          .values({ seasonId: season.id, week: String(weekNum), discordId: humanData.discordId!, gameType: "cpu" })
+          .values({ seasonId: season.id, week: String(weekNum), discordId: humanId, gameType: "cpu" })
           .onConflictDoNothing();
       }
 
