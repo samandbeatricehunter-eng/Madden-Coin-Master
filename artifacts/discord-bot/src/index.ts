@@ -57,6 +57,7 @@ import * as adminManualScore         from "./commands/admin-manualscore.js";
 import * as adminReverseGame         from "./commands/admin-reverse-game.js";
 import * as adminPostFullSeasonSchedule from "./commands/admin-postfullseasonschedule.js";
 import * as adminRollbackFranchise   from "./commands/admin-rollback-franchise.js";
+import * as adminResetSeasonStats    from "./commands/admin-reset-season-stats.js";
 import * as endofseasonpayout        from "./commands/endofseasonpayout.js";
 import * as adminSetPayouts          from "./commands/admin-setpayouts.js";
 import * as adminSetStatTiers        from "./commands/admin-set-stat-tiers.js";
@@ -185,6 +186,7 @@ if (!isProduction && !devBotEnabled) {
     adminReverseGame,
     adminPostFullSeasonSchedule,
     adminRollbackFranchise,
+    adminResetSeasonStats,
     endofseasonpayout,
     adminSetPayouts,
     adminSetStatTiers,
