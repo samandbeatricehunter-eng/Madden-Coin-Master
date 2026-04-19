@@ -277,6 +277,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         season.id,
         leavingPlayoffMeta.weekIndex,
         season.currentWeek!,
+        guildId,
       );
       if (payoutSummary) channelLines.push(payoutSummary);
     } catch (err) {
@@ -922,6 +923,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           season,
           displayWeekNum:  _newWeekNum,
           payoutWeekIndex: (!isNaN(oldWeekNum) && oldWeekNum >= 1) ? oldWeekNum - 1 : null,
+          guildId,
           replyFn: async ({ content, components }) => {
             await interaction.followUp({
               content,

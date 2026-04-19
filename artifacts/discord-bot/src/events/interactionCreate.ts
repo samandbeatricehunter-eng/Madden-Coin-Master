@@ -1824,11 +1824,11 @@ async function handleButton(interaction: ButtonInteraction) {
 
     await interaction.deferUpdate();
 
-    // Look up team names for both Discord IDs
+    // Look up team names for both Discord IDs — always scoped to THIS guild
     const [awayUser] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, awayDiscordId!)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, awayDiscordId!), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     const [homeUser] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, homeDiscordId!)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, homeDiscordId!), eq(usersTable.guildId, interaction.guildId!))).limit(1);
 
     const awayTeam = awayUser?.team ?? awayDiscordId ?? "Away Team";
     const homeTeam = homeUser?.team ?? homeDiscordId ?? "Home Team";
@@ -2707,9 +2707,9 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     await interaction.deferUpdate();
 
     const [awayUser] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, awayDiscordId!)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, awayDiscordId!), eq(usersTable.guildId, interaction.guildId!))).limit(1);
     const [homeUser] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, homeDiscordId!)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, homeDiscordId!), eq(usersTable.guildId, interaction.guildId!))).limit(1);
 
     const awayTeam = awayUser?.team ?? "Away Team";
     const homeTeam = homeUser?.team ?? "Home Team";
