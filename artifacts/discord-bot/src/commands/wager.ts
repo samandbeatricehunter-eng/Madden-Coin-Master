@@ -1,6 +1,6 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, GuildMember,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { wagersTable, usersTable } from "@workspace/db";
@@ -78,11 +78,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await getOrCreateUser(opponent.id, opponent.username, interaction.guildId!);
 
+  // Resolve display names (server nickname > username) for embed field names —
+  // Discord does not render mentions inside embed field names.
+  const challengerMember = interaction.member instanceof GuildMember
+    ? interaction.member
+    : await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+  const opponentMember = await interaction.guild?.members.fetch(opponent.id).catch(() => null);
+  const challengerName = challengerMember?.displayName ?? interaction.user.username;
+  const opponentName   = opponentMember?.displayName   ?? opponent.username;
+
   const [wager] = await db.insert(wagersTable).values({
-    challengerId:      interaction.user.id,
+    guildId:            interaction.guildId!,
+    challengerId:       interaction.user.id,
     challengerUsername: interaction.user.username,
-    opponentId:        opponent.id,
-    opponentUsername:  opponent.username,
+    opponentId:         opponent.id,
+    opponentUsername:   opponent.username,
     amount,
     pot:       amount * 2,
     teamFor,
@@ -99,10 +109,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setTitle("⚔️ Wager Challenge!")
     .setDescription(`<@${interaction.user.id}> has challenged <@${opponent.id}> to a coin wager!`)
     .addFields(
-      { name: "💰 Stake",                    value: `**${amount.toLocaleString()} coins** each (total pot: **${(amount * 2).toLocaleString()} coins**)` },
-      { name: `🏈 <@${interaction.user.id}> is taking`, value: `**${teamFor}**`,    inline: true },
-      { name: `🏈 <@${opponent.id}> is taking`,         value: `**${teamAgainst}**`, inline: true },
-      { name: "📋 Status",                  value: "⏳ Waiting for opponent to respond…" },
+      { name: "💰 Stake",                          value: `**${amount.toLocaleString()} coins** each (total pot: **${(amount * 2).toLocaleString()} coins**)` },
+      { name: `🏈 ${challengerName} is taking`,   value: `**${teamFor}**`,    inline: true },
+      { name: `🏈 ${opponentName} is taking`,     value: `**${teamAgainst}**`, inline: true },
+      { name: "📋 Status",                        value: "⏳ Waiting for opponent to respond…" },
     )
     .setFooter({ text: `Wager #${wager.id}` })
     .setTimestamp();

@@ -758,11 +758,12 @@ async function handleButton(interaction: ButtonInteraction) {
       return;
     }
 
-    // Verify both users still have sufficient funds
+    // Verify both users still have sufficient funds — scoped to the wager's guild
+    const wagerGuildId = wager.guildId ?? interaction.guildId!;
     const [challengerRow] = await db.select({ balance: usersTable.balance })
-      .from(usersTable).where(eq(usersTable.discordId, wager.challengerId)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, wager.challengerId), eq(usersTable.guildId, wagerGuildId))).limit(1);
     const [opponentRow] = await db.select({ balance: usersTable.balance })
-      .from(usersTable).where(eq(usersTable.discordId, wager.opponentId)).limit(1);
+      .from(usersTable).where(and(eq(usersTable.discordId, wager.opponentId), eq(usersTable.guildId, wagerGuildId))).limit(1);
 
     const challengerBal = challengerRow?.balance ?? 0;
     const opponentBal   = opponentRow?.balance   ?? 0;
@@ -786,15 +787,21 @@ async function handleButton(interaction: ButtonInteraction) {
     }
 
     // Deduct from both — coins go into holding (tracked by wager record)
-    await addBalance(wager.challengerId, -wager.amount, interaction.guildId!);
+    await addBalance(wager.challengerId, -wager.amount, wagerGuildId);
     await logTransaction(wager.challengerId, -wager.amount, "removecoins",
-      `Wager #${wagerId} held: ${wager.teamFor} vs ${wager.teamAgainst}`, interaction.guildId!, wager.opponentId);
+      `Wager #${wagerId} held: ${wager.teamFor} vs ${wager.teamAgainst}`, wagerGuildId, wager.opponentId);
 
-    await addBalance(wager.opponentId, -wager.amount, interaction.guildId!);
+    await addBalance(wager.opponentId, -wager.amount, wagerGuildId);
     await logTransaction(wager.opponentId, -wager.amount, "removecoins",
-      `Wager #${wagerId} held: ${wager.teamAgainst} vs ${wager.teamFor}`, interaction.guildId!, wager.challengerId);
+      `Wager #${wagerId} held: ${wager.teamAgainst} vs ${wager.teamFor}`, wagerGuildId, wager.challengerId);
 
     await db.update(wagersTable).set({ status: "active" }).where(eq(wagersTable.id, wagerId));
+
+    // Resolve display names for embed field names (mentions don't render in field names)
+    const challengerMember = await interaction.guild?.members.fetch(wager.challengerId).catch(() => null);
+    const opponentMember   = await interaction.guild?.members.fetch(wager.opponentId).catch(() => null);
+    const challengerName   = challengerMember?.displayName ?? wager.challengerUsername;
+    const opponentName     = opponentMember?.displayName   ?? wager.opponentUsername;
 
     // Edit the challenge message to show active state
     const activeEmbed = new EmbedBuilder()
@@ -802,10 +809,10 @@ async function handleButton(interaction: ButtonInteraction) {
       .setTitle("⚔️ Wager Active — Awaiting Result")
       .setDescription(`<@${wager.challengerId}> vs <@${wager.opponentId}>`)
       .addFields(
-        { name: "💰 Pot",                             value: `**${wager.pot.toLocaleString()} coins** in holding` },
-        { name: `🏈 <@${wager.challengerId}> is taking`, value: `**${wager.teamFor}**`,    inline: true },
-        { name: `🏈 <@${wager.opponentId}> is taking`,   value: `**${wager.teamAgainst}**`, inline: true },
-        { name: "📋 Status",                          value: "🔒 Coins held — commissioner will declare the winner" },
+        { name: "💰 Pot",                           value: `**${wager.pot.toLocaleString()} coins** in holding` },
+        { name: `🏈 ${challengerName} is taking`,  value: `**${wager.teamFor}**`,    inline: true },
+        { name: `🏈 ${opponentName} is taking`,    value: `**${wager.teamAgainst}**`, inline: true },
+        { name: "📋 Status",                       value: "🔒 Coins held — commissioner will declare the winner" },
       )
       .setFooter({ text: `Wager #${wagerId}` })
       .setTimestamp();
@@ -927,10 +934,11 @@ async function handleButton(interaction: ButtonInteraction) {
     const winnerTeam = winnerId === wager.challengerId ? wager.teamFor : wager.teamAgainst;
     const loserTeam  = winnerId === wager.challengerId ? wager.teamAgainst : wager.teamFor;
 
-    // Pay out the full pot to the winner
-    await addBalance(winnerId, wager.pot, interaction.guildId!);
+    // Pay out the full pot to the winner — always use the wager's own guild
+    const wagerGuildId = wager.guildId ?? interaction.guildId!;
+    await addBalance(winnerId, wager.pot, wagerGuildId);
     await logTransaction(winnerId, wager.pot, "addcoins",
-      `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, interaction.guildId!, interaction.user.id);
+      `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, wagerGuildId, interaction.user.id);
 
     await db.update(wagersTable)
       .set({ status: "completed", winnerId, resolvedAt: new Date(), resolvedBy: interaction.user.id })
