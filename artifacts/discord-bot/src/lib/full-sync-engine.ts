@@ -18,7 +18,7 @@ import {
   seasonsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { getOrCreateActiveSeason, PRIMARY_GUILD_ID, upsertGlobalRecord } from "./db-helpers.js";
+import { getOrCreateActiveSeason, upsertGlobalRecord } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { listMcaFilesSafe, readMcaJson, mcaFileExists } from "./gcs-reader.js";
 
@@ -309,6 +309,7 @@ export async function runTeamAutoLink(
 
 export async function runGcsScheduleProcessing(
   seasonId: number,
+  guildId: string,
   report: FullSyncReport,
 ) {
   // Refresh team map after Phase 1 linking
@@ -321,9 +322,11 @@ export async function runGcsScheduleProcessing(
     return;
   }
 
-  // Load processed game dedup set
+  // Load processed game dedup set — scope to this season so cross-guild
+  // gameIds from other seasons do not block processing in this guild.
   const allProcessed = await db.select({ gameId: franchiseProcessedGamesTable.gameId })
-    .from(franchiseProcessedGamesTable);
+    .from(franchiseProcessedGamesTable)
+    .where(eq(franchiseProcessedGamesTable.seasonIdRef, seasonId));
   const processedSet = new Set(allProcessed.map(r => r.gameId));
 
   // Load payout amounts
@@ -359,10 +362,10 @@ export async function runGcsScheduleProcessing(
     return;
   }
 
-  // Load all economy_users for username/team lookup
+  // Load guild-scoped economy_users for username/team lookup
   const allUsers = await db.select({
     discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team,
-  }).from(usersTable);
+  }).from(usersTable).where(eq(usersTable.guildId, guildId));
   const userMap = new Map(allUsers.map(u => [u.discordId, u]));
 
   for (const file of schedFiles) {
@@ -442,9 +445,9 @@ export async function runGcsScheduleProcessing(
         const winnerUser = userMap.get(winnerId);
         const loserUser  = userMap.get(loserId);
 
-        await addBalance(winnerId, h2hWin, PRIMARY_GUILD_ID);
+        await addBalance(winnerId, h2hWin, guildId);
         await logTx(winnerId, h2hWin, `H2H win vs ${loserTeam} Wk${weekNum} (${hiScore}–${loScore}) [sync]`);
-        await addBalance(loserId, h2hLoss, PRIMARY_GUILD_ID);
+        await addBalance(loserId, h2hLoss, guildId);
         await logTx(loserId, h2hLoss, `H2H loss vs ${winnerTeam} Wk${weekNum} (${loScore}–${hiScore}) [sync]`);
 
         await upsertRecord(winnerId, winnerUser?.discordUsername ?? "", winnerUser?.team ?? null, seasonId, true,  spread);
@@ -455,10 +458,10 @@ export async function runGcsScheduleProcessing(
 
         await db.update(usersTable)
           .set({ allTimeH2HWins:   sql`${usersTable.allTimeH2HWins} + 1`,   updatedAt: new Date() })
-          .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, PRIMARY_GUILD_ID)));
+          .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId)));
         await db.update(usersTable)
           .set({ allTimeH2HLosses: sql`${usersTable.allTimeH2HLosses} + 1`, updatedAt: new Date() })
-          .where(and(eq(usersTable.discordId, loserId), eq(usersTable.guildId, PRIMARY_GUILD_ID)));
+          .where(and(eq(usersTable.discordId, loserId), eq(usersTable.guildId, guildId)));
 
         await db.insert(gameLogTable).values([
           { discordId: winnerId, seasonId, result: "win",  pointSpread:  spread, opponentLabel: loserTeam,  gameType: "regular_season" },
@@ -502,7 +505,7 @@ export async function runGcsScheduleProcessing(
         const humanWon   = humanScore > cpuScore && !isTie;
 
         if (humanWon && humanData.discordId) {
-          await addBalance(humanData.discordId, cpuWin, PRIMARY_GUILD_ID);
+          await addBalance(humanData.discordId, cpuWin, guildId);
           await logTx(humanData.discordId, cpuWin, `CPU win vs ${cpuData.fullName} Wk${weekNum} [sync]`);
           await db.insert(gameLogTable).values({
             discordId: humanData.discordId, seasonId, result: "win",
@@ -536,7 +539,7 @@ export async function runGcsScheduleProcessing(
 // ── Phase 3: Standings fallback ────────────────────────────────────────────────
 // For teams with no processed games, read mca/standings.json and set season records.
 
-export async function runStandingsFallback(seasonId: number, report: FullSyncReport) {
+export async function runStandingsFallback(seasonId: number, guildId: string, report: FullSyncReport) {
   const standingsExists = await mcaFileExists("mca/standings.json");
   if (!standingsExists) return;
 
@@ -553,7 +556,7 @@ export async function runStandingsFallback(seasonId: number, report: FullSyncRep
 
   const allUsers = await db.select({
     discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team,
-  }).from(usersTable);
+  }).from(usersTable).where(eq(usersTable.guildId, guildId));
   const userMap = new Map(allUsers.map(u => [u.discordId, u]));
 
   // Find users who still have 0 processed games this season
@@ -664,6 +667,7 @@ export async function runMilestoneSync(report: FullSyncReport, guildId: string) 
 // ── Main entry point ───────────────────────────────────────────────────────────
 
 export async function runFullSync(
+  guildId: string,
   guildMembers: Map<string, { username: string; displayName: string }>,
 ): Promise<FullSyncReport> {
   const report: FullSyncReport = {
@@ -684,12 +688,12 @@ export async function runFullSync(
     errors:            [],
   };
 
-  const season = await getOrCreateActiveSeason(PRIMARY_GUILD_ID);
+  const season = await getOrCreateActiveSeason(guildId);
 
   await runTeamAutoLink(guildMembers, report);
-  await runGcsScheduleProcessing(season.id, report);
-  await runStandingsFallback(season.id, report);
-  await runMilestoneSync(report, PRIMARY_GUILD_ID);
+  await runGcsScheduleProcessing(season.id, guildId, report);
+  await runStandingsFallback(season.id, guildId, report);
+  await runMilestoneSync(report, guildId);
 
   return report;
 }
