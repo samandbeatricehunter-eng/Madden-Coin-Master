@@ -1447,12 +1447,13 @@ export interface WeekScoresResult {
   gamesUnregistered: number;
   payoutLines: string[];
   milestoneLines: string[];
-  resultLines: string[];        // all completed games (scored), including unregistered
-  unregisteredLines: string[];  // human teams with no Discord link
+  resultLines: string[];           // all completed games (scored), including unregistered
+  unregisteredLines: string[];     // human teams with no Discord link
+  reconciliationLines: string[];   // corrections applied to user_records from EA data
   weekNum: number;
   seasonId: number;
-  catchupMode: boolean;         // true when catchup mode is active (no payouts/notifications)
-  violations: ViolationRecord[]; // stat-padding / blowout flags for commissioner review
+  catchupMode: boolean;            // true when catchup mode is active (no payouts/notifications)
+  violations: ViolationRecord[];   // stat-padding / blowout flags for commissioner review
 }
 
 /**
@@ -1626,6 +1627,137 @@ export async function syncWeekScoresToSchedule(
   }
 }
 
+/**
+ * Cross-references ALL completed H2H games in the EA schedule payload against
+ * the current user_records for the season and corrects any discrepancies.
+ *
+ * EA sends the full season schedule (past + future) in every import, so the
+ * completed-game subset gives us the authoritative cumulative W/L/T totals.
+ * We SET the records to the EA-derived values rather than trusting the
+ * incremental counters, which can drift from double-imports or bugs.
+ *
+ * Only genuine H2H games are counted (both human, no force/autopilot flag),
+ * matching the same filter used by processWeekScores for W/L writes.
+ */
+async function reconcileRecordsFromSchedule(
+  games: any[],
+  season: { id: number; guildId: string | null },
+  teamMap: Map<number, { isHuman: boolean; discordId: string | null; fullName: string; userName: string }>,
+): Promise<string[]> {
+  const computed = new Map<string, { wins: number; losses: number; ties: number }>();
+
+  for (const g of games) {
+    if (!g || typeof g !== "object") continue;
+    if (Number(g.scheduleStatus ?? g.status ?? 0) < MIN_COMPLETED_STATUS) continue;
+
+    const hId = Number(g.homeTeamId ?? -1);
+    const aId = Number(g.awayTeamId ?? -1);
+    if (hId < 0 || aId < 0) continue;
+
+    const hData = teamMap.get(hId);
+    const aData = teamMap.get(aId);
+    if (!hData?.isHuman || !aData?.isHuman) continue;
+    if (!hData.discordId || !aData.discordId) continue;
+
+    const hasForceFlag = !!(
+      g.isForceWin     || g.isForced      || g.forceWin    ||
+      g.homeForceWin   || g.awayForceWin  ||
+      g.homeAutoPilot  || g.awayAutoPilot ||
+      g.isSimulated    || g.wasSimulated   || g.isAutopilot  ||
+      g.homeIsForceWin || g.awayIsForceWin
+    );
+    if (hasForceFlag) continue;
+
+    const homeScore = Number(g.homeScore ?? 0);
+    const awayScore = Number(g.awayScore ?? 0);
+    const isTie     = homeScore === awayScore;
+    const homeWon   = homeScore > awayScore;
+
+    const hRec = computed.get(hData.discordId) ?? { wins: 0, losses: 0, ties: 0 };
+    const aRec = computed.get(aData.discordId) ?? { wins: 0, losses: 0, ties: 0 };
+
+    if (isTie) {
+      hRec.ties++; aRec.ties++;
+    } else if (homeWon) {
+      hRec.wins++; aRec.losses++;
+    } else {
+      hRec.losses++; aRec.wins++;
+    }
+
+    computed.set(hData.discordId, hRec);
+    computed.set(aData.discordId, aRec);
+  }
+
+  if (computed.size === 0) return [];
+
+  const discordIds = Array.from(computed.keys());
+  const currentRows = await db
+    .select({
+      discordId: userRecordsTable.discordId,
+      wins:      userRecordsTable.wins,
+      losses:    userRecordsTable.losses,
+      ties:      userRecordsTable.ties,
+    })
+    .from(userRecordsTable)
+    .where(and(
+      eq(userRecordsTable.seasonId, season.id),
+      inArray(userRecordsTable.discordId, discordIds),
+    ));
+
+  const currentMap = new Map(currentRows.map(r => [r.discordId, r]));
+  const guildId    = season.guildId ?? "";
+  const corrections: string[] = [];
+
+  for (const [discordId, expected] of computed) {
+    const current     = currentMap.get(discordId);
+    const curWins     = current?.wins   ?? 0;
+    const curLosses   = current?.losses ?? 0;
+    const curTies     = current?.ties   ?? 0;
+    const winsMatch   = curWins   === expected.wins;
+    const lossesMatch = curLosses === expected.losses;
+    const tiesMatch   = curTies   === expected.ties;
+
+    if (winsMatch && lossesMatch && tiesMatch) continue;
+
+    const [userRow] = await db
+      .select({ discordUsername: usersTable.discordUsername })
+      .from(usersTable)
+      .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)))
+      .limit(1);
+    const username = userRow?.discordUsername ?? discordId;
+
+    if (current) {
+      await db.update(userRecordsTable)
+        .set({ wins: expected.wins, losses: expected.losses, ties: expected.ties, updatedAt: new Date() })
+        .where(and(
+          eq(userRecordsTable.discordId, discordId),
+          eq(userRecordsTable.seasonId, season.id),
+        ));
+    } else {
+      await db.insert(userRecordsTable)
+        .values({
+          discordId,
+          discordUsername: userRow?.discordUsername ?? discordId,
+          team:            null,
+          seasonId:        season.id,
+          wins:            expected.wins,
+          losses:          expected.losses,
+          ties:            expected.ties,
+          pointDifferential: 0,
+        })
+        .onConflictDoNothing();
+    }
+
+    const diff: string[] = [];
+    if (!winsMatch)   diff.push(`W ${curWins}→${expected.wins}`);
+    if (!lossesMatch) diff.push(`L ${curLosses}→${expected.losses}`);
+    if (!tiesMatch)   diff.push(`T ${curTies}→${expected.ties}`);
+    corrections.push(`🔧 **${username}**: ${diff.join(", ")}`);
+  }
+
+  return corrections;
+}
+
 export async function processWeekScores(
   body: unknown,
   weekNum: number,
@@ -1635,7 +1767,7 @@ export async function processWeekScores(
   const zero: WeekScoresResult = {
     ok: false, message: "", gamesProcessed: 0, gamesDuplicate: 0,
     gamesCpuVsCpu: 0, gamesUnregistered: 0, payoutLines: [], milestoneLines: [],
-    resultLines: [], unregisteredLines: [],
+    resultLines: [], unregisteredLines: [], reconciliationLines: [],
     weekNum, seasonId: 0, catchupMode: false, violations: [],
   };
 
@@ -1773,6 +1905,7 @@ export async function processWeekScores(
         await db.insert(franchiseProcessedGamesTable)
           .values({
             gameId, payoutType: "catchup",
+            guildId:     season.guildId ?? "",
             seasonIdRef: season.id, weekIndexRef: weekIndexTarget,
             homeTeamRef: hData.fullName.toLowerCase(),
             awayTeamRef: aData.fullName.toLowerCase(),
@@ -1971,6 +2104,7 @@ export async function processWeekScores(
         .values({
           gameId,
           ...payoutMeta,
+          guildId:     season.guildId ?? "",
           seasonIdRef: season.id,
           weekIndexRef: weekIndexTarget,
           homeTeamRef: hData.fullName.toLowerCase(),
@@ -1992,11 +2126,22 @@ export async function processWeekScores(
     }
 
     console.log(`[mca/week${weekNum}/schedules] Processed: ${gamesProcessed} games, ${gamesDuplicate} dupes, ${gamesCpuVsCpu} cpu-vs-cpu, ${gamesUnregistered} unregistered, ${violations.length} violations`);
+
+    // Reconcile user_records against the full EA schedule — fixes any drift
+    // caused by double-imports, missed increments, or prior dedup bugs.
+    const reconciliationLines = await reconcileRecordsFromSchedule(games, season, teamMap).catch(err => {
+      console.error(`[mca/week${weekNum}/schedules] Reconciliation error (non-fatal):`, err);
+      return [] as string[];
+    });
+    if (reconciliationLines.length > 0) {
+      console.log(`[mca/week${weekNum}/schedules] Reconciled ${reconciliationLines.length} user record(s)`);
+    }
+
     return {
       ok: true,
       message: `Week ${weekNum}: ${gamesProcessed} game(s) processed${season.catchupMode ? " [CATCHUP MODE — no payouts]" : ""}`,
       gamesProcessed, gamesDuplicate, gamesCpuVsCpu, gamesUnregistered,
-      payoutLines, milestoneLines, resultLines, unregisteredLines, violations,
+      payoutLines, milestoneLines, resultLines, unregisteredLines, reconciliationLines, violations,
       weekNum, seasonId: season.id, catchupMode: season.catchupMode,
     };
   } catch (err) {

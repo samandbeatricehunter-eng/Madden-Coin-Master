@@ -395,7 +395,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as ViolationRecord[],
+    resultLines: [] as string[], unregisteredLines: [] as string[],
+    reconciliationLines: [] as string[], violations: [] as ViolationRecord[],
     weekNum, seasonId: 0, catchupMode: false,
   }));
   console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
@@ -452,6 +453,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
     if (result.milestoneLines.length > 0) {
       fields.push({ name: "🎯 Milestones", value: result.milestoneLines.join("\n"), inline: false });
+    }
+
+    if (result.reconciliationLines.length > 0) {
+      fields.push({
+        name: `🔧 Record Corrections (${result.reconciliationLines.length})`,
+        value: result.reconciliationLines.slice(0, 20).join("\n"),
+        inline: false,
+      });
     }
 
     const summaryParts: string[] = [];
@@ -606,7 +615,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       ok: false, message: String(err),
       gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
       payoutLines: [] as string[], milestoneLines: [] as string[],
-      resultLines: [] as string[], unregisteredLines: [] as string[], violations: [] as ViolationRecord[],
+      resultLines: [] as string[], unregisteredLines: [] as string[],
+      reconciliationLines: [] as string[], violations: [] as ViolationRecord[],
       weekNum, seasonId: 0, catchupMode: false,
     })),
     resolveLeagueChannels(leagueId),
@@ -658,6 +668,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       fields.push({
         name: "🎯 Win Milestones",
         value: result.milestoneLines.join("\n"),
+        inline: false,
+      });
+    }
+
+    if (result.reconciliationLines.length > 0) {
+      fields.push({
+        name: `🔧 Record Corrections (${result.reconciliationLines.length})`,
+        value: result.reconciliationLines.slice(0, 20).join("\n"),
         inline: false,
       });
     }
