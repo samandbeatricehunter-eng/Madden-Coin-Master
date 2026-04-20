@@ -57,6 +57,7 @@ import {
   handleReferral, handleReferralModal,
   handleEos, handleEosKeySelect, handleEosEditModal, handleEosStatTierModal,
   handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
+  handleTweetPayout, handleInterviewPayout,
 } from "../lib/admin-payout-handlers.js";
 import {
   handleUdClose, handleUdCancel,
@@ -90,7 +91,8 @@ import {
 } from "../lib/server-settings.js";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { buildMemberHelpEmbed } from "../commands/help.js";
-import { INTERVIEW_PAYOUT, INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
+import { INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
+import { handleActionsInteraction } from "../lib/actions-handlers.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import {
   DRAFT_TOGGLE_PREFIX, DRAFT_CLOSE_BUTTON_ID,
@@ -164,6 +166,12 @@ export async function execute(interaction: Interaction) {
 async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
+
+  // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
+  if (action?.startsWith("ac_")) {
+    const handled = await handleActionsInteraction(interaction);
+    if (handled) return;
+  }
 
   // ── Archetype viewer — archetype nav ─────────────────────────────────────────
   // Button IDs: vca_prev:POSITION:IDX   vca_next:POSITION:IDX
@@ -637,15 +645,16 @@ async function handleButton(interaction: ButtonInteraction) {
       return;
     }
 
-    await addBalance(interview.discordId, INTERVIEW_PAYOUT, interaction.guildId!);
-    await logTransaction(interview.discordId, INTERVIEW_PAYOUT, "addcoins", "Post-game interview payout", interaction.guildId!, interaction.user.id);
+    const interviewPayout = await getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT, interaction.guildId!);
+    await addBalance(interview.discordId, interviewPayout, interaction.guildId!);
+    await logTransaction(interview.discordId, interviewPayout, "addcoins", "Post-game interview payout", interaction.guildId!, interaction.user.id);
     await db.update(interviewRequestsTable)
       .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
       .where(eq(interviewRequestsTable.id, interviewId));
 
     try {
       const u = await interaction.client.users.fetch(interview.discordId);
-      await u.send(`🎙️ Your post-game interview was approved! **+${INTERVIEW_PAYOUT} coins** added to your balance.`).catch(() => {});
+      await u.send(`🎙️ Your post-game interview was approved! **+${interviewPayout} coins** added to your balance.`).catch(() => {});
     } catch (_) {}
 
     const [ivUserRow] = await db.select({ team: usersTable.team })
@@ -656,7 +665,7 @@ async function handleButton(interaction: ButtonInteraction) {
       .setDescription(
         `**Player:** <@${interview.discordId}>${ivUserRow?.team ? ` (${ivUserRow.team})` : ""}\n` +
         (interview.week ? `**Week:** ${interview.week}\n` : "") +
-        `**Coins Awarded:** +${INTERVIEW_PAYOUT} coins\n\n` +
+        `**Coins Awarded:** +${interviewPayout} coins\n\n` +
         `✅ Approved by ${interaction.user.toString()}`
       )
       .setFooter({ text: `Interview #${interviewId}` })
@@ -683,7 +692,7 @@ async function handleButton(interaction: ButtonInteraction) {
           .setTitle("🎙️ Post-Game Interview")
           .setDescription(
             `**<@${interview.discordId}>**${teamName ? ` — ${teamName}` : ""}\n` +
-            `💰 **+${INTERVIEW_PAYOUT} coins** awarded.`
+            `💰 **+${interviewPayout} coins** awarded.`
           )
           .addFields(
             {
@@ -1509,8 +1518,8 @@ async function handleButton(interaction: ButtonInteraction) {
         return;
       }
 
-      const { TextChannel, AttachmentBuilder } = await import("discord.js");
-      const tc = faqChannel as InstanceType<typeof TextChannel>;
+      const { AttachmentBuilder } = await import("discord.js");
+      const tc = faqChannel as TextChannel;
       const path = await import("path");
       const ASSETS_DIR = path.join(process.cwd(), "artifacts/discord-bot/assets");
 
@@ -2061,6 +2070,8 @@ async function handleButton(interaction: ButtonInteraction) {
     const tier = parseInt(action.slice("ap_ms_edit_".length), 10);
     if (!isNaN(tier)) { await handleMilestoneEdit(interaction, tier); return; }
   }
+  if (action === "ap_tweetpayout")       { await handleTweetPayout(interaction);      return; }
+  if (action === "ap_interviewpayout")   { await handleInterviewPayout(interaction);  return; }
 
   // ── Admin User Data Hub ────────────────────────────────────────────────────
   if (action === "ud_close")           { await handleUdClose(interaction);          return; }
@@ -2109,6 +2120,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   const parts     = interaction.customId.split(":");
   const action    = parts[0]!;
   const sessionId = parts[1] ?? "";
+
+  // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
+  if (action?.startsWith("ac_")) {
+    const handled = await handleActionsInteraction(interaction);
+    if (handled) return;
+  }
 
   // ── Archetype viewer ──────────────────────────────────────────────────────────
   if (action === "vca_pos") { await handleViewArchetypeSelect(interaction); return; }
@@ -2337,6 +2354,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const action = parts[0]!;
   const idStr  = parts[1];
 
+  // ── Actions hub — dispatch all ac_ prefixed modal submissions ─────────────────
+  if (action?.startsWith("ac_")) {
+    const handled = await handleActionsInteraction(interaction);
+    if (handled) return;
+  }
+
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_modal")            { await handleCcpModal(interaction, idStr ?? "");            return; }
   if (action === "ccp_refund_modal")     { await handleCcpRefundModal(interaction, idStr ?? "");      return; }
@@ -2444,6 +2467,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const interviewId = interview!.id;
 
     // ── Commissioner embed with all 3 Q&A pairs ──────────────────────────────
+    const submitPayoutVal = await getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT, interaction.guildId!);
     const embed = new EmbedBuilder()
       .setColor(Colors.Blurple)
       .setTitle("🎙️ Post-Game Interview")
@@ -2453,7 +2477,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
         { name: `Q1: ${q1.slice(0, 200)}`, value: a1.slice(0, 1000) },
         { name: `Q2: ${q2.slice(0, 200)}`, value: a2.slice(0, 1000) },
         { name: `Q3: ${q3.slice(0, 200)}`, value: a3.slice(0, 1000) },
-        { name: "Payout if Approved", value: `+**${INTERVIEW_PAYOUT} coins**` },
+        { name: "Payout if Approved", value: `+**${submitPayoutVal} coins**` },
       )
       .setFooter({ text: `Interview #${interviewId}` })
       .setTimestamp();

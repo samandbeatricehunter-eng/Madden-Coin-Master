@@ -9,8 +9,6 @@ import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { lookupNflDivision } from "../lib/constants.js";
 import * as viewstore          from "./viewstore.js";
 import * as viewCustomArchetypes from "./viewcustomarchetypes.js";
-import * as viewroster         from "./viewroster.js";
-
 import * as statLeaders        from "./statleaders.js";
 import * as viewplayerstats    from "./viewplayerstats.js";
 import * as rulesCmd           from "./rules.js";
@@ -78,15 +76,6 @@ export const data = new SlashCommandBuilder()
     .setDescription("Browse available custom player archetypes by position")
   )
 
-  // ── roster ─────────────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("roster")
-    .setDescription("View the full roster of any team in the league")
-    .addStringOption(o => o.setName("team").setDescription("Team name (start typing to search)").setRequired(false).setAutocomplete(true))
-    .addUserOption(o => o.setName("user").setDescription("Look up a team by its Discord manager instead").setRequired(false))
-    .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel?").setRequired(false))
-  )
-
   // ── rules ─────────────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("rules")
@@ -108,7 +97,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (sub === "store")                    return viewstore.execute(interaction);
   if (sub === "custom_player_archetypes") return viewCustomArchetypes.execute(interaction);
-  if (sub === "roster")                   return viewroster.execute(interaction);
   if (sub === "rules")                    return rulesCmd.execute(interaction);
 
   if (sub === "player_stats") {
@@ -360,7 +348,6 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
   try {
     const sub = interaction.options.getSubcommand();
 
-    if (sub === "roster")        return viewroster.autocomplete(interaction);
     if (sub === "rules")          return rulesCmd.autocomplete(interaction);
 
     if (sub === "team_stats") {

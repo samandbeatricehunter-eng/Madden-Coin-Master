@@ -8,6 +8,7 @@ import * as view          from "./commands/view.js";
 
 
 // ── User commands ─────────────────────────────────────────────────────────────
+import * as actions          from "./commands/actions.js";
 import * as help             from "./commands/help.js";
 import * as balance          from "./commands/balance.js";
 import * as sendcoins        from "./commands/sendcoins.js";
@@ -24,7 +25,6 @@ import * as openteams        from "./commands/openteams.js";
 import * as seasonschedule   from "./commands/seasonschedule.js";
 import * as nextschedule     from "./commands/nextschedule.js";
 import * as nextopp          from "./commands/nextopp.js";
-import * as myRoster         from "./commands/my-roster.js";
 import * as savings          from "./commands/savings.js";
 import * as weeklyMatchups   from "./commands/weekly-matchups.js";
 import * as standings        from "./commands/standings.js";
@@ -137,6 +137,7 @@ if (!isProduction && !devBotEnabled) {
     view,
 
     // User-facing commands
+    actions,
     help,
     balance,
     sendcoins,
@@ -153,7 +154,6 @@ if (!isProduction && !devBotEnabled) {
     seasonschedule,
     nextschedule,
     nextopp,
-    myRoster,
     savings,
     weeklyMatchups,
     standings,

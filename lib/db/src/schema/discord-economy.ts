@@ -1078,3 +1078,56 @@ export const leagueTwitterTable = pgTable("league_twitter_tweets", {
   content:      text("content").notNull(),          // full tweet text
   postedAt:     timestamp("posted_at").notNull().defaultNow(),
 });
+
+// ── Member tweets posted via /actions hub ────────────────────────────────────
+export const guildTweetsTable = pgTable("guild_tweets", {
+  id:               serial("id").primaryKey(),
+  guildId:          text("guild_id").notNull(),
+  discordId:        text("discord_id").notNull(),
+  seasonId:         integer("season_id").notNull(),
+  weekNumber:       text("week_number").notNull(),   // season currentWeek at time of post
+  tweetText:        text("tweet_text").notNull(),
+  coinsAwarded:     integer("coins_awarded").notNull().default(0),
+  channelMessageId: text("channel_message_id"),      // Discord message ID of posted tweet
+  postedAt:         timestamp("posted_at").notNull().defaultNow(),
+});
+
+export type GuildTweet = typeof guildTweetsTable.$inferSelect;
+
+// ── Auto-pilot requests from members ────────────────────────────────────────
+export const autoPilotRequestsTable = pgTable("autopilot_requests", {
+  id:              serial("id").primaryKey(),
+  guildId:         text("guild_id").notNull(),
+  discordId:       text("discord_id").notNull(),
+  teamName:        text("team_name"),
+  weeksRequested:  integer("weeks_requested").notNull(),
+  reason:          text("reason"),
+  status:          text("status").notNull().default("pending"), // "pending" | "approved" | "denied"
+  reviewedBy:      text("reviewed_by"),
+  reviewedAt:      timestamp("reviewed_at"),
+  commMessageId:   text("comm_message_id"),
+  createdAt:       timestamp("created_at").notNull().defaultNow(),
+});
+
+export type AutoPilotRequest = typeof autoPilotRequestsTable.$inferSelect;
+
+// ── Rule violation reports ────────────────────────────────────────────────────
+export const ruleViolationsTable = pgTable("rule_violations", {
+  id:            serial("id").primaryKey(),
+  guildId:       text("guild_id").notNull(),
+  reporterId:    text("reporter_id").notNull(),
+  reporterTeam:  text("reporter_team"),
+  opponentId:    text("opponent_id"),
+  opponentTeam:  text("opponent_team"),
+  weekNumber:    text("week_number").notNull(),
+  seasonId:      integer("season_id").notNull(),
+  description:   text("description").notNull(),
+  mediaUrls:     json("media_urls").$type<string[]>().default([]),
+  status:        text("status").notNull().default("pending"), // "pending" | "reviewed"
+  reviewedBy:    text("reviewed_by"),
+  reviewedAt:    timestamp("reviewed_at"),
+  commMessageId: text("comm_message_id"),
+  createdAt:     timestamp("created_at").notNull().defaultNow(),
+});
+
+export type RuleViolation = typeof ruleViolationsTable.$inferSelect;

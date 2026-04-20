@@ -22,7 +22,9 @@ export function buildPayoutHubEmbed(): EmbedBuilder {
       "⬛ Issue Game Payout | 🟡 Correct Game Payout | 🔵 Set Game Payouts | ⬛ Set Referral Bonuses\n\n" +
       "**Row 3 — Configuration**\n" +
       "⬛ New Member Bonus | ⬛ GOTW Guess Bonus | ⬛ POTW Winner Bonus\n" +
-      "⬛ EOS Payouts & Tiers | ⬛ Milestone Payouts & Tiers"
+      "⬛ EOS Payouts & Tiers | ⬛ Milestone Payouts & Tiers\n\n" +
+      "**Row 4 — Activity Payouts**\n" +
+      "🟡 Tweet Payouts This Week | 🔵 Pending Interview Payouts"
     )
     .setFooter({ text: "Admin Payout Hub — selections expire after 15 minutes" })
     .setTimestamp();
@@ -95,6 +97,14 @@ export function buildPayoutHubRows(): ActionRowBuilder<ButtonBuilder>[] {
   );
 
   const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ap_tweetpayout")
+      .setLabel("🟡 Tweet Payouts")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("ap_interviewpayout")
+      .setLabel("🔵 Interview Payouts")
+      .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId("ap_close")
       .setLabel("✖ Close Hub")

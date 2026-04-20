@@ -11,9 +11,9 @@ import {
   h2hMatchupRecordsTable, franchiseProcessedGamesTable,
   globalUserRecordsTable, franchiseScheduleTable,
   franchiseMcaTeamsTable, coinTransactionsTable,
-  seasonStatTierConfigsTable,
+  seasonStatTierConfigsTable, guildTweetsTable, interviewRequestsTable,
 } from "@workspace/db";
-import { eq, and, sql, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, sql, isNotNull, isNull, desc, inArray } from "drizzle-orm";
 import {
   addBalance, logTransaction, getOrCreateActiveSeason,
   isAdminUser, getGuildChannel, CHANNEL_KEYS, upsertGlobalRecord,
@@ -2092,5 +2092,130 @@ export async function handleMilestoneEditModal(interaction: ModalSubmitInteracti
   payoutSessions.delete(sessionK);
   await interaction.editReply({
     content: `✅ Milestone Tier ${tier} updated: **${wins} wins** → **+${bonus} coins**`,
+  });
+}
+
+// ── Tweet Payouts This Week ────────────────────────────────────────────────────
+export async function handleTweetPayout(interaction: ButtonInteraction): Promise<void> {
+  const gid = interaction.guildId!;
+  await interaction.deferUpdate();
+
+  const season     = await getOrCreateActiveSeason(gid);
+  const currentWeek = String((season as any).currentWeek ?? 1);
+
+  const tweets = await db.select({
+    id:           guildTweetsTable.id,
+    discordId:    guildTweetsTable.discordId,
+    coinsAwarded: guildTweetsTable.coinsAwarded,
+    postedAt:     guildTweetsTable.postedAt,
+    tweetText:    guildTweetsTable.tweetText,
+  }).from(guildTweetsTable)
+    .where(and(
+      eq(guildTweetsTable.guildId, gid),
+      eq(guildTweetsTable.seasonId, season.id),
+      eq(guildTweetsTable.weekNumber, currentWeek),
+    ))
+    .orderBy(desc(guildTweetsTable.postedAt));
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle(`🐦 Tweet Payouts — Week ${currentWeek}`)
+    .setTimestamp();
+
+  if (!tweets.length) {
+    embed.setDescription("No tweet submissions recorded for the current week.");
+  } else {
+    const totalCoins = tweets.reduce((s, t) => s + t.coinsAwarded, 0);
+    const lines = tweets.map(t =>
+      `<@${t.discordId}> — **+${t.coinsAwarded}** coins · ${t.tweetText.slice(0, 60)}${t.tweetText.length > 60 ? "…" : ""}`,
+    );
+    embed.setDescription(
+      `**${tweets.length} tweet(s)** submitted this week · **${totalCoins} total coins** paid\n\n` +
+      lines.join("\n"),
+    );
+    embed.setFooter({ text: "Tweets are paid automatically on submission." });
+  }
+
+  await interaction.editReply({
+    embeds: [embed],
+    components: buildPayoutHubRows(),
+  });
+}
+
+// ── Pending Interview Payouts ─────────────────────────────────────────────────
+export async function handleInterviewPayout(interaction: ButtonInteraction): Promise<void> {
+  const gid = interaction.guildId!;
+  await interaction.deferUpdate();
+
+  const pendingInterviews = await db.select({
+    id:        interviewRequestsTable.id,
+    discordId: interviewRequestsTable.discordId,
+    week:      interviewRequestsTable.week,
+    createdAt: interviewRequestsTable.createdAt,
+    answer1:   interviewRequestsTable.answer1,
+  }).from(interviewRequestsTable)
+    .where(and(
+      eq(interviewRequestsTable.guildId, gid),
+      eq(interviewRequestsTable.status, "pending"),
+    ))
+    .orderBy(desc(interviewRequestsTable.createdAt))
+    .limit(10);
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle("🎙️ Pending Interview Payouts")
+    .setTimestamp();
+
+  if (!pendingInterviews.length) {
+    embed.setDescription("No pending interview submissions.");
+    await interaction.editReply({ embeds: [embed], components: buildPayoutHubRows() });
+    return;
+  }
+
+  embed.setDescription(
+    `**${pendingInterviews.length} pending** interview(s) — approve or deny via the commissioner channel, or use the buttons below.`,
+  );
+
+  const payoutVal = await getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT, gid);
+
+  for (const iv of pendingInterviews) {
+    const preview = iv.answer1?.slice(0, 80) ?? "*No answer provided*";
+    embed.addFields({
+      name:  `#${iv.id} · <@${iv.discordId}>${iv.week ? ` · Week ${iv.week}` : ""}`,
+      value: `${preview}${(iv.answer1?.length ?? 0) > 80 ? "…" : ""}`,
+      inline: false,
+    });
+  }
+
+  embed.setFooter({ text: `Payout per approval: +${payoutVal} coins` });
+
+  const buttonRows: ActionRowBuilder<ButtonBuilder>[] = [];
+  const chunks: typeof pendingInterviews[] = [];
+  for (let i = 0; i < pendingInterviews.length; i += 4) {
+    chunks.push(pendingInterviews.slice(i, i + 4));
+  }
+  for (const chunk of chunks.slice(0, 4)) {
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      chunk.map(iv =>
+        new ButtonBuilder()
+          .setCustomId(`interview_approve:${iv.id}`)
+          .setLabel(`✅ Approve #${iv.id}`)
+          .setStyle(ButtonStyle.Success),
+      ),
+    );
+    buttonRows.push(row);
+  }
+
+  const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ap_close")
+      .setLabel("✖ Close Hub")
+      .setStyle(ButtonStyle.Danger),
+  );
+  buttonRows.push(backRow);
+
+  await interaction.editReply({
+    embeds: [embed],
+    components: buttonRows,
   });
 }

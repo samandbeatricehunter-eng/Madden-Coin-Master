@@ -1,0 +1,51 @@
+we can stop tracking XP and overall changes for players in the various guilds using league data. this data is not being used for anything. 
+I want to create a new top-level command that condenses many of the older commands into one menu, just as we did with the other commands and menus. All necessary buttons included. The command and buttons are mapped out below, and after that, the workflow of the buttons. 
+
+/actions (member level command) > opens menu that displays the following buttons: 
+
+ROW 1: 
+Make A Purchase; Place A Wager; View/Transfer/Send Coins; Request an Interview; Post A Tweet;  
+
+ROW 2: 
+View My Roster; View Any Roster; View Free Agents; View Player Stats & Ratings; View Team Stats;
+
+ROW 3:
+Show League Standings; Show Teams to Watch; View My User Stats; View Any Users Stats;
+
+ROW 4: 
+View Season PR; View All-Time PR; View Global PR; View EOS Payouts; View User Milestone Payouts
+
+ROW 5: 
+Show Active Team List; Show Open Teams; Request Auto-Pilot; Report Rule Violation;
+
+
+ROW 1: 
+Make A Purchase > opens new menu with three buttons on Row 1: Attribute Upgrade; Age Reset; Dev Trait Upgrade; buttons on Row 2: Custom Player; Legend; and a close button at the bottom of the message that will return the user to the main menu. If any of these features are turned off in the server settings, then their button should not display. If all store functions - legends, custom players, attribute, dev trait upgrades and age resets - are turned off, then the "Make a Purchase" button shouldn't even show when /actions is ran by a user. If even one of these functions is turned on for the server, the button should show. This same logic should apply for any button whose settings are turned off in server settings. Which ever option is selected should progress to the next menu where each option should function as their current commands do, ie Attribute upgrade should take the user through a menu selection of what attribute(s) their upgrading, increase amount via dropdown, capped at whatever remaining points they have for core/non-core for the season, etc. Same with age resets and dev trait upgrades. Legend button should display the list of available legends in store by position group and then require the user select a position group via dropdown and then a legend from a dropdown list populated only by available legends in that position group. Custom player button should take the user to the custom player archetypes view, where they can choose a position and view the related archetypes for that position. should have a "Purchase and Customize" button that confirms an archetype and begins the purchase and creation process just as our current command for buying custom players does. 
+Place A Wager > opens a menu that functions the same as the /wager command. Allows the user to select a game from the current week from a drop down and then select one of the two teams as their pick to win. they then enter the coin amount for the wager click "Proceed" button > takes the user to another menu where they'll select a user from the AFC/NFC dropdowns who is actively linked to a team in the server. Then will click "Send Wager" button to send it as usual, or click Cancel to return to menu. Should function same as /wager command does. 
+View/Transfer/Send Coins > opens a menu with three buttons on Row 1: View Coin Balance (shows the users in-server wallet, global savings, and global funds from all server wallets); Transfer Coins (allows the user to set an amount to transfer coins from their in-server wallet to their global savings or select to transfer FROM global savings to their in-server wallet); Send Coins (allows user to send a specified coin amount to another user via selecting them from an AFC/NFC dropdown of linked users, cannot go negative). Also has a cancel button that returns to main menu. 
+Request an Interview > opens a menu with three buttons on Row 1: Pre-Game Interview; Post-Game Interview; General Interview; If pre-game is clicked, the new menu will display the users opponent for the current week and provide them with three AI generated questions related to this opponent and their upcoming matchup. The AI will use all guild specific data related to the two teams, to include season stats, recent performances, w/l record to generate the three questions that the user can respond to in text fields. Once submitted, posts to the league headlines channel just as the interviewrequest command does and issues a payout to the user. If Post-Game Interview is selected, will display the users current opponent for the week and ask them to input the final game score for each team. It will then use this data as well as any other relevant guild-specific team data and season data to formulate 3 AI generated questions regarding the game for the user to answer. Same end process of payout being issued. General Interview button opens a menu prompting the user to input the topic for their requested interview. AI will then pull all relevant league-specific data and metrics to form 3 AI generated questions related to the topic the user submitted and allow them to answer for a payout. Users are still limited to one interview per in-game week, so if a user has already submitted theirs for the week then this button will not appear again that week when /actions command is run by a user. will be available again upon advance to a new week. 
+Post A Tweet > opens a menu where it will prompt the user to input their tweet text and submit. once submitted, it will post an embed to the league twitter channel with their @nickname and the tweet itself, shared by the bot and tagging @everyone in the tweet. A user is limited to 2 tweets per week and the tweet payouts are 5 coins each by default.
+
+You'll need to add the option to edit tweet and interview payouts in the /admin-payout command. 
+
+View My Roster > displays the users full roster just as /myroster does now. can delete the /myroster command after installing this. 
+View Any Roster > opens new menu where user will select a team from the AFC/NFC dropdowns, only one team, then click "Continue" or cancel to return to main menu, at which point the teams full roster will display just as they do for /view roster now and the /view roster command can be deleted after installing this. 
+View Free Agents > opens new menu where user will select a position group from a drop down, sorted by offensive positions first then defensive positions. the dropdown should be organized as follows: QB, HB, FB, WR, LT, LG, C, RG, RT, DT, LEDGE, REDGE, MIKE, WILL, SAM, CB, FS, SS, K, P, LS. Once a position is selected, the menu should display the available free agents at that position with a close button at the bottom. 
+View Player Stats & Ratings > opens new menu where user will select a team from the AFC/NFC dropdowns, only one team, then click "Continue" or cancel to return to main menu. Once the team is selected, the user will select a position group from a drop down, sorted by offensive positions first then defensive positions. the dropdown should be organized as follows: QB, HB, FB, WR, LT, LG, C, RG, RT, DT, LEDGE, REDGE, MIKE, WILL, SAM, CB, FS, SS, K, P, LS. The menu will then progress to the user selecting a player from a dropdown that is in the position group they previously selected on that teams roster. Continue and Cancel buttons at the bottom of the message. Continue will display a message showing that specific players season stats in-server from league data, as well as their details such as attribute ratings, dev trait level, age, contract details, etc. 
+View Team Stats > opens a menu where user will select a team from the AFC/NFC dropdowns, only one team, then click "Continue" or cancel to return to main menu. Once the team is selected, the menu will advance to displaying that selected teams in-league team stats for the season as well as w/l/tie records and point differential. 
+
+Show League Standings > displays league standings just as the league standings command does.
+Show Teams to Watch > displays the teams to watch from the player_stats command. 
+View My User Stats > displays the users stats 
+View Any Users Stats > opens new menu where user will select a team from the AFC/NFC dropdowns, only one team, then click "Continue" or cancel to return to main menu. Once the team is selected, the display will show that users stats. 
+
+View Season PR > prompts user to choose public or private > displays season PR
+View All-Time PR > prompts user to choose public or private > displays All-Time PR in-guild
+View Global PR > prompts user to choose public or private > displays global PR
+View EOS Payouts > displayed ephemeral > shows user the payouts and tiers for end of season payouts
+View User Milestone Payouts > displayed ephemeral > shows user the payouts and tiers for user h2h milestones. 
+
+Show Active Team List > displays the active teams and their linked users in-guild (can be set to public or private via prompt before displaying. 
+Show Open Teams > displays the open teams that have no user linked (can be set to public or private via prompt before displaying. 
+Request Auto-Pilot > prompts user to input # of weeks. Once submitted, sends notice to Commissioners Log channel in guild with "Approve" or Deny buttons for commissioner to confirm auto-pilot has been placed for that number of weeks. 
+Report Rule Violation > shows users current weekly opponent and asks the user via prompt to confirm that this is the game they're reporting the violation for, past violations in older weeks are not accepted > once user confirms, they'll input text explaining the violation > the user will then be prompted to include up to 2 videos and 2 images for proof if they desire before clicking submit which will send a report to the Commissioners Log channel with an "approve" or deny button. if approve is clicked, then the violation is sent to the Violation-log channel to be permanently recorded. 

@@ -14,7 +14,7 @@ import {
 import { db } from "@workspace/db";
 import {
   franchiseMcaTeamsTable, franchiseRostersTable,
-  playerSeasonStatsTable, playerXpLogTable, seasonsTable, purchasesTable,
+  playerSeasonStatsTable, seasonsTable, purchasesTable,
 } from "@workspace/db";
 import { eq, and, desc, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
@@ -330,17 +330,12 @@ export async function handlePlayerSelect(interaction: StringSelectMenuInteractio
   const playerId = Number(interaction.values[0]);
   if (isNaN(playerId)) { await interaction.editReply({ content: "Invalid player selection.", components: [] }); return; }
 
-  const [rosterRows, statRows, xpRows, seasonRow] = await Promise.all([
+  const [rosterRows, statRows, seasonRow] = await Promise.all([
     db.select().from(franchiseRostersTable)
       .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.teamId, teamId), eq(franchiseRostersTable.playerId, playerId)))
       .limit(1),
     db.select().from(playerSeasonStatsTable)
       .where(and(eq(playerSeasonStatsTable.seasonId, seasonId), eq(playerSeasonStatsTable.playerId, playerId)))
-      .limit(1),
-    db.select({ xpEarned: playerXpLogTable.xpEarned, xpTotal: playerXpLogTable.xpTotal, weekNum: playerXpLogTable.weekNum })
-      .from(playerXpLogTable)
-      .where(and(eq(playerXpLogTable.seasonId, seasonId), eq(playerXpLogTable.playerId, playerId)))
-      .orderBy(desc(playerXpLogTable.loggedAt))
       .limit(1),
     db.select({ seasonNumber: seasonsTable.seasonNumber }).from(seasonsTable).where(eq(seasonsTable.id, seasonId)).limit(1),
   ]);
@@ -361,7 +356,6 @@ export async function handlePlayerSelect(interaction: StringSelectMenuInteractio
 
   const roster   = rosterRows[0];
   const stats    = statRows[0];
-  const xpEntry  = xpRows[0];
   const seasonLabel = seasonRow[0]?.seasonNumber ?? seasonId;
 
   if (!roster) { await interaction.editReply({ content: "Player not found in roster data.", components: [] }); return; }
@@ -463,15 +457,6 @@ export async function handlePlayerSelect(interaction: StringSelectMenuInteractio
 
   // Season stats
   embed.addFields({ name: `📊 Season ${seasonLabel} Stats`, value: statLines.join("\n"), inline: false });
-
-  // XP
-  const xpTotalLive = roster.xpTotal ?? xpEntry?.xpTotal;
-  if (xpTotalLive != null || xpEntry) {
-    const xpParts: string[] = [];
-    if (xpEntry) xpParts.push(`+${xpEntry.xpEarned.toLocaleString()} XP (Week ${xpEntry.weekNum ?? "?"})`);
-    if (xpTotalLive != null) xpParts.push(`**${xpTotalLive.toLocaleString()} total**`);
-    embed.addFields({ name: "⚡ Experience", value: xpParts.join(" · "), inline: false });
-  }
 
   // Core attribute upgrades used this season on this player
   const usedCoreAttrs = attrPurchases
