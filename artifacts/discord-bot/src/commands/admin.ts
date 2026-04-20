@@ -49,10 +49,6 @@ export const data = new SlashCommandBuilder()
 
   // ── milestone & EOS tier settings ─────────────────────────────────────────
   .addSubcommand(s => s
-    .setName("view_eos_payout_settings")
-    .setDescription("View all end-of-season stat tier thresholds and payouts")
-  )
-  .addSubcommand(s => s
     .setName("set_eos_payout_settings")
     .setDescription("Set a single tier threshold/payout for an end-of-season stat bonus category")
     .addStringOption(o => o.setName("category").setDescription("Stat category to configure").setRequired(true).addChoices(...STAT_CATEGORY_CHOICES))
@@ -63,10 +59,6 @@ export const data = new SlashCommandBuilder()
   )
 
   // ── custom player settings ─────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("view_custom_player_settings")
-    .setDescription("View current custom player package settings (points and cost per tier)")
-  )
   .addSubcommand(s => s
     .setName("set_custom_player_settings")
     .setDescription("Update a custom player package's creation points and/or coin cost")
@@ -128,10 +120,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return adminSetAdmin.execute(interaction);
   if (sub === "resync_player_names")      return adminFixPlayerNames.execute(interaction);
 
-  if (sub === "view_eos_payout_settings") return adminStatTiers.execute(interaction);
   if (sub === "set_eos_payout_settings")  return adminSetStatTier.execute(interaction);
 
-  if (sub === "view_custom_player_settings" || sub === "set_custom_player_settings")
+  if (sub === "set_custom_player_settings")
     return adminCustomPlayerSettings.execute(interaction);
   if (sub === "edit_archetype")           return adminCustomArchetypes.execute(interaction);
 

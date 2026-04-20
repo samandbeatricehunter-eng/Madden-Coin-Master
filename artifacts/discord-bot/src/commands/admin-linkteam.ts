@@ -34,9 +34,6 @@ export const data = new SlashCommandBuilder()
       .setDescription("Player's EA / PSN / Xbox gamertag used in CFM (optional)")
       .setRequired(false)))
   .addSubcommand(sub => sub
-    .setName("view")
-    .setDescription("Show all current player → team assignments and any unlinked players"))
-  .addSubcommand(sub => sub
     .setName("relink")
     .setDescription("Re-cascade team assignments to MCA teams & roster rows (run after /leagueteams import)."));
 
@@ -124,78 +121,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const sub = interaction.options.getSubcommand();
-
-  // ── VIEW ────────────────────────────────────────────────────────────────────
-  if (sub === "view") {
-    const allUsers = await db.select({
-      discordId:       usersTable.discordId,
-      discordUsername: usersTable.discordUsername,
-      team:            usersTable.team,
-      balance:         usersTable.balance,
-      allTimeH2HWins:  usersTable.allTimeH2HWins,
-      milestoneTier:   usersTable.milestoneTierAwarded,
-    }).from(usersTable).where(eq(usersTable.guildId, interaction.guildId!)).orderBy(usersTable.team);
-
-    const linked   = allUsers.filter(u => u.team);
-    const unlinked = allUsers.filter(u => !u.team);
-
-    const linkedLines = linked.map(u =>
-      u.discordId.startsWith("unlinked_")
-        ? `🔓 **${u.team}** — *Open Slot*`
-        : `🏈 **${u.team}** → <@${u.discordId}> (${u.discordUsername}) | ${u.allTimeH2HWins}W all-time · tier ${u.milestoneTier}`
-    );
-    const unlinkedLines = unlinked.map(u =>
-      `❓ <@${u.discordId}> (${u.discordUsername}) — no team assigned`
-    );
-
-    function chunkLines(lines: string[], limit = 1020): string[] {
-      const chunks: string[] = [];
-      let current = "";
-      for (const line of lines) {
-        const addition = current ? "\n" + line : line;
-        if (current.length + addition.length > limit) {
-          chunks.push(current);
-          current = line;
-        } else {
-          current += addition;
-        }
-      }
-      if (current) chunks.push(current);
-      return chunks;
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle("🏈 Team Assignments")
-      .setTimestamp();
-
-    if (linkedLines.length > 0) {
-      const chunks = chunkLines(linkedLines);
-      chunks.forEach((chunk, i) => {
-        embed.addFields({
-          name: i === 0 ? `Linked Players (${linked.length})` : `Linked Players (cont.)`,
-          value: chunk,
-        });
-      });
-    }
-
-    if (unlinkedLines.length > 0) {
-      const chunks = chunkLines(unlinkedLines);
-      chunks.forEach((chunk, i) => {
-        const isLast = i === chunks.length - 1;
-        embed.addFields({
-          name: i === 0 ? `⚠️ Unlinked Players (${unlinked.length})` : `⚠️ Unlinked Players (cont.)`,
-          value: chunk + (isLast ? "\n\nUse `/admin-linkteam set` to assign their teams." : ""),
-        });
-      });
-    }
-
-    if (allUsers.length === 0) {
-      embed.setDescription("No players registered yet.");
-    }
-
-    return interaction.editReply({ embeds: [embed] });
-  }
 
   // ── RELINK ──────────────────────────────────────────────────────────────────
   if (sub === "relink") {

@@ -57,7 +57,8 @@ import {
   handleReferral, handleReferralModal,
   handleEos, handleEosKeySelect, handleEosEditModal, handleEosStatTierModal,
   handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
-  handleTweetPayout, handleInterviewPayout,
+  handleTweetPayout, handleTweetPayoutModal,
+  handleInterviewPayout, handleInterviewPayoutModal,
 } from "../lib/admin-payout-handlers.js";
 import {
   handleUdClose, handleUdCancel,
@@ -2583,8 +2584,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ap_modal_setpay_po1")     { await handleSetPayPo1Modal(interaction);     return; }
   if (action === "ap_modal_setpay_po2")     { await handleSetPayPo2Modal(interaction);     return; }
   if (action === "ap_modal_newmember")      { await handleNewMemberModal(interaction);     return; }
-  if (action === "ap_modal_gotwbonus")      { await handleGotwBonusModal(interaction);     return; }
-  if (action === "ap_modal_potwbonus")      { await handlePotwBonusModal(interaction);     return; }
+  if (action === "ap_modal_gotwbonus")        { await handleGotwBonusModal(interaction);       return; }
+  if (action === "ap_modal_potwbonus")        { await handlePotwBonusModal(interaction);       return; }
+  if (action === "ap_modal_tweetpayout")      { await handleTweetPayoutModal(interaction);     return; }
+  if (action === "ap_modal_interviewpayout")  { await handleInterviewPayoutModal(interaction); return; }
   if (action === "ap_modal_eos_edit")       { await handleEosEditModal(interaction);        return; }
   if (action === "ap_modal_eos_stat_tier")  { await handleEosStatTierModal(interaction);    return; }
   if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction);  return; }

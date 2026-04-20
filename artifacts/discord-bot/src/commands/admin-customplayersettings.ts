@@ -12,10 +12,6 @@ export const data = new SlashCommandBuilder()
   .setDescription("View or update custom player package settings")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub => sub
-    .setName("view")
-    .setDescription("View current package settings"),
-  )
-  .addSubcommand(sub => sub
     .setName("set")
     .setDescription("Update a package's creation points and/or coin cost")
     .addStringOption(o => o
@@ -51,13 +47,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "view_custom_player_settings") {
-    const s = await getSettings();
-    await interaction.editReply({ embeds: [buildSettingsEmbed(s, "⚙️ Custom Player Package Settings")] });
-    return;
-  }
-
-  // sub === "set_custom_player_settings"
+  // sub === "set"
   const pkg    = interaction.options.getString("package", true) as "bronze"|"silver"|"gold"|"kp";
   const points = interaction.options.getInteger("points");
   const cost   = interaction.options.getInteger("cost");

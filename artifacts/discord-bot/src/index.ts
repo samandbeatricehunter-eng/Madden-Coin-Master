@@ -12,11 +12,6 @@ import * as actions          from "./commands/actions.js";
 import * as help             from "./commands/help.js";
 import * as balance          from "./commands/balance.js";
 import * as sendcoins        from "./commands/sendcoins.js";
-import * as buyLegend        from "./commands/buy-legend.js";
-import * as buyAttribute     from "./commands/buy-attribute.js";
-import * as buyDevup         from "./commands/buy-devup.js";
-import * as buyAgereset      from "./commands/buy-agereset.js";
-import * as buyCustomPlayer  from "./commands/buy-customplayer.js";
 import * as inventory        from "./commands/inventory.js";
 import * as recentH2H        from "./commands/recentH2H.js";
 import * as wager            from "./commands/wager.js";
@@ -31,13 +26,9 @@ import * as standings        from "./commands/standings.js";
 import * as h2hrecord        from "./commands/h2hrecord.js";
 import * as customarticle    from "./commands/customarticle.js";
 import * as webhookurl       from "./commands/webhookurl.js";
-import * as viewpayouttiers  from "./commands/viewpayouttiers.js";
-import * as interviewrequest from "./commands/interviewrequest.js";
 import * as advanceweek      from "./commands/advanceweek.js";
 import * as statleaders      from "./commands/statleaders.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
-import * as viewFreeAgents   from "./commands/viewfreeagents.js";
-import * as viewXp            from "./commands/viewxp.js";
 import * as waitlist          from "./commands/waitlist.js";
 import * as globalrecords     from "./commands/globalrecords.js";
 
@@ -141,11 +132,6 @@ if (!isProduction && !devBotEnabled) {
     help,
     balance,
     sendcoins,
-    buyLegend,
-    buyAttribute,
-    buyDevup,
-    buyAgereset,
-    buyCustomPlayer,
     inventory,
     recentH2H,
     wager,
@@ -160,13 +146,9 @@ if (!isProduction && !devBotEnabled) {
     h2hrecord,
     customarticle,
     webhookurl,
-    viewpayouttiers,
-    interviewrequest,
     advanceweek,
     statleaders,
     availableupgrades,
-    viewFreeAgents,
-    viewXp,
 
     // Admin tools
     adminEosTestrun,

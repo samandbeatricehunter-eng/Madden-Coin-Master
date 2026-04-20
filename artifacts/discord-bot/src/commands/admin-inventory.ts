@@ -63,13 +63,6 @@ export const data = new SlashCommandBuilder()
   .setDescription("Admin: view, remove, transfer, or manually add inventory items")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
-    sub.setName("view")
-      .setDescription("View inventory items for a user (current season + all permanent items)")
-      .addUserOption(opt =>
-        opt.setName("user").setDescription("The user whose inventory to view").setRequired(true)
-      )
-  )
-  .addSubcommand(sub =>
     sub.setName("remove")
       .setDescription("Remove an inventory item by its ID")
       .addIntegerOption(opt =>
@@ -107,43 +100,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   const sub = interaction.options.getSubcommand();
-
-  // ── VIEW ────────────────────────────────────────────────────────────────────
-  if (sub === "view") {
-    const targetUser = interaction.options.getUser("user", true);
-    const season = await getOrCreateActiveSeason(interaction.guildId!);
-
-    const items = await db.select().from(inventoryTable)
-      .where(
-        and(
-          eq(inventoryTable.discordId, targetUser.id),
-          or(
-            eq(inventoryTable.seasonId, season.id),
-            eq(inventoryTable.legendCategory, "permanent"),
-          ),
-        )
-      )
-      .orderBy(desc(inventoryTable.addedAt));
-
-    if (items.length === 0) {
-      await interaction.reply({
-        content: `📦 **${targetUser.username}** has no inventory items.`,
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const lines = items.map(itemSummary).join("\n");
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle(`📦 Inventory — ${targetUser.username}`)
-      .setDescription(lines)
-      .setFooter({ text: "🔒 = permanent item. Use /admininventory remove <ID> or move <ID> <user> to manage." })
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-    return;
-  }
 
   // ── REMOVE ──────────────────────────────────────────────────────────────────
   if (sub === "remove") {

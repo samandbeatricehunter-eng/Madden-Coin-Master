@@ -37,11 +37,6 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("description").setDescription("Optional description for the store entry").setRequired(false))
   )
   .addSubcommand(sub =>
-    sub.setName("view")
-      .setDescription("View all legend inventory for a user (shows item IDs)")
-      .addUserOption(o => o.setName("user").setDescription("User to inspect").setRequired(true))
-  )
-  .addSubcommand(sub =>
     sub.setName("move")
       .setDescription("Move a legend between current and permanent categories")
       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
@@ -163,44 +158,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         { name: "Store Entry",    value: wasCreated ? `✅ Created (ID ${legendId})` : `Existing (ID ${legendId})` },
       )
       .setFooter({ text: wasCreated ? "Legend was not in the store — a new entry was created and assigned." : "Legend found in store and assigned." });
-
-    await interaction.editReply({ embeds: [embed] });
-    return;
-  }
-
-  // ── VIEW ────────────────────────────────────────────────────────────────────
-  if (sub === "view") {
-    // Current-season legends: always by discordId (current items are per-user)
-    const currentItems = await db.select().from(inventoryTable)
-      .where(and(
-        eq(inventoryTable.discordId, t.id),
-        eq(inventoryTable.itemType, "legend"),
-        sql`${inventoryTable.legendCategory} = 'current'`,
-      ))
-      .orderBy(inventoryTable.addedAt);
-
-    // Permanent legends: team-based (falls back to discordId for pre-team rows)
-    const permanentItems = await db.select().from(inventoryTable)
-      .where(and(
-        ownerWhere(teamName, t.id),
-        eq(inventoryTable.itemType, "legend"),
-        sql`${inventoryTable.legendCategory} = 'permanent'`,
-      ))
-      .orderBy(inventoryTable.addedAt);
-
-    const fmt = (arr: typeof currentItems) =>
-      arr.length > 0
-        ? arr.map(i => `**ID ${i.id}** — ${i.legendName ?? i.playerName ?? "?"} (${i.playerPosition ?? "?"})`).join("\n")
-        : "*None*";
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blurple)
-      .setTitle(`🏅 Legend Vault — ${t.username}${teamName ? ` (${teamName})` : ""}`)
-      .addFields(
-        { name: `⚡ Current Season (${currentItems.length})`,                    value: fmt(currentItems)   },
-        { name: `🔒 Permanent Vault (${permanentItems.length}/${PERMANENT_CAP})`, value: fmt(permanentItems) },
-      )
-      .setFooter({ text: "Use item IDs with /admin-legendvault move or remove" });
 
     await interaction.editReply({ embeds: [embed] });
     return;
