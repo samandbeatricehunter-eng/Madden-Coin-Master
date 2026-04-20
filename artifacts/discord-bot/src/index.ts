@@ -75,6 +75,7 @@ import * as adminRules              from "./commands/admin-rules.js";
 import * as adminTeamLogo          from "./commands/admin-team-logo.js";
 import * as adminRepostBanners     from "./commands/admin-repost-banners.js";
 import * as adminPayout            from "./commands/admin-payout.js";
+import * as adminUserData          from "./commands/admin-user-data.js";
 
 // ── Records / rankings (standalone) ──────────────────────────────────────────
 import {
@@ -178,6 +179,7 @@ if (!isProduction && !devBotEnabled) {
     adminResendArticle,
     adminCatchup,
     adminPayout,
+    adminUserData,
     adminPostFullSeasonSchedule,
     adminRollbackFranchise,
     adminResetSeasonStats,

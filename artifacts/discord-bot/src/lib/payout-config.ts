@@ -31,6 +31,9 @@ export const PAYOUT_KEYS = {
   POTW_BONUS:              "potw_bonus",               // Player of the Week winner bonus
   // ── New member bonus ─────────────────────────────────────────────────────────
   NEW_MEMBER_BONUS:        "new_member_bonus",          // Coins awarded when user is first linked to a team
+  // ── Referral bonuses ─────────────────────────────────────────────────────────
+  REFERRAL_BONUS_NEW:      "referral_bonus_new",        // Coins awarded to a newly linked user who was referred
+  REFERRAL_BONUS_MEMBER:   "referral_bonus_member",     // Coins awarded to the existing member who made the referral
   // ── Career win milestones ────────────────────────────────────────────────────
   MILESTONE_T1_WINS:  "milestone_t1_wins",   // Win threshold for tier 1 milestone
   MILESTONE_T1_BONUS: "milestone_t1_bonus",  // Coin bonus for tier 1 milestone
@@ -107,6 +110,8 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   potw_bonus:         { value: 10, description: "Player of the Week winner bonus",                category: "GOTW Bonuses" },
   // ── New member bonus ─────────────────────────────────────────────────────────
   new_member_bonus:   { value: 0,  description: "Bonus coins awarded when a new user is first linked to a team", category: "Activity Payouts" },
+  referral_bonus_new:    { value: 100, description: "Coins awarded to a newly linked user who was referred by an existing member",        category: "Activity Payouts" },
+  referral_bonus_member: { value: 100, description: "Coins awarded to the existing member who successfully referred a new player",        category: "Activity Payouts" },
   // ── Career win milestones ────────────────────────────────────────────────────
   milestone_t1_wins:  { value: 5,    description: "Career milestone tier 1 — win threshold",      category: "Milestones"   },
   milestone_t1_bonus: { value: 100,  description: "Career milestone tier 1 — coin bonus",         category: "Milestones"   },

@@ -19,7 +19,7 @@ export function buildPayoutHubEmbed(): EmbedBuilder {
       "🔴 GOTW Voting | 🔵 POTW Winners | 🟢 Issue One-Time Payout\n" +
       "🔴 Deduct Coins | ⬛ Transfer Coins\n\n" +
       "**Row 2 — Game Management**\n" +
-      "⬛ Issue Game Payout | 🟡 Correct Game Payout | 🔵 Set Game Payouts\n\n" +
+      "⬛ Issue Game Payout | 🟡 Correct Game Payout | 🔵 Set Game Payouts | ⬛ Set Referral Bonuses\n\n" +
       "**Row 3 — Configuration**\n" +
       "⬛ New Member Bonus | ⬛ GOTW Guess Bonus | ⬛ POTW Winner Bonus\n" +
       "⬛ EOS Payouts & Tiers | ⬛ Milestone Payouts & Tiers"
@@ -65,6 +65,10 @@ export function buildPayoutHubRows(): ActionRowBuilder<ButtonBuilder>[] {
       .setCustomId("ap_setpay")
       .setLabel("Set Game Payouts (Reg/Playoffs)")
       .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("ap_referral")
+      .setLabel("Set Referral Bonuses")
+      .setStyle(ButtonStyle.Secondary),
   );
 
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(

@@ -1716,6 +1716,56 @@ export async function handlePotwBonusModal(interaction: ModalSubmitInteraction):
   await interaction.editReply({ content: `✅ POTW winner bonus set to **${val} coins**.` });
 }
 
+// ── Set Referral Bonuses ───────────────────────────────────────────────────────
+export async function handleReferral(interaction: ButtonInteraction): Promise<void> {
+  if (!await checkAdmin(interaction)) { await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return; }
+  const guildId = interaction.guildId!;
+  const [newVal, memberVal] = await Promise.all([
+    getPayoutValue(PAYOUT_KEYS.REFERRAL_BONUS_NEW,    guildId),
+    getPayoutValue(PAYOUT_KEYS.REFERRAL_BONUS_MEMBER, guildId),
+  ]);
+  const modal = new ModalBuilder().setCustomId("ap_modal_referral").setTitle("Set Referral Bonuses");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_referral")
+        .setLabel(`New Referral Bonus (current: ${newVal} coins)`)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(3)
+        .setPlaceholder(String(newVal))
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("member_referral")
+        .setLabel(`Member Referral Bonus (current: ${memberVal} coins)`)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(3)
+        .setPlaceholder(String(memberVal))
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+export async function handleReferralModal(interaction: ModalSubmitInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const guildId  = interaction.guildId!;
+  const newRaw   = interaction.fields.getTextInputValue("new_referral").trim();
+  const memRaw   = interaction.fields.getTextInputValue("member_referral").trim();
+  const newVal   = parseInt(newRaw,  10);
+  const memberVal = parseInt(memRaw, 10);
+  if (isNaN(newVal)  || newVal  < 0 || newVal  > 999) { await interaction.editReply({ content: "❌ New Referral Bonus must be a number 0–999." });    return; }
+  if (isNaN(memberVal) || memberVal < 0 || memberVal > 999) { await interaction.editReply({ content: "❌ Member Referral Bonus must be a number 0–999." }); return; }
+  await Promise.all([
+    setPayoutValue(PAYOUT_KEYS.REFERRAL_BONUS_NEW,    newVal,    interaction.user.id, guildId),
+    setPayoutValue(PAYOUT_KEYS.REFERRAL_BONUS_MEMBER, memberVal, interaction.user.id, guildId),
+  ]);
+  await interaction.editReply({
+    content: `✅ Referral bonuses updated — New member referral: **${newVal} coins** | Referring member bonus: **${memberVal} coins**.`,
+  });
+}
+
 // ── Set EOS Payouts & Tiers ────────────────────────────────────────────────────
 const EOS_PAYOUT_KEYS: Array<{ key: PayoutKey; label: string }> = [
   { key: PAYOUT_KEYS.SEASON_PR_1,         label: "Season PR #1 Bonus" },

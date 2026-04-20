@@ -1,0 +1,27 @@
+I want to add a setting for setting the referral bonuses. This should be added into the same row of the /admin-payouts menu as issuing game payouts, but the last button in that row. It will open a menu for the admin to input an integer for the following two fields: New Referral Bonus and Member Referral Bonus. Each input field is capped at 3 numbers and should save in-server as the new defaults. the current defaults should be 100 issued to the new referral member and 100 issued to the current member who referred them. should have finalize and cancel buttons. 
+
+I want to condense all user related commands into a single top-level command that also opens a button coded message for the admin to interact with that has a blue background. The command should be /admin user_data
+
+The buttons that display should be:
+
+(GROUPED TOGETHER ON ONE ACTION ROW:)
+View All User Teams (should function the same as /admin view_all_user_teams command does) [blue button with white text]
+Link New User (should function the same as /admin set_user_team command does) [White button with black text]
+Unlink User (should function the same as /admin clear_user_team command does) [Black button with white text]
+View/Edit User Data (should function the same as the /view user_stats and /admin set_user_stats commands do) [White button with black text]
+Delete User Data (should function the same as /admin user_delete command does) [Red button with white text]
+
+Should be formatted similar to the /admin-payout commands menu that we created. 
+
+View All User Teams > lists all linked user teams in an ephemeral window.
+
+Link New User > opens a menu where the admin will select one team from either the AFC dropdown or NFC dropdown, and the dropdowns should only populate with teams from those conferences which are currently unlinked to a user. Once the admin selects a team, it then shows any users who are in guild but not currently linked to a team in another dropdown. The menu should then have a pop up that asks if this is a new user (would receive new member bonus) and another question asking if this user was referred. The pop up should have submit and close buttons. if referral was responded to with the yes then the next window should ask who referred the user and have a drop down of nfc and afc users with linked teams. one can be selected. if a user is selected, then the referral bonus should be issued to that user and to the user who is a new member. if new member is selected then the new user should receive the new member bonus. Once this pop up is responded to, the commands should execute and the menu should close. If a referral is logged this way, then the bot should post a notification to the transactions log channel (bot can scan channel names for a match).
+
+Unlink User > opens a menu where the admin will select one team from either the AFC or NFC dropdowns and the dropdowns should only populate with teams from those conferences which are currently linked to a user. Once the admin selects a team and clicks finalize then it will unlink that user from that team in all relevant data storage. it will not clear their coins or any other user data that is unique to that user, they will just no longer be linked to that team in-guild in any way. Should also have a close button in the menu that closes the window. 
+
+Delete User Data > opens a menu where any unlinked user that is in-guild or has ever been in-guild but is not currently linked to a team in-guild should populate in a dropdown menu, and allow for autocomplete by the admin to find a non-linked user that isn't in the displayed drop down due to display limitations. This will then transition to the next menu page where the user will be able to select yes or no in a toggle for each category of user data that can be deleted from the storage db. this should have finalize and cancel buttons. cancel will close the window and stop the command. finalize will follow through with the command and then close the menu. 
+
+View/Edit User Data > opens a menu where the admin will select one team from either the AFC or NFC dropdowns and the dropdowns should only populate with teams from those conferences which are currently linked to a user. Once the admin selects a team and clicks the next button (should also be a cancel button) it will display that users data just like view user_stats command does now. the bottom of the message it shows for user stats should have two buttons: Edit and Close.
+If Edit is clicked, it takes you to the Edit User Data window. If close is clicked, it closes the message and windows. 
+In the Edit User Data window, it should have every field where data can be input related to UserStats and allow the admin to input new values (numbers generally, but some fields may require text - use your judgement) for each user data category. should have finalize and cancel buttons at the bottom of the message. finalize saves the changes and updates the db then closes the message. cancel just ends the process and closes the message. 
+

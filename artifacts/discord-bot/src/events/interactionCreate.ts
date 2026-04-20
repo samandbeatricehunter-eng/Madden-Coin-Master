@@ -54,9 +54,20 @@ import {
   handleNewMember, handleNewMemberModal,
   handleGotwBonus, handleGotwBonusModal,
   handlePotwBonus, handlePotwBonusModal,
+  handleReferral, handleReferralModal,
   handleEos, handleEosKeySelect, handleEosEditModal, handleEosStatTierModal,
   handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
 } from "../lib/admin-payout-handlers.js";
+import {
+  handleUdClose, handleUdCancel,
+  handleUdViewTeams,
+  handleUdLink, handleUdLinkTeamAfc, handleUdLinkTeamNfc, handleUdLinkMember, handleUdLinkNext, handleUdLinkModal,
+  handleUdUnlink, handleUdUnlinkTeamAfc, handleUdUnlinkTeamNfc, handleUdUnlinkConfirm,
+  handleUdViewEdit, handleUdVeTeamAfc, handleUdVeTeamNfc, handleUdVeLoad,
+  handleUdEditEconomy, handleUdEditRecords, handleUdEditAllTime,
+  handleUdEditEconomyModal, handleUdEditRecordsModal, handleUdEditAllTimeModal,
+  handleUdDelete, handleUdDeleteUserSelect, handleUdDeleteToggle, handleUdDeleteConfirm,
+} from "../lib/admin-user-handlers.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
@@ -2032,12 +2043,34 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ap_newmember")         { await handleNewMember(interaction);    return; }
   if (action === "ap_gotwbonus")         { await handleGotwBonus(interaction);    return; }
   if (action === "ap_potwbonus")         { await handlePotwBonus(interaction);    return; }
+  if (action === "ap_referral")          { await handleReferral(interaction);     return; }
   if (action === "ap_eos")              { await handleEos(interaction);          return; }
   if (action === "ap_milestone")         { await handleMilestone(interaction);    return; }
   if (action === "ap_ms_add")            { await handleMilestoneAdd(interaction);  return; }
   if (action?.startsWith("ap_ms_edit_")) {
     const tier = parseInt(action.slice("ap_ms_edit_".length), 10);
     if (!isNaN(tier)) { await handleMilestoneEdit(interaction, tier); return; }
+  }
+
+  // ── Admin User Data Hub ────────────────────────────────────────────────────
+  if (action === "ud_close")           { await handleUdClose(interaction);          return; }
+  if (action === "ud_cancel")          { await handleUdCancel(interaction);         return; }
+  if (action === "ud_view_teams")      { await handleUdViewTeams(interaction);      return; }
+  if (action === "ud_link")            { await handleUdLink(interaction);           return; }
+  if (action === "ud_link_next")       { await handleUdLinkNext(interaction);       return; }
+  if (action === "ud_unlink")          { await handleUdUnlink(interaction);         return; }
+  if (action === "ud_unlink_confirm")  { await handleUdUnlinkConfirm(interaction);  return; }
+  if (action === "ud_view_edit")       { await handleUdViewEdit(interaction);       return; }
+  if (action === "ud_ve_load")         { await handleUdVeLoad(interaction);         return; }
+  if (action === "ud_edit_economy")    { await handleUdEditEconomy(interaction);    return; }
+  if (action === "ud_edit_records")    { await handleUdEditRecords(interaction);    return; }
+  if (action === "ud_edit_alltime")    { await handleUdEditAllTime(interaction);    return; }
+  if (action === "ud_delete")          { await handleUdDelete(interaction);         return; }
+  if (action === "ud_delete_confirm")  { await handleUdDeleteConfirm(interaction);  return; }
+  if (action === "ud_delete_toggle") {
+    const category = parts[1] ?? "";
+    await handleUdDeleteToggle(interaction, category);
+    return;
   }
 }
 
@@ -2248,6 +2281,16 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "ap_correct_week")    { await handleCorrectWeekSelect(interaction);  return; }
   if (action === "ap_correct_game")    { await handleCorrectGameSelect(interaction);  return; }
   if (action === "ap_eos_key")         { await handleEosKeySelect(interaction);       return; }
+
+  // ── Admin User Data Hub — select menus ────────────────────────────────────
+  if (action === "ud_link_team_afc")   { await handleUdLinkTeamAfc(interaction);     return; }
+  if (action === "ud_link_team_nfc")   { await handleUdLinkTeamNfc(interaction);     return; }
+  if (action === "ud_link_member")     { await handleUdLinkMember(interaction);      return; }
+  if (action === "ud_unlink_team_afc") { await handleUdUnlinkTeamAfc(interaction);   return; }
+  if (action === "ud_unlink_team_nfc") { await handleUdUnlinkTeamNfc(interaction);   return; }
+  if (action === "ud_ve_team_afc")     { await handleUdVeTeamAfc(interaction);       return; }
+  if (action === "ud_ve_team_nfc")     { await handleUdVeTeamNfc(interaction);       return; }
+  if (action === "ud_delete_user")     { await handleUdDeleteUserSelect(interaction); return; }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -2484,4 +2527,11 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ap_modal_eos_stat_tier")  { await handleEosStatTierModal(interaction);    return; }
   if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction);  return; }
   if (action === "ap_modal_setpay_channel") { await handleSetPayChannelModal(interaction);  return; }
+  if (action === "ap_modal_referral")       { await handleReferralModal(interaction);        return; }
+
+  // ── Admin User Data Hub modals ─────────────────────────────────────────────
+  if (action === "ud_modal_link")          { await handleUdLinkModal(interaction);          return; }
+  if (action === "ud_modal_edit_economy")  { await handleUdEditEconomyModal(interaction);   return; }
+  if (action === "ud_modal_edit_records")  { await handleUdEditRecordsModal(interaction);   return; }
+  if (action === "ud_modal_edit_alltime")  { await handleUdEditAllTimeModal(interaction);   return; }
 }
