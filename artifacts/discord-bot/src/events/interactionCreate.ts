@@ -68,6 +68,16 @@ import {
   handleUdEditEconomyModal, handleUdEditRecordsModal, handleUdEditAllTimeModal,
   handleUdDelete, handleUdDeleteUserSelect, handleUdDeleteToggle, handleUdDeleteConfirm,
 } from "../lib/admin-user-handlers.js";
+import {
+  handleSsClose, handleSsCancel,
+  handleSsArch, handleSsArchPrev, handleSsArchNext, handleSsArchEdit, handleSsArchBackToView,
+  handleSsLt, handleSsLtEdit, handleSsLtCreate, handleSsLtBackToPos, handleSsLtBackToModel, handleSsLtBackToView,
+  handleSsPc, handleSsPcLegendPrices, handleSsPcUpgradePrices, handleSsPcSeasonCaps, handleSsPcAlltimeCaps,
+  handleSsArchPos, handleSsArchEditGroup,
+  handleSsLtPos, handleSsLtLegend, handleSsLtModel, handleSsLtEditGroup,
+  handleSsArchEditModal, handleSsLtEditModal,
+  handleSsPcLegendPricesModal, handleSsPcUpgradePricesModal, handleSsPcSeasonCapsModal, handleSsPcAlltimeCapsModal,
+} from "../lib/admin-store-handlers.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
@@ -2072,6 +2082,26 @@ async function handleButton(interaction: ButtonInteraction) {
     await handleUdDeleteToggle(interaction, category);
     return;
   }
+
+  // ── Admin Store Settings Hub ───────────────────────────────────────────────
+  if (action === "ss_close")          { await handleSsClose(interaction);          return; }
+  if (action === "ss_cancel")         { await handleSsCancel(interaction);         return; }
+  if (action === "ss_arch")           { await handleSsArch(interaction);           return; }
+  if (action === "ss_arch_prev")      { await handleSsArchPrev(interaction);       return; }
+  if (action === "ss_arch_next")      { await handleSsArchNext(interaction);       return; }
+  if (action === "ss_arch_edit")      { await handleSsArchEdit(interaction);       return; }
+  if (action === "ss_arch_back_to_view") { await handleSsArchBackToView(interaction); return; }
+  if (action === "ss_lt")             { await handleSsLt(interaction);             return; }
+  if (action === "ss_lt_edit")        { await handleSsLtEdit(interaction);         return; }
+  if (action === "ss_lt_create")      { await handleSsLtCreate(interaction);       return; }
+  if (action === "ss_lt_back_to_pos") { await handleSsLtBackToPos(interaction);   return; }
+  if (action === "ss_lt_back_to_model") { await handleSsLtBackToModel(interaction); return; }
+  if (action === "ss_lt_back_to_view")  { await handleSsLtBackToView(interaction);  return; }
+  if (action === "ss_pc")             { await handleSsPc(interaction);             return; }
+  if (action === "ss_pc_legend_prices")   { await handleSsPcLegendPrices(interaction);   return; }
+  if (action === "ss_pc_upgrade_prices")  { await handleSsPcUpgradePrices(interaction);  return; }
+  if (action === "ss_pc_season_caps")     { await handleSsPcSeasonCaps(interaction);      return; }
+  if (action === "ss_pc_alltime_caps")    { await handleSsPcAlltimeCaps(interaction);     return; }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────
@@ -2291,6 +2321,14 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "ud_ve_team_afc")     { await handleUdVeTeamAfc(interaction);       return; }
   if (action === "ud_ve_team_nfc")     { await handleUdVeTeamNfc(interaction);       return; }
   if (action === "ud_delete_user")     { await handleUdDeleteUserSelect(interaction); return; }
+
+  // ── Admin Store Settings Hub ────────────────────────────────────────────────
+  if (action === "ss_arch_pos")       { await handleSsArchPos(interaction);       return; }
+  if (action === "ss_arch_edit_group") { await handleSsArchEditGroup(interaction); return; }
+  if (action === "ss_lt_pos")         { await handleSsLtPos(interaction);         return; }
+  if (action === "ss_lt_legend")      { await handleSsLtLegend(interaction);      return; }
+  if (action === "ss_lt_model")       { await handleSsLtModel(interaction);       return; }
+  if (action === "ss_lt_edit_group")  { await handleSsLtEditGroup(interaction);   return; }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -2534,4 +2572,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ud_modal_edit_economy")  { await handleUdEditEconomyModal(interaction);   return; }
   if (action === "ud_modal_edit_records")  { await handleUdEditRecordsModal(interaction);   return; }
   if (action === "ud_modal_edit_alltime")  { await handleUdEditAllTimeModal(interaction);   return; }
+
+  // ── Admin Store Settings Hub modals ────────────────────────────────────────
+  if (action === "ss_modal_arch_edit")          { await handleSsArchEditModal(interaction);          return; }
+  if (action === "ss_modal_lt_edit")            { await handleSsLtEditModal(interaction);            return; }
+  if (action === "ss_modal_pc_legend_prices")   { await handleSsPcLegendPricesModal(interaction);   return; }
+  if (action === "ss_modal_pc_upgrade_prices")  { await handleSsPcUpgradePricesModal(interaction);  return; }
+  if (action === "ss_modal_pc_season_caps")     { await handleSsPcSeasonCapsModal(interaction);     return; }
+  if (action === "ss_modal_pc_alltime_caps")    { await handleSsPcAlltimeCapsModal(interaction);    return; }
 }

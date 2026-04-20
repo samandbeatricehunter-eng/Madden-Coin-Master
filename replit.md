@@ -105,6 +105,8 @@ All admin-facing commands now have Discord-level permission restrictions — the
 | `/admin_ea_connect disconnect` | Remove the EA connection (reverts to MCA manual imports) |
 | `/admin_ea_export week` | Export stats for a specific regular/preseason week directly from EA |
 | `/admin_ea_export playoffs` | Export stats for a specific playoff round directly from EA |
+| `/admin-user-data` | Commissioner hub: view/link/unlink teams, view+edit user economy/records/all-time stats, delete user data |
+| `/admin-store-settings` | Commissioner hub: browse+edit custom player archetypes (all positions), set legend attribute templates (per legend × model type), set prices and per-season/all-time purchase caps |
 
 ### Purchase Rules
 
@@ -125,7 +127,9 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 ## Database Schema (lib/db/src/schema/discord-economy.ts)
 
 - `economy_users` — Discord users, balances, all-time legend count, team, playoff info
-- `seasons` — Season tracking; supports per-season overrides for all costs, caps, and core attribute list (`coreAttributesOverride` is JSON text)
+- `seasons` — Season tracking; supports per-season overrides for all costs, caps, and core attribute list (`coreAttributesOverride` is JSON text); new columns: `legendsPerSeasonCapOverride`, `customPlayersPerSeasonCapOverride`
+- `legend_templates` — Base attribute templates per legend × model type (realistic_rookie / 88_ovr / 99_ovr); one row per legendId+model unique combo
+- `server_settings` — Guild-level feature flags; new column: `allTimeLegendCap` (overrides the hardcoded LIMITS.legendsAllTime default)
 - `legends` — Available/purchased legends store (permanent catalog, `isAvailable` controls store)
 - `purchases` — All purchase history with status (pending/approved/refunded)
 - `inventory` — Per-season user inventory

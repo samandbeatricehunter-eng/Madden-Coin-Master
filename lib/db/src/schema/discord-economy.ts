@@ -69,9 +69,11 @@ export const seasonsTable = pgTable("seasons", {
   ageResetsCapOverride: integer("age_resets_cap_override"),
   ageResetsCostOverride: integer("age_resets_cost_override"),
   legendCostOverride: integer("legend_cost_override"),
+  legendsPerSeasonCapOverride: integer("legends_per_season_cap_override"),
   customGoldCostOverride: integer("custom_gold_cost_override"),
   customSilverCostOverride: integer("custom_silver_cost_override"),
   customBronzeCostOverride: integer("custom_bronze_cost_override"),
+  customPlayersPerSeasonCapOverride: integer("custom_players_per_season_cap_override"),
   currentWeek: text("current_week").notNull().default("1"),
   // JSON array of attribute names that count as "core" this season — null = use default from constants
   coreAttributesOverride: text("core_attributes_override"),
@@ -761,6 +763,7 @@ export const serverSettingsTable = pgTable("server_settings", {
   attributeUpgradesEnabled: boolean("attribute_upgrades_enabled").notNull().default(true),
   devUpgradesEnabled:      boolean("dev_upgrades_enabled").notNull().default(true),
   ageResetsEnabled:        boolean("age_resets_enabled").notNull().default(true),
+  allTimeLegendCap:        integer("all_time_legend_cap"),
   wagerEnabled:            boolean("wager_enabled").notNull().default(true),
   tradeBlockEnabled:       boolean("trade_block_enabled").notNull().default(true),
   mcaImportEnabled:        boolean("mca_import_enabled").notNull().default(true),
@@ -862,6 +865,21 @@ export const customArchetypesTable = pgTable("custom_archetypes", {
   createdAt:  timestamp("created_at").notNull().defaultNow(),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ── Legend Templates (base attribute templates per legend × model type) ─────────
+export const legendTemplatesTable = pgTable("legend_templates", {
+  id:           serial("id").primaryKey(),
+  guildId:      text("guild_id").notNull().default("1476251181524189438"),
+  legendId:     integer("legend_id").notNull(),
+  legendName:   text("legend_name").notNull(),
+  position:     text("position").notNull(),
+  model:        text("model").notNull(), // 'realistic_rookie' | '88_ovr' | '99_ovr'
+  attributes:   json("attributes").notNull().$type<Record<string, number>>(),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+  updatedAt:    timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  uniqLegendModel: uniqueIndex("legend_templates_legend_model_idx").on(t.legendId, t.model),
+}));
 
 // ── Custom Player Settings (Bronze/Silver/Gold points & costs) ────────────────
 export const customPlayerSettingsTable = pgTable("custom_player_settings", {
