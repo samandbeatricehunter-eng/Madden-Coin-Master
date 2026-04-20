@@ -18,6 +18,7 @@ import {
   seasonStatsTable, teamSeasonStatsTable, purchasesTable, inventoryTable,
   legendsTable, franchiseScheduleTable,
   guildTweetsTable, autoPilotRequestsTable, ruleViolationsTable,
+  playerEaIdsTable, customPlayersTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
 import {
@@ -38,7 +39,7 @@ import { aupSessions } from "../commands/attribute-up-interactions.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
-import { ATTRIBUTES, CORE_ATTRIBUTES } from "./constants.js";
+import { ATTRIBUTES, CORE_ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP } from "./constants.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -290,8 +291,9 @@ export async function handleActionsInteraction(
   if (id.startsWith("ac_standings_conf:"))   { await handleStandingsShow(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_teamstowatch") { await handleTeamsToWatch(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_myuserstats")  { await handleMyUserStats(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_anyuserstats") { await handleAnyUserStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_anyus_sel")    { await handleAnyUserStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_anyuserstats")         { await handleAnyUserStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
+  if (id.startsWith("ac_anyus_conf:")) { await handleAnyUserStatsConfPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_anyus_sel")            { await handleAnyUserStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
 
   // ── Row 4: Rankings & Payouts ────────────────────────────────────────────────
 
@@ -1355,9 +1357,32 @@ async function handleTweetSubmit(interaction: ModalSubmitInteraction, sess: Acti
     await logTransaction(interaction.user.id, earnedCoins, "addcoins", `Tweet payout — Week ${currentWeek}`, gid);
   }
 
+  // Post the tweet to the league twitter channel
+  const twitterChannelId = await getGuildChannel(gid, CHANNEL_KEYS.LEAGUE_TWITTER);
+  if (twitterChannelId) {
+    try {
+      const ch = await interaction.client.channels.fetch(twitterChannelId);
+      if (ch?.isTextBased()) {
+        await (ch as TextChannel).send({
+          embeds: [new EmbedBuilder()
+            .setColor(Colors.Blue)
+            .setAuthor({
+              name: `@${interaction.user.username}${user.team ? ` · ${user.team}` : ""}`,
+              iconURL: interaction.user.displayAvatarURL(),
+            })
+            .setDescription(text)
+            .setFooter({ text: `Week ${currentWeek} 🐦 League Twitter` })
+            .setTimestamp()],
+        });
+      }
+    } catch { /* channel fetch/send failure is non-fatal */ }
+  }
+
   const limitNote = !willEarnCoins
     ? `\n*Weekly tweet limit reached (${weeklyLimit}) — no coins awarded.*`
-    : `\n**+${earnedCoins} coins** awarded!`;
+    : earnedCoins > 0
+      ? `\n**+${earnedCoins} coins** awarded!`
+      : `\n*Tweet posted! (No coin payout configured this week.)*`;
 
   await interaction.reply({
     ephemeral: true,
@@ -1705,43 +1730,93 @@ async function handleTeamsToWatch(interaction: ButtonInteraction, sess: ActionsS
 
 async function handleMyUserStats(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
+  const uid = interaction.user.id;
   await interaction.deferUpdate();
 
   const [user, season, savingsRow] = await Promise.all([
-    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
+    getOrCreateUser(uid, interaction.user.username, gid),
     getOrCreateActiveSeason(gid),
-    db.select({ balance: userSavingsTable.balance }).from(userSavingsTable).where(eq(userSavingsTable.discordId, interaction.user.id)).limit(1).then(r => r[0]),
+    db.select({ balance: userSavingsTable.balance }).from(userSavingsTable).where(eq(userSavingsTable.discordId, uid)).limit(1).then(r => r[0]),
   ]);
 
-  const [recordRow, seasonStatsRow] = await Promise.all([
-    db.select().from(userRecordsTable).where(and(eq(userRecordsTable.discordId, interaction.user.id), eq(userRecordsTable.seasonId, season.id))).limit(1).then(r => r[0]),
-    getSeasonStats(interaction.user.id, season.id),
+  const [recordRow, seasonStatsRow, globalRecord, eaIds, lastTxns] = await Promise.all([
+    db.select().from(userRecordsTable).where(and(eq(userRecordsTable.discordId, uid), eq(userRecordsTable.seasonId, season.id))).limit(1).then(r => r[0]),
+    getSeasonStats(uid, season.id),
+    db.select({ wins: globalUserRecordsTable.wins, losses: globalUserRecordsTable.losses })
+      .from(globalUserRecordsTable).where(eq(globalUserRecordsTable.discordId, uid)).limit(1).then(r => r[0]),
+    db.select({ eaId: playerEaIdsTable.eaId, console: playerEaIdsTable.console, slot: playerEaIdsTable.slot })
+      .from(playerEaIdsTable).where(eq(playerEaIdsTable.discordId, uid)).orderBy(playerEaIdsTable.slot),
+    db.select({ amount: coinTransactionsTable.amount, description: coinTransactionsTable.description, createdAt: coinTransactionsTable.createdAt })
+      .from(coinTransactionsTable)
+      .where(and(eq(coinTransactionsTable.discordId, uid), eq(coinTransactionsTable.guildId, gid)))
+      .orderBy(desc(coinTransactionsTable.createdAt)).limit(10),
   ]);
 
-  const savings     = savingsRow?.balance ?? 0;
-  const total       = user.balance + savings;
-  const ssW         = recordRow?.wins         ?? 0;
-  const ssL         = recordRow?.losses       ?? 0;
-  const atW         = 0;
-  const atL         = 0;
-  const sbW         = recordRow?.superbowlWins ?? 0;
+  const legendRows = await db.select({ legendName: inventoryTable.legendName, legendCategory: inventoryTable.legendCategory })
+    .from(inventoryTable)
+    .where(and(eq(inventoryTable.discordId, uid), eq(inventoryTable.itemType, "legend")));
+
+  const customPlayerRows = await db.select({
+    firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
+    position: customPlayersTable.position, packageTier: customPlayersTable.packageTier,
+  }).from(customPlayersTable)
+    .where(and(eq(customPlayersTable.discordId, uid), ne(customPlayersTable.status, "refunded")));
+
+  const savings = savingsRow?.balance ?? 0;
+  const total   = user.balance + savings;
+  const ssW     = recordRow?.wins          ?? 0;
+  const ssL     = recordRow?.losses        ?? 0;
+  const atW     = globalRecord?.wins       ?? 0;
+  const atL     = globalRecord?.losses     ?? 0;
+  const sbW     = recordRow?.superbowlWins ?? 0;
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(`🧑 ${user.team ?? interaction.user.username} — User Stats`)
+    .setThumbnail(interaction.user.displayAvatarURL())
     .addFields(
-      { name: "💰 Balance",        value: `Wallet: **${user.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
-      { name: "📊 Season Record",  value: `${ssW}W-${ssL}L`, inline: true },
-      { name: "🏆 All-Time",       value: `${atW}W-${atL}L | ${sbW} SB${sbW !== 1 ? "s" : ""}`, inline: true },
+      { name: "💰 Balance",       value: `Wallet: **${user.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
+      { name: "📊 Season Record", value: `${ssW}W-${ssL}L`, inline: true },
+      { name: "🏆 All-Time",      value: `${atW}W-${atL}L | ${sbW} SB${sbW !== 1 ? "s" : ""}`, inline: true },
     );
+
+  if (eaIds.length) {
+    embed.addFields({ name: "🎮 EA IDs", value: eaIds.map(e => `${e.console.toUpperCase()}: **${e.eaId}**`).join("\n"), inline: false });
+  }
 
   if (seasonStatsRow) {
     const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
     embed.addFields({
       name: "🛒 This Season's Purchases",
-      value: `Core Attrs: ${coreAttrPurchased ?? 0} | Non-Core: ${nonCoreAttrPurchased ?? 0} | Dev Ups: ${devUpsPurchased ?? 0} | Age Resets: ${ageResetsPurchased ?? 0}`,
+      value: `Core: ${coreAttrPurchased ?? 0} | Non-Core: ${nonCoreAttrPurchased ?? 0} | Dev Ups: ${devUpsPurchased ?? 0} | Age Resets: ${ageResetsPurchased ?? 0}`,
       inline: false,
     });
+  }
+
+  const vaultLegends   = legendRows.filter(l => l.legendCategory === "permanent");
+  const currentLegends = legendRows.filter(l => l.legendCategory !== "permanent");
+  if (legendRows.length) {
+    const parts: string[] = [];
+    if (currentLegends.length) parts.push(`Season: ${currentLegends.map(l => l.legendName).join(", ")}`);
+    if (vaultLegends.length)   parts.push(`Vault: ${vaultLegends.map(l => l.legendName).join(", ")}`);
+    embed.addFields({ name: "🏅 Legends", value: parts.join("\n"), inline: false });
+  }
+
+  if (customPlayerRows.length) {
+    embed.addFields({
+      name: "⚡ Custom Players",
+      value: customPlayerRows.map(p => `${p.firstName} ${p.lastName} (${p.position}) — ${p.packageTier}`).join("\n"),
+      inline: false,
+    });
+  }
+
+  if (lastTxns.length) {
+    const txLines = lastTxns.map(t => {
+      const sign = t.amount >= 0 ? "+" : "";
+      const ts   = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:d>`;
+      return `${ts} **${sign}${t.amount.toLocaleString()}** — ${t.description}`;
+    });
+    embed.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
   }
 
   embed.setTimestamp();
@@ -1749,22 +1824,51 @@ async function handleMyUserStats(interaction: ButtonInteraction, sess: ActionsSe
 }
 
 async function handleAnyUserStatsTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid   = interaction.guildId!;
-  const users = await db.select({ discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team })
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("👤 Any User Stats — Pick Conference")],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_anyus_conf:AFC").setLabel("🔵 AFC").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_anyus_conf:NFC").setLabel("🔴 NFC").setStyle(ButtonStyle.Danger),
+      ),
+      cancelRow(),
+    ],
+  });
+}
+
+async function handleAnyUserStatsConfPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  const conf = interaction.customId.split(":")[1] as "AFC" | "NFC";
+  const gid  = interaction.guildId!;
+
+  const allUsers = await db.select({ discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team })
     .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team), ne(usersTable.team, "")))
+    .where(and(
+      eq(usersTable.guildId, gid),
+      isNotNull(usersTable.team),
+      ne(usersTable.team, ""),
+    ))
     .orderBy(usersTable.team);
 
-  if (!users.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No linked users found.")], components: [backToHubRow()] });
+  const confUsers = allUsers.filter(u => {
+    const teamKey = (u.team ?? "").replace(/^(.*\s)?/, "").trim(); // try nickname last word
+    const fullKey = (u.team ?? "").trim();
+    const info = NFL_DIVISION_MAP[fullKey] ?? NFL_DIVISION_MAP[teamKey];
+    return info?.conference === conf;
+  });
+
+  if (!confUsers.length) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No ${conf} users found.`)],
+      components: [backToHubRow()],
+    });
     return;
   }
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId("ac_anyus_sel")
-    .setPlaceholder("Select a team owner…")
+    .setPlaceholder(`Select a ${conf} team owner…`)
     .addOptions(
-      users.slice(0, 25).map(u =>
+      confUsers.slice(0, 25).map(u =>
         new StringSelectMenuOptionBuilder()
           .setLabel(`${u.team ?? u.discordUsername}`)
           .setDescription(`@${u.discordUsername}`)
@@ -1773,7 +1877,7 @@ async function handleAnyUserStatsTeamPick(interaction: ButtonInteraction, sess: 
     );
 
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("👤 Any User Stats — Select Owner")],
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`👤 Any User Stats — ${conf} Owners`)],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
 }
@@ -1784,11 +1888,19 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
   await interaction.deferUpdate();
 
   const season = await getOrCreateActiveSeason(gid);
-  const [targetUser, savingsRow, recordRow, seasonStatsRow] = await Promise.all([
+  const [targetUser, savingsRow, recordRow, seasonStatsRow, globalRecord, eaIds, lastTxns] = await Promise.all([
     db.select().from(usersTable).where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, gid))).limit(1).then(r => r[0]),
     db.select({ balance: userSavingsTable.balance }).from(userSavingsTable).where(eq(userSavingsTable.discordId, targetId)).limit(1).then(r => r[0]),
     db.select().from(userRecordsTable).where(and(eq(userRecordsTable.discordId, targetId), eq(userRecordsTable.seasonId, season.id))).limit(1).then(r => r[0]),
     getSeasonStats(targetId, season.id),
+    db.select({ wins: globalUserRecordsTable.wins, losses: globalUserRecordsTable.losses })
+      .from(globalUserRecordsTable).where(eq(globalUserRecordsTable.discordId, targetId)).limit(1).then(r => r[0]),
+    db.select({ eaId: playerEaIdsTable.eaId, console: playerEaIdsTable.console, slot: playerEaIdsTable.slot })
+      .from(playerEaIdsTable).where(eq(playerEaIdsTable.discordId, targetId)).orderBy(playerEaIdsTable.slot),
+    db.select({ amount: coinTransactionsTable.amount, description: coinTransactionsTable.description, createdAt: coinTransactionsTable.createdAt })
+      .from(coinTransactionsTable)
+      .where(and(eq(coinTransactionsTable.discordId, targetId), eq(coinTransactionsTable.guildId, gid)))
+      .orderBy(desc(coinTransactionsTable.createdAt)).limit(10),
   ]);
 
   if (!targetUser) {
@@ -1796,12 +1908,22 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
     return;
   }
 
+  const legendRows = await db.select({ legendName: inventoryTable.legendName, legendCategory: inventoryTable.legendCategory })
+    .from(inventoryTable)
+    .where(and(eq(inventoryTable.discordId, targetId), eq(inventoryTable.itemType, "legend")));
+
+  const customPlayerRows = await db.select({
+    firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
+    position: customPlayersTable.position, packageTier: customPlayersTable.packageTier,
+  }).from(customPlayersTable)
+    .where(and(eq(customPlayersTable.discordId, targetId), ne(customPlayersTable.status, "refunded")));
+
   const savings = savingsRow?.balance ?? 0;
   const total   = targetUser.balance + savings;
-  const ssW     = recordRow?.wins         ?? 0;
-  const ssL     = recordRow?.losses       ?? 0;
-  const atW     = 0;
-  const atL     = 0;
+  const ssW     = recordRow?.wins          ?? 0;
+  const ssL     = recordRow?.losses        ?? 0;
+  const atW     = globalRecord?.wins       ?? 0;
+  const atL     = globalRecord?.losses     ?? 0;
   const sbW     = recordRow?.superbowlWins ?? 0;
 
   const embed = new EmbedBuilder()
@@ -1811,9 +1933,48 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
       { name: "💰 Balance",       value: `Wallet: **${targetUser.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
       { name: "📊 Season Record", value: `${ssW}W-${ssL}L`, inline: true },
       { name: "🏆 All-Time",      value: `${atW}W-${atL}L | ${sbW} SB${sbW !== 1 ? "s" : ""}`, inline: true },
-    )
-    .setTimestamp();
+    );
 
+  if (eaIds.length) {
+    embed.addFields({ name: "🎮 EA IDs", value: eaIds.map(e => `${e.console.toUpperCase()}: **${e.eaId}**`).join("\n"), inline: false });
+  }
+
+  if (seasonStatsRow) {
+    const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
+    embed.addFields({
+      name: "🛒 This Season's Purchases",
+      value: `Core: ${coreAttrPurchased ?? 0} | Non-Core: ${nonCoreAttrPurchased ?? 0} | Dev Ups: ${devUpsPurchased ?? 0} | Age Resets: ${ageResetsPurchased ?? 0}`,
+      inline: false,
+    });
+  }
+
+  const vaultLegends   = legendRows.filter(l => l.legendCategory === "permanent");
+  const currentLegends = legendRows.filter(l => l.legendCategory !== "permanent");
+  if (legendRows.length) {
+    const parts: string[] = [];
+    if (currentLegends.length) parts.push(`Season: ${currentLegends.map(l => l.legendName).join(", ")}`);
+    if (vaultLegends.length)   parts.push(`Vault: ${vaultLegends.map(l => l.legendName).join(", ")}`);
+    embed.addFields({ name: "🏅 Legends", value: parts.join("\n"), inline: false });
+  }
+
+  if (customPlayerRows.length) {
+    embed.addFields({
+      name: "⚡ Custom Players",
+      value: customPlayerRows.map(p => `${p.firstName} ${p.lastName} (${p.position}) — ${p.packageTier}`).join("\n"),
+      inline: false,
+    });
+  }
+
+  if (lastTxns.length) {
+    const txLines = lastTxns.map(t => {
+      const sign = t.amount >= 0 ? "+" : "";
+      const ts   = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:d>`;
+      return `${ts} **${sign}${t.amount.toLocaleString()}** — ${t.description}`;
+    });
+    embed.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
+  }
+
+  embed.setTimestamp();
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
 }
 
@@ -2040,34 +2201,33 @@ async function handleOpenTeams(interaction: ButtonInteraction, sess: ActionsSess
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const season  = await getOrCreateActiveSeason(gid);
-  const allTeams = await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName, conference: franchiseMcaTeamsTable.conference })
-    .from(franchiseMcaTeamsTable)
-    .where(eq(franchiseMcaTeamsTable.seasonId, season.id))
-    .orderBy(franchiseMcaTeamsTable.conference, franchiseMcaTeamsTable.fullName);
-
-  const linkedTeams = await db.select({ team: usersTable.team })
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
     .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team), ne(usersTable.team, "")));
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
 
-  const linkedSet   = new Set(linkedTeams.map(r => r.team?.toLowerCase()));
-  const openTeams   = allTeams.filter(t => !linkedSet.has(t.fullName?.toLowerCase()));
+  const taken = new Set(
+    takenRows
+      .filter(r => r.discordId && !r.discordId.startsWith("unlinked_"))
+      .map(r => r.team as string),
+  );
+
+  const openTeams = NFL_TEAMS.filter(t => !taken.has(t));
 
   if (!openTeams.length) {
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("🔴 Open Teams").setDescription("All teams are currently claimed!")], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("🔴 Open Teams").setDescription("All 32 teams are currently claimed!")], components: [backToHubRow()] });
     return;
   }
 
-  const afcOpen = openTeams.filter(t => t.conference === "AFC");
-  const nfcOpen = openTeams.filter(t => t.conference === "NFC");
+  const afcOpen = openTeams.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
+  const nfcOpen = openTeams.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Red)
     .setTitle(`🔴 Open Teams (${openTeams.length} available)`)
     .setTimestamp();
 
-  if (afcOpen.length) embed.addFields({ name: "🔵 AFC", value: afcOpen.map(t => `• ${t.fullName}`).join("\n"), inline: true });
-  if (nfcOpen.length) embed.addFields({ name: "🔴 NFC", value: nfcOpen.map(t => `• ${t.fullName}`).join("\n"), inline: true });
+  if (afcOpen.length) embed.addFields({ name: "🔵 AFC", value: afcOpen.map(t => `• ${t}`).join("\n"), inline: true });
+  if (nfcOpen.length) embed.addFields({ name: "🔴 NFC", value: nfcOpen.map(t => `• ${t}`).join("\n"), inline: true });
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
 }
