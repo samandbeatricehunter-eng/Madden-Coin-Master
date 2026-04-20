@@ -35,8 +35,7 @@ import * as globalrecords     from "./commands/globalrecords.js";
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
 import * as adminStatReimport        from "./commands/admin-stat-reimport.js";
-import * as adminEaConnect           from "./commands/admin-ea-connect.js";
-import * as adminEaExport            from "./commands/admin-ea-export.js";
+import * as adminLeagueData          from "./commands/admin-league-data.js";
 import * as adminCancelResendEos     from "./commands/admin-cancel-resend-eos.js";
 import * as adminRebuildHistorical   from "./commands/admin-rebuild-historical.js";
 import * as draftPresence            from "./commands/draft-presence.js";
@@ -56,7 +55,6 @@ import * as adminMilestoneAudit      from "./commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
-import * as adminScoreEntry         from "./commands/admin-score-entry.js";
 import * as adminEosReapprove        from "./commands/admin-eos-reapprove.js";
 import * as adminSeason             from "./commands/admin-season.js";
 import * as adminLinkTeam           from "./commands/admin-linkteam.js";
@@ -154,8 +152,7 @@ if (!isProduction && !devBotEnabled) {
     // Admin tools
     adminEosTestrun,
     adminStatReimport,
-    adminEaConnect,
-    adminEaExport,
+    adminLeagueData,
     adminCancelResendEos,
     adminRebuildHistorical,
     draftPresence,
@@ -178,7 +175,6 @@ if (!isProduction && !devBotEnabled) {
     adminCustomArcetypes,
     adminCustomPlayerSettings,
     adminFixPlayerNames,
-    adminScoreEntry,
     adminEosReapprove,
     adminSeason,
     adminLinkTeam,

@@ -114,7 +114,11 @@ import {
   handleTsResyncData,
   handleTsEosTestRun,
 } from "../lib/admin-troubleshoot-handlers.js";
-
+import {
+  handleLeagueDataButton,
+  handleLeagueDataModal,
+  handleLeagueDataSelect,
+} from "../lib/league-data-handlers.js";
 
 
 export const name = "interactionCreate";
@@ -177,6 +181,12 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ts_repair_records") { await handleTsRepairRecords(interaction); return; }
   if (action === "ts_resync_data")    { await handleTsResyncData(interaction);    return; }
   if (action === "ts_eos_testrun")    { await handleTsEosTestRun(interaction);    return; }
+
+  // ── League Data wizard — all ld_ prefixed buttons ─────────────────────────
+  if (action?.startsWith("ld_")) {
+    await handleLeagueDataButton(interaction);
+    return;
+  }
 
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
   if (action?.startsWith("ac_")) {
@@ -2132,6 +2142,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   const action    = parts[0]!;
   const sessionId = parts[1] ?? "";
 
+  // ── League Data wizard — all ld_ prefixed select menus ───────────────────────
+  if (action?.startsWith("ld_")) {
+    await handleLeagueDataSelect(interaction);
+    return;
+  }
+
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
@@ -2364,6 +2380,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const parts  = interaction.customId.split(":");
   const action = parts[0]!;
   const idStr  = parts[1];
+
+  // ── League Data wizard — all ld_ prefixed modal submissions ──────────────────
+  if (action?.startsWith("ld_")) {
+    await handleLeagueDataModal(interaction);
+    return;
+  }
 
   // ── Actions hub — dispatch all ac_ prefixed modal submissions ─────────────────
   if (action?.startsWith("ac_")) {

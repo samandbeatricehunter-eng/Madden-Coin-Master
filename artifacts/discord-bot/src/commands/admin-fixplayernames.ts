@@ -106,7 +106,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         ? `Fixed **${updated}** player stat rows — names, positions, and team names filled from roster data.`
         : "All stat rows already complete — nothing to fix."
     )
-    .setFooter({ text: `Season ${season.seasonNumber} • Tip: re-run /admin_ea_export week to re-import with correct team names going forward` })
+    .setFooter({ text: `Season ${season.seasonNumber} • Tip: use /admin-league-data → Import Data Only to re-import with correct team names` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });

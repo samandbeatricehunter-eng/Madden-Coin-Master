@@ -54,7 +54,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const conn = await loadEAConnection(guildId);
   if (!conn) {
     await interaction.editReply({
-      content: "❌ No EA connection found for this server. Run `/admin_ea_connect start` first.",
+      content: "❌ No EA connection found for this server. Use `/admin-league-data` → Start EA Connection first.",
     });
     return;
   }

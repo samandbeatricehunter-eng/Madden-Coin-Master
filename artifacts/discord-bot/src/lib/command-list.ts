@@ -32,10 +32,10 @@ import * as statleaders        from "../commands/statleaders.js";
 import * as availableupgrades  from "../commands/availableupgrades.js";
 import * as viewFreeAgents     from "../commands/viewfreeagents.js";
 import * as viewXp             from "../commands/viewxp.js";
+import * as actions                 from "../commands/actions.js";
 import * as adminEosTestrun         from "../commands/admin-eos-testrun.js";
 import * as adminStatReimport       from "../commands/admin-stat-reimport.js";
-import * as adminEaConnect          from "../commands/admin-ea-connect.js";
-import * as adminEaExport           from "../commands/admin-ea-export.js";
+import * as adminLeagueData         from "../commands/admin-league-data.js";
 import * as adminCancelResendEos    from "../commands/admin-cancel-resend-eos.js";
 import * as adminRebuildHistorical  from "../commands/admin-rebuild-historical.js";
 import * as draftPresence           from "../commands/draft-presence.js";
@@ -55,7 +55,6 @@ import * as adminMilestoneAudit     from "../commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes    from "../commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "../commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames     from "../commands/admin-fixplayernames.js";
-import * as adminScoreEntry        from "../commands/admin-score-entry.js";
 import * as adminEosReapprove       from "../commands/admin-eos-reapprove.js";
 import * as adminSeason             from "../commands/admin-season.js";
 import * as adminLinkTeam           from "../commands/admin-linkteam.js";
@@ -94,6 +93,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
   const entries: [{ data: { toJSON(): object } }, boolean][] = [
     // ── Always visible ──────────────────────────────────────────────────────
     [admin,              true],
+    [actions,            true],
     [view,               true],
     [help,               true],
     [teamlist,           true],
@@ -114,8 +114,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [viewFreeAgents,     true],
     [adminEosTestrun,    true],
     [adminStatReimport,  true],
-    [adminEaConnect,     true],
-    [adminEaExport,      true],
+    [adminLeagueData,    true],
     [adminCancelResendEos,   true],
     [adminRebuildHistorical, true],
     [draftPresence,      true],
@@ -129,7 +128,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminRollbackFranchise, true],
     [adminResetSeasonStats,  true],
     [adminEosReapprove,  true],
-    [adminScoreEntry,    true],
     [adminSeason,        true],
     [adminLinkTeam,         true],
     [adminInventory,        true],
