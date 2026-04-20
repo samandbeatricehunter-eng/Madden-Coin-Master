@@ -92,29 +92,34 @@ export const data = new SlashCommandBuilder()
     .setMinValue(1),
   );
 
-// ── Execute ────────────────────────────────────────────────────────────────────
-export async function execute(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: true });
+// ── Shared context type (allows slash command + button handler to call the same logic) ──
+export interface EosRunContext {
+  guildId:          string;
+  seasonIdOverride: number | null;
+  deferReply: (opts: { ephemeral: boolean }) => Promise<unknown>;
+  editReply:  (data: object) => Promise<unknown>;
+  followUp:   (data: object) => Promise<unknown>;
+}
+
+export async function runEosTestRun(ctx: EosRunContext): Promise<void> {
+  await ctx.deferReply({ ephemeral: true });
 
   // ── 1. Resolve season ────────────────────────────────────────────────────────
-  const activeSeason = await getOrCreateActiveSeason(interaction.guildId!);
-  const seasonIdInput = interaction.options.getInteger("season_id");
-  const seasonId      = seasonIdInput ?? activeSeason.id;
-  const seasonNum     = seasonId === activeSeason.id ? activeSeason.seasonNumber : seasonId;
+  const activeSeason = await getOrCreateActiveSeason(ctx.guildId);
+  const seasonId     = ctx.seasonIdOverride ?? activeSeason.id;
+  const seasonNum    = seasonId === activeSeason.id ? activeSeason.seasonNumber : seasonId;
 
   // ── 2. Load all registered users ─────────────────────────────────────────────
   const allUsers = await db.select({
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
     team:            usersTable.team,
-  }).from(usersTable).where(eq(usersTable.guildId, interaction.guildId!));
+  }).from(usersTable).where(eq(usersTable.guildId, ctx.guildId));
 
   if (allUsers.length === 0) {
-    await interaction.editReply({ content: "❌ No registered users found." });
+    await ctx.editReply({ content: "❌ No registered users found." });
     return;
   }
-
-  const userMap = new Map(allUsers.map(u => [u.discordId, u]));
 
   // ── 3. Load tier configs ──────────────────────────────────────────────────────
   const allTierRows = await db.select()
@@ -573,11 +578,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const batches = batchEmbeds(embeds);
   const [firstBatch, ...restBatches] = batches;
 
-  await interaction.editReply({ embeds: firstBatch });
+  await ctx.editReply({ embeds: firstBatch });
 
   for (const batch of restBatches) {
-    await interaction.followUp({ embeds: batch, ephemeral: true });
+    await ctx.followUp({ embeds: batch, ephemeral: true });
   }
+}
+
+// ── Execute (slash command entrypoint) ────────────────────────────────────────
+export async function execute(interaction: ChatInputCommandInteraction) {
+  await runEosTestRun({
+    guildId:          interaction.guildId!,
+    seasonIdOverride: interaction.options.getInteger("season_id"),
+    deferReply: opts => interaction.deferReply(opts),
+    editReply:  data => interaction.editReply(data),
+    followUp:   data => interaction.followUp(data as any),
+  });
 }
 
 /** Approximate the character count Discord uses for a single embed. */

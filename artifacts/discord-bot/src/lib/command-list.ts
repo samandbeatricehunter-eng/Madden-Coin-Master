@@ -49,7 +49,7 @@ import * as endofseasonpayout       from "../commands/endofseasonpayout.js";
 import * as adminSetStatTiers       from "../commands/admin-set-stat-tiers.js";
 import * as adminStatTiers          from "../commands/admin-stat-tiers.js";
 import * as adminLegendVault        from "../commands/admin-legendvault.js";
-import * as adminResyncTeams        from "../commands/admin-resync-teams.js";
+import * as adminTroubleshoot       from "../commands/admin-troubleshoot.js";
 import * as adminRepairTeamLinks   from "../commands/admin-repair-teamlinks.js";
 import * as adminMilestoneAudit     from "../commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes    from "../commands/admin-customarchetypes.js";
@@ -58,7 +58,6 @@ import * as adminFixPlayerNames     from "../commands/admin-fixplayernames.js";
 import * as adminEosReapprove       from "../commands/admin-eos-reapprove.js";
 import * as adminSeason             from "../commands/admin-season.js";
 import * as adminLinkTeam           from "../commands/admin-linkteam.js";
-import * as adminRosterLegends      from "../commands/admin-roster-legends.js";
 import * as adminInventory          from "../commands/admin-inventory.js";
 import * as adminInitialize         from "../commands/admin-initialize.js";
 import * as adminServer             from "../commands/adminserver.js";
@@ -131,7 +130,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminEosReapprove,  true],
     [adminSeason,        true],
     [adminLinkTeam,         true],
-    [adminRosterLegends,    true],
     [adminInventory,        true],
     [adminInitialize,    true],
     [adminServer,        true],
@@ -163,7 +161,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [availableupgrades,          anyUpgrade],
     [wager,                      wagersOn],
     [adminLegendVault,           legends],
-    [adminResyncTeams,           true],
+    [adminTroubleshoot,          true],
     [adminRepairTeamLinks,       true],
     [adminMilestoneAudit,        true],
     [adminCustomArcetypes,       custom],

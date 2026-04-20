@@ -109,6 +109,11 @@ import { waitlistTable } from "@workspace/db";
 import {
   WAITLIST_ACCEPT_PREFIX, WAITLIST_DENY_PREFIX,
 } from "../commands/waitlist.js";
+import {
+  handleTsRepairRecords,
+  handleTsResyncData,
+  handleTsEosTestRun,
+} from "../lib/admin-troubleshoot-handlers.js";
 
 
 
@@ -167,6 +172,11 @@ export async function execute(interaction: Interaction) {
 async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
+
+  // ── Admin troubleshoot panel buttons ─────────────────────────────────────────
+  if (action === "ts_repair_records") { await handleTsRepairRecords(interaction); return; }
+  if (action === "ts_resync_data")    { await handleTsResyncData(interaction);    return; }
+  if (action === "ts_eos_testrun")    { await handleTsEosTestRun(interaction);    return; }
 
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
   if (action?.startsWith("ac_")) {

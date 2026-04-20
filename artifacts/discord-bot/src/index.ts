@@ -50,7 +50,7 @@ import * as endofseasonpayout        from "./commands/endofseasonpayout.js";
 import * as adminSetStatTiers        from "./commands/admin-set-stat-tiers.js";
 import * as adminStatTiers           from "./commands/admin-stat-tiers.js";
 import * as adminLegendVault         from "./commands/admin-legendvault.js";
-import * as adminResyncTeams         from "./commands/admin-resync-teams.js";
+import * as adminTroubleshoot        from "./commands/admin-troubleshoot.js";
 import * as adminRepairTeamLinks     from "./commands/admin-repair-teamlinks.js";
 import * as adminMilestoneAudit      from "./commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
@@ -171,7 +171,7 @@ if (!isProduction && !devBotEnabled) {
     adminSetStatTiers,
     adminStatTiers,
     adminLegendVault,
-    adminResyncTeams,
+    adminTroubleshoot,
     adminRepairTeamLinks,
     adminMilestoneAudit,
     adminCustomArcetypes,
