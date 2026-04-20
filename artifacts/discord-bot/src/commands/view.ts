@@ -7,7 +7,6 @@ import { franchiseMcaTeamsTable, franchiseRostersTable, teamSeasonStatsTable } f
 import { eq, and } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { lookupNflDivision } from "../lib/constants.js";
-import * as userStats          from "./userstats.js";
 import * as viewstore          from "./viewstore.js";
 import * as viewCustomArchetypes from "./viewcustomarchetypes.js";
 import * as viewroster         from "./viewroster.js";
@@ -20,13 +19,6 @@ import * as rulesCmd           from "./rules.js";
 export const data = new SlashCommandBuilder()
   .setName("view")
   .setDescription("View stats, store, rosters, and league information")
-
-  // ── userStats ──────────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("user_stats")
-    .setDescription("View stats, coins, and inventory for any league member")
-    .addUserOption(o => o.setName("user").setDescription("League member to look up — leave blank for yourself").setRequired(false))
-  )
 
   // ── playerStats ────────────────────────────────────────────────────────────
   .addSubcommand(s => s
@@ -114,7 +106,6 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction): Promise<unknown> {
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "user_stats")               return userStats.execute(interaction);
   if (sub === "store")                    return viewstore.execute(interaction);
   if (sub === "custom_player_archetypes") return viewCustomArchetypes.execute(interaction);
   if (sub === "roster")                   return viewroster.execute(interaction);
