@@ -36,6 +36,25 @@ import {
 } from "../commands/attribute-up-interactions.js";
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin-inventory.js";
+import {
+  handleCancel as apHandleCancel,
+  handleGotw, handleGotwSelectAfc, handleGotwSelectNfc, handleGotwFinalize,
+  handlePotw, handlePotwModal,
+  handleAddCoins, handleAddCoinsSelectAfc, handleAddCoinsSelectNfc, handleAddCoinsNext, handleAddCoinsModal,
+  handleRemoveCoins, handleRemoveCoinsSelectAfc, handleRemoveCoinsSelectNfc, handleRemoveCoinsNext, handleRemoveCoinsModal,
+  handleTransfer, handleTransferSelectAfc, handleTransferSelectNfc, handleTransferNext, handleTransferModal,
+  handleGame, handleGameSelect, handleGameWinnerHome, handleGameWinnerAway, handleGameWinnerCpu,
+  handleGameModalHomeWins, handleGameModalAwayWins, handleGameModalCpuWins,
+  handleCorrect, handleCorrectWeekSelect, handleCorrectGameSelect,
+  handleCorrectNewWinner, handleCorrectSwap, handleCorrectModalSame, handleCorrectModalSwap,
+  handleSetPay, handleSetPayReg, handleSetPayRegModal, handleSetPayPlayoff,
+  handleSetPayPo1Btn, handleSetPayPo2Btn, handleSetPayPo1Modal, handleSetPayPo2Modal,
+  handleNewMember, handleNewMemberModal,
+  handleGotwBonus, handleGotwBonusModal,
+  handlePotwBonus, handlePotwBonusModal,
+  handleEos, handleEosKeySelect, handleEosEditModal,
+  handleMilestone, handleMilestoneEdit, handleMilestoneEditModal,
+} from "../lib/admin-payout-handlers.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
@@ -1980,6 +1999,39 @@ async function handleButton(interaction: ButtonInteraction) {
 
     return;
   }
+
+  // ── Admin-Payout Hub ──────────────────────────────────────────────────────────
+  if (action === "ap_cancel")             { await apHandleCancel(interaction);    return; }
+  if (action === "ap_gotw")              { await handleGotw(interaction);         return; }
+  if (action === "ap_gotw_finalize")     { await handleGotwFinalize(interaction); return; }
+  if (action === "ap_potw")              { await handlePotw(interaction);         return; }
+  if (action === "ap_addcoins")          { await handleAddCoins(interaction);     return; }
+  if (action === "ap_addcoins_next")     { await handleAddCoinsNext(interaction); return; }
+  if (action === "ap_removecoins")       { await handleRemoveCoins(interaction);  return; }
+  if (action === "ap_removecoins_next")  { await handleRemoveCoinsNext(interaction); return; }
+  if (action === "ap_transfer")          { await handleTransfer(interaction);     return; }
+  if (action === "ap_transfer_next")     { await handleTransferNext(interaction); return; }
+  if (action === "ap_game")              { await handleGame(interaction);         return; }
+  if (action === "ap_game_winner_home")  { await handleGameWinnerHome(interaction); return; }
+  if (action === "ap_game_winner_away")  { await handleGameWinnerAway(interaction); return; }
+  if (action === "ap_game_winner_cpu")   { await handleGameWinnerCpu(interaction);  return; }
+  if (action === "ap_correct")           { await handleCorrect(interaction);      return; }
+  if (action === "ap_correct_new_winner"){ await handleCorrectNewWinner(interaction); return; }
+  if (action === "ap_correct_swap")      { await handleCorrectSwap(interaction);  return; }
+  if (action === "ap_setpay")            { await handleSetPay(interaction);          return; }
+  if (action === "ap_setpay_reg")        { await handleSetPayReg(interaction);       return; }
+  if (action === "ap_setpay_playoff")    { await handleSetPayPlayoff(interaction);   return; }
+  if (action === "ap_setpay_po1_btn")   { await handleSetPayPo1Btn(interaction);   return; }
+  if (action === "ap_setpay_po2_btn")   { await handleSetPayPo2Btn(interaction);   return; }
+  if (action === "ap_newmember")         { await handleNewMember(interaction);    return; }
+  if (action === "ap_gotwbonus")         { await handleGotwBonus(interaction);    return; }
+  if (action === "ap_potwbonus")         { await handlePotwBonus(interaction);    return; }
+  if (action === "ap_eos")              { await handleEos(interaction);          return; }
+  if (action === "ap_milestone")         { await handleMilestone(interaction);    return; }
+  if (action?.startsWith("ap_ms_edit_")) {
+    const tier = parseInt(action.slice("ap_ms_edit_".length), 10);
+    if (!isNaN(tier)) { await handleMilestoneEdit(interaction, tier); return; }
+  }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────
@@ -2174,6 +2226,19 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── Admin-Payout Hub selects ──────────────────────────────────────────────────
+  if (action === "ap_gotw_afc")        { await handleGotwSelectAfc(interaction);      return; }
+  if (action === "ap_gotw_nfc")        { await handleGotwSelectNfc(interaction);      return; }
+  if (action === "ap_addcoins_afc")    { await handleAddCoinsSelectAfc(interaction);  return; }
+  if (action === "ap_addcoins_nfc")    { await handleAddCoinsSelectNfc(interaction);  return; }
+  if (action === "ap_removecoins_afc") { await handleRemoveCoinsSelectAfc(interaction); return; }
+  if (action === "ap_removecoins_nfc") { await handleRemoveCoinsSelectNfc(interaction); return; }
+  if (action === "ap_transfer_afc")    { await handleTransferSelectAfc(interaction);  return; }
+  if (action === "ap_transfer_nfc")    { await handleTransferSelectNfc(interaction);  return; }
+  if (action === "ap_game_select")     { await handleGameSelect(interaction);         return; }
+  if (action === "ap_correct_week")    { await handleCorrectWeekSelect(interaction);  return; }
+  if (action === "ap_correct_game")    { await handleCorrectGameSelect(interaction);  return; }
+  if (action === "ap_eos_key")         { await handleEosKeySelect(interaction);       return; }
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -2390,4 +2455,22 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     return;
   }
 
+  // ── Admin-Payout Hub modals ────────────────────────────────────────────────
+  if (action === "ap_modal_potw")           { await handlePotwModal(interaction);          return; }
+  if (action === "ap_modal_addcoins")       { await handleAddCoinsModal(interaction);      return; }
+  if (action === "ap_modal_removecoins")    { await handleRemoveCoinsModal(interaction);   return; }
+  if (action === "ap_modal_transfer")       { await handleTransferModal(interaction);      return; }
+  if (action === "ap_modal_game_home_wins") { await handleGameModalHomeWins(interaction);  return; }
+  if (action === "ap_modal_game_away_wins") { await handleGameModalAwayWins(interaction);  return; }
+  if (action === "ap_modal_game_cpu_wins")  { await handleGameModalCpuWins(interaction);   return; }
+  if (action === "ap_modal_correct_same")   { await handleCorrectModalSame(interaction);   return; }
+  if (action === "ap_modal_correct_swap")   { await handleCorrectModalSwap(interaction);   return; }
+  if (action === "ap_modal_setpay_reg")     { await handleSetPayRegModal(interaction);     return; }
+  if (action === "ap_modal_setpay_po1")     { await handleSetPayPo1Modal(interaction);     return; }
+  if (action === "ap_modal_setpay_po2")     { await handleSetPayPo2Modal(interaction);     return; }
+  if (action === "ap_modal_newmember")      { await handleNewMemberModal(interaction);     return; }
+  if (action === "ap_modal_gotwbonus")      { await handleGotwBonusModal(interaction);     return; }
+  if (action === "ap_modal_potwbonus")      { await handlePotwBonusModal(interaction);     return; }
+  if (action === "ap_modal_eos_edit")       { await handleEosEditModal(interaction);       return; }
+  if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction); return; }
 }

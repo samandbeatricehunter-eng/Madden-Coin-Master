@@ -10,7 +10,8 @@ import {
 import { eq, and, or, ilike, isNotNull, sql } from "drizzle-orm";
 import { NFL_TEAMS } from "../lib/constants.js";
 import { assignRosterLegends, formatLegendAssignResult } from "../lib/roster-legend-assign.js";
-import { getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
+import { getGuildChannel, CHANNEL_KEYS, addBalance, logTransaction } from "../lib/db-helpers.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-linkteam")
@@ -339,6 +340,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await db.insert(globalUserRecordsTable)
       .values({ discordId: targetUser.id, wins: 0, losses: 0, ties: 0 })
       .onConflictDoNothing();
+
+    // Award new member bonus if configured
+    const newMemberBonus = await getPayoutValue(PAYOUT_KEYS.NEW_MEMBER_BONUS, interaction.guildId!);
+    if (newMemberBonus > 0) {
+      await addBalance(targetUser.id, newMemberBonus, interaction.guildId!);
+      await logTransaction(targetUser.id, newMemberBonus, "addcoins", `New member welcome bonus`, interaction.guildId!);
+      try {
+        await targetUser.send(`🎉 Welcome to the league! You've received **${newMemberBonus.toLocaleString()} coins** as a new member bonus. Good luck!`).catch(() => {});
+      } catch (_) {}
+    }
   } else {
     await db.update(usersTable)
       .set({

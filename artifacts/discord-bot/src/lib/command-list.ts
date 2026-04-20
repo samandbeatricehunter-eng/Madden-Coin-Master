@@ -69,6 +69,7 @@ import * as adminServer             from "../commands/adminserver.js";
 import * as adminRules              from "../commands/admin-rules.js";
 import * as adminTeamLogo          from "../commands/admin-team-logo.js";
 import * as adminRepostBanners     from "../commands/admin-repost-banners.js";
+import * as adminPayout            from "../commands/admin-payout.js";
 import * as waitlist                from "../commands/waitlist.js";
 import * as globalrecords          from "../commands/globalrecords.js";
 import * as alltimeleaderboard     from "../commands/alltimeleaderboard.js";
@@ -123,6 +124,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminPlayoffs,      true],
     [adminResendArticle, true],
     [adminCatchup,       true],
+    [adminPayout,        true],
     [adminManualScore,   true],
     [adminReverseGame,   true],
     [adminPostFullSeasonSchedule, true],
