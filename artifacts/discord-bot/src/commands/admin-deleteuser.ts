@@ -27,8 +27,6 @@ import {
   userRecordsTable,
   coinTransactionsTable,
   purchasesTable,
-  tradeBlockListingsTable,
-  tradeBlockISOTable,
   customPlayersTable,
   h2hMatchupRecordsTable,
   gameLogTable,
@@ -172,12 +170,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     skipped.push(CATEGORY_LABELS["wagers"]!);
   }
 
-  if (flags.trade_listings) {
-    await del("trade_listings", db.delete(tradeBlockListingsTable).where(and(eq(tradeBlockListingsTable.discordId, discordId), inArray(tradeBlockListingsTable.seasonId, guildSeasonIds))).returning({ id: tradeBlockListingsTable.id }));
-    await del("trade_iso",      db.delete(tradeBlockISOTable)     .where(and(eq(tradeBlockISOTable.discordId,     discordId), inArray(tradeBlockISOTable.seasonId,     guildSeasonIds))).returning({ id: tradeBlockISOTable.id }));
-  } else {
-    skipped.push(CATEGORY_LABELS["trade_listings"]!);
-  }
+  skipped.push(CATEGORY_LABELS["trade_listings"]!);
 
   if (flags.payout_data) {
     // payoutRequestsTable has no guildId or seasonId — delete by discordId only

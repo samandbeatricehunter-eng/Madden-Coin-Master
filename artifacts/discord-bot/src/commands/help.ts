@@ -42,7 +42,6 @@ export function buildMemberHelpEmbed(
   const devUpgrades   = economy && (settings?.devUpgradesEnabled        ?? true);
   const ageResets     = economy && (settings?.ageResetsEnabled          ?? true);
   const wagers        = economy && (settings?.wagerEnabled              ?? true);
-  const tradeBlock    = settings?.tradeBlockEnabled ?? true;
   const legacyMode    = settings?.legacyCoreAttrMode ?? false;
 
   const coreAttrCost    = rules?.coreAttrCost    ?? 25;
@@ -137,17 +136,6 @@ export function buildMemberHelpEmbed(
       ].join("\n"),
     },
   );
-
-  if (tradeBlock) {
-    embed.addFields({
-      name: "🔄 Trade Block",
-      value: [
-        "`/tradeblock add [player] [position] [notes]` — List a player for trade",
-        "`/tradeblock view` — Browse current trade block listings",
-        "`/tradeblock remove [id]` — Remove your listing",
-      ].join("\n"),
-    });
-  }
 
   embed
     .setFooter({ text: "Use /viewstore for live prices. Purchases go to the commissioner for approval." })

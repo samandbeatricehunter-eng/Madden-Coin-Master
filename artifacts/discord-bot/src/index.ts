@@ -28,7 +28,6 @@ import * as myRoster         from "./commands/my-roster.js";
 import * as savings          from "./commands/savings.js";
 import * as weeklyMatchups   from "./commands/weekly-matchups.js";
 import * as standings        from "./commands/standings.js";
-import * as tradeBlock       from "./commands/tradeblock.js";
 import * as h2hrecord        from "./commands/h2hrecord.js";
 import * as customarticle    from "./commands/customarticle.js";
 import * as webhookurl       from "./commands/webhookurl.js";
@@ -159,7 +158,6 @@ if (!isProduction && !devBotEnabled) {
     savings,
     weeklyMatchups,
     standings,
-    tradeBlock,
     h2hrecord,
     customarticle,
     webhookurl,

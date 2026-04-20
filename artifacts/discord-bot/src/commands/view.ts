@@ -11,7 +11,6 @@ import * as userStats          from "./userstats.js";
 import * as viewstore          from "./viewstore.js";
 import * as viewCustomArchetypes from "./viewcustomarchetypes.js";
 import * as viewroster         from "./viewroster.js";
-import * as viewtradeblock     from "./viewtradeblock.js";
 
 import * as statLeaders        from "./statleaders.js";
 import * as viewplayerstats    from "./viewplayerstats.js";
@@ -96,14 +95,6 @@ export const data = new SlashCommandBuilder()
     .addBooleanOption(o => o.setName("public").setDescription("Post publicly in the channel?").setRequired(false))
   )
 
-  // ── tradeBlock ────────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("trade_block")
-    .setDescription("Browse active trade block listings and send offers")
-    .addBooleanOption(o => o.setName("public").setDescription("Show to everyone in this channel?").setRequired(false))
-    .addBooleanOption(o => o.setName("admin").setDescription("Admin mode: show Remove buttons on every listing").setRequired(false))
-  )
-
   // ── rules ─────────────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("rules")
@@ -127,7 +118,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "store")                    return viewstore.execute(interaction);
   if (sub === "custom_player_archetypes") return viewCustomArchetypes.execute(interaction);
   if (sub === "roster")                   return viewroster.execute(interaction);
-  if (sub === "trade_block")              return viewtradeblock.execute(interaction);
   if (sub === "rules")                    return rulesCmd.execute(interaction);
 
   if (sub === "player_stats") {

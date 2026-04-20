@@ -24,7 +24,6 @@ const LINKABLE_KEYS: Record<string, string> = {
   violation_log:    CHANNEL_KEYS.VIOLATION_LOG,
   transactions:     CHANNEL_KEYS.TRANSACTIONS,
   payouts:          CHANNEL_KEYS.PAYOUTS,
-  trade_block:      CHANNEL_KEYS.TRADE_BLOCK,
   stream:           CHANNEL_KEYS.STREAM,
   highlights:       CHANNEL_KEYS.HIGHLIGHTS,
 };
@@ -59,7 +58,6 @@ export const data = new SlashCommandBuilder()
             { name: "violation_log",    value: "violation_log"    },
             { name: "transactions",     value: "transactions"     },
             { name: "payouts",          value: "payouts"          },
-            { name: "trade_block",      value: "trade_block"      },
             { name: "announcements",    value: "announcements"    },
             { name: "welcome",          value: "welcome"          },
             { name: "general",          value: "general"          },

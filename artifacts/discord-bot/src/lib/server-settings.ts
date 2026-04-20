@@ -77,7 +77,6 @@ export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: 
   { key: "devUpgradesEnabled",      label: "Dev Upgrades",       description: "Development upgrade purchases" },
   { key: "ageResetsEnabled",        label: "Age Resets",         description: "Age reset purchases" },
   { key: "wagerEnabled",            label: "Wagers",             description: "Coin wager system" },
-  { key: "tradeBlockEnabled",       label: "Trade Block",        description: "Trade block listings & ISO" },
   { key: "mcaImportEnabled",        label: "MCA Import",         description: "Stat/schedule commands for all users (off = admin-only)" },
   { key: "legacyCoreAttrMode",      label: "Legacy Core Attrs",  description: "Allow multi-point & repeat core upgrades per player (off = strict 1pt/attr/player/season)" },
 ];

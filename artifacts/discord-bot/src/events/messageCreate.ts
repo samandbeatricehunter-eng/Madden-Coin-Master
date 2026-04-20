@@ -758,14 +758,6 @@ There is no payout for CPU losses.
 /standings — Current league standings.
 /statleaders — Leaderboard of top statistical performers.
 
-── TRADE BLOCK ──
-/tradeblock add — Post a player or asset you're willing to trade.
-/tradeblock iso — Post an "In Search Of" — what you're looking for in a trade.
-/tradeblock update — Edit an existing listing.
-/tradeblock remove — Remove a listing. If a deal was reached, you'll be prompted to record the trade details.
-/tradeblock send-offer — Send a trade offer directly to another member's listing.
-/viewtradeblock — Browse all active trade listings and ISOs. Admins have extra options.
-
 ── RECORDS & HISTORY ──
 /recenth2h @user — View recent head-to-head results for a specific user.
 /seasonpr — Season personal records leaderboard.
@@ -1164,11 +1156,6 @@ STORE & INVENTORY:
 - /availableupgrades: Shows remaining limit slots for upgrades this season.
 - Purchases sit as "pending" in the DB until commissioners apply them in MCA and mark them delivered.
 
-TRADE BLOCK:
-- Members post listings (player/asset for trade) or ISOs (in search of).
-- Other members can send offers via /tradeblock send-offer.
-- When a deal is reached and a listing is removed, the user is prompted to record trade details.
-- Commissioners can view all listings and have additional management options.
 
 SEASON ADVANCEMENT:
 - Regular season: weeks 1–18, weekIndex = weekNum-1 (0-based).

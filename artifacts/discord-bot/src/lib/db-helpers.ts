@@ -28,7 +28,6 @@ export const CHANNEL_KEYS = {
   TRANSACTIONS:   "transactions",
   WELCOME:        "welcome",
   ANNOUNCEMENTS:  "announcements",
-  TRADE_BLOCK:    "trade_block",
   STREAM:         "stream",
   HIGHLIGHTS:     "highlights",
 } as const;
@@ -59,12 +58,10 @@ export const KNOWN_GUILD_CHANNELS: Record<string, Partial<Record<string, string>
   // Primary guild (season 3 / old server)
   "1476251181524189438": {
     transactions: "1493360346382209224",
-    trade_block:  "1476321282868908052",   // #general / announcements channel
   },
   // Secondary guild (season 4 / new server)
   "1493688089883971735": {
     transactions: "1494083828866879638",
-    // trade_block: set this via /admin-initialize or add the channel ID here
   },
 };
 
@@ -181,7 +178,7 @@ export const DEFAULT_RULES: Record<string, string[]> = {
     "Fake punts and fake field goals are always allowed.",
   ],
   trade_policy: [
-    "Both Users must submit a trade through the /tradeblock command in-server, if activated, prior to submitting and accepting it in-game.",
+    "Both Users must coordinate a trade in-server prior to submitting and accepting it in-game.",
     "CPU trades are per Commissioner discretion.",
     "Users can use their in-house currency, if it is an active feature, as an added trade mechanism when trading with other users.",
   ],
