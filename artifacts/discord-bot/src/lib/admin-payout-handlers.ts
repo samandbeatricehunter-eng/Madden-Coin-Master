@@ -11,8 +11,9 @@ import {
   h2hMatchupRecordsTable, franchiseProcessedGamesTable,
   globalUserRecordsTable, franchiseScheduleTable,
   franchiseMcaTeamsTable, coinTransactionsTable,
+  seasonStatTierConfigsTable,
 } from "@workspace/db";
-import { eq, and, sql, isNotNull } from "drizzle-orm";
+import { eq, and, sql, isNotNull, isNull } from "drizzle-orm";
 import {
   addBalance, logTransaction, getOrCreateActiveSeason,
   isAdminUser, getGuildChannel, CHANNEL_KEYS, upsertGlobalRecord,
@@ -20,13 +21,21 @@ import {
 } from "./db-helpers.js";
 import {
   getPayoutValue, setPayoutValue, getAllPayoutConfig, getMilestoneTiers,
-  PAYOUT_KEYS, type PayoutKey,
+  PAYOUT_KEYS, MILESTONE_TIER_KEYS, type PayoutKey,
 } from "./payout-config.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import { buildPayoutHubEmbed, buildPayoutHubRows } from "../commands/admin-payout.js";
 import { NFL_DIVISION_MAP } from "./constants.js";
+import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, STAT_CATEGORY_MAP } from "./stat-categories.js";
 
 // ── Session state ─────────────────────────────────────────────────────────────
+interface GameOption {
+  home: string;
+  away: string;
+  homeDiscord: string | null;
+  awayDiscord: string | null;
+}
+
 interface PayoutSession {
   flow: string;
   afcSelected: string[];
@@ -42,7 +51,11 @@ interface PayoutSession {
   currentLoserId?: string;
   step1Data?: Record<string, string>;
   eosKey?: PayoutKey;
+  eosStatCategory?: string;
   milestoneIndex?: number;
+  gameOptions?: GameOption[];
+  correctGameOptions?: Record<string, { gameId: string; winnerId: string | null; loserId: string | null; homeTeam: string | null; awayTeam: string | null }>;
+  potwSelections?: string[];
 }
 
 // Key: `${guildId}:${userId}`
@@ -131,6 +144,15 @@ export async function handleCancel(interaction: ButtonInteraction): Promise<void
   await interaction.update({
     embeds: [buildPayoutHubEmbed()],
     components: buildPayoutHubRows(),
+  });
+}
+
+export async function handleClose(interaction: ButtonInteraction): Promise<void> {
+  const key = sessionKey(interaction.guildId!, interaction.user.id);
+  payoutSessions.delete(key);
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("✖ Hub Closed").setDescription("The Payout Management Hub has been closed.")],
+    components: [],
   });
 }
 
@@ -241,58 +263,124 @@ export async function handleGotwFinalize(interaction: ButtonInteraction): Promis
 }
 
 // ── POTW Winners ──────────────────────────────────────────────────────────────
+async function buildPotwMenu(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  guildId: string,
+  selections: string[],
+): Promise<void> {
+  const season = await getOrCreateActiveSeason(guildId);
+  const currentWeek = (season as any).currentWeek ?? "1";
+  const weekDisplay = weekLabel(currentWeek);
+  const bonus = await getPayoutValue(PAYOUT_KEYS.POTW_BONUS, guildId);
+
+  const selectionText = selections.length === 0
+    ? "*None yet — pick players from the dropdowns below.*"
+    : selections.map((id, i) => `${i + 1}. <@${id}>`).join("\n");
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("🌟 POTW Winners")
+    .setDescription(
+      `**Week:** ${weekDisplay} | **Bonus each:** +${bonus} coins\n\n` +
+      "Pick **one player at a time** from the AFC or NFC dropdown. " +
+      "Use **↩️ Remove Last** to undo. Finalize when done."
+    )
+    .addFields({ name: "Current Selections", value: selectionText.slice(0, 1024) });
+
+  const confRows = await buildConferenceSelectRows(guildId, "ap_potw", [], [], 1);
+
+  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ap_potw_finalize").setLabel("✅ Finalize Payouts").setStyle(ButtonStyle.Success).setDisabled(selections.length === 0),
+    new ButtonBuilder().setCustomId("ap_potw_back").setLabel("↩️ Remove Last").setStyle(ButtonStyle.Secondary).setDisabled(selections.length === 0),
+    new ButtonBuilder().setCustomId("ap_cancel").setLabel("❌ Cancel").setStyle(ButtonStyle.Danger),
+  );
+
+  await interaction.update({
+    embeds: [embed],
+    components: [...confRows, btnRow],
+  });
+}
+
 export async function handlePotw(interaction: ButtonInteraction): Promise<void> {
   if (!await checkAdmin(interaction)) {
     await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return;
   }
-  const modal = new ModalBuilder()
-    .setCustomId("ap_modal_potw")
-    .setTitle("POTW Winners");
-  const fields = [1,2,3,4].map(i =>
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId(`user${i}`)
-        .setLabel(`Player ${i} (paste @mention or user ID)`)
-        .setStyle(TextInputStyle.Short)
-        .setRequired(i === 1)
-        .setMaxLength(30)
-    )
-  );
-  modal.addComponents(...fields);
-  await interaction.showModal(modal);
+  const guildId = interaction.guildId!;
+  const key = sessionKey(guildId, interaction.user.id);
+  payoutSessions.set(key, { flow: "potw", afcSelected: [], nfcSelected: [], potwSelections: [] });
+  await buildPotwMenu(interaction, guildId, []);
 }
 
-export async function handlePotwModal(interaction: ModalSubmitInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-
-  const ids: string[] = [];
-  for (let i = 1; i <= 4; i++) {
-    const raw = interaction.fields.getTextInputValue(`user${i}`).trim();
-    if (!raw) continue;
-    const match = raw.match(/<?@?!?(\d{17,20})>?/);
-    if (match?.[1]) ids.push(match[1]);
+export async function handlePotwSelectAfc(interaction: StringSelectMenuInteraction): Promise<void> {
+  const key = sessionKey(interaction.guildId!, interaction.user.id);
+  const session = payoutSessions.get(key);
+  if (!session || session.flow !== "potw") { await interaction.deferUpdate(); return; }
+  if (!session.potwSelections) session.potwSelections = [];
+  const selected = interaction.values[0];
+  if (selected) {
+    const count = session.potwSelections.filter(id => id === selected).length;
+    if (count >= 2) {
+      await interaction.reply({ content: `⚠️ <@${selected}> has already been selected twice. Choose someone else or finalize.`, ephemeral: true });
+      return;
+    }
+    session.potwSelections.push(selected);
   }
+  await buildPotwMenu(interaction, interaction.guildId!, session.potwSelections);
+}
 
-  if (ids.length === 0) {
-    await interaction.editReply({ content: "❌ No valid user IDs found. Paste @mentions or Discord IDs." }); return;
+export async function handlePotwSelectNfc(interaction: StringSelectMenuInteraction): Promise<void> {
+  const key = sessionKey(interaction.guildId!, interaction.user.id);
+  const session = payoutSessions.get(key);
+  if (!session || session.flow !== "potw") { await interaction.deferUpdate(); return; }
+  if (!session.potwSelections) session.potwSelections = [];
+  const selected = interaction.values[0];
+  if (selected) {
+    const count = session.potwSelections.filter(id => id === selected).length;
+    if (count >= 2) {
+      await interaction.reply({ content: `⚠️ <@${selected}> has already been selected twice. Choose someone else or finalize.`, ephemeral: true });
+      return;
+    }
+    session.potwSelections.push(selected);
   }
+  await buildPotwMenu(interaction, interaction.guildId!, session.potwSelections);
+}
 
-  const bonus = await getPayoutValue(PAYOUT_KEYS.POTW_BONUS, interaction.guildId!);
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const currentWeek = (season as any).currentWeek ?? "1";
-  const weekDisplay = weekLabel(currentWeek);
+export async function handlePotwBack(interaction: ButtonInteraction): Promise<void> {
+  const key = sessionKey(interaction.guildId!, interaction.user.id);
+  const session = payoutSessions.get(key);
+  if (!session || session.flow !== "potw") { await interaction.deferUpdate(); return; }
+  if (!session.potwSelections) session.potwSelections = [];
+  session.potwSelections.pop();
+  await buildPotwMenu(interaction, interaction.guildId!, session.potwSelections);
+}
+
+export async function handlePotwFinalize(interaction: ButtonInteraction): Promise<void> {
+  const key = sessionKey(interaction.guildId!, interaction.user.id);
+  const session = payoutSessions.get(key);
+  if (!session || session.flow !== "potw") { await interaction.deferUpdate(); return; }
+  const selections = session.potwSelections ?? [];
+  if (selections.length === 0) {
+    await interaction.reply({ content: "❌ No players selected.", ephemeral: true }); return;
+  }
+  await interaction.deferUpdate();
+
+  const guildId = interaction.guildId!;
+  const bonus = await getPayoutValue(PAYOUT_KEYS.POTW_BONUS, guildId);
+  const season = await getOrCreateActiveSeason(guildId);
+  const weekDisplay = weekLabel((season as any).currentWeek ?? "1");
 
   const lines: string[] = [];
-  for (const uid of ids) {
+  for (const uid of selections) {
     const discordUser = await interaction.client.users.fetch(uid).catch(() => null);
     if (!discordUser) { lines.push(`⚠️ Could not find user \`${uid}\``); continue; }
-    await getOrCreateUser(uid, discordUser.username, interaction.guildId!);
-    await addBalance(uid, bonus, interaction.guildId!);
-    await logTransaction(uid, bonus, "addcoins", `Player of the Week bonus — ${weekDisplay}`, interaction.guildId!, interaction.user.id);
+    await getOrCreateUser(uid, discordUser.username, guildId);
+    await addBalance(uid, bonus, guildId);
+    await logTransaction(uid, bonus, "addcoins", `Player of the Week bonus — ${weekDisplay}`, guildId, interaction.user.id);
     lines.push(`✅ <@${uid}> → +**${bonus} coins**`);
-    await discordUser.send(`🌟 You've been named **Player of the Week** for ${weekDisplay}!\n**+${bonus} coins** have been added to your balance. Keep balling out! 🏈`).catch(() => {});
+    await discordUser.send(`🌟 You've been named **Player of the Week** for ${weekDisplay}!\n**+${bonus} coins** added to your balance. Keep balling out! 🏈`).catch(() => {});
   }
 
+  payoutSessions.delete(key);
   await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Gold)
@@ -300,11 +388,18 @@ export async function handlePotwModal(interaction: ModalSubmitInteraction): Prom
       .addFields(
         { name: "Week", value: weekDisplay, inline: true },
         { name: "Bonus Each", value: `+${bonus} coins`, inline: true },
-        { name: "Recipients", value: lines.join("\n") },
+        { name: "Recipients", value: lines.join("\n") || "None" },
       )
       .setFooter({ text: `Issued by ${interaction.user.username}` })
       .setTimestamp()],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ap_cancel").setLabel("Back to Hub").setStyle(ButtonStyle.Secondary)
+    )],
   });
+}
+
+export async function handlePotwModal(_interaction: ModalSubmitInteraction): Promise<void> {
+  await _interaction.reply({ content: "❌ This flow is no longer used.", ephemeral: true });
 }
 
 // ── Add/Remove Coins (shared flow) ─────────────────────────────────────────────
@@ -555,6 +650,23 @@ export async function handleTransferModal(interaction: ModalSubmitInteraction): 
   });
 }
 
+// ── Playoff weekIndex helpers ─────────────────────────────────────────────────
+const PLAYOFF_WEEK_IDX: Record<string, number> = {
+  wildcard: 1018, divisional: 1019, conference: 1020, superbowl: 1022,
+};
+const PLAYOFF_LABELS_MAP: Record<number, string> = {
+  1018: "Wild Card", 1019: "Divisional", 1020: "Conference Championship", 1022: "Super Bowl",
+};
+function resolveWeekIndex(currentWeek: string): number {
+  const po = PLAYOFF_WEEK_IDX[currentWeek.toLowerCase()];
+  if (po !== undefined) return po;
+  const n = parseInt(currentWeek, 10);
+  return isNaN(n) ? 0 : n - 1;
+}
+function weekIndexLabel(idx: number): string {
+  return PLAYOFF_LABELS_MAP[idx] ?? `Week ${idx + 1}`;
+}
+
 // ── Issue Game Payout ─────────────────────────────────────────────────────────
 export async function handleGame(interaction: ButtonInteraction): Promise<void> {
   if (!await checkAdmin(interaction)) {
@@ -563,14 +675,14 @@ export async function handleGame(interaction: ButtonInteraction): Promise<void> 
 
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
-  const currentWeek = (season as any).currentWeek ?? "1";
-  const weekIdx = parseInt(currentWeek, 10) - 1;
+  const currentWeek = String((season as any).currentWeek ?? "1");
+  const weekIdx = resolveWeekIndex(currentWeek);
 
   const games = await db.select()
     .from(franchiseScheduleTable)
     .where(and(
       eq(franchiseScheduleTable.seasonId, season.id),
-      eq(franchiseScheduleTable.weekIndex, isNaN(weekIdx) ? 0 : weekIdx),
+      eq(franchiseScheduleTable.weekIndex, weekIdx),
     ));
 
   if (games.length === 0) {
@@ -598,24 +710,28 @@ export async function handleGame(interaction: ButtonInteraction): Promise<void> 
   }
 
   const key = sessionKey(guildId, interaction.user.id);
-  payoutSessions.set(key, { flow: "game", afcSelected: [], nfcSelected: [] });
-
-  const options = games.slice(0, 25).map(g => {
+  const gameOpts: GameOption[] = games.slice(0, 25).map(g => {
     const homeLabel = g.homeTeamName ?? "Home";
     const awayLabel = g.awayTeamName ?? "Away";
-    return new StringSelectMenuOptionBuilder()
-      .setLabel(`${awayLabel} @ ${homeLabel}`)
-      .setValue(JSON.stringify({
-        home: homeLabel,
-        away: awayLabel,
-        homeDiscord: teamToDiscord.get(homeLabel.toLowerCase()) ?? null,
-        awayDiscord: teamToDiscord.get(awayLabel.toLowerCase()) ?? null,
-      }));
+    return {
+      home: homeLabel,
+      away: awayLabel,
+      homeDiscord: teamToDiscord.get(homeLabel.toLowerCase()) ?? null,
+      awayDiscord: teamToDiscord.get(awayLabel.toLowerCase()) ?? null,
+    };
   });
+  payoutSessions.set(key, { flow: "game", afcSelected: [], nfcSelected: [], gameOptions: gameOpts });
 
+  const options = gameOpts.map((g, i) =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(`${g.away} @ ${g.home}`.slice(0, 100))
+      .setValue(String(i))
+  );
+
+  const wkDisplay = weekIndexLabel(weekIdx);
   const select = new StringSelectMenuBuilder()
     .setCustomId("ap_game_select")
-    .setPlaceholder(`Week ${currentWeek} matchups — pick one`)
+    .setPlaceholder(`${wkDisplay} matchups — pick one`)
     .setMinValues(1).setMaxValues(1)
     .addOptions(options);
 
@@ -623,7 +739,7 @@ export async function handleGame(interaction: ButtonInteraction): Promise<void> 
     embeds: [new EmbedBuilder()
       .setColor(0x2d6a4f)
       .setTitle("🏈 Issue Game Payout")
-      .setDescription(`Select the **Week ${currentWeek}** matchup to issue a payout for.`)],
+      .setDescription(`Select the **${wkDisplay}** matchup to issue a payout for.`)],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -638,8 +754,9 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
   const session = payoutSessions.get(key);
   if (!session || session.flow !== "game") { await interaction.deferUpdate(); return; }
 
-  let matchup: { home: string; away: string; homeDiscord: string | null; awayDiscord: string | null };
-  try { matchup = JSON.parse(interaction.values[0]!); } catch { await interaction.deferUpdate(); return; }
+  const idx = parseInt(interaction.values[0]!, 10);
+  const matchup = session.gameOptions?.[idx];
+  if (!matchup) { await interaction.deferUpdate(); return; }
 
   session.homeTeam      = matchup.home;
   session.awayTeam      = matchup.away;
@@ -966,6 +1083,8 @@ export async function handleGameModalCpuWins(interaction: ModalSubmitInteraction
 }
 
 // ── Correct Game Payout ────────────────────────────────────────────────────────
+const NULL_WEEK_SENTINEL = -999;
+
 export async function handleCorrect(interaction: ButtonInteraction): Promise<void> {
   if (!await checkAdmin(interaction)) {
     await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return;
@@ -979,8 +1098,11 @@ export async function handleCorrect(interaction: ButtonInteraction): Promise<voi
   }).from(franchiseProcessedGamesTable)
     .where(eq(franchiseProcessedGamesTable.seasonIdRef, season.id));
 
-  const weekIndices = [...new Set(processedGames.map(g => g.weekIndexRef).filter(w => w != null))] as number[];
-  weekIndices.sort((a, b) => a - b);
+  const weekSet = new Set<number>();
+  for (const g of processedGames) {
+    weekSet.add(g.weekIndexRef ?? NULL_WEEK_SENTINEL);
+  }
+  const weekIndices = [...weekSet].sort((a, b) => a - b);
 
   if (weekIndices.length === 0) {
     await interaction.update({
@@ -992,8 +1114,10 @@ export async function handleCorrect(interaction: ButtonInteraction): Promise<voi
     return;
   }
 
-  const PLAYOFF_LABELS: Record<number, string> = { 1018: "Wild Card", 1019: "Divisional", 1020: "Conference Championship", 1022: "Super Bowl" };
-  function wkLabel(idx: number): string { return PLAYOFF_LABELS[idx] ?? `Week ${idx + 1}`; }
+  function wkLabel(idx: number): string {
+    if (idx === NULL_WEEK_SENTINEL) return "Unknown / Pre-Hub Games";
+    return PLAYOFF_LABELS_MAP[idx] ?? `Week ${idx + 1}`;
+  }
 
   const key = sessionKey(guildId, interaction.user.id);
   payoutSessions.set(key, { flow: "correct", afcSelected: [], nfcSelected: [] });
@@ -1028,32 +1152,43 @@ export async function handleCorrectWeekSelect(interaction: StringSelectMenuInter
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
 
-  const games = await db.select()
-    .from(franchiseProcessedGamesTable)
-    .where(and(
-      eq(franchiseProcessedGamesTable.seasonIdRef, season.id),
-      eq(franchiseProcessedGamesTable.weekIndexRef, weekIndex),
-    ));
+  const whereClause = weekIndex === NULL_WEEK_SENTINEL
+    ? and(eq(franchiseProcessedGamesTable.seasonIdRef, season.id), isNull(franchiseProcessedGamesTable.weekIndexRef))
+    : and(eq(franchiseProcessedGamesTable.seasonIdRef, season.id), eq(franchiseProcessedGamesTable.weekIndexRef, weekIndex));
 
-  if (games.length === 0) { await interaction.deferUpdate(); return; }
+  const games = await db.select().from(franchiseProcessedGamesTable).where(whereClause);
 
-  const PLAYOFF_LABELS: Record<number, string> = { 1018: "Wild Card", 1019: "Divisional", 1020: "Conference Championship", 1022: "Super Bowl" };
-  function wkLabel(idx: number): string { return PLAYOFF_LABELS[idx] ?? `Week ${idx + 1}`; }
+  if (games.length === 0) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Games Found").setDescription("No games found for this week.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ap_cancel").setLabel("Back").setStyle(ButtonStyle.Secondary)
+      )],
+    });
+    return;
+  }
 
-  const options = games.slice(0, 25).map(g => {
+  function wkLabel(idx: number): string {
+    if (idx === NULL_WEEK_SENTINEL) return "Unknown / Pre-Hub";
+    return PLAYOFF_LABELS_MAP[idx] ?? `Week ${idx + 1}`;
+  }
+
+  const gameMap: Record<string, { gameId: string; winnerId: string | null; loserId: string | null; homeTeam: string | null; awayTeam: string | null }> = {};
+  const options = games.slice(0, 25).map((g, i) => {
+    const shortKey = String(i);
+    gameMap[shortKey] = {
+      gameId: g.gameId,
+      winnerId: g.winnerDiscordId,
+      loserId: g.loserDiscordId,
+      homeTeam: g.homeTeamRef,
+      awayTeam: g.awayTeamRef,
+    };
     const label = g.homeTeamRef && g.awayTeamRef
       ? `${g.awayTeamRef} @ ${g.homeTeamRef}`
-      : g.gameId;
-    return new StringSelectMenuOptionBuilder()
-      .setLabel(label.slice(0, 100))
-      .setValue(JSON.stringify({
-        gameId: g.gameId,
-        winnerId: g.winnerDiscordId,
-        loserId: g.loserDiscordId,
-        homeTeam: g.homeTeamRef,
-        awayTeam: g.awayTeamRef,
-      }));
+      : g.gameId.slice(0, 80);
+    return new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setValue(shortKey);
   });
+  session.correctGameOptions = gameMap;
 
   const select = new StringSelectMenuBuilder()
     .setCustomId("ap_correct_game")
@@ -1077,8 +1212,9 @@ export async function handleCorrectGameSelect(interaction: StringSelectMenuInter
   const session = payoutSessions.get(key);
   if (!session || session.flow !== "correct") { await interaction.deferUpdate(); return; }
 
-  let data: { gameId: string; winnerId: string | null; loserId: string | null; homeTeam: string | null; awayTeam: string | null };
-  try { data = JSON.parse(interaction.values[0]!); } catch { await interaction.deferUpdate(); return; }
+  const shortKey = interaction.values[0]!;
+  const data = session.correctGameOptions?.[shortKey];
+  if (!data) { await interaction.deferUpdate(); return; }
 
   session.selectedGameId  = data.gameId;
   session.currentWinnerId = data.winnerId ?? undefined;
@@ -1280,26 +1416,29 @@ export async function handleSetPay(interaction: ButtonInteraction): Promise<void
       .setTitle("⚙️ Set Game Payouts")
       .setDescription(
         "Choose which payout set to configure.\n\n" +
-        "**Playoffs** has two parts — open each independently:\n" +
-        "• **Playoff Part 1** — H2H win/loss/CPU, Wild Card bonus, Divisional bonus\n" +
-        "• **Playoff Part 2** — Conference bonuses, Super Bowl bonuses, Highlight cap"
+        "• **Regular Season** — H2H win/loss, CPU win, Highlight payout/cap\n" +
+        "• **Channel Payouts** — Stream payout per side\n" +
+        "• **Playoffs Part 1** — H2H win/loss/CPU, Wild Card bonus, Divisional bonus\n" +
+        "• **Playoffs Part 2** — Conference bonuses, Super Bowl bonuses, Playoff Highlight payout"
       )],
-    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ap_setpay_reg").setLabel("Regular Season").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ap_setpay_po1_btn").setLabel("Playoffs Part 1").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ap_setpay_po2_btn").setLabel("Playoffs Part 2").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ap_cancel").setLabel("Cancel").setStyle(ButtonStyle.Danger),
-    )],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ap_setpay_reg").setLabel("Regular Season").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ap_setpay_channel").setLabel("Channel Payouts").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ap_setpay_po1_btn").setLabel("Playoffs Part 1").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ap_setpay_po2_btn").setLabel("Playoffs Part 2").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ap_cancel").setLabel("Cancel").setStyle(ButtonStyle.Danger),
+      ),
+    ],
   });
 }
 
 export async function handleSetPayReg(interaction: ButtonInteraction): Promise<void> {
   const guildId = interaction.guildId!;
-  const [h2hWin, h2hLoss, cpuWin, streams, highlights, highlightCap] = await Promise.all([
+  const [h2hWin, h2hLoss, cpuWin, highlights, highlightCap] = await Promise.all([
     getPayoutValue(PAYOUT_KEYS.H2H_WIN, guildId),
     getPayoutValue(PAYOUT_KEYS.H2H_LOSS, guildId),
     getPayoutValue(PAYOUT_KEYS.CPU_WIN, guildId),
-    getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT, guildId),
     getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_PAYOUT, guildId),
     getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT, guildId),
   ]);
@@ -1308,8 +1447,8 @@ export async function handleSetPayReg(interaction: ButtonInteraction): Promise<v
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("h2h_win").setLabel(`H2H Win (current: ${h2hWin})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(h2hWin))),
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("h2h_loss").setLabel(`H2H Loss (current: ${h2hLoss})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(h2hLoss))),
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("cpu_win").setLabel(`CPU Win (current: ${cpuWin})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(cpuWin))),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("streams").setLabel(`Stream Payout (current: ${streams})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(streams))),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("highlights").setLabel(`Highlight Payout (current: ${highlights}) | Cap: ${highlightCap}`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(`e.g. ${highlights} (highlight payout)`)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("highlights").setLabel(`Highlight Payout per video (current: ${highlights})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(highlights))),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("highlight_cap").setLabel(`Highlight Weekly Cap (current: ${highlightCap})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(2).setPlaceholder(String(highlightCap))),
   );
   await interaction.showModal(modal);
 }
@@ -1321,11 +1460,11 @@ export async function handleSetPayRegModal(interaction: ModalSubmitInteraction):
   const changes: string[] = [];
 
   const pairs: [string, PayoutKey][] = [
-    ["h2h_win", PAYOUT_KEYS.H2H_WIN],
-    ["h2h_loss", PAYOUT_KEYS.H2H_LOSS],
-    ["cpu_win", PAYOUT_KEYS.CPU_WIN],
-    ["streams", PAYOUT_KEYS.STREAM_PAYOUT],
-    ["highlights", PAYOUT_KEYS.HIGHLIGHT_PAYOUT],
+    ["h2h_win",       PAYOUT_KEYS.H2H_WIN],
+    ["h2h_loss",      PAYOUT_KEYS.H2H_LOSS],
+    ["cpu_win",       PAYOUT_KEYS.CPU_WIN],
+    ["highlights",    PAYOUT_KEYS.HIGHLIGHT_PAYOUT],
+    ["highlight_cap", PAYOUT_KEYS.HIGHLIGHT_LIMIT],
   ];
   for (const [field, pk] of pairs) {
     const raw = interaction.fields.getTextInputValue(field).trim();
@@ -1333,13 +1472,9 @@ export async function handleSetPayRegModal(interaction: ModalSubmitInteraction):
     const val = parseInt(raw, 10);
     if (!isNaN(val) && val >= 0) {
       await setPayoutValue(pk, val, adminId, guildId);
-      changes.push(`✅ ${field.replace("_"," ")} → **${val} coins**`);
+      changes.push(`✅ ${field.replace(/_/g," ")} → **${val}${field === "highlight_cap" ? " videos/wk" : " coins"}**`);
     }
   }
-  // Show second step for highlight cap
-  const key = sessionKey(guildId, interaction.user.id);
-  const session = payoutSessions.get(key);
-  if (session) session.step1Data = Object.fromEntries(pairs.map(([f]) => [f, interaction.fields.getTextInputValue(f)]));
 
   await interaction.editReply({
     embeds: [new EmbedBuilder()
@@ -1347,17 +1482,45 @@ export async function handleSetPayRegModal(interaction: ModalSubmitInteraction):
       .setDescription(changes.length > 0 ? changes.join("\n") : "No changes made (all fields left blank).")
       .setFooter({ text: `By ${interaction.user.username}` }).setTimestamp()],
   });
+}
 
-  // Show highlight cap follow-up
-  const capModal = new ModalBuilder().setCustomId("ap_modal_setpay_highlightcap").setTitle("Highlight Weekly Cap");
-  const currentCap = await getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT, guildId);
-  capModal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder().setCustomId("cap").setLabel(`Highlight videos paid per week (current: ${currentCap})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(2).setPlaceholder(String(currentCap))
-    ),
+export async function handleSetPayChannel(interaction: ButtonInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const [stream, poHighlight] = await Promise.all([
+    getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT, guildId),
+    getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT, guildId),
+  ]);
+  const modal = new ModalBuilder().setCustomId("ap_modal_setpay_channel").setTitle("Channel Activity Payouts");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("stream").setLabel(`Stream Payout per side (current: ${stream})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(stream))),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("po_highlight").setLabel(`Playoff Highlight Payout (current: ${poHighlight})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4).setPlaceholder(String(poHighlight))),
   );
-  // Can't show a modal after deferred reply — just inform
-  await interaction.followUp({ content: "💡 To set the **Highlight Weekly Cap**, click **Set Game Payouts** → **Regular Season** again and enter the cap value separately if needed.", ephemeral: true }).catch(() => {});
+  await interaction.showModal(modal);
+}
+
+export async function handleSetPayChannelModal(interaction: ModalSubmitInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const guildId = interaction.guildId!;
+  const changes: string[] = [];
+  const pairs: [string, PayoutKey][] = [
+    ["stream",       PAYOUT_KEYS.STREAM_PAYOUT],
+    ["po_highlight", PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT],
+  ];
+  for (const [field, pk] of pairs) {
+    const raw = interaction.fields.getTextInputValue(field).trim();
+    if (!raw) continue;
+    const val = parseInt(raw, 10);
+    if (!isNaN(val) && val >= 0) {
+      await setPayoutValue(pk, val, interaction.user.id, guildId);
+      changes.push(`✅ ${field.replace(/_/g," ")} → **${val} coins**`);
+    }
+  }
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Green).setTitle("✅ Channel Payouts Updated")
+      .setDescription(changes.length > 0 ? changes.join("\n") : "No changes made.")
+      .setFooter({ text: `By ${interaction.user.username}` }).setTimestamp()],
+  });
 }
 
 export async function handleSetPayHighlightCapModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -1399,12 +1562,12 @@ export async function handleSetPayPo1Btn(interaction: ButtonInteraction): Promis
 
 export async function handleSetPayPo2Btn(interaction: ButtonInteraction): Promise<void> {
   const guildId = interaction.guildId!;
-  const [confWin, confRU, sbWin, sbRU, hlCap] = await Promise.all([
-    getPayoutValue(PAYOUT_KEYS.CONFERENCE_WIN_BONUS,  guildId),
-    getPayoutValue(PAYOUT_KEYS.CONFERENCE_RUNNER_UP,  guildId),
-    getPayoutValue(PAYOUT_KEYS.SUPERBOWL_WIN_BONUS,   guildId),
-    getPayoutValue(PAYOUT_KEYS.SUPERBOWL_RUNNER_UP,   guildId),
-    getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT,       guildId),
+  const [confWin, confRU, sbWin, sbRU, poHighlight] = await Promise.all([
+    getPayoutValue(PAYOUT_KEYS.CONFERENCE_WIN_BONUS,      guildId),
+    getPayoutValue(PAYOUT_KEYS.CONFERENCE_RUNNER_UP,      guildId),
+    getPayoutValue(PAYOUT_KEYS.SUPERBOWL_WIN_BONUS,       guildId),
+    getPayoutValue(PAYOUT_KEYS.SUPERBOWL_RUNNER_UP,       guildId),
+    getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT,  guildId),
   ]);
   const modal = new ModalBuilder().setCustomId("ap_modal_setpay_po2").setTitle("Playoff Payouts — Part 2");
   modal.addComponents(
@@ -1412,7 +1575,7 @@ export async function handleSetPayPo2Btn(interaction: ButtonInteraction): Promis
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("conf_runnerup").setLabel(`Conference Runner-Up (current: ${confRU})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("sb_win").setLabel(`Super Bowl Winner (current: ${sbWin})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("sb_runnerup").setLabel(`Super Bowl Runner-Up (current: ${sbRU})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("highlight_cap").setLabel(`Playoff Highlight Cap (current: ${hlCap})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(2)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("po_highlight").setLabel(`Playoff Highlight Payout per video (current: ${poHighlight})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
   );
   await interaction.showModal(modal);
 }
@@ -1456,7 +1619,7 @@ export async function handleSetPayPo2Modal(interaction: ModalSubmitInteraction):
     ["conf_runnerup", PAYOUT_KEYS.CONFERENCE_RUNNER_UP],
     ["sb_win",        PAYOUT_KEYS.SUPERBOWL_WIN_BONUS],
     ["sb_runnerup",   PAYOUT_KEYS.SUPERBOWL_RUNNER_UP],
-    ["highlight_cap", PAYOUT_KEYS.HIGHLIGHT_LIMIT],
+    ["po_highlight",  PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT],
   ];
   for (const [field, pk] of po2Pairs) {
     const raw = interaction.fields.getTextInputValue(field).trim();
@@ -1555,64 +1718,143 @@ export async function handlePotwBonusModal(interaction: ModalSubmitInteraction):
 
 // ── Set EOS Payouts & Tiers ────────────────────────────────────────────────────
 const EOS_PAYOUT_KEYS: Array<{ key: PayoutKey; label: string }> = [
-  { key: PAYOUT_KEYS.AWARD_WIN_BONUS,    label: "Award Win Bonus (per team with award winner)" },
-  { key: PAYOUT_KEYS.SEASON_PR_1,        label: "Season PR #1 Bonus" },
-  { key: PAYOUT_KEYS.SEASON_PR_2,        label: "Season PR #2 Bonus" },
-  { key: PAYOUT_KEYS.SEASON_PR_3_6,      label: "Season PR #3–6 Bonus" },
-  { key: PAYOUT_KEYS.SEASON_PR_7_8,      label: "Season PR #7–8 Bonus" },
-  { key: PAYOUT_KEYS.SEASON_PR_9_10,     label: "Season PR #9–10 Bonus" },
-  { key: PAYOUT_KEYS.GOTY_WINNER,        label: "GOTY Award Winner Bonus" },
-  { key: PAYOUT_KEYS.EOS_RB_YPC_BONUS,   label: "EOS Top RB YPC Bonus" },
-  { key: PAYOUT_KEYS.EOS_QB_YPA_BONUS,   label: "EOS Top QB YPA Bonus" },
-  { key: PAYOUT_KEYS.EOS_DB_INT_BONUS,   label: "EOS DB 8+ INT Bonus" },
-  { key: PAYOUT_KEYS.EOS_QB_MIN_ATT,     label: "EOS QB Min Pass Attempts (threshold, not coins)" },
-  { key: PAYOUT_KEYS.EOS_RB_MIN_ATT,     label: "EOS RB Min Rush Attempts (threshold, not coins)" },
-  { key: PAYOUT_KEYS.EOS_QB_MIN_YPA,     label: "EOS QB Min YPA ×10 (e.g. 85 = 8.5)" },
-  { key: PAYOUT_KEYS.EOS_RB_MIN_YPC,     label: "EOS RB Min YPC ×10 (e.g. 70 = 7.0)" },
-  { key: PAYOUT_KEYS.EOS_DB_MIN_INTS,    label: "EOS DB Min INT Count" },
+  { key: PAYOUT_KEYS.SEASON_PR_1,         label: "Season PR #1 Bonus" },
+  { key: PAYOUT_KEYS.SEASON_PR_2,         label: "Season PR #2 Bonus" },
+  { key: PAYOUT_KEYS.SEASON_PR_3_6,       label: "Season PR #3–6 Bonus" },
+  { key: PAYOUT_KEYS.SEASON_PR_7_8,       label: "Season PR #7–8 Bonus" },
+  { key: PAYOUT_KEYS.SEASON_PR_9_10,      label: "Season PR #9–10 Bonus" },
+  { key: PAYOUT_KEYS.EOS_RB_YPC_BONUS,    label: "EOS Top RB YPC Bonus" },
+  { key: PAYOUT_KEYS.EOS_QB_YPA_BONUS,    label: "EOS Top QB YPA Bonus" },
+  { key: PAYOUT_KEYS.EOS_DB_INT_BONUS,    label: "EOS DB Individual INT Bonus" },
+  { key: PAYOUT_KEYS.EOS_QB_MIN_ATT,      label: "EOS QB Min Pass Attempts (threshold)" },
+  { key: PAYOUT_KEYS.EOS_RB_MIN_ATT,      label: "EOS RB Min Rush Attempts (threshold)" },
+  { key: PAYOUT_KEYS.EOS_QB_MIN_YPA,      label: "EOS QB Min YPA ×10 (e.g. 85 = 8.5)" },
+  { key: PAYOUT_KEYS.EOS_RB_MIN_YPC,      label: "EOS RB Min YPC ×10 (e.g. 70 = 7.0)" },
+  { key: PAYOUT_KEYS.EOS_DB_MIN_INTS,     label: "EOS DB Min INT Count" },
   { key: PAYOUT_KEYS.EOS_MISSED_PLAYOFFS, label: "Missed Playoffs Consolation" },
 ];
+
+const EOS_STAT_TIER_PREFIX = "stat_tier:";
 
 export async function handleEos(interaction: ButtonInteraction): Promise<void> {
   if (!await checkAdmin(interaction)) { await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return; }
 
   const guildId = interaction.guildId!;
   const config  = await getAllPayoutConfig(guildId);
+  const season  = await getOrCreateActiveSeason(guildId);
 
-  const description = EOS_PAYOUT_KEYS.map(({ key, label }) =>
+  const statTierRows = await db.select()
+    .from(seasonStatTierConfigsTable)
+    .where(eq(seasonStatTierConfigsTable.seasonId, season.id));
+
+  const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
+  for (const row of statTierRows) {
+    let arr = tiersByCategory.get(row.statCategory);
+    if (!arr) { arr = []; tiersByCategory.set(row.statCategory, arr); }
+    arr.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
+  }
+
+  const flatBlock = EOS_PAYOUT_KEYS.map(({ key, label }) =>
     `**${label}**: ${config.get(key) ?? 0}`
   ).join("\n");
 
+  const tierBlock = STAT_CATEGORIES.map(cat => {
+    const tiers = (tiersByCategory.get(cat.key) ?? []).sort((a, b) => a.tier - b.tier);
+    const op = cat.direction === "higher" ? "≥" : "≤";
+    const tierStr = tiers.length > 0
+      ? tiers.map(t => `T${t.tier}:${op}${t.threshold}→${t.payout}🪙`).join(" ")
+      : "*(defaults not seeded)*";
+    return `**${cat.label}**: ${tierStr}`;
+  }).join("\n");
+
+  const flatOptions = EOS_PAYOUT_KEYS.map(({ key, label }) =>
+    new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setValue(key)
+  );
+  const tierOptions = STAT_CATEGORIES.map(cat =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(`📊 ${cat.label} (tiered)`.slice(0, 100))
+      .setDescription(`${cat.direction === "higher" ? "Higher" : "Lower"} = better (${cat.unit})`)
+      .setValue(`${EOS_STAT_TIER_PREFIX}${cat.key}`)
+  );
+  const allOptions = [...flatOptions, ...tierOptions].slice(0, 25);
+
   const select = new StringSelectMenuBuilder()
     .setCustomId("ap_eos_key")
-    .setPlaceholder("Select a payout/tier to edit…")
+    .setPlaceholder("Select a payout or stat-tier category to edit…")
     .setMinValues(1).setMaxValues(1)
-    .addOptions(EOS_PAYOUT_KEYS.map(({ key, label }) =>
-      new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setValue(key)
-    ));
+    .addOptions(allOptions);
 
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x2d6a4f)
       .setTitle("📊 EOS Payouts & Tiers")
-      .setDescription(description.slice(0, 4000))],
+      .addFields(
+        { name: "Flat Payouts", value: flatBlock.slice(0, 1024) },
+        { name: "Stat Tier Categories (this season)", value: tierBlock.slice(0, 1024) },
+      )],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ap_cancel").setLabel("Cancel").setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId("ap_cancel").setLabel("Back to Hub").setStyle(ButtonStyle.Secondary)
       ),
     ],
   });
 }
 
 export async function handleEosKeySelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const key = interaction.values[0] as PayoutKey;
-  const current = await getPayoutValue(key, interaction.guildId!);
-  const meta = EOS_PAYOUT_KEYS.find(e => e.key === key);
-
+  const value = interaction.values[0]!;
   const sessionK = sessionKey(interaction.guildId!, interaction.user.id);
   let session = payoutSessions.get(sessionK);
   if (!session) session = { flow: "eos", afcSelected: [], nfcSelected: [] };
+
+  if (value.startsWith(EOS_STAT_TIER_PREFIX)) {
+    const catKey = value.slice(EOS_STAT_TIER_PREFIX.length);
+    const cat = STAT_CATEGORY_MAP.get(catKey);
+    if (!cat) { await interaction.deferUpdate(); return; }
+
+    session.eosStatCategory = catKey;
+    payoutSessions.set(sessionK, session);
+
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
+    const existingRows = await db.select()
+      .from(seasonStatTierConfigsTable)
+      .where(and(
+        eq(seasonStatTierConfigsTable.seasonId, season.id),
+        eq(seasonStatTierConfigsTable.statCategory, catKey),
+      ));
+    const existingByTier = new Map(existingRows.map(r => [r.tier, r]));
+
+    const defaults = STAT_TIER_DEFAULTS[catKey] ?? [];
+    const op = cat.direction === "higher" ? "≥" : "≤";
+
+    const getRow = (tier: number) => existingByTier.get(tier) ?? defaults[tier - 1];
+    const t = (n: number) => { const r = getRow(n); return r ? `${r.threshold}/${r.payout}` : ""; };
+
+    const modal = new ModalBuilder()
+      .setCustomId("ap_modal_eos_stat_tier")
+      .setTitle(`Stat Tiers: ${cat.label.slice(0, 30)}`);
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("t1").setLabel(`Tier 1 (worst) — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(1))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("t2").setLabel(`Tier 2 — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(2))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("t3").setLabel(`Tier 3 — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(3))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("t4").setLabel(`Tier 4 (best) — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(4))
+      ),
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  const key = value as PayoutKey;
+  const current = await getPayoutValue(key, interaction.guildId!);
+  const meta = EOS_PAYOUT_KEYS.find(e => e.key === key);
+
   session.eosKey = key;
   payoutSessions.set(sessionK, session);
 
@@ -1646,6 +1888,49 @@ export async function handleEosEditModal(interaction: ModalSubmitInteraction): P
   payoutSessions.delete(sessionK);
 }
 
+export async function handleEosStatTierModal(interaction: ModalSubmitInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const sessionK = sessionKey(interaction.guildId!, interaction.user.id);
+  const session  = payoutSessions.get(sessionK);
+  if (!session?.eosStatCategory) { await interaction.editReply({ content: "❌ Session expired." }); return; }
+
+  const catKey = session.eosStatCategory;
+  const cat = STAT_CATEGORY_MAP.get(catKey);
+  if (!cat) { await interaction.editReply({ content: "❌ Invalid category." }); return; }
+
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
+  const changes: string[] = [];
+
+  for (let tier = 1; tier <= 4; tier++) {
+    const raw = interaction.fields.getTextInputValue(`t${tier}`).trim();
+    if (!raw) continue;
+    const parts = raw.split("/");
+    if (parts.length !== 2) { changes.push(`⚠️ Tier ${tier}: invalid format (use threshold/coins)`); continue; }
+    const threshold = parseInt(parts[0]!.trim(), 10);
+    const payout    = parseInt(parts[1]!.trim(), 10);
+    if (isNaN(threshold) || isNaN(payout)) { changes.push(`⚠️ Tier ${tier}: non-numeric value`); continue; }
+
+    await db.insert(seasonStatTierConfigsTable)
+      .values({ seasonId: season.id, statCategory: catKey, tier, threshold, payout })
+      .onConflictDoUpdate({
+        target: [seasonStatTierConfigsTable.seasonId, seasonStatTierConfigsTable.statCategory, seasonStatTierConfigsTable.tier],
+        set: { threshold, payout, updatedAt: new Date() },
+      });
+    const op = cat.direction === "higher" ? "≥" : "≤";
+    changes.push(`✅ ${cat.label} Tier ${tier}: ${op}${threshold} → +${payout} coins`);
+  }
+
+  payoutSessions.delete(sessionK);
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle(`✅ Stat Tiers Updated — ${cat.label}`)
+      .setDescription(changes.join("\n") || "No changes made.")
+      .setFooter({ text: `By ${interaction.user.username}` })
+      .setTimestamp()],
+  });
+}
+
 // ── Set Milestone Payouts & Tiers ──────────────────────────────────────────────
 export async function handleMilestone(interaction: ButtonInteraction): Promise<void> {
   if (!await checkAdmin(interaction)) { await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return; }
@@ -1654,23 +1939,63 @@ export async function handleMilestone(interaction: ButtonInteraction): Promise<v
   const tiers   = await getMilestoneTiers(guildId);
 
   const description = tiers.map(t =>
-    `**Tier ${t.tier}**: ${t.wins} all-time wins → **+${t.bonus} coins**`
+    `**Tier ${t.tier}**: ${t.wins} all-time wins → **+${t.bonus} coins**${t.wins === 0 ? " *(inactive)*" : ""}`
   ).join("\n");
 
-  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    ...tiers.map(t =>
-      new ButtonBuilder().setCustomId(`ap_ms_edit_${t.tier}`).setLabel(`Edit Tier ${t.tier}`).setStyle(ButtonStyle.Danger)
-    ),
-    new ButtonBuilder().setCustomId("ap_cancel").setLabel("Cancel").setStyle(ButtonStyle.Danger),
+  const canAddTier = tiers.length < MILESTONE_TIER_KEYS.length;
+  const editBtns = tiers.map(t =>
+    new ButtonBuilder().setCustomId(`ap_ms_edit_${t.tier}`).setLabel(`Edit T${t.tier}`).setStyle(ButtonStyle.Secondary)
   );
+  const addBtn  = new ButtonBuilder().setCustomId("ap_ms_add").setLabel("➕ Add Tier").setStyle(ButtonStyle.Success);
+  const backBtn = new ButtonBuilder().setCustomId("ap_cancel").setLabel("Back to Hub").setStyle(ButtonStyle.Secondary);
+
+  const actionBtns = canAddTier ? [...editBtns, addBtn] : editBtns;
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < actionBtns.length; i += 5) {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...actionBtns.slice(i, i + 5)));
+  }
+  if (rows.length < 5) {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(backBtn));
+  } else {
+    rows[rows.length - 1]!.addComponents(backBtn);
+  }
 
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x2d6a4f)
       .setTitle("🎯 Career Win Milestone Tiers")
-      .setDescription(description + "\n\nClick **Edit** next to a tier to update its win threshold and bonus amount.")],
-    components: [btnRow],
+      .setDescription(
+        description +
+        "\n\nClick **Edit** to update a tier. Click **Add Tier** to add a new tier (up to 10 total).\n" +
+        `Tiers active: **${tiers.length}** / ${MILESTONE_TIER_KEYS.length}`
+      )],
+    components: rows,
   });
+}
+
+export async function handleMilestoneAdd(interaction: ButtonInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const tiers = await getMilestoneTiers(guildId);
+  const nextTierNum = tiers.length + 1;
+  if (nextTierNum > MILESTONE_TIER_KEYS.length) {
+    await interaction.reply({ content: `❌ Maximum of ${MILESTONE_TIER_KEYS.length} tiers reached.`, ephemeral: true }); return;
+  }
+  const sessionK = sessionKey(guildId, interaction.user.id);
+  let session = payoutSessions.get(sessionK);
+  if (!session) session = { flow: "milestone", afcSelected: [], nfcSelected: [] };
+  session.milestoneIndex = nextTierNum;
+  payoutSessions.set(sessionK, session);
+
+  const modal = new ModalBuilder().setCustomId("ap_modal_milestone_edit").setTitle(`Add Milestone — Tier ${nextTierNum}`);
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("wins").setLabel(`Win threshold for Tier ${nextTierNum}`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(4).setPlaceholder("e.g. 75")
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("bonus").setLabel(`Coin bonus for Tier ${nextTierNum}`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(5).setPlaceholder("e.g. 2000")
+    ),
+  );
+  await interaction.showModal(modal);
 }
 
 export async function handleMilestoneEdit(interaction: ButtonInteraction, tier: number): Promise<void> {

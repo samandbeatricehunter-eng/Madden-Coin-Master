@@ -90,7 +90,14 @@ export function buildPayoutHubRows(): ActionRowBuilder<ButtonBuilder>[] {
       .setStyle(ButtonStyle.Secondary),
   );
 
-  return [row1, row2, row3];
+  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ap_close")
+      .setLabel("✖ Close Hub")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  return [row1, row2, row3, row4];
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {

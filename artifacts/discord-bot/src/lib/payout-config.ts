@@ -40,6 +40,18 @@ export const PAYOUT_KEYS = {
   MILESTONE_T3_BONUS: "milestone_t3_bonus",
   MILESTONE_T4_WINS:  "milestone_t4_wins",
   MILESTONE_T4_BONUS: "milestone_t4_bonus",
+  MILESTONE_T5_WINS:  "milestone_t5_wins",
+  MILESTONE_T5_BONUS: "milestone_t5_bonus",
+  MILESTONE_T6_WINS:  "milestone_t6_wins",
+  MILESTONE_T6_BONUS: "milestone_t6_bonus",
+  MILESTONE_T7_WINS:  "milestone_t7_wins",
+  MILESTONE_T7_BONUS: "milestone_t7_bonus",
+  MILESTONE_T8_WINS:  "milestone_t8_wins",
+  MILESTONE_T8_BONUS: "milestone_t8_bonus",
+  MILESTONE_T9_WINS:  "milestone_t9_wins",
+  MILESTONE_T9_BONUS: "milestone_t9_bonus",
+  MILESTONE_T10_WINS:  "milestone_t10_wins",
+  MILESTONE_T10_BONUS: "milestone_t10_bonus",
   // ── End-of-season bonuses ────────────────────────────────────────────────────
   AWARD_WIN_BONUS:  "award_win_bonus",
   SEASON_PR_1:      "season_pr_1",
@@ -104,6 +116,18 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   milestone_t3_bonus: { value: 500,  description: "Career milestone tier 3 — coin bonus",         category: "Milestones"   },
   milestone_t4_wins:  { value: 50,   description: "Career milestone tier 4 — win threshold",      category: "Milestones"   },
   milestone_t4_bonus: { value: 1000, description: "Career milestone tier 4 — coin bonus",         category: "Milestones"   },
+  milestone_t5_wins:  { value: 0,   description: "Career milestone tier 5 — win threshold (0 = inactive)",  category: "Milestones"   },
+  milestone_t5_bonus: { value: 0,   description: "Career milestone tier 5 — coin bonus",          category: "Milestones"   },
+  milestone_t6_wins:  { value: 0,   description: "Career milestone tier 6 — win threshold (0 = inactive)",  category: "Milestones"   },
+  milestone_t6_bonus: { value: 0,   description: "Career milestone tier 6 — coin bonus",          category: "Milestones"   },
+  milestone_t7_wins:  { value: 0,   description: "Career milestone tier 7 — win threshold (0 = inactive)",  category: "Milestones"   },
+  milestone_t7_bonus: { value: 0,   description: "Career milestone tier 7 — coin bonus",          category: "Milestones"   },
+  milestone_t8_wins:  { value: 0,   description: "Career milestone tier 8 — win threshold (0 = inactive)",  category: "Milestones"   },
+  milestone_t8_bonus: { value: 0,   description: "Career milestone tier 8 — coin bonus",          category: "Milestones"   },
+  milestone_t9_wins:  { value: 0,   description: "Career milestone tier 9 — win threshold (0 = inactive)",  category: "Milestones"   },
+  milestone_t9_bonus: { value: 0,   description: "Career milestone tier 9 — coin bonus",          category: "Milestones"   },
+  milestone_t10_wins:  { value: 0,  description: "Career milestone tier 10 — win threshold (0 = inactive)", category: "Milestones"   },
+  milestone_t10_bonus: { value: 0,  description: "Career milestone tier 10 — coin bonus",         category: "Milestones"   },
   // ── End-of-season bonuses ────────────────────────────────────────────────────
   award_win_bonus:   { value: 50,  description: "Coins per team with an in-game award winner",                 category: "Season Bonuses"        },
   season_pr_1:       { value: 150, description: "Season PR bonus — #1 ranked player",                          category: "Season Bonuses"        },
@@ -180,21 +204,34 @@ export function getAllPayoutKeys(): Array<{ key: PayoutKey; description: string;
 }
 
 // ── Milestone helpers ──────────────────────────────────────────────────────────
+const MILESTONE_TIER_KEYS: Array<{ wins: PayoutKey; bonus: PayoutKey }> = [
+  { wins: PAYOUT_KEYS.MILESTONE_T1_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T1_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T2_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T2_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T3_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T3_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T4_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T4_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T5_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T5_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T6_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T6_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T7_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T7_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T8_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T8_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T9_WINS,  bonus: PAYOUT_KEYS.MILESTONE_T9_BONUS },
+  { wins: PAYOUT_KEYS.MILESTONE_T10_WINS, bonus: PAYOUT_KEYS.MILESTONE_T10_BONUS },
+];
+export { MILESTONE_TIER_KEYS };
+
 export async function getMilestoneTiers(guildId: string = PRIMARY_GUILD_ID): Promise<Array<{tier: number; wins: number; bonus: number}>> {
-  const [t1w, t1b, t2w, t2b, t3w, t3b, t4w, t4b] = await Promise.all([
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T1_WINS,  guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T1_BONUS, guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T2_WINS,  guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T2_BONUS, guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T3_WINS,  guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T3_BONUS, guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T4_WINS,  guildId),
-    getPayoutValue(PAYOUT_KEYS.MILESTONE_T4_BONUS, guildId),
-  ]);
-  return [
-    { tier: 1, wins: t1w, bonus: t1b },
-    { tier: 2, wins: t2w, bonus: t2b },
-    { tier: 3, wins: t3w, bonus: t3b },
-    { tier: 4, wins: t4w, bonus: t4b },
-  ];
+  const values = await Promise.all(
+    MILESTONE_TIER_KEYS.flatMap(({ wins, bonus }) => [
+      getPayoutValue(wins,  guildId),
+      getPayoutValue(bonus, guildId),
+    ])
+  );
+  const result: Array<{ tier: number; wins: number; bonus: number }> = [];
+  for (let i = 0; i < MILESTONE_TIER_KEYS.length; i++) {
+    const w = values[i * 2]!;
+    const b = values[i * 2 + 1]!;
+    if (i < 4 || w > 0) {
+      result.push({ tier: i + 1, wins: w, bonus: b });
+    }
+  }
+  return result;
 }

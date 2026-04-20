@@ -39,7 +39,9 @@ import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admi
 import {
   handleCancel as apHandleCancel,
   handleGotw, handleGotwSelectAfc, handleGotwSelectNfc, handleGotwFinalize,
-  handlePotw, handlePotwModal,
+  handlePotw,
+  handlePotwSelectAfc, handlePotwSelectNfc, handlePotwBack, handlePotwFinalize,
+  handleClose,
   handleAddCoins, handleAddCoinsSelectAfc, handleAddCoinsSelectNfc, handleAddCoinsNext, handleAddCoinsModal,
   handleRemoveCoins, handleRemoveCoinsSelectAfc, handleRemoveCoinsSelectNfc, handleRemoveCoinsNext, handleRemoveCoinsModal,
   handleTransfer, handleTransferSelectAfc, handleTransferSelectNfc, handleTransferNext, handleTransferModal,
@@ -47,13 +49,13 @@ import {
   handleGameModalHomeWins, handleGameModalAwayWins, handleGameModalCpuWins,
   handleCorrect, handleCorrectWeekSelect, handleCorrectGameSelect,
   handleCorrectNewWinner, handleCorrectSwap, handleCorrectModalSame, handleCorrectModalSwap,
-  handleSetPay, handleSetPayReg, handleSetPayRegModal, handleSetPayPlayoff,
+  handleSetPay, handleSetPayReg, handleSetPayRegModal, handleSetPayPlayoff, handleSetPayChannel, handleSetPayChannelModal,
   handleSetPayPo1Btn, handleSetPayPo2Btn, handleSetPayPo1Modal, handleSetPayPo2Modal,
   handleNewMember, handleNewMemberModal,
   handleGotwBonus, handleGotwBonusModal,
   handlePotwBonus, handlePotwBonusModal,
-  handleEos, handleEosKeySelect, handleEosEditModal,
-  handleMilestone, handleMilestoneEdit, handleMilestoneEditModal,
+  handleEos, handleEosKeySelect, handleEosEditModal, handleEosStatTierModal,
+  handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
 } from "../lib/admin-payout-handlers.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
@@ -2005,6 +2007,9 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ap_gotw")              { await handleGotw(interaction);         return; }
   if (action === "ap_gotw_finalize")     { await handleGotwFinalize(interaction); return; }
   if (action === "ap_potw")              { await handlePotw(interaction);         return; }
+  if (action === "ap_potw_back")         { await handlePotwBack(interaction);      return; }
+  if (action === "ap_potw_finalize")     { await handlePotwFinalize(interaction);  return; }
+  if (action === "ap_close")             { await handleClose(interaction);         return; }
   if (action === "ap_addcoins")          { await handleAddCoins(interaction);     return; }
   if (action === "ap_addcoins_next")     { await handleAddCoinsNext(interaction); return; }
   if (action === "ap_removecoins")       { await handleRemoveCoins(interaction);  return; }
@@ -2021,6 +2026,7 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ap_setpay")            { await handleSetPay(interaction);          return; }
   if (action === "ap_setpay_reg")        { await handleSetPayReg(interaction);       return; }
   if (action === "ap_setpay_playoff")    { await handleSetPayPlayoff(interaction);   return; }
+  if (action === "ap_setpay_channel")    { await handleSetPayChannel(interaction);   return; }
   if (action === "ap_setpay_po1_btn")   { await handleSetPayPo1Btn(interaction);   return; }
   if (action === "ap_setpay_po2_btn")   { await handleSetPayPo2Btn(interaction);   return; }
   if (action === "ap_newmember")         { await handleNewMember(interaction);    return; }
@@ -2028,6 +2034,7 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ap_potwbonus")         { await handlePotwBonus(interaction);    return; }
   if (action === "ap_eos")              { await handleEos(interaction);          return; }
   if (action === "ap_milestone")         { await handleMilestone(interaction);    return; }
+  if (action === "ap_ms_add")            { await handleMilestoneAdd(interaction);  return; }
   if (action?.startsWith("ap_ms_edit_")) {
     const tier = parseInt(action.slice("ap_ms_edit_".length), 10);
     if (!isNaN(tier)) { await handleMilestoneEdit(interaction, tier); return; }
@@ -2229,6 +2236,8 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── Admin-Payout Hub selects ──────────────────────────────────────────────────
   if (action === "ap_gotw_afc")        { await handleGotwSelectAfc(interaction);      return; }
   if (action === "ap_gotw_nfc")        { await handleGotwSelectNfc(interaction);      return; }
+  if (action === "ap_potw_afc")        { await handlePotwSelectAfc(interaction);      return; }
+  if (action === "ap_potw_nfc")        { await handlePotwSelectNfc(interaction);      return; }
   if (action === "ap_addcoins_afc")    { await handleAddCoinsSelectAfc(interaction);  return; }
   if (action === "ap_addcoins_nfc")    { await handleAddCoinsSelectNfc(interaction);  return; }
   if (action === "ap_removecoins_afc") { await handleRemoveCoinsSelectAfc(interaction); return; }
@@ -2456,7 +2465,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   }
 
   // ── Admin-Payout Hub modals ────────────────────────────────────────────────
-  if (action === "ap_modal_potw")           { await handlePotwModal(interaction);          return; }
+  // ap_modal_potw removed — POTW now uses dropdown select menus, not modals
   if (action === "ap_modal_addcoins")       { await handleAddCoinsModal(interaction);      return; }
   if (action === "ap_modal_removecoins")    { await handleRemoveCoinsModal(interaction);   return; }
   if (action === "ap_modal_transfer")       { await handleTransferModal(interaction);      return; }
@@ -2471,6 +2480,8 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ap_modal_newmember")      { await handleNewMemberModal(interaction);     return; }
   if (action === "ap_modal_gotwbonus")      { await handleGotwBonusModal(interaction);     return; }
   if (action === "ap_modal_potwbonus")      { await handlePotwBonusModal(interaction);     return; }
-  if (action === "ap_modal_eos_edit")       { await handleEosEditModal(interaction);       return; }
-  if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction); return; }
+  if (action === "ap_modal_eos_edit")       { await handleEosEditModal(interaction);        return; }
+  if (action === "ap_modal_eos_stat_tier")  { await handleEosStatTierModal(interaction);    return; }
+  if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction);  return; }
+  if (action === "ap_modal_setpay_channel") { await handleSetPayChannelModal(interaction);  return; }
 }
