@@ -214,6 +214,24 @@ function buildLeagueSelectContent(leagues: EALeague[]) {
   return { embeds: [embed], components: [selectRow, cancelRow_] };
 }
 
+// ── Playoff round metadata ─────────────────────────────────────────────────────
+// Playoffs use stageIndex=1 (same as regular season), weekIndex = weekNum - 1.
+// Week 19 = Wild Card (index 18), 20 = Divisional (19), 21 = Conf Champ (20), 23 = Super Bowl (22).
+const PLAYOFF_ROUNDS: { weekNum: number; label: string; desc: string }[] = [
+  { weekNum: 19, label: "🏆 Wild Card Round",            desc: "Playoff Week 19 — Wild Card (stageIndex 1, weekIndex 18)" },
+  { weekNum: 20, label: "🏆 Divisional Round",           desc: "Playoff Week 20 — Divisional (stageIndex 1, weekIndex 19)" },
+  { weekNum: 21, label: "🏆 Conference Championship",    desc: "Playoff Week 21 — Conf. Champ (stageIndex 1, weekIndex 20)" },
+  { weekNum: 23, label: "🏆 Super Bowl",                 desc: "Playoff Week 23 — Super Bowl (stageIndex 1, weekIndex 22)" },
+];
+
+/** Human-readable label for any week/stage combination. */
+function getWeekLabel(weekType: "reg" | "pre", weekNum: number): string {
+  if (weekType === "pre") return `Preseason Week ${weekNum}`;
+  const round = PLAYOFF_ROUNDS.find(r => r.weekNum === weekNum);
+  if (round) return round.label.replace("🏆 ", ""); // strip emoji for progress messages
+  return `Regular Season Week ${weekNum}`;
+}
+
 // ── Connected status + week select ─────────────────────────────────────────────
 async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: string; eaLeagueId: number; platform: string }) {
   const [season] = await db
@@ -223,9 +241,34 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
     .limit(1);
 
   const currentWeekNum = season ? (parseInt(season.currentWeek ?? "1", 10) || 1) : 1;
-  const maxWeek = Math.max(0, currentWeekNum - 1); // can import up to week before current
+  const maxWeek = Math.max(0, currentWeekNum - 1); // can import up to the week before current
 
   const conn = connInfo ?? await loadEAConnection(guildId);
+
+  // Build the list of selectable weeks (reg season + playoff rounds up to maxWeek)
+  const options: StringSelectMenuOptionBuilder[] = [];
+
+  for (let w = 1; w <= Math.min(maxWeek, 18); w++) {
+    options.push(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`Week ${w}`)
+        .setValue(`reg:${w}`)
+        .setDescription(`Regular Season Week ${w} (stageIndex 1, weekIndex ${w - 1})`),
+    );
+  }
+
+  for (const round of PLAYOFF_ROUNDS) {
+    if (round.weekNum <= maxWeek) {
+      options.push(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(round.label)
+          .setValue(`reg:${round.weekNum}`)
+          .setDescription(round.desc),
+      );
+    }
+  }
+
+  const hasOptions = options.length > 0;
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
@@ -234,29 +277,22 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
       (connInfo
         ? `**League:** ${connInfo.leagueName} · **Platform:** ${connInfo.platform.toUpperCase()}\n\n`
         : "") +
-      (maxWeek < 1
+      (!hasOptions
         ? "⚠️ No completed weeks available yet (current week is 1 or training camp).\nAdvance to Week 2 before importing."
-        : `Select the week you want to import from EA. The current week is **Week ${currentWeekNum}**, so you can import up to **Week ${maxWeek}**.`),
+        : `Select a week to import from EA.\n\n` +
+          `Current week: **${currentWeekNum <= 18 ? `Week ${currentWeekNum}` : (PLAYOFF_ROUNDS.find(r => r.weekNum === currentWeekNum)?.label ?? `Week ${currentWeekNum}`)}**\n` +
+          `Available: Weeks 1–${Math.min(maxWeek, 18)}` +
+          (maxWeek >= 19 ? ` + ${PLAYOFF_ROUNDS.filter(r => r.weekNum <= maxWeek).map(r => r.label.replace("🏆 ", "")).join(", ")}` : "")),
     )
     .setFooter({ text: connInfo ? `League ID: ${connInfo.eaLeagueId}` : (conn ? `League ID: ${conn.eaLeagueId}` : "No connection") });
 
-  if (maxWeek < 1) {
+  if (!hasOptions) {
     return { embeds: [embed], components: [cancelRow()] };
-  }
-
-  const options: StringSelectMenuOptionBuilder[] = [];
-  for (let w = 1; w <= Math.min(maxWeek, 18); w++) {
-    options.push(
-      new StringSelectMenuOptionBuilder()
-        .setLabel(`Week ${w}`)
-        .setValue(`reg:${w}`)
-        .setDescription(`Regular Season Week ${w}`),
-    );
   }
 
   const select = new StringSelectMenuBuilder()
     .setCustomId("ld_select_week")
-    .setPlaceholder("Select a week to import…")
+    .setPlaceholder("Select a week or playoff round to import…")
     .addOptions(options);
 
   const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
@@ -682,17 +718,16 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
 
   // ── Week selection ─────────────────────────────────────────────────────────
   if (action === "ld_select_week") {
-    // value format: "reg:3" or "pre:3"
+    // value format: "reg:3" or "reg:19" (playoff) or "pre:1"
     const [stage, weekStr] = value.split(":");
-    const weekNum = parseInt(weekStr ?? "0", 10);
+    const weekNum  = parseInt(weekStr ?? "0", 10);
     const stageKey = stage === "pre" ? "pre" : "reg";
-    const weekLabel = `${stageKey === "pre" ? "Preseason" : "Regular Season"} Week ${weekNum}`;
+    const chosen   = getWeekLabel(stageKey, weekNum);
 
-    // Rebuild the same embed but with an active Proceed button
     const conn = await loadEAConnection(guildId).catch(() => null);
 
     const [season] = await db
-      .select({ currentWeek: seasonsTable.currentWeek, seasonNumber: seasonsTable.seasonNumber })
+      .select({ currentWeek: seasonsTable.currentWeek })
       .from(seasonsTable)
       .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
       .limit(1);
@@ -704,36 +739,48 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
       .setColor(Colors.Green)
       .setTitle("📥 Select Week to Import")
       .setDescription(
-        `**Selected: ${weekLabel}**\n\n` +
+        `**Selected: ${chosen}**\n\n` +
         (conn
-          ? `League: **${conn.leagueName}** · Platform: **${conn.token.platform.toUpperCase()}**\n`
+          ? `League: **${conn.leagueName}** · Platform: **${conn.token.platform.toUpperCase()}**\n\n`
           : "") +
         `Click **Proceed with Import** to start, or pick a different week from the dropdown.`,
       )
-      .setFooter({ text: conn ? `League ID: ${conn.eaLeagueId}` : "Connected" });
+      .setFooter({ text: conn ? `League ID: ${conn.eaLeagueId}` : "No connection info" });
 
+    // Rebuild the dropdown with the same options as the initial view, marking selected
     const options: StringSelectMenuOptionBuilder[] = [];
     for (let w = 1; w <= Math.min(maxWeek, 18); w++) {
       options.push(
         new StringSelectMenuOptionBuilder()
           .setLabel(`Week ${w}`)
           .setValue(`reg:${w}`)
-          .setDescription(`Regular Season Week ${w}`)
+          .setDescription(`Regular Season Week ${w} (stageIndex 1, weekIndex ${w - 1})`)
           .setDefault(w === weekNum && stageKey === "reg"),
       );
+    }
+    for (const round of PLAYOFF_ROUNDS) {
+      if (round.weekNum <= maxWeek) {
+        options.push(
+          new StringSelectMenuOptionBuilder()
+            .setLabel(round.label)
+            .setValue(`reg:${round.weekNum}`)
+            .setDescription(round.desc)
+            .setDefault(round.weekNum === weekNum && stageKey === "reg"),
+        );
+      }
     }
 
     const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId("ld_select_week")
-        .setPlaceholder(`Week ${weekNum} selected`)
+        .setPlaceholder(chosen)
         .addOptions(options),
     );
 
     const proceedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`ld_proceed:${stageKey}_${weekNum}`)
-        .setLabel(`⬆ Proceed with Import — ${weekLabel}`)
+        .setLabel(`⬆ Proceed with Import — ${chosen}`)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId("ld_cancel_to_main")
@@ -856,12 +903,14 @@ export async function runWeekImport(ctx: {
   }
 
   const { token, eaLeagueId } = conn;
+  // Playoffs (weeks 19/20/21/23) use stageIndex=1 (same as regular season), weekIndex = weekNum - 1.
+  // Wild Card (wk 19) → index 18 | Divisional (wk 20) → index 19 | Conf Champ (wk 21) → index 20 | Super Bowl (wk 23) → index 22
   const stageIndex = weekType === "pre" ? 0 : 1;
   const weekIndex  = weekNum - 1;
-  const weekLabel  = `${weekType === "pre" ? "Preseason" : "Reg Season"} Week ${weekNum}`;
+  const wkLabel    = getWeekLabel(weekType, weekNum);
 
   await editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Fetching **${weekLabel}** stats from EA…`)],
+    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Fetching **${wkLabel}** stats from EA…`)],
     components: [],
   });
 
@@ -876,7 +925,7 @@ export async function runWeekImport(ctx: {
       embeds: [
         new EmbedBuilder()
           .setColor(Colors.Red)
-          .setTitle(`❌ Fetch Failed — ${weekLabel}`)
+          .setTitle(`❌ Fetch Failed — ${wkLabel}`)
           .setDescription(
             `${err?.message ?? String(err)}\n\n` +
             "If you see an auth error, use **Start EA Connection** to refresh the link.",
@@ -901,7 +950,7 @@ export async function runWeekImport(ctx: {
   const weekBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/${weekType}/${weekNum}`;
 
   await editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Sending **${weekLabel}** stats to processor…`)],
+    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Sending **${wkLabel}** stats to processor…`)],
     components: [],
   });
 
@@ -949,7 +998,7 @@ export async function runWeekImport(ctx: {
 
   const embed = new EmbedBuilder()
     .setColor(overallOk ? Colors.Green : failCount > 0 || !rostersAllOk ? Colors.Yellow : Colors.Red)
-    .setTitle(`📥 Import Complete — ${weekLabel}`)
+    .setTitle(`📥 Import Complete — ${wkLabel}`)
     .addFields(
       { name: "📊 Player & Team Stats", value: statsLines.join("\n") || "none" },
       { name: "🏈 Roster Sync",         value: rosterSummary },
