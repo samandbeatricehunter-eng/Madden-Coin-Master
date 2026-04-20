@@ -56,6 +56,7 @@ import * as adminMilestoneAudit      from "./commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes     from "./commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "./commands/admin-customplayersettings.js";
 import * as adminFixPlayerNames      from "./commands/admin-fixplayernames.js";
+import * as adminScoreEntry         from "./commands/admin-score-entry.js";
 import * as adminEosReapprove        from "./commands/admin-eos-reapprove.js";
 import * as adminSeason             from "./commands/admin-season.js";
 import * as adminLinkTeam           from "./commands/admin-linkteam.js";
@@ -177,6 +178,7 @@ if (!isProduction && !devBotEnabled) {
     adminCustomArcetypes,
     adminCustomPlayerSettings,
     adminFixPlayerNames,
+    adminScoreEntry,
     adminEosReapprove,
     adminSeason,
     adminLinkTeam,
