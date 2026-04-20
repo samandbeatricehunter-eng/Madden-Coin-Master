@@ -10,7 +10,7 @@ import { db } from "@workspace/db";
 import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   interviewRequestsTable, wagersTable,
-  tradeBlockListingsTable, tradeBlockISOTable, completedTradesTable,
+  tradeBlockListingsTable, completedTradesTable,
   franchiseScheduleTable, seasonsTable,
   pendingEosPayoutsTable, seasonStatTierConfigsTable,
   pendingChannelPayoutsTable,
@@ -1387,89 +1387,6 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Trade Block ISO: Send Offer button (opens modal) ─────────────────────────
-  if (action === "tb_iso_offer") {
-    const isoId           = secondPart!;
-    const posterDiscordId = userId!;
-
-    if (interaction.user.id === posterDiscordId) {
-      await interaction.reply({ content: "❌ You can't make an offer on your own ISO post.", ephemeral: true });
-      return;
-    }
-
-    const modal = new ModalBuilder()
-      .setCustomId(`tb_iso_offer_modal:${isoId}:${posterDiscordId}`)
-      .setTitle("Make Your Offer");
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("offer_assets")
-          .setLabel("Players / Picks you're offering")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(500)
-          .setPlaceholder("e.g. CeeDee Lamb (WR) + my 2026 Round 2 pick"),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("offer_coins")
-          .setLabel("Coins you're including (leave blank for none)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(10)
-          .setPlaceholder("e.g. 300"),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("offer_message")
-          .setLabel("Message (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(200)
-          .setPlaceholder("Any note you want to include"),
-      ),
-    );
-    await interaction.showModal(modal).catch((err: Error) => {
-      if ((err as any).code !== 40060) console.error("showModal (tb_iso_offer) error:", err);
-    });
-    return;
-  }
-
-  // ── Trade Block ISO: Cancel own ISO → ask if a deal was reached ──────────────
-  if (action === "tb_cancel_iso" || action === "tb_iso_close") {
-    const isoId = parseInt(secondPart ?? "0", 10);
-
-    const [iso] = await db.select().from(tradeBlockISOTable)
-      .where(and(eq(tradeBlockISOTable.id, isoId), eq(tradeBlockISOTable.status, "active")))
-      .limit(1);
-
-    if (!iso) {
-      await interaction.reply({ content: "❌ This ISO has already been removed.", ephemeral: true });
-      return;
-    }
-    if (iso.discordId !== interaction.user.id) {
-      await interaction.reply({ content: "❌ Only the owner of this ISO can cancel it.", ephemeral: true });
-      return;
-    }
-
-    const dealRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tb_deal_yes:${isoId}:I`)
-        .setLabel("✅ Yes — We made a deal")
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`tb_deal_no:${isoId}:I`)
-        .setLabel("❌ No deal, just remove")
-        .setStyle(ButtonStyle.Secondary),
-    );
-    await interaction.reply({
-      content: "🤝 **Was a trade deal reached through this ISO post?**\nIf yes, we'll announce it to the server!",
-      components: [dealRow],
-      ephemeral: true,
-    });
-    return;
-  }
-
   // ── Send Offer: skip player dropdown — open offer details modal directly ──────
   // customId: so_continue:TARGET_ID  (empty-roster fallback — no players in DB)
   if (action === "so_continue") {
@@ -1598,14 +1515,8 @@ async function handleButton(interaction: ButtonInteraction) {
 
   // ── Trade Block: No deal, remove silently ─────────────────────────────────────
   if (action === "tb_deal_no") {
-    const listingId   = parseInt(secondPart ?? "0", 10);
-    const listingType = userId ?? "L";
-
-    if (listingType === "I") {
-      await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, listingId));
-    } else {
-      await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
-    }
+    const listingId = parseInt(secondPart ?? "0", 10);
+    await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
     await interaction.update({ content: "✅ Listing removed from the trade block.", components: [] });
 
     try {
@@ -1616,8 +1527,8 @@ async function handleButton(interaction: ButtonInteraction) {
       const ndTeam = ndUser[0]?.team ?? interaction.user.username;
       void logTradeEvent({
         seasonId:  ndSeason.id,
-        eventType: listingType === "I" ? "iso_removed" : "listing_removed",
-        summary:   `${ndTeam} removed their ${listingType === "I" ? "ISO" : "trade block listing"} (no deal reached)`,
+        eventType: "listing_removed",
+        summary:   `${ndTeam} removed their trade block listing (no deal reached)`,
         teamA:     ndTeam,
       });
     } catch (_) {}
@@ -1635,19 +1546,6 @@ async function handleButton(interaction: ButtonInteraction) {
     }
     await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
     await interaction.reply({ content: `✅ Listing #${listingId} removed from the trade block.`, ephemeral: true });
-    return;
-  }
-
-  // ── Trade Block: Admin remove ISO ─────────────────────────────────────────────
-  if (action === "tb_rm_iso") {
-    const isoId = parseInt(secondPart ?? "0", 10);
-    const admin = await isAdminUser(interaction.user.id, interaction.guildId!);
-    if (!admin) {
-      await interaction.reply({ content: "❌ Only league commissioners can remove ISO posts.", ephemeral: true });
-      return;
-    }
-    await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, isoId));
-    await interaction.reply({ content: `✅ ISO #${isoId} removed from the trade block.`, ephemeral: true });
     return;
   }
 
@@ -1677,7 +1575,6 @@ async function handleButton(interaction: ButtonInteraction) {
     const offerorId  = parts[1]!;
     const coins      = parseInt(parts[2] ?? "0", 10);
     const entryId    = parseInt(parts[3] ?? "0", 10);
-    const entryType  = parts[4] ?? "L"; // L = listing, I = ISO
 
     await interaction.deferUpdate();
 
@@ -1712,14 +1609,9 @@ async function handleButton(interaction: ButtonInteraction) {
       }
     }
 
-    // ── Mark listing/ISO as removed ─────────────────────────────────────────
-    if (entryType === "I") {
-      await db.update(tradeBlockISOTable).set({ status: "removed" })
-        .where(eq(tradeBlockISOTable.id, entryId)).catch(() => {});
-    } else {
-      await db.update(tradeBlockListingsTable).set({ status: "removed" })
-        .where(eq(tradeBlockListingsTable.id, entryId)).catch(() => {});
-    }
+    // ── Mark listing as removed ──────────────────────────────────────────────
+    await db.update(tradeBlockListingsTable).set({ status: "removed" })
+      .where(eq(tradeBlockListingsTable.id, entryId)).catch(() => {});
 
     // ── Record completed trade ────────────────────────────────────────────────
     // team1 = the offeror (who sent the send-offer); listingField = what they sent.
@@ -1727,7 +1619,7 @@ async function handleButton(interaction: ButtonInteraction) {
     await db.insert(completedTradesTable).values({
       seasonId:          season.id,
       listingId:         entryId || null,
-      listingType:       entryType === "I" ? "iso" : "listing",
+      listingType:       "listing",
       team1DiscordId:    offerorId,
       team1Name:         offerorTeam,
       team2Name:         posterTeam,
@@ -3167,104 +3059,9 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     return;
   }
 
-  // ── Trade Block ISO: offer submitted ──────────────────────────────────────────
-  if (action === "tb_iso_offer_modal") {
-    const isoId           = parseInt(idStr ?? "0", 10);
-    const posterDiscordId = parts[2]!;
-    const offerAssets     = interaction.fields.getTextInputValue("offer_assets");
-    const offerCoinsRaw   = interaction.fields.getTextInputValue("offer_coins").trim();
-    const offerMessage    = interaction.fields.getTextInputValue("offer_message").trim();
-    const offerCoins      = parseInt(offerCoinsRaw, 10);
-    const coinsStr        = !isNaN(offerCoins) && offerCoins > 0 ? `💰 ${offerCoins.toLocaleString()} coins` : "";
-
-    await interaction.deferReply({ ephemeral: true });
-
-    const [iso] = await db.select().from(tradeBlockISOTable)
-      .where(eq(tradeBlockISOTable.id, isoId)).limit(1);
-
-    if (!iso || iso.status !== "active") {
-      await interaction.editReply({ content: "❌ This ISO post is no longer active." });
-      return;
-    }
-
-    const sd = iso.seekingDetails as any;
-    let seekingDesc = "";
-    if (iso.seekingType === "multi") {
-      const seekParts: string[] = [];
-      if (sd.positions?.length)  seekParts.push(sd.positions.join(", "));
-      if (sd.pickInfo)           seekParts.push(formatPickInfo(sd.pickInfo));
-      else if (sd.pickRounds?.length) seekParts.push(`Round ${sd.pickRounds.join("/")} picks`);
-      if (sd.wantsCoins)         seekParts.push("💰 Coins");
-      seekingDesc = seekParts.join(" · ") || "various assets";
-    } else if (iso.seekingType === "player_position") {
-      seekingDesc = `${sd.position ?? "?"} player`;
-    } else if (iso.seekingType === "draft_pick") {
-      seekingDesc = `Round ${(sd.rounds ?? []).join("/")} picks`;
-    } else {
-      seekingDesc = `${(sd.amount ?? 0).toLocaleString()} coins`;
-    }
-
-    const senderName = interaction.user.username;
-    const offerBody  = [offerAssets, coinsStr].filter(Boolean).join("\n");
-
-    const dmEmbed = new EmbedBuilder()
-      .setColor(Colors.Gold)
-      .setTitle(`🤝 Trade Response to Your ISO! (ISO #${isoId})`)
-      .setDescription(`<@${interaction.user.id}> is responding to your ISO!${offerMessage ? `\n\n💬 *"${offerMessage}"*` : ""}`)
-      .addFields(
-        { name: "🔍 Your ISO — Seeking", value: seekingDesc },
-        { name: "📨 Their Offer", value: offerBody || "*See their message above*" },
-      )
-      .setFooter({ text: `Reply in this DM or reach out to ${senderName} in the server` })
-      .setTimestamp();
-
-    const safeIsoCoins = !isNaN(offerCoins) && offerCoins > 0 ? offerCoins : 0;
-    const dmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tb_dm_acc:${interaction.user.id}:${safeIsoCoins}:${isoId}:I`)
-        .setLabel("✅ Accept")
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`tb_dm_neg:${interaction.user.id}`)
-        .setLabel("🤝 Negotiate")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`tb_dm_ref:${interaction.user.id}`)
-        .setLabel("❌ Decline")
-        .setStyle(ButtonStyle.Danger),
-    );
-
-    try {
-      const poster = await interaction.client.users.fetch(posterDiscordId);
-      await poster.send({ embeds: [dmEmbed], components: [dmRow] });
-    } catch (_) {}
-
-    await interaction.editReply({ content: "✅ Your offer has been sent! They'll receive Accept / Negotiate / Decline buttons in their DM." });
-
-    try {
-      const [isoSeason, offerorIsoRows, posterIsoRows] = await Promise.all([
-        getOrCreateActiveSeason(interaction.guildId!),
-        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, interaction.user.id)).limit(1),
-        db.select({ team: usersTable.team }).from(usersTable).where(eq(usersTable.discordId, posterDiscordId)).limit(1),
-      ]);
-      const offerorIsoTeam = offerorIsoRows[0]?.team ?? interaction.user.username;
-      const posterIsoTeam  = posterIsoRows[0]?.team ?? "Unknown Team";
-      void logTradeEvent({
-        seasonId:  isoSeason.id,
-        eventType: "offer_sent",
-        summary:   `${offerorIsoTeam} sent an offer to ${posterIsoTeam}'s ISO (ISO #${isoId})`,
-        teamA:     offerorIsoTeam,
-        teamB:     posterIsoTeam,
-      });
-    } catch (_) {}
-
-    return;
-  }
-
   // ── Trade Block: Deal announcement modal submitted ───────────────────────────
   if (action === "tb_deal_modal") {
     const listingId   = parseInt(idStr ?? "0", 10);
-    const listingType = parts[2] ?? "L"; // L = listing, I = ISO
 
     const otherTeam   = interaction.fields.getTextInputValue("other_team").trim();
     const whatSent    = interaction.fields.getTextInputValue("what_sent").trim();
@@ -3272,35 +3069,21 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     await interaction.deferReply({ ephemeral: true });
 
-    // Fetch the listing/ISO to get team1's info
     let team1Name = "Unknown Team";
     let seasonId  = 0;
     try {
       const season = await getOrCreateActiveSeason(interaction.guildId!);
       seasonId = season.id;
-      if (listingType === "I") {
-        const [iso] = await db.select({ teamName: tradeBlockISOTable.teamName, discordId: tradeBlockISOTable.discordId })
-          .from(tradeBlockISOTable).where(eq(tradeBlockISOTable.id, listingId)).limit(1);
-        if (iso) {
-          team1Name = iso.teamName || "Unknown Team";
-          if (iso.discordId !== interaction.user.id) {
-            await interaction.editReply({ content: "❌ This listing doesn't belong to you." });
-            return;
-          }
+      const [listing] = await db.select({ teamName: tradeBlockListingsTable.teamName, discordId: tradeBlockListingsTable.discordId })
+        .from(tradeBlockListingsTable).where(eq(tradeBlockListingsTable.id, listingId)).limit(1);
+      if (listing) {
+        team1Name = listing.teamName || "Unknown Team";
+        if (listing.discordId !== interaction.user.id) {
+          await interaction.editReply({ content: "❌ This listing doesn't belong to you." });
+          return;
         }
-        await db.update(tradeBlockISOTable).set({ status: "removed" }).where(eq(tradeBlockISOTable.id, listingId));
-      } else {
-        const [listing] = await db.select({ teamName: tradeBlockListingsTable.teamName, discordId: tradeBlockListingsTable.discordId })
-          .from(tradeBlockListingsTable).where(eq(tradeBlockListingsTable.id, listingId)).limit(1);
-        if (listing) {
-          team1Name = listing.teamName || "Unknown Team";
-          if (listing.discordId !== interaction.user.id) {
-            await interaction.editReply({ content: "❌ This listing doesn't belong to you." });
-            return;
-          }
-        }
-        await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
       }
+      await db.update(tradeBlockListingsTable).set({ status: "removed" }).where(eq(tradeBlockListingsTable.id, listingId));
     } catch (err) {
       console.error("[tb_deal_modal] DB error:", err);
     }
@@ -3310,7 +3093,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       await db.insert(completedTradesTable).values({
         seasonId,
         listingId:         listingId || null,
-        listingType:       listingType === "I" ? "iso" : "listing",
+        listingType:       "listing",
         team1DiscordId:    interaction.user.id,
         team1Name,
         team2Name:         otherTeam,

@@ -6,7 +6,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
-  usersTable, franchiseRostersTable, tradeBlockListingsTable, tradeBlockISOTable,
+  usersTable, franchiseRostersTable, tradeBlockListingsTable,
 } from "@workspace/db";
 import { eq, and, count, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
@@ -99,8 +99,6 @@ async function postAnnouncement(
   teamName: string,
   items: TradeItem[],
   notes: string | null,
-  isISO: boolean,
-  isoSeeking?: string,
 ) {
   try {
     const channelId =
@@ -110,23 +108,15 @@ async function postAnnouncement(
     const ch = await client.channels.fetch(channelId);
     if (!ch?.isTextBased()) return;
 
-    let description: string;
-    if (isISO) {
-      description =
-        `🔍 **${teamName}** is **In Search Of**: ${isoSeeking ?? "various assets"}\n` +
-        (items.length ? `📤 **Offering:** ${items.map(itemLine).join(", ")}\n` : "") +
-        `\nUse \`/viewtradeblock\` to browse listings and respond to this ISO!`;
-    } else {
-      const offeringText = items.map(itemLine).join("\n");
-      description =
-        `📦 **Offering:**\n${offeringText}\n` +
-        (notes ? `\n🔎 **Looking For:** ${notes}\n` : "\n") +
-        `\nUse \`/viewtradeblock\` to browse listings and send an offer!`;
-    }
+    const offeringText = items.map(itemLine).join("\n");
+    const description =
+      `📦 **Offering:**\n${offeringText}\n` +
+      (notes ? `\n🔎 **Looking For:** ${notes}\n` : "\n") +
+      `\nUse \`/viewtradeblock\` to browse listings and send an offer!`;
 
     const embed = new EmbedBuilder()
-      .setColor(isISO ? Colors.Purple : Colors.Blue)
-      .setTitle(isISO ? `🔍 ISO — ${teamName}` : `🔄 Trade Block — ${teamName}`)
+      .setColor(Colors.Blue)
+      .setTitle(`🔄 Trade Block — ${teamName}`)
       .setDescription(description)
       .setTimestamp();
 
@@ -188,69 +178,6 @@ export const data = new SlashCommandBuilder()
       .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
       .addIntegerOption(o => o.setName("coins").setDescription("Coins to include").setMinValue(1))
       .addStringOption(o => o.setName("looking_for").setDescription("What you want in return"))
-  )
-
-  // ── iso ────────────────────────────────────────────────────────────────────
-  .addSubcommand(sub =>
-    sub.setName("iso")
-      .setDescription("Post an ISO — specify what you're looking for and what you'll offer in return")
-      // What you're seeking
-      .addStringOption(o =>
-        o.setName("seeking_pos1")
-          .setDescription("Position you're looking for (required unless seeking picks)")
-          .addChoices(...MADDEN_POSITIONS.map(p => ({ name: p, value: p })))
-      )
-      .addStringOption(o =>
-        o.setName("seeking_pos2")
-          .setDescription("2nd position (optional)")
-          .addChoices(...MADDEN_POSITIONS.map(p => ({ name: p, value: p })))
-      )
-      .addStringOption(o =>
-        o.setName("seeking_pos3")
-          .setDescription("3rd position (optional)")
-          .addChoices(...MADDEN_POSITIONS.map(p => ({ name: p, value: p })))
-      )
-      .addStringOption(o =>
-        o.setName("seeking_picks")
-          .setDescription("Pick round(s) you're looking for (or 'Any round')")
-          .addChoices(
-            { name: "Any round",   value: "any" },
-            { name: "Round 1",     value: "1" },
-            { name: "Round 2",     value: "2" },
-            { name: "Round 3",     value: "3" },
-            { name: "Round 4",     value: "4" },
-            { name: "Round 5",     value: "5" },
-            { name: "Round 6",     value: "6" },
-            { name: "Round 7",     value: "7" },
-          )
-      )
-      .addIntegerOption(o =>
-        o.setName("seeking_pick_qty")
-          .setDescription("How many of those picks are you looking for? (default: 1)")
-          .setMinValue(1)
-          .setMaxValue(5)
-      )
-      .addIntegerOption(o =>
-        o.setName("seeking_pick_year")
-          .setDescription("Specific draft year for those picks (e.g. 2028), leave blank for any year")
-          .setMinValue(2025)
-          .setMaxValue(2035)
-      )
-      .addBooleanOption(o =>
-        o.setName("seeking_coins")
-          .setDescription("Are you also looking for coins?")
-      )
-      // What you're offering in return (same autocomplete as regular listing)
-      .addStringOption(o => o.setName("player1").setDescription("Player from your roster you're offering").setAutocomplete(true))
-      .addStringOption(o => o.setName("player2").setDescription("2nd player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("player3").setDescription("3rd player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("player4").setDescription("4th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("player5").setDescription("5th player (optional)").setAutocomplete(true))
-      .addStringOption(o => o.setName("pick1").setDescription("Pick you're offering, e.g. '2027 Round 1' or '2026 Round 2 (from Raiders)'"))
-      .addStringOption(o => o.setName("pick2").setDescription("2nd draft pick (optional)"))
-      .addStringOption(o => o.setName("pick3").setDescription("3rd draft pick (optional)"))
-      .addIntegerOption(o => o.setName("coins").setDescription("Coins you're offering in return").setMinValue(1))
-      .addStringOption(o => o.setName("notes").setDescription("Any additional details about what you're seeking"))
   )
 
   // ── send-offer ─────────────────────────────────────────────────────────────
@@ -350,7 +277,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "add")        return handleAdd(interaction);
   if (sub === "remove")     return handleRemove(interaction);
   if (sub === "update")     return handleUpdate(interaction);
-  if (sub === "iso")        return handleISO(interaction);
   if (sub === "send-offer") return handleSendOffer(interaction);
 }
 
@@ -417,7 +343,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
   });
 
   // Announce to trade block channel (falls back to general)
-  await postAnnouncement(interaction.client, interaction.guildId!, teamName, items, notes ?? null, false);
+  await postAnnouncement(interaction.client, interaction.guildId!, teamName, items, notes ?? null);
 }
 
 // ── /tradeblock remove ────────────────────────────────────────────────────────
@@ -506,88 +432,6 @@ async function handleUpdate(interaction: ChatInputCommandInteraction) {
     .where(eq(tradeBlockListingsTable.id, listingId));
 
   await interaction.editReply({ content: `✅ Listing #${listingId} updated! Use \`/viewtradeblock\` to see it.` });
-}
-
-// ── /tradeblock iso ───────────────────────────────────────────────────────────
-
-async function handleISO(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: true });
-
-  const season   = await getOrCreateActiveSeason(interaction.guildId!);
-  const teamName = await getMyTeam(interaction.user.id, interaction.guildId!);
-
-  // Seeking
-  const pos1         = interaction.options.getString("seeking_pos1") ?? null;
-  const pos2         = interaction.options.getString("seeking_pos2") ?? null;
-  const pos3         = interaction.options.getString("seeking_pos3") ?? null;
-  const picksRound   = interaction.options.getString("seeking_picks") ?? null;   // "any" | "1"-"7" | null
-  const picksQty     = interaction.options.getInteger("seeking_pick_qty") ?? 1;
-  const picksYear    = interaction.options.getInteger("seeking_pick_year") ?? null;
-  const wantsCoins   = interaction.options.getBoolean("seeking_coins") ?? false;
-
-  const positions: string[] = [pos1, pos2, pos3].filter(Boolean) as string[];
-
-  if (positions.length === 0 && !picksRound) {
-    await interaction.editReply({ content: "❌ You must specify at least a position **or** a pick round you're looking for." });
-    return;
-  }
-  const pickInfo = picksRound ? { round: picksRound, qty: picksQty, year: picksYear } : undefined;
-
-  const seekingDetails = { positions, pickInfo, wantsCoins };
-  const seekingType    = "multi";
-
-  // Offering (same autocomplete as regular listing)
-  const offeringItems: TradeItem[] = [];
-  for (const key of ["player1","player2","player3","player4","player5"] as const) {
-    const p = parsePlayerOption(interaction.options.getString(key));
-    if (p) offeringItems.push(p);
-  }
-  for (const key of ["pick1","pick2","pick3"] as const) {
-    const desc = interaction.options.getString(key)?.trim();
-    if (desc) offeringItems.push({ type: "pick", description: desc });
-  }
-  const offerCoins = interaction.options.getInteger("coins");
-  if (offerCoins) offeringItems.push({ type: "coins", amount: offerCoins });
-
-  if (offeringItems.length === 0) {
-    await interaction.editReply({ content: "❌ You must include at least one item you're offering in return (player, pick, or coins)." });
-    return;
-  }
-
-  const notes = interaction.options.getString("notes");
-
-  // Build seeking summary for display / announcement
-  const seekingParts: string[] = [];
-  if (positions.length) seekingParts.push(positions.join(", "));
-  if (pickInfo)          seekingParts.push(formatPickInfo(pickInfo));
-  if (wantsCoins)        seekingParts.push("💰 Coins");
-  const seekingSummary = seekingParts.join(" · ");
-
-  const [inserted] = await db.insert(tradeBlockISOTable).values({
-    discordId:      interaction.user.id,
-    teamName,
-    seasonId:       season.id,
-    seekingType,
-    seekingDetails,
-    offering:       { items: offeringItems },
-    status:         "active",
-  }).returning({ id: tradeBlockISOTable.id });
-
-  const isoId = inserted!.id;
-
-  await interaction.editReply({
-    content: `✅ ISO #${isoId} posted! Use \`/viewtradeblock\` to see it on the block.`,
-  });
-
-  void logTradeEvent({
-    seasonId:  season.id,
-    eventType: "iso_posted",
-    summary:   `${teamName} posted an ISO (seeking: ${seekingSummary || seekingType})`,
-    teamA:     teamName,
-  });
-
-  // Announce to trade block channel (falls back to general)
-  await postAnnouncement(interaction.client, interaction.guildId!, teamName, offeringItems, notes ?? null, true, seekingSummary);
 }
 
 // ── /tradeblock send-offer — shared state & page builder ─────────────────────

@@ -1,9 +1,9 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, Client,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { tradeBlockListingsTable, tradeBlockISOTable } from "@workspace/db";
+import { tradeBlockListingsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { getOrCreateActiveSeason, isAdminUser } from "../lib/db-helpers.js";
 import { devBadge } from "../lib/dev-trait.js";
@@ -22,8 +22,7 @@ type TradeItem =
   | { type: "coins";  amount: number };
 
 type CombinedEntry =
-  | { kind: "listing"; id: number; discordId: string; teamName: string; items: TradeItem[]; notes: string | null }
-  | { kind: "iso";     id: number; discordId: string; teamName: string; seekingType: string; seekingDetails: any; offering: any };
+  | { kind: "listing"; id: number; discordId: string; teamName: string; items: TradeItem[]; notes: string | null };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -40,43 +39,6 @@ function formatListingField(entry: Extract<CombinedEntry, { kind: "listing" }>):
   return lines + footer;
 }
 
-function formatISOSeeking(seekingType: string, seekingDetails: any): string {
-  // New multi format
-  if (seekingType === "multi") {
-    const parts: string[] = [];
-    if (seekingDetails.positions?.length) parts.push(seekingDetails.positions.join(", "));
-    // new structured pick info
-    if (seekingDetails.pickInfo)           parts.push(formatPickInfo(seekingDetails.pickInfo));
-    // legacy free-text pickRounds (old ISOs)
-    else if (seekingDetails.pickRounds?.length) parts.push(`Round ${seekingDetails.pickRounds.join("/")} picks`);
-    if (seekingDetails.wantsCoins)         parts.push("💰 Coins");
-    return parts.join(" · ") || "*Not specified*";
-  }
-  // Legacy formats
-  if (seekingType === "player_position") return `${seekingDetails.position ?? "?"} player`;
-  if (seekingType === "draft_pick")      return `Round ${(seekingDetails.rounds ?? []).join("/")} picks`;
-  return `${(seekingDetails.amount ?? 0).toLocaleString()} coins`;
-}
-
-function formatISOOffering(offering: any): string {
-  // New items-array format
-  if (Array.isArray(offering?.items)) {
-    return (offering.items as TradeItem[]).map(itemLine).join("\n") || "*Open to discussion*";
-  }
-  // Legacy free-text format
-  const parts: string[] = [];
-  if (offering?.players) parts.push(`🏈 ${offering.players}`);
-  if (offering?.picks)   parts.push(`📋 ${offering.picks}`);
-  if (offering?.coins)   parts.push(`💰 ${(offering.coins as number).toLocaleString()} coins`);
-  return parts.join("\n") || "*Open to discussion*";
-}
-
-function formatISOField(entry: Extract<CombinedEntry, { kind: "iso" }>): string {
-  const seeking  = formatISOSeeking(entry.seekingType, entry.seekingDetails);
-  const offering = formatISOOffering(entry.offering);
-  return `**Seeking:** ${seeking}\n**Offering:**\n${offering}`;
-}
-
 // ── Page builder (exported so interaction handler can reuse it) ────────────────
 
 export async function buildPageResponse(
@@ -85,35 +47,19 @@ export async function buildPageResponse(
   isAdminMode: boolean,
   seasonId: number,
 ): Promise<{ embed: EmbedBuilder; components: ActionRowBuilder<ButtonBuilder>[]; totalPages: number }> {
-  // Fetch all active listings and ISOs for this season
+  // Fetch all active listings for this season
   const listings = await db.select().from(tradeBlockListingsTable)
     .where(and(eq(tradeBlockListingsTable.seasonId, seasonId), eq(tradeBlockListingsTable.status, "active")))
     .orderBy(desc(tradeBlockListingsTable.createdAt));
 
-  const isos = await db.select().from(tradeBlockISOTable)
-    .where(and(eq(tradeBlockISOTable.seasonId, seasonId), eq(tradeBlockISOTable.status, "active")))
-    .orderBy(desc(tradeBlockISOTable.id));
-
-  // Combine: listings first, then ISOs
-  const combined: CombinedEntry[] = [
-    ...listings.map(l => ({
-      kind:      "listing" as const,
-      id:        l.id,
-      discordId: l.discordId,
-      teamName:  l.teamName,
-      items:     l.items as TradeItem[],
-      notes:     l.notes ?? null,
-    })),
-    ...isos.map(iso => ({
-      kind:          "iso" as const,
-      id:            iso.id,
-      discordId:     iso.discordId,
-      teamName:      iso.teamName,
-      seekingType:   iso.seekingType,
-      seekingDetails: iso.seekingDetails,
-      offering:      iso.offering,
-    })),
-  ];
+  const combined: CombinedEntry[] = listings.map(l => ({
+    kind:      "listing" as const,
+    id:        l.id,
+    discordId: l.discordId,
+    teamName:  l.teamName,
+    items:     l.items as TradeItem[],
+    notes:     l.notes ?? null,
+  }));
 
   const totalPages = Math.max(1, Math.ceil(combined.length / PAGE_SIZE));
   const safePage   = Math.min(Math.max(0, page), totalPages - 1);
@@ -125,27 +71,18 @@ export async function buildPageResponse(
     .setTitle("📋 Trade Block")
     .setDescription(
       combined.length === 0
-        ? "*The trade block is empty right now — use `/tradeblock add` or `/tradeblock iso` to post a listing.*"
-        : `Page **${safePage + 1}** of **${totalPages}** · 🔄 ${listings.length} for trade · 🔍 ${isos.length} ISO${isos.length !== 1 ? "s" : ""}`,
+        ? "*The trade block is empty right now — use `/tradeblock add` to post a listing.*"
+        : `Page **${safePage + 1}** of **${totalPages}** · 🔄 ${listings.length} listing${listings.length !== 1 ? "s" : ""} active`,
     )
     .setFooter({ text: isAdminMode ? "🔧 Admin Mode — Remove buttons visible" : "Use /tradeblock add to list your own assets" })
     .setTimestamp();
 
-  // Track whether we've shown the ISO section header
-  let shownISOHeader = false;
-
   for (const entry of pageItems) {
-    // Add a visual separator before the first ISO
-    if (entry.kind === "iso" && !shownISOHeader) {
-      embed.addFields({ name: "─────────────────────────", value: "🔍 **IN SEARCH OF (ISO)**", inline: false });
-      shownISOHeader = true;
-    }
-
-    const isOwn = entry.discordId === viewerId;
-    const label = entry.kind === "listing" ? `🔄 **${entry.teamName}**` : `🔍 **${entry.teamName}** *(ISO)*`;
-    const value = entry.kind === "listing" ? formatListingField(entry) : formatISOField(entry);
-
-    embed.addFields({ name: label, value: value.slice(0, 1024), inline: false });
+    embed.addFields({
+      name:  `🔄 **${entry.teamName}**`,
+      value: formatListingField(entry).slice(0, 1024),
+      inline: false,
+    });
   }
 
   // ── Build button rows ─────────────────────────────────────────────────────
@@ -155,47 +92,26 @@ export async function buildPageResponse(
     const isOwn = entry.discordId === viewerId;
     const row   = new ActionRowBuilder<ButtonBuilder>();
 
-    if (entry.kind === "listing") {
-      if (isOwn) {
-        row.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`tb_cancel:${entry.id}`)
-            .setLabel("🚫 Cancel My Listing")
-            .setStyle(ButtonStyle.Danger),
-        );
-      } else {
-        row.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`tb_offer:${entry.id}:${entry.discordId}`)
-            .setLabel(`📨 Send Offer (${entry.teamName})`)
-            .setStyle(ButtonStyle.Success),
-        );
-      }
-    } else {
-      // ISO
-      if (isOwn) {
-        row.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`tb_cancel_iso:${entry.id}`)
-            .setLabel("🚫 Cancel My ISO")
-            .setStyle(ButtonStyle.Danger),
-        );
-      } else {
-        row.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`tb_iso_offer:${entry.id}:${entry.discordId}`)
-            .setLabel(`📨 Make Offer (${entry.teamName} ISO)`)
-            .setStyle(ButtonStyle.Success),
-        );
-      }
-    }
-
-    // Admin remove button (always shown in admin mode)
-    if (isAdminMode) {
-      const rmId = entry.kind === "listing" ? `tb_rm:${entry.id}` : `tb_rm_iso:${entry.id}`;
+    if (isOwn) {
       row.addComponents(
         new ButtonBuilder()
-          .setCustomId(rmId)
+          .setCustomId(`tb_cancel:${entry.id}`)
+          .setLabel("🚫 Cancel My Listing")
+          .setStyle(ButtonStyle.Danger),
+      );
+    } else {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`tb_offer:${entry.id}:${entry.discordId}`)
+          .setLabel(`📨 Send Offer (${entry.teamName})`)
+          .setStyle(ButtonStyle.Success),
+      );
+    }
+
+    if (isAdminMode) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`tb_rm:${entry.id}`)
           .setLabel("🗑️ Remove")
           .setStyle(ButtonStyle.Secondary),
       );
