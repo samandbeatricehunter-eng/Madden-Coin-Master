@@ -241,7 +241,7 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
     .limit(1);
 
   const currentWeekNum = season ? (parseInt(season.currentWeek ?? "1", 10) || 1) : 1;
-  const maxWeek = Math.max(0, currentWeekNum - 1); // can import up to the week before current
+  const maxWeek = currentWeekNum; // include current week and all previous weeks
 
   const conn = connInfo ?? await loadEAConnection(guildId);
 
@@ -278,7 +278,7 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
         ? `**League:** ${connInfo.leagueName} · **Platform:** ${connInfo.platform.toUpperCase()}\n\n`
         : "") +
       (!hasOptions
-        ? "⚠️ No completed weeks available yet (current week is 1 or training camp).\nAdvance to Week 2 before importing."
+        ? "⚠️ No weeks available yet. Make sure the season is active."
         : `Select a week to import from EA.\n\n` +
           `Current week: **${currentWeekNum <= 18 ? `Week ${currentWeekNum}` : (PLAYOFF_ROUNDS.find(r => r.weekNum === currentWeekNum)?.label ?? `Week ${currentWeekNum}`)}**\n` +
           `Available: Weeks 1–${Math.min(maxWeek, 18)}` +
@@ -733,7 +733,7 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
       .limit(1);
 
     const currentWeekNum = season ? (parseInt(season.currentWeek ?? "1", 10) || 1) : 1;
-    const maxWeek = Math.max(0, currentWeekNum - 1);
+    const maxWeek = currentWeekNum; // include current week and all previous weeks
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Green)
