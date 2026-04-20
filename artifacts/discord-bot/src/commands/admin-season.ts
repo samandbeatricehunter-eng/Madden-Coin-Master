@@ -450,7 +450,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   if (sub === "status") {
-    const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+    const seasons = await db.select().from(seasonsTable).where(and(eq(seasonsTable.guildId, interaction.guildId!), eq(seasonsTable.isActive, true))).limit(1);
     const season = seasons[0];
     if (!season) {
       return interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Active Season").setDescription("No active season found. Use `/season new` to start one.")] });
@@ -505,7 +505,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "set_limits") {
     const clear = interaction.options.getBoolean("clear") ?? false;
 
-    const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+    const seasons = await db.select().from(seasonsTable).where(and(eq(seasonsTable.guildId, interaction.guildId!), eq(seasonsTable.isActive, true))).limit(1);
     const season = seasons[0];
     if (!season) {
       return interaction.editReply({
@@ -614,7 +614,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   if (sub === "core-attrs") {
-    const seasons = await db.select().from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+    const seasons = await db.select().from(seasonsTable).where(and(eq(seasonsTable.guildId, interaction.guildId!), eq(seasonsTable.isActive, true))).limit(1);
     const season = seasons[0];
     if (!season) {
       return interaction.editReply({
@@ -785,7 +785,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const [activeSeason] = await db.select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
-      .from(seasonsTable).where(eq(seasonsTable.isActive, true)).limit(1);
+      .from(seasonsTable).where(and(eq(seasonsTable.guildId, interaction.guildId!), eq(seasonsTable.isActive, true))).limit(1);
     if (!activeSeason) return interaction.editReply({ content: "❌ No active season found." });
 
     const [deletedStats] = await Promise.all([

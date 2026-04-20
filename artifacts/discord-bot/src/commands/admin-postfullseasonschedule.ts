@@ -4,7 +4,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { seasonsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { postFullSeasonScheduleToChannel } from "../lib/season-schedule-post.js";
 import { getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
@@ -16,9 +16,14 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
+  const guildId = interaction.guildId!;
+
   const [season] = await db.select()
     .from(seasonsTable)
-    .where(eq(seasonsTable.isActive, true))
+    .where(and(
+      eq(seasonsTable.guildId, guildId),
+      eq(seasonsTable.isActive, true),
+    ))
     .limit(1);
 
   if (!season) {
