@@ -1450,7 +1450,7 @@ async function handleButton(interaction: ButtonInteraction) {
       .setDescription(
         "Configure how coins are awarded at the end of each season.\n\n" +
         "**Set EOS payout amounts:**\n" +
-        "```/admin-setpayouts```\n" +
+        "```/admin-payout```\n" +
         "Set values for: Champion, Runner-up, 3rd place, Playoff appearance, Regular season wins, etc.\n\n" +
         "**Set stat-based XP tiers:**\n" +
         "```/admin-set-stat-tiers```\n" +

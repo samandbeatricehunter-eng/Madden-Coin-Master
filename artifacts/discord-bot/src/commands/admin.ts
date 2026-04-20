@@ -2,50 +2,31 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction,
   PermissionFlagsBits,
 } from "discord.js";
-import * as adminAddCoins            from "./admin-addcoins.js";
-import * as adminRemoveCoins         from "./admin-removecoins.js";
 import * as adminReverseTransaction  from "./admin-reverse-transaction.js";
 import * as adminLinkTeam            from "./admin-linkteam.js";
 import * as adminClearteam           from "./admin-clearteam.js";
 import * as adminSetUser             from "./admin-setuser.js";
 import * as adminSetAdmin            from "./admin-setadmin.js";
 import * as adminFixPlayerNames      from "./admin-fixplayernames.js";
-import * as adminSetPayouts          from "./admin-setpayouts.js";
-import * as adminSetMilestoneTier    from "./admin-setmilestonetier.js";
 import * as adminSetStatTier         from "./admin-set-stat-tiers.js";
 import * as adminStatTiers           from "./admin-stat-tiers.js";
 import * as adminCustomPlayerSettings from "./admin-customplayersettings.js";
 import * as adminCustomArchetypes    from "./admin-customarchetypes.js";
-import * as adminGotw                from "./admin-gotw.js";
-import * as adminPotw                from "./admin-potw.js";
 import * as adminServer              from "./adminserver.js";
 import * as adminDeleteUser         from "./admin-deleteuser.js";
 import { executeFranchiseLimit, executeFranchiseReset } from "./admin-season.js";
-import { PAYOUT_KEYS }               from "../lib/payout-config.js";
 import { STAT_CATEGORY_CHOICES }     from "../lib/stat-categories.js";
 import { ALL_POSITIONS }             from "../lib/custom-player-helpers.js";
+import { db } from "@workspace/db";
+import { usersTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
+import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin")
   .setDescription("Commissioner & admin tools")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 
-  // ── coins ──────────────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("add_coins")
-    .setDescription("Add coins to up to 32 users at once")
-    .addStringOption(o => o.setName("users").setDescription("@mentions or space/comma-separated list").setRequired(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Coins to add to each user").setRequired(true).setMinValue(1))
-    .addStringOption(o => o.setName("reason").setDescription("Optional reason shown to each user").setRequired(false))
-  )
-  .addSubcommand(s => s
-    .setName("remove_coins")
-    .setDescription("Remove coins from a user's balance")
-    .addUserOption(o => o.setName("user").setDescription("User to remove coins from").setRequired(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Amount to remove").setRequired(true).setMinValue(1))
-    .addStringOption(o => o.setName("reason").setDescription("Optional reason").setRequired(false))
-    .addBooleanOption(o => o.setName("allow_negative").setDescription("Allow balance to go negative?").setRequired(false))
-  )
   .addSubcommand(s => s
     .setName("reverse_transaction_by_id")
     .setDescription("Reverse a coin transaction by ID (and optionally its store purchase)")
@@ -131,40 +112,6 @@ export const data = new SlashCommandBuilder()
     .setDescription("Re-sync all player display names from Discord")
   )
 
-  // ── payout settings ────────────────────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("view_payout_settings")
-    .setDescription("Show ALL current economy values (payouts, bonuses, store prices)")
-  )
-  .addSubcommand(s => s
-    .setName("set_payout_amounts")
-    .setDescription("Update a specific payout or bonus amount")
-    .addStringOption(o => o.setName("reward").setDescription("Which value to update").setRequired(true)
-      .addChoices(
-        { name: "🎮 Game — H2H win (both players played)",               value: PAYOUT_KEYS.H2H_WIN         },
-        { name: "🎮 Game — H2H loss (both players played)",              value: PAYOUT_KEYS.H2H_LOSS        },
-        { name: "🤖 Game — CPU/force win (one-sided or simmed game)",    value: PAYOUT_KEYS.CPU_WIN         },
-        { name: "🏅 Season bonus — in-game award winner (per team)",     value: PAYOUT_KEYS.AWARD_WIN_BONUS },
-        { name: "📊 Season PR bonus — #1 ranked player",                 value: PAYOUT_KEYS.SEASON_PR_1     },
-        { name: "📊 Season PR bonus — #2 ranked player",                 value: PAYOUT_KEYS.SEASON_PR_2     },
-        { name: "📊 Season PR bonus — #3–6 ranked players",              value: PAYOUT_KEYS.SEASON_PR_3_6   },
-        { name: "📊 Season PR bonus — #7–8 ranked players",              value: PAYOUT_KEYS.SEASON_PR_7_8   },
-        { name: "📊 Season PR bonus — #9–10 ranked players",             value: PAYOUT_KEYS.SEASON_PR_9_10  },
-        { name: "🎮 GOTY award — coins per winner",                      value: PAYOUT_KEYS.GOTY_WINNER     },
-        { name: "🏃 EOS bonus — top RB qualifying YPC (coins)",           value: PAYOUT_KEYS.EOS_RB_YPC_BONUS    },
-        { name: "🏈 EOS bonus — top QB qualifying YPA (coins)",           value: PAYOUT_KEYS.EOS_QB_YPA_BONUS    },
-        { name: "🛡️ EOS bonus — DB individual player 8+ INTs",           value: PAYOUT_KEYS.EOS_DB_INT_BONUS    },
-        { name: "😔 EOS consolation — missed playoffs (user team)",       value: PAYOUT_KEYS.EOS_MISSED_PLAYOFFS },
-        { name: "🏈 EOS QB YPA — minimum pass attempts to qualify",                  value: PAYOUT_KEYS.EOS_QB_MIN_ATT   },
-        { name: "🏃 EOS RB YPC — minimum rush carries to qualify",                  value: PAYOUT_KEYS.EOS_RB_MIN_ATT   },
-        { name: "📐 EOS QB YPA threshold — min YPA×10 (e.g. 85 = 8.5 YPA)",        value: PAYOUT_KEYS.EOS_QB_MIN_YPA   },
-        { name: "📐 EOS RB YPC threshold — min YPC×10 (e.g. 70 = 7.0 YPC)",        value: PAYOUT_KEYS.EOS_RB_MIN_YPC   },
-        { name: "🛡️ EOS DB INT threshold — min individual player INTs to qualify",  value: PAYOUT_KEYS.EOS_DB_MIN_INTS  },
-      )
-    )
-    .addIntegerOption(o => o.setName("amount").setDescription("New value (coins, attempts, or threshold)").setRequired(true).setMinValue(0))
-  )
-
   // ── milestone & EOS tier settings ─────────────────────────────────────────
   .addSubcommand(s => s
     .setName("set_user_milestone_tier")
@@ -216,33 +163,6 @@ export const data = new SlashCommandBuilder()
     .addStringOption(o => o.setName("archetype").setDescription("Archetype name (e.g. Scrambler, Field General)").setRequired(true).setAutocomplete(true))
   )
 
-  // ── payouts ────────────────────────────────────────────────────────────────
-  .addSubcommand(s => {
-    s.setName("payout_gotw")
-      .setDescription("Award GOTW correct-guess bonuses in bulk (up to 24 users, or use 'all' to pay everyone)")
-      .addBooleanOption(o =>
-        o.setName("all")
-          .setDescription("Pay every registered member currently linked to a team")
-          .setRequired(false)
-      );
-    for (let i = 1; i <= 24; i++) {
-      s.addUserOption(o =>
-        o.setName(`user${i}`)
-          .setDescription("Correct guesser")
-          .setRequired(false)
-      );
-    }
-    return s;
-  })
-  .addSubcommand(s => s
-    .setName("payout_potw")
-    .setDescription("Award Player of the Week bonus — 1 to 4 players")
-    .addUserOption(o => o.setName("player1").setDescription("POTW recipient").setRequired(true))
-    .addUserOption(o => o.setName("player2").setDescription("POTW recipient").setRequired(false))
-    .addUserOption(o => o.setName("player3").setDescription("POTW recipient").setRequired(false))
-    .addUserOption(o => o.setName("player4").setDescription("POTW recipient").setRequired(false))
-  )
-
   // ── server settings ────────────────────────────────────────────────────────
   .addSubcommand(s => s
     .setName("server_bot_settings")
@@ -290,8 +210,6 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction): Promise<unknown> {
   const sub = interaction.options.getSubcommand(true);
 
-  if (sub === "add_coins")                return adminAddCoins.execute(interaction);
-  if (sub === "remove_coins")             return adminRemoveCoins.execute(interaction);
   if (sub === "reverse_transaction_by_id") return adminReverseTransaction.execute(interaction);
 
   if (sub === "set_user_team" || sub === "view_all_user_teams")
@@ -303,9 +221,31 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return adminSetAdmin.execute(interaction);
   if (sub === "resync_player_names")      return adminFixPlayerNames.execute(interaction);
 
-  if (sub === "view_payout_settings")     return adminSetPayouts.execute(interaction);
-  if (sub === "set_payout_amounts")       return adminSetPayouts.execute(interaction);
-  if (sub === "set_user_milestone_tier")  return adminSetMilestoneTier.execute(interaction);
+  if (sub === "set_user_milestone_tier") {
+    await interaction.deferReply({ ephemeral: true });
+    const member = interaction.guild?.members.cache.get(interaction.user.id)
+      ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+    const isDbAdmin = await isAdminUser(interaction.user.id, interaction.guildId!);
+    if (!isDiscordAdmin && !isDbAdmin) {
+      return interaction.editReply({ content: "❌ You don't have permission to use this command." });
+    }
+    const target = interaction.options.getUser("user", true);
+    const tier = interaction.options.getInteger("tier", true);
+    const rows = await db.select({ discordId: usersTable.discordId })
+      .from(usersTable)
+      .where(and(eq(usersTable.discordId, target.id), eq(usersTable.guildId, interaction.guildId!)));
+    if (!rows.length) {
+      return interaction.editReply({ content: `❌ <@${target.id}> is not registered in this server.` });
+    }
+    await db.update(usersTable)
+      .set({ milestoneTierAwarded: tier })
+      .where(and(eq(usersTable.discordId, target.id), eq(usersTable.guildId, interaction.guildId!)));
+    return interaction.editReply({
+      content: `✅ Set <@${target.id}>'s milestone tier to **Tier ${tier}** (coins unchanged).`,
+    });
+  }
+
   if (sub === "view_eos_payout_settings") return adminStatTiers.execute(interaction);
   if (sub === "set_eos_payout_settings")  return adminSetStatTier.execute(interaction);
 
@@ -313,8 +253,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return adminCustomPlayerSettings.execute(interaction);
   if (sub === "edit_archetype")           return adminCustomArchetypes.execute(interaction);
 
-  if (sub === "payout_gotw")              return adminGotw.execute(interaction);
-  if (sub === "payout_potw")              return adminPotw.execute(interaction);
   if (sub === "server_bot_settings")      return adminServer.execute(interaction);
   if (sub === "server_franchise_limit")   return executeFranchiseLimit(interaction);
   if (sub === "server_franchise_reset")   return executeFranchiseReset(interaction);

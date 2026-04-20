@@ -42,16 +42,12 @@ import * as draftPresence           from "../commands/draft-presence.js";
 import * as adminPlayoffs           from "../commands/admin-playoffs.js";
 import * as adminResendArticle      from "../commands/admin-resendarticle.js";
 import * as adminCatchup            from "../commands/admin-catchup.js";
-import * as adminManualScore        from "../commands/admin-manualscore.js";
-import * as adminReverseGame        from "../commands/admin-reverse-game.js";
 import * as adminPostFullSeasonSchedule from "../commands/admin-postfullseasonschedule.js";
 import * as adminRollbackFranchise  from "../commands/admin-rollback-franchise.js";
 import * as adminResetSeasonStats   from "../commands/admin-reset-season-stats.js";
 import * as endofseasonpayout       from "../commands/endofseasonpayout.js";
-import * as adminSetPayouts         from "../commands/admin-setpayouts.js";
 import * as adminSetStatTiers       from "../commands/admin-set-stat-tiers.js";
 import * as adminStatTiers          from "../commands/admin-stat-tiers.js";
-import * as adminSetMilestoneTier   from "../commands/admin-setmilestonetier.js";
 import * as adminLegendVault        from "../commands/admin-legendvault.js";
 import * as adminResyncTeams        from "../commands/admin-resync-teams.js";
 import * as adminRepairTeamLinks   from "../commands/admin-repair-teamlinks.js";
@@ -125,8 +121,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminResendArticle, true],
     [adminCatchup,       true],
     [adminPayout,        true],
-    [adminManualScore,   true],
-    [adminReverseGame,   true],
     [adminPostFullSeasonSchedule, true],
     [adminRollbackFranchise, true],
     [adminResetSeasonStats,  true],
@@ -161,9 +155,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [viewpayouttiers, economy],
     [viewXp,          economy],
     [endofseasonpayout,   economy],
-    [adminSetPayouts,     economy],
-    [adminSetMilestoneTier, economy],
-
     // ── Feature-specific ─────────────────────────────────────────────────────
     [availableupgrades,          anyUpgrade],
     [wager,                      wagersOn],
