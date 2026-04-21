@@ -591,6 +591,45 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
     .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, discordId)))
     .catch(() => null);
 
+  // ── Discord role + nickname ────────────────────────────────────────────────
+  const discordStatusLines: string[] = [];
+
+  const guildMember = await interaction.guild?.members.fetch(discordId).catch(() => null);
+  if (guildMember) {
+    // Add "Approved Member" role
+    await interaction.guild!.roles.fetch().catch(() => null);
+    const approvedRole = interaction.guild!.roles.cache.find(r => r.name === "Approved Member");
+    if (approvedRole) {
+      const added = await guildMember.roles.add(approvedRole).then(() => true).catch(err => {
+        console.error(`[ud_link] Failed to add Approved Member role to ${discordId}:`, err);
+        return false;
+      });
+      if (added) discordStatusLines.push(`✅ Assigned **Approved Member** role`);
+      else       discordStatusLines.push(`⚠️ Could not assign **Approved Member** role (check bot permissions)`);
+    } else {
+      discordStatusLines.push(`⚠️ **Approved Member** role not found in this server`);
+    }
+
+    // Resolve short team nickname (e.g. "Cowboys") from MCA table, fallback to last word of fullName
+    const [mcaTeam] = await db
+      .select({ nickName: franchiseMcaTeamsTable.nickName })
+      .from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.fullName, teamName))
+      .orderBy(desc(franchiseMcaTeamsTable.id))
+      .limit(1)
+      .catch(() => [] as { nickName: string }[]);
+
+    const teamNick = mcaTeam?.nickName ?? teamName.split(" ").pop() ?? teamName;
+    const nickSet = await guildMember.setNickname(teamNick, `Linked to ${teamName} by ${interaction.user.username}`).then(() => true).catch(err => {
+      console.error(`[ud_link] Failed to set nickname for ${discordId}:`, err);
+      return false;
+    });
+    if (nickSet) discordStatusLines.push(`✅ Nickname set to **${teamNick}**`);
+    else         discordStatusLines.push(`⚠️ Could not set nickname (check bot permissions / member rank)`);
+  } else {
+    discordStatusLines.push(`⚠️ Could not fetch guild member — role and nickname not applied`);
+  }
+
   const bonusLines: string[] = [];
 
   // New member bonus
@@ -642,6 +681,9 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
       { name: "Team",    value: teamName, inline: true },
     );
 
+  if (discordStatusLines.length > 0) {
+    embed.addFields({ name: "Discord Updates", value: discordStatusLines.join("\n") });
+  }
   if (bonusLines.length > 0) {
     embed.addFields({ name: "Bonuses Awarded", value: bonusLines.join("\n") });
   }
