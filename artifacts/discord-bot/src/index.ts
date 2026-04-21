@@ -14,7 +14,6 @@ import * as balance          from "./commands/balance.js";
 import * as sendcoins        from "./commands/sendcoins.js";
 import * as inventory        from "./commands/inventory.js";
 import * as recentH2H        from "./commands/recentH2H.js";
-import * as wager            from "./commands/wager.js";
 import * as teamlist         from "./commands/teamlist.js";
 import * as openteams        from "./commands/openteams.js";
 import * as seasonschedule   from "./commands/seasonschedule.js";
@@ -131,7 +130,6 @@ if (!isProduction && !devBotEnabled) {
     sendcoins,
     inventory,
     recentH2H,
-    wager,
     teamlist,
     openteams,
     seasonschedule,

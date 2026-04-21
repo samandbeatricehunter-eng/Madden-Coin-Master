@@ -323,6 +323,10 @@ export const wagersTable = pgTable("wagers", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at"),
   resolvedBy: text("resolved_by"),
+  // Spread wager fields (null for legacy wagers without spread)
+  spread:         integer("spread"),          // challenger's declared spread (-10 to +10)
+  challengerSide: text("challenger_side"),    // "home" | "away" — which side challenger picked
+  scheduleGameId: integer("schedule_game_id"), // franchise_schedule.id this wager is for
 });
 
 // Tracks Madden franchise game IDs that have already been processed (dedup)

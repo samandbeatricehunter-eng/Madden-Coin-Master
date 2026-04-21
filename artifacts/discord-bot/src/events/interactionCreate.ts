@@ -882,26 +882,39 @@ async function handleButton(interaction: ButtonInteraction) {
 
     // Post to commissioner channel with winner buttons
     const commChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]!;
+    // Derive home/away team names from wager fields
+    const homeTeamLabel = wager.challengerSide === "home" ? wager.teamFor : wager.teamAgainst;
+    const awayTeamLabel = wager.challengerSide === "away" ? wager.teamFor : wager.teamAgainst;
+    const spreadInfo    = wager.spread !== null && wager.spread !== undefined
+      ? `Challenger's spread: **${wager.spread > 0 ? "+" : ""}${wager.spread}** on ${wager.teamFor}`
+      : "No spread set (straight win)";
+
     const commEmbed = new EmbedBuilder()
       .setColor(Colors.Gold)
-      .setTitle("⚔️ Wager — Declare Winner")
+      .setTitle("⚔️ Wager — Confirm Result")
+      .setDescription("Enter the **final score margin** (home score − away score) and the spread will be applied automatically to determine the winner.")
       .addFields(
-        { name: "Player 1 (Challenger)", value: `<@${wager.challengerId}> — **${wager.teamFor}**`,  inline: true },
-        { name: "Player 2 (Opponent)",   value: `<@${wager.opponentId}> — **${wager.teamAgainst}**`, inline: true },
-        { name: "💰 Pot", value: `**${wager.pot.toLocaleString()} coins** → goes to winner`, inline: false },
+        { name: "🏠 Home Team",                value: `**${homeTeamLabel}** — <@${wager.challengerSide === "home" ? wager.challengerId : wager.opponentId}>`, inline: true },
+        { name: "✈️ Away Team",                value: `**${awayTeamLabel}** — <@${wager.challengerSide === "away" ? wager.challengerId : wager.opponentId}>`, inline: true },
+        { name: "💰 Pot",                      value: `**${wager.pot.toLocaleString()} coins**`, inline: false },
+        { name: "📊 Spread",                   value: spreadInfo, inline: false },
       )
-      .setFooter({ text: `Wager #${wagerId} • Click the winner below once the game is played` })
+      .setFooter({ text: `Wager #${wagerId} • Enter the margin via "Confirm Home Win" or "Confirm Away Win"` })
       .setTimestamp();
 
     const commRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(`wager_winner:${wagerId}:${wager.challengerId}`)
-        .setLabel(`🏆 ${wager.teamFor} Wins`)
+        .setCustomId(`wager_confirm:home:${wagerId}`)
+        .setLabel(`🏠 Confirm Home Win`)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
-        .setCustomId(`wager_winner:${wagerId}:${wager.opponentId}`)
-        .setLabel(`🏆 ${wager.teamAgainst} Wins`)
+        .setCustomId(`wager_confirm:away:${wagerId}`)
+        .setLabel(`✈️ Confirm Away Win`)
         .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`wager_rescind:${wagerId}`)
+        .setLabel("↩️ Rescind")
+        .setStyle(ButtonStyle.Danger),
     );
 
     try {
@@ -977,65 +990,89 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Wager: commissioner declares winner ───────────────────────────────────
-  if (action === "wager_winner") {
-    const wagerId  = parseInt(secondPart ?? "0", 10);
-    const winnerId = userId!;
+  // ── Wager: commissioner opens margin modal (Confirm Home/Away Win) ────────
+  if (action === "wager_confirm") {
+    // customId format: wager_confirm:<home|away>:<wagerId>
+    const winningSide = secondPart as "home" | "away";  // "home" or "away"
+    const wagerId     = parseInt(parts[2] ?? "0", 10);
+
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
+      await interaction.reply({ content: "❌ Only commissioners can confirm wager results.", ephemeral: true });
+      return;
+    }
+
+    const [wager] = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
+    if (!wager) { await interaction.reply({ content: "❌ Wager not found.", ephemeral: true }); return; }
+    if (wager.status !== "active") {
+      await interaction.reply({ content: `⚠️ This wager is not active (status: **${wager.status}**).`, ephemeral: true });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`wager_margin:${winningSide}:${wagerId}`)
+      .setTitle(`Enter Final Score`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("home_score")
+            .setLabel("Home Team Score")
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("e.g. 28")
+            .setRequired(true)
+            .setMaxLength(3),
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("away_score")
+            .setLabel("Away Team Score")
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("e.g. 21")
+            .setRequired(true)
+            .setMaxLength(3),
+        ),
+      );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // ── Wager: commissioner rescinds (refunds both sides) ─────────────────────
+  if (action === "wager_rescind") {
+    const wagerId = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    const rows = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
-    const wager = rows[0];
+    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
+      await interaction.followUp({ content: "❌ Only commissioners can rescind wagers.", ephemeral: true });
+      return;
+    }
+
+    const [wager] = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
     if (!wager) { await interaction.followUp({ content: "❌ Wager not found.", ephemeral: true }); return; }
     if (wager.status !== "active") {
       await interaction.followUp({ content: `⚠️ This wager is not active (status: **${wager.status}**).`, ephemeral: true });
       return;
     }
 
-    const loserId = winnerId === wager.challengerId ? wager.opponentId : wager.challengerId;
-    const winnerTeam = winnerId === wager.challengerId ? wager.teamFor : wager.teamAgainst;
-    const loserTeam  = winnerId === wager.challengerId ? wager.teamAgainst : wager.teamFor;
-
-    // Pay out the full pot to the winner — always use the wager's own guild
     const wagerGuildId = wager.guildId ?? interaction.guildId!;
-    await addBalance(winnerId, wager.pot, wagerGuildId);
-    await logTransaction(winnerId, wager.pot, "addcoins",
-      `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, wagerGuildId, interaction.user.id);
+    await addBalance(wager.challengerId, wager.amount, wagerGuildId);
+    await logTransaction(wager.challengerId, wager.amount, "addcoins", `Wager #${wagerId} rescinded — refund`, wagerGuildId, interaction.user.id);
+    await addBalance(wager.opponentId, wager.amount, wagerGuildId);
+    await logTransaction(wager.opponentId, wager.amount, "addcoins", `Wager #${wagerId} rescinded — refund`, wagerGuildId, interaction.user.id);
 
-    await db.update(wagersTable)
-      .set({ status: "completed", winnerId, resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(wagersTable.id, wagerId));
+    await db.update(wagersTable).set({ status: "rescinded", resolvedAt: new Date(), resolvedBy: interaction.user.id }).where(eq(wagersTable.id, wagerId));
 
-    // Edit the commissioner message
-    const resolvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle("✅ Wager Resolved")
-      .setDescription(`**${winnerTeam}** wins!\n<@${winnerId}> collects the pot of **${wager.pot.toLocaleString()} coins**.`)
-      .addFields(
-        { name: "🏆 Winner", value: `<@${winnerId}> (${winnerTeam})`, inline: true },
-        { name: "📉 Loser",  value: `<@${loserId}> (${loserTeam})`,  inline: true },
-        { name: "💰 Payout", value: `**${wager.pot.toLocaleString()} coins** → <@${winnerId}>`, inline: false },
-        { name: "🔖 Decided by", value: interaction.user.toString(), inline: false },
-      )
-      .setFooter({ text: `Wager #${wagerId}` })
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Grey)
+      .setTitle("↩️ Wager Rescinded")
+      .setDescription(`Wager #${wagerId} has been rescinded by <@${interaction.user.id}>.\nBoth players have been refunded **${wager.amount.toLocaleString()} coins**.`)
       .setTimestamp();
+    await interaction.editReply({ embeds: [embed], components: [] });
 
-    await interaction.editReply({ embeds: [resolvedEmbed], components: [] });
-
-    // DM both players
-    try {
-      const winnerUser = await interaction.client.users.fetch(winnerId);
-      await winnerUser.send(
-        `🏆 **You won Wager #${wagerId}!**\n` +
-        `You took **${winnerTeam}** and they won — **${wager.pot.toLocaleString()} coins** have been added to your balance.`
-      ).catch(() => {});
-    } catch (_) {}
-    try {
-      const loserUser = await interaction.client.users.fetch(loserId);
-      await loserUser.send(
-        `📉 **Wager #${wagerId} result:** You lost.\n` +
-        `You took **${loserTeam}** and they lost to **${winnerTeam}**. Your **${wager.amount.toLocaleString()} coins** have been paid out to the winner.`
-      ).catch(() => {});
-    } catch (_) {}
+    for (const uid of [wager.challengerId, wager.opponentId]) {
+      try {
+        const u = await interaction.client.users.fetch(uid);
+        await u.send(`↩️ **Wager #${wagerId} has been rescinded** by a commissioner. Your **${wager.amount.toLocaleString()} coins** have been refunded.`).catch(() => {});
+      } catch (_) {}
+    }
     return;
   }
 
@@ -2429,6 +2466,113 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "ss_lt_edit_group")  { await handleSsLtEditGroup(interaction);   return; }
 }
 
+// ── Wager margin modal handler ─────────────────────────────────────────────────
+async function handleWagerMarginModal(interaction: ModalSubmitInteraction) {
+  // customId: wager_margin:<winningSide>:<wagerId>
+  const parts   = interaction.customId.split(":");
+  // parts[1] is the button side (home/away) — not used; spread math determines winner from scores
+  const wagerId = parseInt(parts[2] ?? "0", 10);
+
+  const homeScoreStr = interaction.fields.getTextInputValue("home_score").trim();
+  const awayScoreStr = interaction.fields.getTextInputValue("away_score").trim();
+  const homeScore    = parseInt(homeScoreStr, 10);
+  const awayScore    = parseInt(awayScoreStr, 10);
+
+  if (isNaN(homeScore) || isNaN(awayScore) || homeScore < 0 || awayScore < 0) {
+    await interaction.reply({ content: "❌ Invalid scores. Enter non-negative whole numbers.", ephemeral: true });
+    return;
+  }
+
+  const [wager] = await db.select().from(wagersTable).where(eq(wagersTable.id, wagerId)).limit(1);
+  if (!wager) { await interaction.reply({ content: "❌ Wager not found.", ephemeral: true }); return; }
+  if (wager.status !== "active") {
+    await interaction.reply({ content: `⚠️ This wager is not active (status: **${wager.status}**).`, ephemeral: true });
+    return;
+  }
+
+  const wagerGuildId = wager.guildId ?? interaction.guildId!;
+  const spread       = wager.spread ?? 0;
+
+  // Spread math: challenger net = (challengerSideScore - opponentSideScore) + spread
+  // Positive → challenger wins; negative → opponent wins; zero → push
+  const challengerScore = wager.challengerSide === "home" ? homeScore : awayScore;
+  const opponentScore   = wager.challengerSide === "home" ? awayScore : homeScore;
+  const net             = (challengerScore - opponentScore) + spread;
+
+  const isPush     = net === 0;
+  const challWins  = net > 0;
+
+  const winnerId   = isPush ? null : challWins ? wager.challengerId : wager.opponentId;
+  const loserId    = isPush ? null : challWins ? wager.opponentId   : wager.challengerId;
+  const winnerTeam = !winnerId ? null : challWins ? wager.teamFor   : wager.teamAgainst;
+  const loserTeam  = !loserId  ? null : challWins ? wager.teamAgainst : wager.teamFor;
+
+  if (isPush) {
+    // Refund both
+    await addBalance(wager.challengerId, wager.amount, wagerGuildId);
+    await logTransaction(wager.challengerId, wager.amount, "addcoins", `Wager #${wagerId} — push (spread tie) refund`, wagerGuildId, interaction.user.id);
+    await addBalance(wager.opponentId, wager.amount, wagerGuildId);
+    await logTransaction(wager.opponentId, wager.amount, "addcoins", `Wager #${wagerId} — push (spread tie) refund`, wagerGuildId, interaction.user.id);
+    await db.update(wagersTable).set({ status: "push", resolvedAt: new Date(), resolvedBy: interaction.user.id }).where(eq(wagersTable.id, wagerId));
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Grey)
+      .setTitle("🤝 Wager Push — Coins Refunded")
+      .setDescription(
+        `Final score: **${wager.teamFor} ${challengerScore} — ${opponentScore} ${wager.teamAgainst}**\n` +
+        `Spread: **${spread > 0 ? "+" : ""}${spread}** → Net: **0** (push)\n\n` +
+        `Both players have been refunded **${wager.amount.toLocaleString()} coins**.`,
+      )
+      .setFooter({ text: `Wager #${wagerId}` }).setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
+    // Also try to clear the buttons from the original commissioner message
+    if (wager.commissionerMessageId && interaction.channel) {
+      try {
+        const msg = await (interaction.channel as any).messages.fetch(wager.commissionerMessageId);
+        await msg.edit({ components: [] });
+      } catch (_) {}
+    }
+
+    for (const uid of [wager.challengerId, wager.opponentId]) {
+      try { const u = await interaction.client.users.fetch(uid); await u.send(`🤝 **Wager #${wagerId} — Push!** Scores tied after spread — your **${wager.amount.toLocaleString()} coins** have been refunded.`).catch(() => {}); } catch (_) {}
+    }
+  } else {
+    // Winner takes pot
+    await addBalance(winnerId!, wager.pot, wagerGuildId);
+    await logTransaction(winnerId!, wager.pot, "addcoins", `Wager #${wagerId} won: ${winnerTeam} vs ${loserTeam}`, wagerGuildId, interaction.user.id);
+    await db.update(wagersTable).set({ status: "completed", winnerId: winnerId!, resolvedAt: new Date(), resolvedBy: interaction.user.id }).where(eq(wagersTable.id, wagerId));
+
+    const homeTeamLabel = wager.challengerSide === "home" ? wager.teamFor : wager.teamAgainst;
+    const awayTeamLabel = wager.challengerSide === "away" ? wager.teamFor : wager.teamAgainst;
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Wager Resolved")
+      .setDescription(`Final: **${homeTeamLabel} ${homeScore} — ${awayScore} ${awayTeamLabel}**`)
+      .addFields(
+        { name: "📊 Spread Applied", value: `Spread: **${spread > 0 ? "+" : ""}${spread}** on ${wager.teamFor} → Net: **${net > 0 ? "+" : ""}${net}**`, inline: false },
+        { name: "🏆 Winner", value: `<@${winnerId!}> (${winnerTeam})`, inline: true },
+        { name: "📉 Loser",  value: `<@${loserId!}> (${loserTeam})`,  inline: true },
+        { name: "💰 Payout", value: `**${wager.pot.toLocaleString()} coins** → <@${winnerId!}>`, inline: false },
+        { name: "🔖 Decided by", value: `<@${interaction.user.id}>`, inline: false },
+      )
+      .setFooter({ text: `Wager #${wagerId}` }).setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
+    // Also try to clear the buttons from the original commissioner message
+    if (wager.commissionerMessageId && interaction.channel) {
+      try {
+        const msg = await (interaction.channel as any).messages.fetch(wager.commissionerMessageId);
+        await msg.edit({ components: [] });
+      } catch (_) {}
+    }
+
+    try { const wu = await interaction.client.users.fetch(winnerId!); await wu.send(`🏆 **You won Wager #${wagerId}!** You took **${winnerTeam}** and covered the spread — **${wager.pot.toLocaleString()} coins** added to your balance.`).catch(() => {}); } catch (_) {}
+    try { const lu = await interaction.client.users.fetch(loserId!); await lu.send(`📉 **Wager #${wagerId} result:** You lost. You took **${loserTeam}** and didn't cover — your **${wager.amount.toLocaleString()} coins** have been paid out to the winner.`).catch(() => {}); } catch (_) {}
+  }
+}
+
 // ── Modal handler ──────────────────────────────────────────────────────────────
 async function handleModal(interaction: ModalSubmitInteraction) {
   const parts  = interaction.customId.split(":");
@@ -2452,6 +2596,9 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const handled = await handleAdminOperationsInteraction(interaction);
     if (handled) return;
   }
+
+  // ── Wager margin modal (commissioner enters final score) ─────────────────────
+  if (action === "wager_margin") { await handleWagerMarginModal(interaction); return; }
 
   // ── Custom player builder ─────────────────────────────────────────────────────
   if (action === "ccp_modal")            { await handleCcpModal(interaction, idStr ?? "");            return; }

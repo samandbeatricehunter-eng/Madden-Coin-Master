@@ -7,7 +7,6 @@ import * as balance            from "../commands/balance.js";
 import * as sendcoins          from "../commands/sendcoins.js";
 import * as inventory          from "../commands/inventory.js";
 import * as recentH2H          from "../commands/recentH2H.js";
-import * as wager              from "../commands/wager.js";
 import * as teamlist           from "../commands/teamlist.js";
 import * as openteams          from "../commands/openteams.js";
 import * as seasonschedule     from "../commands/seasonschedule.js";
@@ -79,8 +78,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
   const devUp      = economy  && (!settings || settings.devUpgradesEnabled);
   const ageReset   = economy  && (!settings || settings.ageResetsEnabled);
   const anyUpgrade = attrUp || devUp || ageReset;
-  const wagersOn     = economy && (!settings || settings.wagerEnabled);
-
   // [module, include?]
   const entries: [{ data: { toJSON(): object } }, boolean][] = [
     // ── Always visible ──────────────────────────────────────────────────────
@@ -142,7 +139,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [endofseasonpayout,   economy],
     // ── Feature-specific ─────────────────────────────────────────────────────
     [availableupgrades,          anyUpgrade],
-    [wager,                      wagersOn],
     [adminLegendVault,           legends],
     [adminTroubleshoot,          true],
     [adminRepairTeamLinks,       true],
