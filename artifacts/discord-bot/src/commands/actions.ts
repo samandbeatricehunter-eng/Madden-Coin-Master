@@ -116,10 +116,12 @@ export function buildUnlinkedHubEmbed(): EmbedBuilder {
     .setTitle("🏈 League Actions Hub — Unlinked")
     .setDescription(
       "You are not currently linked to a team in this league.\n\n" +
-      "**Available Actions**\n" +
-      "🔴 View Open Teams · 🟢 View User Teams · 📬 Request Open Team\n" +
-      "📋 Request Add to Waitlist · ❌ Request Waitlist Removal\n\n" +
-      "👥 View Any Roster",
+      "**Team Requests**\n" +
+      "🔴 View Open Teams · 🟢 View User Teams · 📬 Request Open Team · 📋 Add to Waitlist · ❌ Remove from Waitlist\n\n" +
+      "**Browse**\n" +
+      "👥 Any Roster · 📊 Player Stats & Ratings · 🏟️ Team Stats\n\n" +
+      "**League Info**\n" +
+      "📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch",
     )
     .setFooter({ text: "Contact a commissioner to get linked to a team." });
 }
@@ -134,8 +136,18 @@ export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 View Any Roster").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_playerstats").setLabel("📊 Player Stats & Ratings").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_teamstats").setLabel("🏟️ Team Stats").setStyle(ButtonStyle.Secondary),
   );
-  return [row1, row2];
+  const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_inthehunt").setLabel("🎯 In The Hunt").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
+  );
+  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+  return [row1, row2, row3, row4];
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {

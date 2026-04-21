@@ -247,6 +247,15 @@ export async function handleActionsInteraction(
   const sess = getSession(gid, uid);
   touchSession(sess);
 
+  // ── Close ────────────────────────────────────────────────────────────────────
+  if (id === "ac_close") {
+    await (interaction as ButtonInteraction).update({
+      embeds: [new EmbedBuilder().setColor(Colors.DarkGrey).setDescription("✖ Hub closed.")],
+      components: [],
+    });
+    return true;
+  }
+
   // ── Hub restore ─────────────────────────────────────────────────────────────
   if (id === "ac_hub") {
     const btn = interaction as ButtonInteraction;
