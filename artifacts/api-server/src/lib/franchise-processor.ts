@@ -17,7 +17,6 @@ import {
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
   rosterTransactionsTable,
-  playerXpLogTable,
   leagueNewsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, isNotNull, desc } from "drizzle-orm";
@@ -2504,7 +2503,6 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
           lastName:   franchiseRostersTable.lastName,
           position:   franchiseRostersTable.position,
           attributes: franchiseRostersTable.attributes,
-          xpTotal:    franchiseRostersTable.xpTotal,
         })
         .from(franchiseRostersTable)
         .where(and(
@@ -2514,9 +2512,6 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
       : [];
 
     const existingMap = new Map(existingRows.map(r => [r.playerId, r]));
-    const DEV_LABELS: Record<number, string> = {
-      0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor",
-    };
     const transactions: Array<typeof rosterTransactionsTable.$inferInsert> = [];
 
     // ── Released-player detection ─────────────────────────────────────────────
@@ -2565,40 +2560,6 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
         continue; // no attribute/OVR/dev check when team just changed
       }
 
-      // ── Same team: OVR change ─────────────────────────────────────────────────
-      const prevOvr = prev.overall ?? 0;
-      const newOvr  = (row.overall as number | null) ?? 0;
-      if (prevOvr > 0 && newOvr > 0 && prevOvr !== newOvr) {
-        transactions.push({
-          seasonId:        season.id,
-          transactionType: "overall_change",
-          playerId:        row.playerId,
-          playerName,
-          position,
-          fromTeam:        teamEntry.fullName,
-          toTeam:          teamEntry.fullName,
-          fromValue:       String(prevOvr),
-          toValue:         String(newOvr),
-        });
-      }
-
-      // ── Same team: dev-trait change ───────────────────────────────────────────
-      const prevDev = prev.devTrait ?? 0;
-      const newDev  = (row.devTrait as number | null) ?? 0;
-      if (prevDev !== newDev) {
-        transactions.push({
-          seasonId:        season.id,
-          transactionType: "dev_change",
-          playerId:        row.playerId,
-          playerName,
-          position,
-          fromTeam:        teamEntry.fullName,
-          toTeam:          teamEntry.fullName,
-          fromValue:       DEV_LABELS[prevDev] ?? String(prevDev),
-          toValue:         DEV_LABELS[newDev]  ?? String(newDev),
-        });
-      }
-
       // ── Same team: individual attribute changes ───────────────────────────────
       const prevAttrs = (prev.attributes ?? {}) as Record<string, unknown>;
       const newAttrs  = (row.attributes  ?? {}) as Record<string, unknown>;
@@ -2631,48 +2592,6 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     if (transactions.length > 0) {
       await db.insert(rosterTransactionsTable).values(transactions);
-    }
-
-    // ── XP delta computation ──────────────────────────────────────────────────
-    // Infer the most recently completed week from the schedule table
-    const latestWeekRow = await db
-      .select({ weekIndex: franchiseScheduleTable.weekIndex })
-      .from(franchiseScheduleTable)
-      .where(and(
-        eq(franchiseScheduleTable.seasonId, season.id),
-        isNotNull(franchiseScheduleTable.homeScore),
-      ))
-      .orderBy(desc(franchiseScheduleTable.weekIndex))
-      .limit(1);
-    const inferredWeekNum = latestWeekRow[0]?.weekIndex ?? null;
-
-    const xpInserts: Array<typeof playerXpLogTable.$inferInsert> = [];
-    for (const row of rows) {
-      if (row.playerId == null || row.xpTotal == null) continue;
-      const prev = existingMap.get(row.playerId);
-      const prevXp = prev?.xpTotal ?? null;
-      // Only log if we have a previous baseline and XP increased
-      if (prevXp == null || row.xpTotal <= prevXp) continue;
-      const xpEarned = row.xpTotal - prevXp;
-      xpInserts.push({
-        seasonId:  season.id,
-        guildId:   teamEntry.discordId ?? null,
-        weekNum:   inferredWeekNum,
-        weekType:  "reg",
-        playerId:  row.playerId,
-        firstName: row.firstName ?? "",
-        lastName:  row.lastName  ?? "",
-        position:  row.position  ?? "",
-        teamId:    mcaTeamId,
-        teamName:  teamEntry.fullName,
-        discordId: teamEntry.discordId ?? null,
-        xpEarned,
-        xpTotal:   row.xpTotal,
-      });
-    }
-    if (xpInserts.length > 0) {
-      await db.insert(playerXpLogTable).values(xpInserts).onConflictDoNothing();
-      console.log(`[roster/xp] Team ${mcaTeamId} (${teamEntry.fullName}): logged XP for ${xpInserts.length} players (week ${inferredWeekNum ?? "?"})`);
     }
 
     // Replace the team's roster: delete old rows, insert fresh ones

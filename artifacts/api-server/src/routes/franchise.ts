@@ -537,10 +537,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/draftpicks", va
 
 // ── Transaction embed builder for roster changes ─────────────────────────────
 function buildTransactionEmbeds(transactions: any[]): { title: string; description: string; color: number }[] {
-  const teamChanges   = transactions.filter(t => t.transactionType === "team_change");
-  const overallChanges = transactions.filter(t => t.transactionType === "overall_change");
-  const devChanges    = transactions.filter(t => t.transactionType === "dev_change");
-
+  const teamChanges = transactions.filter(t => t.transactionType === "team_change");
   const embeds: { title: string; description: string; color: number }[] = [];
 
   if (teamChanges.length > 0) {
@@ -551,23 +548,6 @@ function buildTransactionEmbeds(transactions: any[]): { title: string; descripti
       title:       "📋 Roster Moves",
       description: lines.join("\n"),
       color:       0x1abc9c,
-    });
-  }
-
-  if (overallChanges.length > 0 || devChanges.length > 0) {
-    const lines: string[] = [];
-    for (const t of overallChanges) {
-      const diff  = Number(t.toValue) - Number(t.fromValue);
-      const arrow = diff > 0 ? "⬆️" : "⬇️";
-      lines.push(`${arrow} **${t.playerName}** (${t.position}, ${t.fromTeam}) OVR: ${t.fromValue} → **${t.toValue}**`);
-    }
-    for (const t of devChanges) {
-      lines.push(`🌟 **${t.playerName}** (${t.position}, ${t.fromTeam}) Dev: ${t.fromValue} → **${t.toValue}**`);
-    }
-    embeds.push({
-      title:       "📈 Player Development Updates",
-      description: lines.join("\n"),
-      color:       0xf0b132,
     });
   }
 
