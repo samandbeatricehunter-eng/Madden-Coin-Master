@@ -318,8 +318,8 @@ export async function runEosAutoPost(
 
       // ── Missed-playoffs welfare bonus ─────────────────────────────────────────
       // A user "missed the playoffs" when playoffSeed is 0 or null.
-      // Seed is set by /admin-playoffs setnfcseeds/setafcseeds or by the new
-      // /admin_ea_export standings command.  If seeds have not been set at all
+      // Seed is auto-set from standings when advancing Week 18 → Wildcard.
+      // If seeds have not been set at all
       // (every user is 0/null), we skip the bonus entirely to avoid giving
       // everyone consolation coins by mistake — this guards against running EOS
       // before seeds are entered.

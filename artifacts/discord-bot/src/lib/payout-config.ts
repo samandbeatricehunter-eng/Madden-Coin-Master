@@ -13,6 +13,7 @@ export const PAYOUT_KEYS = {
   PLAYOFF_H2H_LOSS: "playoff_h2h_loss",
   PLAYOFF_CPU_WIN:  "playoff_cpu_win",
   // ── Playoff round bonuses ────────────────────────────────────────────────────
+  DIVISION_WINNER_BONUS:    "division_winner_bonus",
   WILDCARD_BONUS:           "wildcard_bonus",
   DIVISIONAL_BONUS:         "divisional_bonus",
   CONFERENCE_WIN_BONUS:     "conference_win_bonus",
@@ -96,6 +97,7 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   playoff_h2h_loss:  { value: 25,  description: "Playoff H2H game loss",                                       category: "Game Payouts"          },
   playoff_cpu_win:   { value: 25,  description: "Playoff CPU/force win",                                       category: "Game Payouts"          },
   // ── Playoff round bonuses ────────────────────────────────────────────────────
+  division_winner_bonus:  { value: 25,  description: "Division winner bonus (seeds 1–4 each conference)",       category: "Playoff Bonuses"       },
   wildcard_bonus:         { value: 50,  description: "Wild Card round bonus (winner)",                          category: "Playoff Bonuses"       },
   divisional_bonus:       { value: 75,  description: "Divisional round bonus (winner)",                         category: "Playoff Bonuses"       },
   conference_win_bonus:   { value: 100, description: "Conference Championship winner bonus",                    category: "Playoff Bonuses"       },

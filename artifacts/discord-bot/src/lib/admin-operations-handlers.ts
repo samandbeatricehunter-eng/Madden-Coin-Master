@@ -33,7 +33,8 @@ import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { sendArticleChunked } from "./send-article.js";
 import { runWeeklyMatchupsFlow } from "./weekly-matchups-runner.js";
 import { postFullSeasonScheduleToChannel } from "./season-schedule-post.js";
-import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults } from "./playoff-matchups-runner.js";
+import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults, autoDivisionBonus } from "./playoff-matchups-runner.js";
+import axios from "axios";
 import { autoPayoutPlayoffGotw, purgeChannel } from "./gotw-helpers.js";
 import { triggerWeekAdvanceTweets } from "./league-twitter.js";
 import { checkAndNotifyWaitlist } from "../commands/waitlist.js";
@@ -356,6 +357,21 @@ async function handleAdvanceConfirm(interaction: ButtonInteraction) {
 }
 
 // ── Advance Week — Core Logic (adapted from advanceweek.ts) ───────────────────
+
+async function postCommissionerNotice(
+  client:  import("discord.js").Client,
+  guildId: string,
+  message: string,
+): Promise<void> {
+  try {
+    const chId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG);
+    if (!chId) return;
+    const ch = (client.channels.cache.get(chId) ?? await client.channels.fetch(chId).catch(() => null)) as TextChannel | null;
+    if (ch?.isTextBased()) await (ch as TextChannel).send({ content: message }).catch(() => {});
+  } catch (err) {
+    console.error("[admin-operations] Failed to post commissioner notice:", err);
+  }
+}
 
 function toChannelName(teamName: string): string {
   return teamName
@@ -686,15 +702,24 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   // ── Playoff payouts — fires when leaving a playoff week ──────────────────────
   const leavingPlayoffMeta = PLAYOFF_WEEK_META[season.currentWeek ?? ""];
   if (leavingPlayoffMeta) {
+    const leavingLabel = leavingPlayoffMeta.label;
+
     try {
       const roundPayoutSummary = await payoutPlayoffRoundResults(
         interaction.client,
         season,
         season.currentWeek!,
+        guildId,
       );
       if (roundPayoutSummary) channelLines.push(roundPayoutSummary);
     } catch (err) {
       console.error("[admin-operations] Playoff round payout error:", err);
+      await postCommissionerNotice(
+        interaction.client, guildId,
+        `⚠️ **${leavingLabel} Payout Failed**\n` +
+        `An error occurred while issuing playoff W/L records and coins: ${err}.\n` +
+        "Payouts for this round were NOT fully issued. Use the admin economy tools to issue missing coins manually.",
+      );
     }
 
     try {
@@ -708,6 +733,10 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
       if (payoutSummary) channelLines.push(payoutSummary);
     } catch (err) {
       console.error("[admin-operations] Playoff GOTW payout error:", err);
+      await postCommissionerNotice(
+        interaction.client, guildId,
+        `⚠️ **${leavingLabel} GOTW Payout Failed**\nPlayoff GOTW poll payouts errored: ${err}.`,
+      );
     }
   }
 
@@ -972,15 +1001,15 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
 
   if (newWeek === "wildcard") {
     embed.addFields({
-      name: "⚠️ Wildcard Week — Action Required",
+      name: "🏈 Wildcard Week — Auto-Actions Running",
       value: [
-        "Before games begin, complete these steps:",
-        "**1.** `/admin-playoffs setnfcseeds` — Register NFC seeds 1–7",
-        "**2.** `/admin-playoffs setafcseeds` — Register AFC seeds 1–7",
-        "**3.** `/admin-playoffs divisionbonus` — Award +25 coins to all 8 division winners",
+        "The following are running automatically in the background:",
+        "• Playoff seeds set from MCA standings",
+        "• Division winner bonuses issued to seeds 1–4 each conference",
+        "• Matchup embeds + GOTW polls posted",
         "",
-        "Seeds 1–4 in each conference earn **+75 coins/playoff win**.",
-        "Seeds 5–7 (wildcard entrants) earn **+100 coins/playoff win**.",
+        "Seeds 1–4 earn **+75 coins/playoff win**.",
+        "Seeds 5–7 (wildcard) earn **+100 coins/playoff win**.",
         "All playoff losers receive **+50 coins** upon elimination.",
       ].join("\n"),
     });
@@ -1056,13 +1085,88 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     }
   }
 
-  // ── Wildcard automation ───────────────────────────────────────────────────
+  // ── Wildcard automation + auto-reseed + division bonus + matchup flow ─────
   if (newWeek === "wildcard" && season.currentWeek === "18") {
     (async () => {
+      // 1. Auto-reseed playoff seeds from saved MCA standings
+      try {
+        const apiDomain  = (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim() ?? "";
+        const apiBase    = `https://${apiDomain}/api`;
+        const webhookKey = process.env["MADDEN_WEBHOOK_KEY"] ?? "";
+        const reseedRes  = await axios.post(`${apiBase}/internal/reseed-from-standings`, {}, {
+          validateStatus: () => true,
+          headers: webhookKey ? { Authorization: `Bearer ${webhookKey}` } : {},
+        });
+        const body = typeof reseedRes.data === "object" && reseedRes.data !== null
+          ? reseedRes.data as { ok: boolean; message?: string; details?: { applied: number } }
+          : { ok: false, message: `HTTP ${reseedRes.status}` };
+        if (body.ok) {
+          console.log(`[admin-operations] Auto-reseed: ${body.details?.applied ?? "?"} seeds applied.`);
+        } else {
+          console.error("[admin-operations] Auto-reseed failed:", body.message);
+          await postCommissionerNotice(
+            interaction.client, guildId,
+            "⚠️ **Wildcard Auto-Reseed Failed**\n" +
+            `The automatic playoff seeding from standings failed: ${body.message ?? "unknown error"}.\n` +
+            "Playoff seeds were not set. Use the API endpoint manually or set seeds via the admin economy tools.",
+          );
+        }
+      } catch (err) {
+        console.error("[admin-operations] Auto-reseed error:", err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **Wildcard Auto-Reseed Error**\nReseed threw an exception: ${err}.\nPlayoff seeds may not be set correctly.`,
+        );
+      }
+
+      // 2. Division winner bonus (seeds 1–4 each conference)
+      try {
+        const divResult = await autoDivisionBonus(interaction.client, guildId);
+        console.log("[admin-operations] Division bonus result:", divResult);
+      } catch (err) {
+        console.error("[admin-operations] Division bonus error:", err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **Division Winner Bonus Failed**\nThe automatic division winner bonus threw an error: ${err}.\n` +
+          "Issue the bonus manually via the economy admin tools.",
+        );
+      }
+
+      // 3. Wildcard automation (in-game awards, season PR, GOTY poll, etc.)
       try {
         await runWildcardAutomation(interaction.client, season.id, season.seasonNumber, interaction.guild);
       } catch (err) {
         console.error("[admin-operations] Wildcard automation error:", err);
+      }
+
+      // 4. Playoff matchup embeds + GOTW polls
+      try {
+        const matchupSummary = await runPlayoffMatchupsFlow(interaction.client, season, "wildcard");
+        console.log("[admin-operations] Wildcard matchups:", matchupSummary);
+      } catch (err) {
+        console.error("[admin-operations] Wildcard matchups flow error:", err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **Wildcard Matchups Flow Failed**\nFailed to post Wild Card matchup embeds and GOTW polls: ${err}.`,
+        );
+      }
+    })();
+  }
+
+  // ── Divisional / Conference / Superbowl matchup flow ──────────────────────
+  if (["divisional", "conference", "superbowl"].includes(newWeek)) {
+    (async () => {
+      try {
+        const matchupSummary = await runPlayoffMatchupsFlow(
+          interaction.client, season, newWeek as keyof typeof PLAYOFF_WEEK_META,
+        );
+        console.log(`[admin-operations] ${newWeek} matchups:`, matchupSummary);
+      } catch (err) {
+        console.error(`[admin-operations] ${newWeek} matchups flow error:`, err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **${weekLabel(newWeek)} Matchups Flow Failed**\nFailed to post matchup embeds and GOTW polls: ${err}.`,
+        );
       }
     })();
   }

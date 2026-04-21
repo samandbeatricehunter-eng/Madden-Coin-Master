@@ -5,9 +5,10 @@ import {
   userRecordsTable, franchiseProcessedGamesTable,
   playoffGotwPollsTable, type Season,
 } from "@workspace/db";
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel } from "./gotw-helpers.js";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
+import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
 const MIN_COMPLETED_STATUS = 2;
 
@@ -390,15 +391,20 @@ export async function payoutPlayoffRoundResults(
 
     if (existingWinner.length > 0) {
       await db.update(userRecordsTable)
-        .set({ playoffWins: sql`${userRecordsTable.playoffWins} + 1`, updatedAt: new Date() })
+        .set({
+          playoffWins: sql`${userRecordsTable.playoffWins} + 1`,
+          wins:        sql`${userRecordsTable.wins} + 1`,
+          updatedAt:   new Date(),
+        })
         .where(and(eq(userRecordsTable.discordId, winnerId), eq(userRecordsTable.seasonId, season.id)));
     } else {
       await db.insert(userRecordsTable).values({
-        discordId: winnerId,
+        discordId:       winnerId,
         discordUsername: winnerUser?.discordUsername ?? "",
-        team: winnerUser?.team ?? null,
-        seasonId: season.id,
-        playoffWins: 1,
+        team:            winnerUser?.team ?? null,
+        seasonId:        season.id,
+        playoffWins:     1,
+        wins:            1,
       });
     }
 
@@ -410,15 +416,20 @@ export async function payoutPlayoffRoundResults(
 
     if (existingLoser.length > 0) {
       await db.update(userRecordsTable)
-        .set({ playoffLosses: sql`${userRecordsTable.playoffLosses} + 1`, updatedAt: new Date() })
+        .set({
+          playoffLosses: sql`${userRecordsTable.playoffLosses} + 1`,
+          losses:        sql`${userRecordsTable.losses} + 1`,
+          updatedAt:     new Date(),
+        })
         .where(and(eq(userRecordsTable.discordId, loserId), eq(userRecordsTable.seasonId, season.id)));
     } else {
       await db.insert(userRecordsTable).values({
-        discordId: loserId,
+        discordId:       loserId,
         discordUsername: loserUser?.discordUsername ?? "",
-        team: loserUser?.team ?? null,
-        seasonId: season.id,
-        playoffLosses: 1,
+        team:            loserUser?.team ?? null,
+        seasonId:        season.id,
+        playoffLosses:   1,
+        losses:          1,
       });
     }
 
@@ -504,4 +515,78 @@ export async function payoutPlayoffRoundResults(
 
   const skipNote = skipped.length > 0 ? `\n*(${skipped.length} already-processed game(s) skipped)*` : "";
   return `✅ **${label}** playoff payouts issued:\n${lines.join("\n")}${skipNote}`;
+}
+
+// ── Auto division winner bonus (fires at Week 18 → Wildcard advance) ──────────
+// Awards the configured division_winner_bonus to every user whose playoff seed
+// is 1–4 (division winners) in this guild.  If no seeds are set, posts a notice
+// to the commissioner log channel and skips payouts.
+
+export async function autoDivisionBonus(
+  client:  Client,
+  guildId: string = PRIMARY_GUILD_ID,
+): Promise<string> {
+  const bonusAmount = await getPayoutValue(PAYOUT_KEYS.DIVISION_WINNER_BONUS, guildId);
+
+  const divisionWinners = await db.select({
+    discordId:       usersTable.discordId,
+    discordUsername: usersTable.discordUsername,
+    playoffSeed:     usersTable.playoffSeed,
+    playoffConference: usersTable.playoffConference,
+  })
+    .from(usersTable)
+    .where(
+      and(
+        eq(usersTable.guildId, guildId),
+        inArray(usersTable.playoffSeed, [1, 2, 3, 4]),
+      ),
+    );
+
+  if (divisionWinners.length === 0) {
+    const notice =
+      "⚠️ **Division Winner Bonus — No Seeds Found**\n" +
+      "Playoff seeds have not been set for this season. No division winner bonus was issued.\n" +
+      "Seeds 1–4 in each conference are auto-set via the standings reseed that runs at this transition. " +
+      "If the reseed failed or no standings data exists, set seeds manually and issue the bonus via the economy admin tools.";
+
+    const commLogId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG);
+    if (commLogId) {
+      const ch = (
+        client.channels.cache.get(commLogId) ??
+        await client.channels.fetch(commLogId).catch(() => null)
+      ) as TextChannel | null;
+      if (ch?.isTextBased()) {
+        await (ch as TextChannel).send({ content: notice }).catch(err =>
+          console.error("[auto-division-bonus] Failed to post commissioner notice:", err),
+        );
+      }
+    }
+
+    console.warn("[auto-division-bonus] No playoff seeds found — bonus skipped, commissioner notified.");
+    return "⚠️ No playoff seeds set — division bonus skipped, commissioner log notified.";
+  }
+
+  const lines: string[] = [];
+  for (const winner of divisionWinners) {
+    await addBalance(winner.discordId, bonusAmount, guildId);
+    await logTransaction(
+      winner.discordId, bonusAmount, "addcoins",
+      `Division winner bonus (${winner.playoffConference ?? "?"} Seed #${winner.playoffSeed ?? "?"})`,
+      guildId,
+    );
+    lines.push(
+      `✅ <@${winner.discordId}> (${winner.playoffConference ?? "?"} Seed #${winner.playoffSeed ?? "?"}) → +**${bonusAmount} coins**`,
+    );
+
+    try {
+      const u = await client.users.fetch(winner.discordId).catch(() => null);
+      if (u) {
+        await u.send(
+          `🏆 **Division Winner Bonus!** You've been awarded **+${bonusAmount} coins** for winning your division this season!`,
+        ).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  return `🏆 Division winner bonuses issued:\n${lines.join("\n")}`;
 }

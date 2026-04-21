@@ -304,7 +304,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             "`/admin-resendarticle week:N` — Regenerate and post the recap for any previous week",
             "`/customarticle [prompt]` — Generate a custom AI article and post it to headlines",
             "`/endofseasonpayout` — Run end-of-season playoff ranking bonuses",
-            "`/admin-playoffs [on/off]` — Toggle playoff mode on/off",
+            "Playoff flows (seeds, division bonus, matchups, payouts) run **automatically** when advancing weeks",
           ].join("\n"),
         },
       )

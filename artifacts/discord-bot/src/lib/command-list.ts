@@ -29,7 +29,6 @@ import * as adminLeagueData         from "../commands/admin-league-data.js";
 import * as adminCancelResendEos    from "../commands/admin-cancel-resend-eos.js";
 import * as adminRebuildHistorical  from "../commands/admin-rebuild-historical.js";
 import * as draftPresence           from "../commands/draft-presence.js";
-import * as adminPlayoffs           from "../commands/admin-playoffs.js";
 import * as adminResendArticle      from "../commands/admin-resendarticle.js";
 import * as adminCatchup            from "../commands/admin-catchup.js";
 import * as adminPostFullSeasonSchedule from "../commands/admin-postfullseasonschedule.js";
@@ -100,7 +99,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminCancelResendEos,   true],
     [adminRebuildHistorical, true],
     [draftPresence,      true],
-    [adminPlayoffs,      true],
     [adminResendArticle, true],
     [adminCatchup,       true],
     [adminPayout,        true],
