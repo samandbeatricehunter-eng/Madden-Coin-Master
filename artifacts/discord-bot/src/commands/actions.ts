@@ -110,6 +110,34 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   return rows;
 }
 
+export function buildUnlinkedHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setTitle("🏈 League Actions Hub — Unlinked")
+    .setDescription(
+      "You are not currently linked to a team in this league.\n\n" +
+      "**Available Actions**\n" +
+      "🔴 View Open Teams · 🟢 View User Teams · 📬 Request Open Team\n" +
+      "📋 Request Add to Waitlist · ❌ Request Waitlist Removal\n\n" +
+      "👥 View Any Roster",
+    )
+    .setFooter({ text: "Contact a commissioner to get linked to a team." });
+}
+
+export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_openteams").setLabel("🔴 View Open Teams").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_activeteams").setLabel("🟢 View User Teams").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_req_openteam").setLabel("📬 Request Open Team").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_req_addwaitlist").setLabel("📋 Add to Waitlist").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_req_rmwaitlist").setLabel("❌ Remove from Waitlist").setStyle(ButtonStyle.Danger),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 View Any Roster").setStyle(ButtonStyle.Secondary),
+  );
+  return [row1, row2];
+}
+
 export async function execute(interaction: ChatInputCommandInteraction) {
   const gid = interaction.guildId!;
   const uid = interaction.user.id;
@@ -125,6 +153,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
   const isDbAdmin      = await isAdminUser(uid, gid);
   const isAdmin        = isDiscordAdmin || isDbAdmin;
+
+  // ── Unlinked user — show restricted hub ──────────────────────────────────────
+  if (!user.team && !isAdmin) {
+    await interaction.editReply({
+      embeds:     [buildUnlinkedHubEmbed()],
+      components: buildUnlinkedHubRows(),
+    });
+    return;
+  }
 
   const rules = await getSeasonRules(season);
 

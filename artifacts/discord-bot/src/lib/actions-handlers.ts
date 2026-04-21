@@ -19,6 +19,7 @@ import {
   legendsTable, franchiseScheduleTable,
   guildTweetsTable, autoPilotRequestsTable, ruleViolationsTable,
   playerEaIdsTable, customPlayersTable,
+  playerSeasonStatsTable, waitlistTable,
 } from "@workspace/db";
 import { eq, and, or, desc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
 import {
@@ -38,7 +39,7 @@ import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
   type InterviewType,
 } from "../commands/interviewrequest.js";
-import { buildActionsHubRows } from "../commands/actions.js";
+import { buildActionsHubRows, buildUnlinkedHubEmbed, buildUnlinkedHubRows } from "../commands/actions.js";
 import { appendUserStatsFields } from "./user-stats-embed.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
@@ -259,6 +260,12 @@ export async function handleActionsInteraction(
     const isDiscordAdmin = (member as import("discord.js").GuildMember | null | undefined)?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
     const isDbAdmin      = await isAdminUser(uid, gid);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
+
+    if (!user.team && !isAdmin) {
+      await btn.editReply({ embeds: [buildUnlinkedHubEmbed()], components: buildUnlinkedHubRows() });
+      return true;
+    }
+
     const rules          = await getSeasonRules(season);
     const embed = new EmbedBuilder()
       .setColor(Colors.Blue)
@@ -319,9 +326,13 @@ export async function handleActionsInteraction(
   if (id === "ac_anyroster_sel")  { await handleAnyRosterShow(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_freeagents")   { await handleFreeAgentsPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_fa_pos")       { await handleFreeAgentsShow(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_playerstats")  { await handlePlayerStatsStart(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_teamstats")    { await handleTeamStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_teamstats_sel")  { await handleTeamStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_playerstats")           { await handlePlayerStatsStart(interaction as ButtonInteraction, sess); return true; }
+  if (id.startsWith("ac_ps_conf:"))      { await handlePsTeamPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ps_team_sel")           { await handlePsPosPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_ps_pos_sel:"))   { await handlePsPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_ps_player_sel:")) { await handlePsPlayerCard(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_teamstats")             { await handleTeamStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_teamstats_sel")         { await handleTeamStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
 
   // ── Row 3: League Info ───────────────────────────────────────────────────────
 
@@ -354,9 +365,14 @@ export async function handleActionsInteraction(
   if (id === "ac_rules_display_bynum")   { await handleRulesDisplayByNumModal(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rules_close")           { await handleRulesClose(interaction as ButtonInteraction); return true; }
   if (id === "ac_modal_rules_bynum")     { await handleRulesByNumSubmit(interaction as ModalSubmitInteraction, sess); return true; }
-  if (id === "ac_violation")    { await handleViolationModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_violation")         { await handleViolationModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_req_openteam")      { await handleReqOpenTeam(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_addwaitlist")   { await handleReqAddWaitlist(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_rmwaitlist")    { await handleReqRmWaitlist(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_rmwl_confirm")  { await handleReqRmWaitlistConfirm(interaction as ButtonInteraction, sess); return true; }
 
   // Modal submits
+  if (id === "ac_modal_req_openteam") { await handleReqOpenTeamSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_tweet")      { await handleTweetSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_sendcoins")  { await handleSendCoinsSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_wageramount") { await handleWagerAmountSubmit(interaction as ModalSubmitInteraction, sess); return true; }
@@ -2096,24 +2112,362 @@ async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, se
   await interaction.update({ embeds: [embed], components: [backToHubRow()] });
 }
 
-// ── Player Stats — hand off to viewps_ handlers ────────────────────────────────
+// ── Player Stats — 4-step chain ────────────────────────────────────────────────
 
 async function handlePlayerStatsStart(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid    = interaction.guildId!;
-  const season = await getOrCreateActiveSeason(gid);
-
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`viewps_team:${season.id}:nfc`).setLabel("NFC Teams").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`viewps_team:${season.id}:afc`).setLabel("AFC Teams").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_ps_conf:AFC").setLabel("🔵 AFC Teams").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_ps_conf:NFC").setLabel("🔴 NFC Teams").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
   );
-
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Blue)
       .setTitle("📊 Player Stats & Ratings")
-      .setDescription("Select a conference to browse teams, then choose a player to view their stats.")],
+      .setDescription("Select a conference, then pick a team → position group → player to view their full player card.")],
     components: [row],
+  });
+}
+
+async function handlePsTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid  = interaction.guildId!;
+  const conf = interaction.customId.split(":")[1] as "AFC" | "NFC";
+  await interaction.deferUpdate();
+
+  const season = await getOrCreateActiveSeason(gid);
+  const teams  = await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, season.id),
+      eq(franchiseMcaTeamsTable.conference, conf),
+      eq(franchiseMcaTeamsTable.isHuman, true),
+    ))
+    .orderBy(franchiseMcaTeamsTable.fullName);
+
+  if (!teams.length) {
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No ${conf} teams found. Make sure rosters have been imported.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ps_team_sel")
+    .setPlaceholder(`Select a ${conf} team…`)
+    .addOptions(teams.slice(0, 25).map(t =>
+      new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.id)),
+    ));
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(conf === "AFC" ? Colors.Blue : Colors.Red).setTitle(`📊 Player Stats — ${conf} Teams`)],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+// Position group definitions
+const PS_POS_GROUPS: { value: string; label: string; positions: string[] }[] = [
+  { value: "QB",  label: "🏈 Quarterback (QB)",          positions: ["QB"] },
+  { value: "HB",  label: "🏃 Running Back (HB/RB/FB)",   positions: ["HB", "RB", "FB"] },
+  { value: "WR",  label: "🙌 Wide Receiver (WR)",         positions: ["WR"] },
+  { value: "TE",  label: "📦 Tight End (TE)",             positions: ["TE"] },
+  { value: "OL",  label: "🛡️ Offensive Line (OL)",        positions: ["LT", "LG", "C", "RG", "RT"] },
+  { value: "DL",  label: "🔴 Defensive Line (DL)",        positions: ["LE", "RE", "DT", "NT"] },
+  { value: "LB",  label: "🔵 Linebacker (LB)",            positions: ["LOLB", "MLB", "ROLB", "ILB", "OLB"] },
+  { value: "CB",  label: "🔒 Cornerback (CB)",            positions: ["CB"] },
+  { value: "S",   label: "🛡️ Safety (FS/SS)",             positions: ["FS", "SS"] },
+  { value: "K",   label: "🦵 Specialist (K/P)",           positions: ["K", "P", "KR", "PR"] },
+];
+
+async function handlePsPosPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const teamId = interaction.values[0]!;
+  await interaction.deferUpdate();
+
+  const [teamRow] = await db.select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.id, Number(teamId))).limit(1);
+  const teamName = teamRow?.fullName ?? "Unknown Team";
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`ac_ps_pos_sel:${teamId}`)
+    .setPlaceholder("Select a position group…")
+    .addOptions(PS_POS_GROUPS.map(g =>
+      new StringSelectMenuOptionBuilder().setLabel(g.label).setValue(g.value),
+    ));
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 Player Stats — ${teamName}`).setDescription("Choose a position group to browse players.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function handlePsPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const parts   = interaction.customId.split(":");
+  const teamId  = Number(parts[1]);
+  const posGroup = interaction.values[0]!;
+  await interaction.deferUpdate();
+
+  const group = PS_POS_GROUPS.find(g => g.value === posGroup)!;
+  if (!group) {
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Unknown position group.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
+  const players = await db.select({
+    id: franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    position:  franchiseRostersTable.position,
+    overall:   franchiseRostersTable.overall,
+  })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, season.id),
+      eq(franchiseRostersTable.teamId, teamId),
+      inArray(franchiseRostersTable.position, group.positions),
+    ))
+    .orderBy(desc(franchiseRostersTable.overall));
+
+  if (!players.length) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setDescription(`No ${group.label} players found on this team.`)],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      )],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`ac_ps_player_sel:${teamId}:${posGroup}`)
+    .setPlaceholder(`Select a player (${group.label})…`)
+    .addOptions(players.slice(0, 25).map(p =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${p.firstName} ${p.lastName} (${p.position}) — OVR ${p.overall}`)
+        .setValue(String(p.id)),
+    ));
+
+  const [teamRow] = await db.select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.id, teamId)).limit(1);
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 ${teamRow?.fullName ?? "Team"} — ${group.label}`)],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+const DEV_TRAIT_LABELS: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "⚡ X-Factor" };
+
+const PS_KEY_ATTRS: Record<string, { key: string; label: string }[]> = {
+  QB: [
+    { key: "throwPowerRating",         label: "THP" },
+    { key: "throwAccuracyShortRating", label: "SAC" },
+    { key: "throwAccuracyMidRating",   label: "MAC" },
+    { key: "throwAccuracyDeepRating",  label: "DAC" },
+    { key: "throwOnRunRating",         label: "TOR" },
+    { key: "awareRating",              label: "AWR" },
+    { key: "speedRating",              label: "SPD" },
+    { key: "breakSackRating",          label: "BSK" },
+  ],
+  HB: [
+    { key: "speedRating",          label: "SPD" },
+    { key: "accelerationRating",   label: "ACC" },
+    { key: "agilityRating",        label: "AGI" },
+    { key: "elusivenessRating",    label: "ELU" },
+    { key: "breakTackleRating",    label: "BTK" },
+    { key: "caryingRating",        label: "CAR" },
+    { key: "catchRating",          label: "CTH" },
+    { key: "bCVisionRating",       label: "BCV" },
+  ],
+  WR: [
+    { key: "speedRating",              label: "SPD" },
+    { key: "agilityRating",            label: "AGI" },
+    { key: "catchRating",              label: "CTH" },
+    { key: "catchInTrafficRating",     label: "CIT" },
+    { key: "shortRouteRunRating",      label: "SRR" },
+    { key: "medRouteRunRating",        label: "MRR" },
+    { key: "deepRouteRunRating",       label: "DRR" },
+    { key: "spectacularCatchRating",   label: "SPC" },
+  ],
+  TE: [
+    { key: "speedRating",          label: "SPD" },
+    { key: "catchRating",          label: "CTH" },
+    { key: "catchInTrafficRating", label: "CIT" },
+    { key: "shortRouteRunRating",  label: "SRR" },
+    { key: "passBlockRating",      label: "PBK" },
+    { key: "runBlockRating",       label: "RBK" },
+    { key: "strengthRating",       label: "STR" },
+    { key: "releaseRating",        label: "RLS" },
+  ],
+  OL: [
+    { key: "passBlockRating",    label: "PBK" },
+    { key: "runBlockRating",     label: "RBK" },
+    { key: "impactBlockRating",  label: "IBL" },
+    { key: "strengthRating",     label: "STR" },
+    { key: "awareRating",        label: "AWR" },
+  ],
+  DL: [
+    { key: "speedRating",        label: "SPD" },
+    { key: "strengthRating",     label: "STR" },
+    { key: "powerMovesRating",   label: "PMV" },
+    { key: "finessMovesRating",  label: "FMV" },
+    { key: "blockShedRating",    label: "BSH" },
+    { key: "awareRating",        label: "AWR" },
+  ],
+  LB: [
+    { key: "speedRating",      label: "SPD" },
+    { key: "strengthRating",   label: "STR" },
+    { key: "tackleRating",     label: "TAK" },
+    { key: "hitPowerRating",   label: "HPW" },
+    { key: "zoneCoverRating",  label: "ZCV" },
+    { key: "manCoverRating",   label: "MCV" },
+    { key: "playRecRating",    label: "PRC" },
+  ],
+  CB: [
+    { key: "speedRating",      label: "SPD" },
+    { key: "agilityRating",    label: "AGI" },
+    { key: "manCoverRating",   label: "MCV" },
+    { key: "zoneCoverRating",  label: "ZCV" },
+    { key: "pressRating",      label: "PRS" },
+    { key: "catchRating",      label: "CTH" },
+    { key: "playRecRating",    label: "PRC" },
+  ],
+  S: [
+    { key: "speedRating",      label: "SPD" },
+    { key: "agilityRating",    label: "AGI" },
+    { key: "zoneCoverRating",  label: "ZCV" },
+    { key: "manCoverRating",   label: "MCV" },
+    { key: "tackleRating",     label: "TAK" },
+    { key: "hitPowerRating",   label: "HPW" },
+    { key: "playRecRating",    label: "PRC" },
+  ],
+  K: [
+    { key: "kickPowerRating",    label: "KPW" },
+    { key: "kickAccuracyRating", label: "KAC" },
+    { key: "speedRating",        label: "SPD" },
+  ],
+};
+
+async function handlePsPlayerCard(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const parts    = interaction.customId.split(":");
+  const teamId   = Number(parts[1]);
+  const posGroup = parts[2]!;
+  const playerId = Number(interaction.values[0]);
+  await interaction.deferUpdate();
+
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
+
+  const [roster, stats] = await Promise.all([
+    db.select().from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.teamId, teamId),
+        eq(franchiseRostersTable.playerId, playerId),
+      )).limit(1).then(r => r[0]),
+    db.select().from(playerSeasonStatsTable)
+      .where(and(
+        eq(playerSeasonStatsTable.seasonId, season.id),
+        eq(playerSeasonStatsTable.playerId, playerId),
+      )).limit(1).then(r => r[0]),
+  ]);
+
+  if (!roster) {
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const devLabel  = DEV_TRAIT_LABELS[roster.devTrait] ?? `Dev ${roster.devTrait}`;
+  const contract  = roster.contractYearsLeft == null ? "Unknown" : roster.contractYearsLeft <= 1 ? "📋 Contract Year (Final Season)" : `${roster.contractYearsLeft} years remaining`;
+  const archetype = roster.archetypeAbbrev ? `${roster.archetypeAbbrev.replace(/_/g, " ")}` : "—";
+  const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
+  const attrs     = (roster.attributes ?? {}) as Record<string, number>;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(`📊 ${roster.firstName} ${roster.lastName} — #${roster.jerseyNum ?? "?"} ${roster.position}`)
+    .setDescription(
+      `**Team:** ${roster.teamName}  |  **OVR:** ${roster.overall}  |  **Age:** ${roster.age ?? "?"}\n` +
+      `**Dev Trait:** ${devLabel}  |  **Archetype:** ${archetype}\n` +
+      `**Contract:** ${contract}`,
+    );
+
+  // Key attributes for this position group
+  const keyAttrs = PS_KEY_ATTRS[posGroup] ?? PS_KEY_ATTRS["QB"]!;
+  const attrLines = keyAttrs
+    .map(a => {
+      const val = attrs[a.key];
+      return val != null ? `**${a.label}:** ${val}` : null;
+    })
+    .filter(Boolean) as string[];
+
+  if (attrLines.length) {
+    const mid = Math.ceil(attrLines.length / 2);
+    embed.addFields(
+      { name: "📈 Key Ratings", value: attrLines.slice(0, mid).join("\n"), inline: true },
+      { name: "\u200B",         value: attrLines.slice(mid).join("\n"),    inline: true },
+    );
+  }
+
+  // Abilities
+  if (abilities) {
+    const lines: string[] = [];
+    if (abilities.superstar) lines.push(...abilities.superstar.map(a => `⭐ ${a}`));
+    if (abilities.zone)      lines.push(`⚡ ${abilities.zone} (Zone)`);
+    if (lines.length) embed.addFields({ name: "💥 Abilities", value: lines.join("\n"), inline: false });
+  }
+
+  // Season Stats — position-appropriate
+  if (stats) {
+    const pos = roster.position;
+    const isQB  = pos === "QB";
+    const isHB  = ["HB","RB","FB"].includes(pos);
+    const isWR  = ["WR","TE"].includes(pos);
+    const isDEF = ["LE","RE","DT","NT","LOLB","MLB","ROLB","ILB","OLB","CB","FS","SS"].includes(pos);
+    const isK   = ["K","P"].includes(pos);
+
+    if (isQB && stats.passAtt > 0) {
+      const pct = stats.passAtt > 0 ? ((stats.passComp / stats.passAtt) * 100).toFixed(1) : "0.0";
+      embed.addFields({ name: "🏈 Season Passing Stats", value: `Yds: **${stats.passYds.toLocaleString()}** | TDs: **${stats.passTDs}** | INTs: **${stats.passInts}**\nComp: ${stats.passComp}/${stats.passAtt} (${pct}%) | Sacked: ${stats.timesSacked}\nRush Yds: ${stats.rushYds} | Rush TDs: ${stats.rushTDs}`, inline: false });
+    } else if (isHB && (stats.rushAtt > 0 || stats.recRec > 0)) {
+      embed.addFields({ name: "🏃 Season Rushing Stats", value: `Rush Yds: **${stats.rushYds.toLocaleString()}** | TDs: **${stats.rushTDs}** | Att: ${stats.rushAtt}\nFumbles: ${stats.fumbles}\nRec: ${stats.recRec} | Rec Yds: ${stats.recYds} | Rec TDs: ${stats.recTDs}`, inline: false });
+    } else if (isWR && stats.recRec > 0) {
+      embed.addFields({ name: "🙌 Season Receiving Stats", value: `Rec: **${stats.recRec}** | Yds: **${stats.recYds.toLocaleString()}** | TDs: **${stats.recTDs}**`, inline: false });
+    } else if (isDEF && (stats.totalTackles > 0 || stats.sacks > 0 || stats.defInts > 0)) {
+      embed.addFields({ name: "🛡️ Season Defense Stats", value: `Tackles: **${stats.totalTackles}** (${stats.tackleSolo} solo / ${stats.tackleAssist} ast)\nSacks: **${stats.sacks}** | INTs: **${stats.defInts}** | FF: ${stats.forcedFumbles}\nTFLs: ${stats.tacklesForLoss} | Def TDs: ${stats.defTDs}`, inline: false });
+    } else if (isK) {
+      if (stats.fgAtt > 0) embed.addFields({ name: "🦵 Season Kicking Stats", value: `FG: ${stats.fgMade}/${stats.fgAtt} | Long: ${stats.fgLong} yds | XP: ${stats.xpMade}/${stats.xpAtt}`, inline: false });
+      if (stats.puntAtt > 0) embed.addFields({ name: "💨 Season Punting Stats", value: `Punts: ${stats.puntAtt} | Yds: ${stats.puntYds.toLocaleString()} | Long: ${stats.puntLong} | In-20: ${stats.puntIn20}`, inline: false });
+    } else if (!isQB && !isHB && !isWR && !isDEF && !isK) {
+      // fallback — rush if any
+      if (stats.rushAtt > 0) embed.addFields({ name: "🏃 Rush", value: `${stats.rushYds} yds / ${stats.rushTDs} TDs`, inline: true });
+    }
+    if (!isK && !isQB && !isHB && !isWR && !isDEF && stats.recRec > 0) {
+      embed.addFields({ name: "🙌 Receiving", value: `${stats.recRec} rec / ${stats.recYds} yds / ${stats.recTDs} TDs`, inline: true });
+    }
+  } else {
+    embed.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
+  }
+
+  embed.setTimestamp().setFooter({ text: `Season ${season.seasonNumber} · Player ID ${playerId}` });
+
+  await interaction.editReply({
+    embeds: [embed],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back to Teams").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_hub").setLabel("🏠 Hub").setStyle(ButtonStyle.Secondary),
+    )],
   });
 }
 
@@ -3301,5 +3655,179 @@ async function handleRulesClose(interaction: ButtonInteraction) {
   await interaction.update({
     embeds: [new EmbedBuilder().setColor(Colors.DarkGrey).setDescription("📜 Rules closed.")],
     components: [],
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  UNLINKED USER — Request handlers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleReqOpenTeam(interaction: ButtonInteraction, sess: ActionsSession) {
+  const modal = new ModalBuilder()
+    .setCustomId("ac_modal_req_openteam")
+    .setTitle("Request an Open Team");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("team_name")
+        .setLabel("Which team are you requesting?")
+        .setPlaceholder("e.g. Kansas City Chiefs")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Why do you want this team? (optional)")
+        .setPlaceholder("Any background info for the commissioner…")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleReqOpenTeamSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
+  const gid      = interaction.guildId!;
+  const uid      = interaction.user.id;
+  const teamName = interaction.fields.getTextInputValue("team_name").trim();
+  const reason   = interaction.fields.getTextInputValue("reason").trim() || "No reason provided.";
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
+
+  if (logChannelId) {
+    const channel = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+    if (channel?.isTextBased()) {
+      await (channel as TextChannel).send({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Yellow)
+          .setTitle("🔔 Open Team Request")
+          .setDescription(`<@${uid}> has requested an open team.`)
+          .addFields(
+            { name: "🏈 Team Requested", value: teamName, inline: true },
+            { name: "📝 Reason",         value: reason,   inline: false },
+          )
+          .setTimestamp()],
+      }).catch(console.error);
+    }
+  }
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Request Submitted")
+      .setDescription(`Your request for **${teamName}** has been sent to the commissioner. You'll be notified once a decision is made.`)],
+  });
+}
+
+async function handleReqAddWaitlist(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const uid = interaction.user.id;
+  await interaction.deferUpdate();
+
+  // Check if already on waitlist
+  const [existing] = await db.select({ id: waitlistTable.id, status: waitlistTable.status })
+    .from(waitlistTable)
+    .where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
+
+  if (existing) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("⚠️ Already on Waitlist")
+        .setDescription(`You're already on the waitlist with status **${existing.status}**. A commissioner will reach out when a spot opens.`)],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  await db.insert(waitlistTable).values({ guildId: gid, discordId: uid, addedBy: uid, status: "waiting" });
+
+  // Notify commissioner
+  const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
+  if (logChannelId) {
+    const channel = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+    if (channel?.isTextBased()) {
+      await (channel as TextChannel).send({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("📋 Waitlist Request")
+          .setDescription(`<@${uid}> has self-added to the waitlist and is waiting for an open spot.`)
+          .setTimestamp()],
+      }).catch(console.error);
+    }
+  }
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Added to Waitlist")
+      .setDescription("You've been added to the waitlist! A commissioner will contact you when a team spot becomes available.")],
+    components: [backToHubRow()],
+  });
+}
+
+async function handleReqRmWaitlist(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const uid = interaction.user.id;
+  await interaction.deferUpdate();
+
+  const [existing] = await db.select({ id: waitlistTable.id, status: waitlistTable.status })
+    .from(waitlistTable)
+    .where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
+
+  if (!existing) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setDescription("You are not currently on the waitlist.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_req_rmwl_confirm").setLabel("✅ Yes, Remove Me").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("← Cancel").setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Yellow)
+      .setTitle("⚠️ Confirm Waitlist Removal")
+      .setDescription(`You are currently on the waitlist (status: **${existing.status}**).\n\nAre you sure you want to remove yourself?`)],
+    components: [confirmRow],
+  });
+}
+
+async function handleReqRmWaitlistConfirm(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const uid = interaction.user.id;
+  await interaction.deferUpdate();
+
+  await db.delete(waitlistTable).where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
+
+  const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
+  if (logChannelId) {
+    const channel = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+    if (channel?.isTextBased()) {
+      await (channel as TextChannel).send({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Grey)
+          .setTitle("📋 Waitlist Removal")
+          .setDescription(`<@${uid}> has removed themselves from the waitlist.`)
+          .setTimestamp()],
+      }).catch(console.error);
+    }
+  }
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✅ Removed from Waitlist").setDescription("You've been removed from the waitlist. You can re-add yourself at any time.")],
+    components: [backToHubRow()],
   });
 }
