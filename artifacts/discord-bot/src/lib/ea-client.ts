@@ -4,18 +4,71 @@ import crypto from "crypto";
 import { db, eaConnectionsTable } from "@workspace/db";
 import { eq, or } from "drizzle-orm";
 
-// ── Madden 26 EA API constants ────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// EA API constants — CURRENT: Madden 26
+//
+// HOW TO UPDATE FOR A NEW MADDEN YEAR
+// ─────────────────────────────────────────────────────────────────────────────
+// Every year EA ships a new Madden Companion App (MCA). Five constants below
+// change with every release (AUTH_SOURCE, CLIENT_SECRET, CLIENT_ID,
+// MACHINE_KEY, and all the year-stamped strings in the four maps).
+// Everything else — Blaze server hostname, endpoint names, OAuth URLs, request
+// payload shape — has been identical across Madden 24, 25, and 26.
+//
+// TWO WAYS TO FIND THE NEW VALUES (both take under 30 minutes):
+//
+// ── Method A: Decompile the APK (easiest, no phone needed) ───────────────────
+//   1. Download the new MCA APK from apkpure.com or apkmirror.com
+//      (search "Madden NFL 27 Companion" once it's live on the Play Store)
+//   2. Upload the APK to https://www.decompiler.com  (free, no install)
+//      — or run locally: jadx -d output/ MaddenCompanion.apk
+//   3. In the decompiled output, search for:
+//        "MCA_2"            → finds CLIENT_ID  (e.g. "MCA_27_COMP_APP")
+//        "authentication_source"  → finds AUTH_SOURCE (the integer beside it)
+//        "client_secret"    → finds CLIENT_SECRET (the long string beside it)
+//        "machineProfileKey"→ finds MACHINE_KEY (16-char hex string)
+//   4. The entitlement tag pattern is always  MADDEN_<2-digit-year><PLATFORM>
+//      e.g. MADDEN_27PS5, MADDEN_27XBSX — just bump the number.
+//   5. The Blaze service pattern is always  madden-20<2-digit-year>-<platform>
+//      e.g. madden-2027-ps5, madden-2027-xbsx — just bump the year.
+//
+// ── Method B: Network intercept (most reliable, confirms live values) ─────────
+//   1. Install Android Studio and create a Pixel emulator (API level 30 or lower
+//      — older Android lets you install user CAs without root).
+//   2. Install mitmproxy (https://mitmproxy.org) and its certificate on the emulator.
+//   3. Install the new MCA APK on the emulator and open it.
+//   4. Log in with your EA account and navigate to your league.
+//   5. In mitmproxy, look at the POST to accounts.ea.com/connect/token —
+//      the request body contains client_id, client_secret, authentication_source.
+//   6. The POST to wal2.tools.gos.bio-iad.ea.com/wal/authentication/login shows
+//      productName, which matches PLATFORM_TO_PRODUCT_NAME.
+//
+// ── After you have the values ─────────────────────────────────────────────────
+// Update the five constants below + do a find-and-replace on "26" → "27" (and
+// "2026" → "2027") in the four maps. That is the entire migration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// YEAR-SPECIFIC — update these every Madden release:
+//   AUTH_SOURCE   → integer beside "authentication_source" in APK / network capture
+//   CLIENT_SECRET → long string beside "client_secret" in APK / network capture
+//   CLIENT_ID     → string matching "MCA_<YY>_COMP_APP" pattern in APK
+//   MACHINE_KEY   → 16-char hex string beside "machineProfileKey" in APK
 const AUTH_SOURCE   = 317239;
 const CLIENT_SECRET = "teJpJ9cSXFqZAuKNW8IuHpy8D4dwWPoVrPoek38iCnrGbrUSfjqnHMBAv8iCVjeSm_20250910175618";
-const REDIRECT_URL  = "http://127.0.0.1/success";
 const CLIENT_ID     = "MCA_26_COMP_APP";
 const MACHINE_KEY   = "444d362e8e067fe2";
+
+// STABLE — does not change year to year:
+const REDIRECT_URL  = "http://127.0.0.1/success";
 
 export const EA_LOGIN_URL =
   `https://accounts.ea.com/connect/auth?hide_create=true&release_type=prod` +
   `&response_type=code&redirect_uri=${REDIRECT_URL}&client_id=${CLIENT_ID}` +
   `&machineProfileKey=${MACHINE_KEY}&authentication_source=${AUTH_SOURCE}`;
 
+// YEAR-SPECIFIC — bump "26" → "27" (and "SDA" stays as-is for Stadia).
+// Pattern: MADDEN_<2-digit-year><PLATFORM_SUFFIX>
+// Confirmed present in the MCA APK as entitlement group names.
 const VALID_ENTITLEMENT_TAGS: Record<string, string> = {
   xone:   "MADDEN_26XONE",
   ps4:    "MADDEN_26PS4",
@@ -25,6 +78,7 @@ const VALID_ENTITLEMENT_TAGS: Record<string, string> = {
   stadia: "MADDEN_26SDA",
 };
 
+// YEAR-SPECIFIC — reverse map of VALID_ENTITLEMENT_TAGS (same keys, bump "26").
 const ENTITLEMENT_TO_PLATFORM: Record<string, string> = {
   MADDEN_26XONE: "xone",
   MADDEN_26PS4:  "ps4",
@@ -34,6 +88,8 @@ const ENTITLEMENT_TO_PLATFORM: Record<string, string> = {
   MADDEN_26SDA:  "stadia",
 };
 
+// STABLE — namespace strings (xbox, ps3, cem_ea_id) have not changed since M24.
+// Only the keys need the year bump.
 const ENTITLEMENT_TO_NAMESPACE: Record<string, string> = {
   MADDEN_26XONE: "xbox",
   MADDEN_26PS4:  "ps3",
@@ -43,6 +99,9 @@ const ENTITLEMENT_TO_NAMESPACE: Record<string, string> = {
   MADDEN_26SDA:  "stadia",
 };
 
+// YEAR-SPECIFIC — Blaze service IDs sent in the X-BLAZE-ID header.
+// Pattern: madden-20<2-digit-year>-<platform>
+// Confirmed via network intercept of the Blaze login POST.
 const PLATFORM_TO_BLAZE_SERVICE: Record<string, string> = {
   xone:   "madden-2026-xone",
   ps4:    "madden-2026-ps4",
@@ -52,6 +111,9 @@ const PLATFORM_TO_BLAZE_SERVICE: Record<string, string> = {
   stadia: "madden-2026-stadia",
 };
 
+// YEAR-SPECIFIC — productName sent in the Blaze authentication/login body.
+// Pattern: madden-20<2-digit-year>-<platform>-mca
+// Confirmed via network intercept; appears beside "productName" in the JSON body.
 const PLATFORM_TO_PRODUCT_NAME: Record<string, string> = {
   xone:   "madden-2026-xone-mca",
   ps4:    "madden-2026-ps4-mca",
