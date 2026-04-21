@@ -121,7 +121,7 @@ export function buildUnlinkedHubEmbed(): EmbedBuilder {
       "**Browse**\n" +
       "👥 Any Roster · 📊 Player Stats & Ratings · 🏟️ Team Stats\n\n" +
       "**League Info**\n" +
-      "📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch",
+      "📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch · 📜 Rules",
     )
     .setFooter({ text: "Contact a commissioner to get linked to a team." });
 }
@@ -143,6 +143,7 @@ export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_inthehunt").setLabel("🎯 In The Hunt").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
   );
   const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
