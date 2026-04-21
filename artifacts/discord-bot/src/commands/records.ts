@@ -21,8 +21,14 @@ function ordinal(n: number): string {
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]!);
 }
 
-function displayName(username: string, team: string | null | undefined): string {
+/** Season PR — team-first since each slot has one owner per season */
+function seasonDisplayName(username: string, team: string | null | undefined): string {
   return team ? `${team}` : username;
+}
+
+/** All-time PR — username is primary; team shown as context to avoid duplicate-looking rows */
+function allTimeDisplayName(username: string, team: string | null | undefined): string {
+  return team ? `${username} (${team})` : username;
 }
 
 // ── General channel announcement helper (used by seasonpr/alltimepr for SB announcements) ──
@@ -63,7 +69,7 @@ export async function executeSeasonPR(interaction: ChatInputCommandInteraction) 
     ...r,
     gamesPlayed: r.wins + r.losses,
     prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
-    label: displayName(r.discordUsername, r.team),
+    label: seasonDisplayName(r.discordUsername, r.team),
   })).sort((a, b) => b.prScore - a.prScore);
 
   const medals = ["🥇", "🥈", "🥉"];
@@ -116,7 +122,7 @@ export async function executeAllTimePR(interaction: ChatInputCommandInteraction)
     ...r,
     gamesPlayed: r.wins + r.losses,
     prScore: calcPRScore(r.wins, r.losses, r.pointDifferential),
-    label: displayName(r.discordUsername, r.team),
+    label: allTimeDisplayName(r.discordUsername, r.team),
   })).sort((a, b) => b.prScore - a.prScore);
 
   const medals = ["🥇", "🥈", "🥉"];
