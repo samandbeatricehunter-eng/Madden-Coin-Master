@@ -32,7 +32,7 @@ import {
 } from "../lib/custom-player-interactions.js";
 import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/viewcustomarchetypes.js";
 import {
-  handleAupPageNav, handleAupSel, handleAupBack, handleAupConfirm, handleAupCancel,
+  handleAupPageNav, handleAupSel, handleAupQtySel, handleAupBack, handleAupConfirm, handleAupCancel,
 } from "../commands/attribute-up-interactions.js";
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin-inventory.js";
@@ -2299,7 +2299,8 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "acp_player") { await handleAcpPlayerSelect(interaction); return; }
 
   // ── Attribute-up: user selected an attribute to upgrade ───────────────────
-  if (action === "aup_sel") { await handleAupSel(interaction); return; }
+  if (action === "aup_sel")     { await handleAupSel(interaction);    return; }
+  if (action === "aup_qty_sel") { await handleAupQtySel(interaction); return; }
 
   // ── GOTY: commissioner selected the 2 winners ─────────────────────────────────
   if (action === "goty_winners") {

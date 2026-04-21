@@ -513,10 +513,70 @@ export async function handleAupSel(interaction: StringSelectMenuInteraction): Pr
   session.scaledCost    = cost;
   session.isCore        = isCore;
 
-  // Show confirmation
-  const invoker = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
+  // ── Non-core: show quantity dropdown before confirmation ───────────────────
+  if (!isCore) {
+    const stats     = await getSeasonStats(interaction.user.id, season.id);
+    const remaining = Math.max(0, rules.nonCoreAttrCap - stats.nonCoreAttrPurchased);
+    const maxByRating = 99 - current;
+    const maxOptions  = Math.min(remaining, maxByRating);
+
+    if (maxOptions <= 0) {
+      const msg = remaining <= 0
+        ? `❌ You've used all **${rules.nonCoreAttrCap}** non-core upgrades for this season.`
+        : `❌ **${attrName}** is already at max (${current}/99) — cannot upgrade further.`;
+      await interaction.reply({ content: msg, ephemeral: true });
+      return;
+    }
+
+    // Discord selects support up to 25 options; cap display at 25 points
+    const displayMax = Math.min(maxOptions, 25);
+    const qtyOptions = Array.from({ length: displayMax }, (_, i) => {
+      const pts = i + 1;
+      const stackResult = stackedCost(base, current, pts);
+      const totalCost = stackResult?.total ?? 0;
+      return new StringSelectMenuOptionBuilder()
+        .setLabel(`+${pts} point${pts !== 1 ? "s" : ""}`)
+        .setValue(String(pts))
+        .setDescription(`${totalCost.toLocaleString()} coins total`);
+    });
+
+    const qtyRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`aup_qty_sel:${sKey}`)
+        .setPlaceholder("Select how many points to upgrade")
+        .addOptions(qtyOptions)
+    );
+
+    const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`aup_back:${sKey}`)
+        .setLabel("◀ Back to Attributes")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`aup_cancel:${sKey}`)
+        .setLabel("✖ Cancel")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    const qtyEmbed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("⚡ Select Upgrade Amount")
+      .setDescription(
+        `**Player:** ${session.playerName} (${session.playerPosition})\n` +
+        `**Attribute:** ${attrName} (Non-core)\n` +
+        `**Current value:** ${current}\n\n` +
+        `You have **${remaining}** non-core upgrade${remaining !== 1 ? "s" : ""} remaining this season.\n` +
+        `How many points would you like to add?` +
+        (remaining > 25 ? `\n*(Showing first 25 options)*` : "")
+      );
+
+    await interaction.update({ embeds: [qtyEmbed], components: [qtyRow, navRow] });
+    return;
+  }
+
+  // ── Core: show confirmation immediately (always 1 point in non-legacy mode) ─
+  const invoker   = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
   const canAfford = invoker.balance >= cost;
-  const category  = isCore ? "Core" : "Non-core";
 
   const embed = new EmbedBuilder()
     .setColor(canAfford ? Colors.Green : Colors.Red)
@@ -525,13 +585,15 @@ export async function handleAupSel(interaction: StringSelectMenuInteraction): Pr
       `**Player:** ${session.playerName} (${session.playerPosition})\n` +
       `**Attribute:** ${attrName}\n` +
       `**Current value:** ${current} → **${current + 1}**\n` +
-      `**Category:** ${category}${isCore ? " ⭐" : ""}\n` +
+      `**Category:** Core ⭐\n` +
       `**Cost:** ${cost.toLocaleString()} coins\n` +
       `**Your balance:** ${invoker.balance.toLocaleString()} coins\n\n` +
       (canAfford
         ? `✅ You can afford this upgrade.`
         : `❌ You need **${(cost - invoker.balance).toLocaleString()}** more coins.`)
     );
+
+  session.quantity = 1;
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -568,6 +630,71 @@ export async function handleAupBack(interaction: ButtonInteraction): Promise<voi
     embeds: [buildAttrPage(session, rules, coreSet)],
     components: [buildAttrDropdown(session, rules, sKey, coreSet), buildNavRow(session, sKey)],
   });
+}
+
+// ── Handler: quantity selected for non-core attribute ─────────────────────────
+// Shown after handleAupSel for non-core attributes — user picks how many points.
+export async function handleAupQtySel(interaction: StringSelectMenuInteraction): Promise<void> {
+  const sKey = interaction.customId.split(":").slice(1).join(":");
+  const session = aupSessions.get(sKey);
+  if (!session || session.invokerId !== interaction.user.id) {
+    await interaction.reply({ content: "❌ Session expired or not yours.", ephemeral: true });
+    return;
+  }
+  if (!session.selectedAttr || session.currentValue === undefined || session.baseCost === undefined) {
+    await interaction.reply({ content: "❌ Session state invalid — please restart the purchase.", ephemeral: true });
+    return;
+  }
+
+  const qty    = parseInt(interaction.values[0]!, 10);
+  const base   = session.baseCost;
+  const current = session.currentValue;
+
+  const stackResult = stackedCost(base, current, qty);
+  if (!stackResult || stackResult.pointsUpgradeable < qty) {
+    await interaction.reply({ content: "❌ Cannot apply that many points — rating cap reached.", ephemeral: true });
+    return;
+  }
+
+  session.quantity   = stackResult.pointsUpgradeable;
+  session.scaledCost = stackResult.total;
+
+  const invoker   = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
+  const canAfford = invoker.balance >= stackResult.total;
+  const actualQty = session.quantity;
+
+  const embed = new EmbedBuilder()
+    .setColor(canAfford ? Colors.Green : Colors.Red)
+    .setTitle("⚡ Confirm Attribute Upgrade")
+    .setDescription(
+      `**Player:** ${session.playerName} (${session.playerPosition})\n` +
+      `**Attribute:** ${session.selectedAttr}\n` +
+      `**Upgrade:** ${current} → **${current + actualQty}** (+${actualQty} point${actualQty !== 1 ? "s" : ""})\n` +
+      `**Category:** Non-core\n` +
+      `**Cost:** ${stackResult.total.toLocaleString()} coins\n` +
+      `**Your balance:** ${invoker.balance.toLocaleString()} coins\n\n` +
+      (canAfford
+        ? `✅ You can afford this upgrade.`
+        : `❌ You need **${(stackResult.total - invoker.balance).toLocaleString()}** more coins.`)
+    );
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`aup_confirm:${sKey}`)
+      .setLabel(`✅ Confirm (+${actualQty} point${actualQty !== 1 ? "s" : ""})`)
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!canAfford),
+    new ButtonBuilder()
+      .setCustomId(`aup_back:${sKey}`)
+      .setLabel("◀ Back to Attributes")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`aup_cancel:${sKey}`)
+      .setLabel("✖ Cancel")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  await interaction.update({ embeds: [embed], components: [row] });
 }
 
 // ── Handler: cancel ───────────────────────────────────────────────────────────
