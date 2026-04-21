@@ -14,7 +14,7 @@ import * as nextschedule       from "../commands/nextschedule.js";
 import * as nextopp            from "../commands/nextopp.js";
 import * as savings            from "../commands/savings.js";
 import * as weeklyMatchups     from "../commands/weekly-matchups.js";
-import * as standings          from "../commands/standings.js";
+
 import * as h2hrecord          from "../commands/h2hrecord.js";
 import * as customarticle      from "../commands/customarticle.js";
 import * as webhookurl         from "../commands/webhookurl.js";
@@ -88,7 +88,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [nextschedule,       true],
     [nextopp,            true],
     [weeklyMatchups,     true],
-    [standings,          true],
     [h2hrecord,          true],
     [recentH2H,          true],
     [customarticle,      true],

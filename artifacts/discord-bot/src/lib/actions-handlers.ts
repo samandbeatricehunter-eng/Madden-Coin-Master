@@ -1958,7 +1958,7 @@ async function handleMyRoster(interaction: ButtonInteraction, sess: ActionsSessi
   }
 
   // Find teamId from franchiseMcaTeams — match on nickName first, then fullName as fallback
-  const teamRow = (await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName, nickName: franchiseMcaTeamsTable.nickName })
+  const teamRow = (await db.select({ id: franchiseMcaTeamsTable.id, mcaTeamId: franchiseMcaTeamsTable.teamId, fullName: franchiseMcaTeamsTable.fullName, nickName: franchiseMcaTeamsTable.nickName })
     .from(franchiseMcaTeamsTable)
     .where(and(
       eq(franchiseMcaTeamsTable.seasonId, seasonId),
@@ -1979,7 +1979,8 @@ async function handleMyRoster(interaction: ButtonInteraction, sess: ActionsSessi
 
   const displayName = teamRow.fullName ?? user.team;
   const embed = new EmbedBuilder();
-  await buildRosterEmbed(gid, seasonId, teamRow.id, displayName, embed);
+  // Pass MCA teamId (not serial PK) — franchiseRostersTable.teamId stores MCA ids
+  await buildRosterEmbed(gid, seasonId, teamRow.mcaTeamId, displayName, embed);
   await interaction.update({ embeds: [embed], components: [backToHubRow()] });
 }
 
@@ -1990,6 +1991,7 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
   // Fetch ALL teams (human and CPU) for this season
   const teams = await db.select({
     id:         franchiseMcaTeamsTable.id,
+    mcaTeamId:  franchiseMcaTeamsTable.teamId,
     fullName:   franchiseMcaTeamsTable.fullName,
     nickName:   franchiseMcaTeamsTable.nickName,
     conference: franchiseMcaTeamsTable.conference,
@@ -2021,6 +2023,7 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
     return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === "NFC";
   });
 
+  // Use MCA teamId (not serial PK) as select value — buildRosterEmbed needs MCA teamId
   const makeMenu = (conference: string, list: typeof teams) =>
     new StringSelectMenuBuilder()
       .setCustomId("ac_anyroster_sel")
@@ -2030,7 +2033,7 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
           new StringSelectMenuOptionBuilder()
             .setLabel(t.fullName)
             .setDescription(t.isHuman ? "👤 Human" : "🤖 CPU")
-            .setValue(String(t.id)),
+            .setValue(String(t.mcaTeamId)),
         ),
       );
 
@@ -2050,15 +2053,19 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
 }
 
 async function handleAnyRosterShow(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const teamId = Number(interaction.values[0]);
-  const gid    = interaction.guildId!;
-  const seasonId = await getRosterSeasonId(gid);
+  // Value is MCA teamId (integer) — NOT the serial PK
+  const mcaTeamId = Number(interaction.values[0]);
+  const gid       = interaction.guildId!;
+  const seasonId  = await getRosterSeasonId(gid);
 
-  const teamRow = (await db.select({ fullName: franchiseMcaTeamsTable.fullName }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.id, teamId)).limit(1))[0];
+  const teamRow = (await db.select({ fullName: franchiseMcaTeamsTable.fullName })
+    .from(franchiseMcaTeamsTable)
+    .where(and(eq(franchiseMcaTeamsTable.seasonId, seasonId), eq(franchiseMcaTeamsTable.teamId, mcaTeamId)))
+    .limit(1))[0];
   const teamName = teamRow?.fullName ?? "Unknown Team";
 
   const embed = new EmbedBuilder();
-  await buildRosterEmbed(gid, seasonId, teamId, teamName, embed);
+  await buildRosterEmbed(gid, seasonId, mcaTeamId, teamName, embed);
 
   const rosterNav = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_anyroster").setLabel("← Back to Teams").setStyle(ButtonStyle.Secondary),
@@ -2092,7 +2099,8 @@ async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, se
   const gid      = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
 
-  // FA = players on team 0 or teamId that signals FA (CPU/free agent)
+  // FA = players with teamId sentinel 999 (Madden free agent pool)
+  const FA_TEAM_ID = 999;
   const faRows = await db.select({
     firstName: franchiseRostersTable.firstName,
     lastName:  franchiseRostersTable.lastName,
@@ -2103,7 +2111,7 @@ async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, se
   }).from(franchiseRostersTable)
     .where(and(
       eq(franchiseRostersTable.seasonId, seasonId),
-      isNull(franchiseRostersTable.discordId),
+      eq(franchiseRostersTable.teamId, FA_TEAM_ID),
       sql`upper(${franchiseRostersTable.position}) = upper(${position})`,
     ))
     .orderBy(desc(franchiseRostersTable.overall))
@@ -2121,8 +2129,8 @@ async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, se
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle(`🆓 Free Agents — ${position}`)
-    .setDescription(lines.slice(0, 20).join("\n"))
-    .setFooter({ text: `Showing top ${Math.min(faRows.length, 20)} by OVR • ${DEV_LEGEND}` })
+    .setDescription(lines.join("\n"))
+    .setFooter({ text: `Showing top ${faRows.length} by OVR • ${DEV_LEGEND}` })
     .setTimestamp();
 
   await interaction.update({ embeds: [embed], components: [backToHubRow()] });
@@ -2132,8 +2140,8 @@ async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, se
 
 async function handlePlayerStatsStart(interaction: ButtonInteraction, sess: ActionsSession) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_ps_conf:AFC").setLabel("🔵 AFC Teams").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_ps_conf:NFC").setLabel("🔴 NFC Teams").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_ps_conf:AFC").setLabel("🔴 AFC Teams").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_ps_conf:NFC").setLabel("🔵 NFC Teams").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
   );
   await interaction.update({
@@ -2151,29 +2159,39 @@ async function handlePsTeamPick(interaction: ButtonInteraction, sess: ActionsSes
   await interaction.deferUpdate();
 
   const season = await getOrCreateActiveSeason(gid);
-  const teams  = await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName })
+  const allTeams = await db.select({
+    mcaTeamId:  franchiseMcaTeamsTable.teamId,
+    fullName:   franchiseMcaTeamsTable.fullName,
+    nickName:   franchiseMcaTeamsTable.nickName,
+    conference: franchiseMcaTeamsTable.conference,
+  })
     .from(franchiseMcaTeamsTable)
-    .where(and(
-      eq(franchiseMcaTeamsTable.seasonId, season.id),
-      eq(franchiseMcaTeamsTable.conference, conf),
-      eq(franchiseMcaTeamsTable.isHuman, true),
-    ))
+    .where(eq(franchiseMcaTeamsTable.seasonId, season.id))
     .orderBy(franchiseMcaTeamsTable.fullName);
+
+  // Filter to the requested conference; fall back to NFL_DIVISION_MAP if conference is null
+  const teams = allTeams.filter(t => {
+    const c = t.conference?.toUpperCase();
+    if (c === conf) return true;
+    if (c === (conf === "AFC" ? "NFC" : "AFC")) return false;
+    return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === conf;
+  });
 
   if (!teams.length) {
     await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No ${conf} teams found. Make sure rosters have been imported.`)], components: [backToHubRow()] });
     return;
   }
 
+  // Use MCA teamId as value — needed for roster queries downstream
   const menu = new StringSelectMenuBuilder()
     .setCustomId("ac_ps_team_sel")
     .setPlaceholder(`Select a ${conf} team…`)
     .addOptions(teams.slice(0, 25).map(t =>
-      new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.id)),
+      new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.mcaTeamId)),
     ));
 
   await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(conf === "AFC" ? Colors.Blue : Colors.Red).setTitle(`📊 Player Stats — ${conf} Teams`)],
+    embeds: [new EmbedBuilder().setColor(conf === "AFC" ? Colors.Red : Colors.Blue).setTitle(`📊 Player Stats — ${conf} Teams`)],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -2198,11 +2216,15 @@ const PS_POS_GROUPS: { value: string; label: string; positions: string[] }[] = [
 ];
 
 async function handlePsPosPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  // Value is MCA teamId (not serial PK)
   const teamId = interaction.values[0]!;
   await interaction.deferUpdate();
 
+  const season = await getOrCreateActiveSeason(interaction.guildId!);
   const [teamRow] = await db.select({ fullName: franchiseMcaTeamsTable.fullName })
-    .from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.id, Number(teamId))).limit(1);
+    .from(franchiseMcaTeamsTable)
+    .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.teamId, Number(teamId))))
+    .limit(1);
   const teamName = teamRow?.fullName ?? "Unknown Team";
 
   const menu = new StringSelectMenuBuilder()
@@ -2270,8 +2292,11 @@ async function handlePsPlayerPick(interaction: StringSelectMenuInteraction, sess
         .setValue(String(p.id)),
     ));
 
+  // teamId is MCA teamId — look up by teamId column, not serial PK
   const [teamRow] = await db.select({ fullName: franchiseMcaTeamsTable.fullName })
-    .from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.id, teamId)).limit(1);
+    .from(franchiseMcaTeamsTable)
+    .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.teamId, teamId)))
+    .limit(1);
 
   await interaction.editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 ${teamRow?.fullName ?? "Team"} — ${group.label}`)],
@@ -2492,42 +2517,69 @@ async function handlePsPlayerCard(interaction: StringSelectMenuInteraction, sess
 async function handleTeamStatsTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid      = interaction.guildId!;
   const season   = await getOrCreateActiveSeason(gid);
-  const teams = await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName, conference: franchiseMcaTeamsTable.conference })
+  const allTeams = await db.select({
+    mcaTeamId:  franchiseMcaTeamsTable.teamId,
+    fullName:   franchiseMcaTeamsTable.fullName,
+    nickName:   franchiseMcaTeamsTable.nickName,
+    conference: franchiseMcaTeamsTable.conference,
+    isHuman:    franchiseMcaTeamsTable.isHuman,
+  })
     .from(franchiseMcaTeamsTable)
     .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.isHuman, true)))
-    .orderBy(franchiseMcaTeamsTable.conference, franchiseMcaTeamsTable.fullName);
+    .orderBy(franchiseMcaTeamsTable.fullName);
 
-  if (!teams.length) {
+  if (!allTeams.length) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No teams found.")], components: [backToHubRow()] });
     return;
   }
 
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ac_teamstats_sel")
-    .setPlaceholder("Select a team…")
-    .addOptions(
-      teams.slice(0, 25).map(t =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${t.fullName} (${t.conference ?? "?"})`)
-          .setValue(String(t.id)),
-      ),
-    );
+  // Split by conference; fall back to NFL_DIVISION_MAP if conference field is null
+  const afcTeams = allTeams.filter(t => {
+    const c = t.conference?.toUpperCase();
+    if (c === "AFC") return true;
+    if (c === "NFC") return false;
+    return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === "AFC";
+  });
+  const nfcTeams = allTeams.filter(t => {
+    const c = t.conference?.toUpperCase();
+    if (c === "NFC") return true;
+    if (c === "AFC") return false;
+    return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === "NFC";
+  });
+
+  // Use MCA teamId as value — teamSeasonStatsTable.teamId stores MCA ids
+  const makeMenu = (conf: string, list: typeof allTeams) =>
+    new StringSelectMenuBuilder()
+      .setCustomId("ac_teamstats_sel")
+      .setPlaceholder(`${conf} — pick a team…`)
+      .addOptions(list.slice(0, 25).map(t =>
+        new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.mcaTeamId)),
+      ));
+
+  const components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [];
+  if (afcTeams.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeMenu("🔴 AFC", afcTeams)));
+  if (nfcTeams.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeMenu("🔵 NFC", nfcTeams)));
+  components.push(cancelRow() as any);
 
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("🏟️ Team Stats — Select Team")],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("🏟️ Team Stats — Select Team").setDescription("Pick a team from the **AFC** or **NFC** dropdown.")],
+    components,
   });
 }
 
 async function handleTeamStatsShow(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const teamId  = Number(interaction.values[0]);
-  const gid     = interaction.guildId!;
-  const season  = await getOrCreateActiveSeason(gid);
+  // Value is MCA teamId (not serial PK)
+  const mcaTeamId = Number(interaction.values[0]);
+  const gid       = interaction.guildId!;
+  const season    = await getOrCreateActiveSeason(gid);
 
   const [teamRow, statsRow] = await Promise.all([
-    db.select({ fullName: franchiseMcaTeamsTable.fullName }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.id, teamId)).limit(1).then(r => r[0]),
+    db.select({ fullName: franchiseMcaTeamsTable.fullName })
+      .from(franchiseMcaTeamsTable)
+      .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.teamId, mcaTeamId)))
+      .limit(1).then(r => r[0]),
     db.select().from(teamSeasonStatsTable)
-      .where(and(eq(teamSeasonStatsTable.seasonId, season.id), eq(teamSeasonStatsTable.teamId, teamId)))
+      .where(and(eq(teamSeasonStatsTable.seasonId, season.id), eq(teamSeasonStatsTable.teamId, mcaTeamId)))
       .limit(1).then(r => r[0]),
   ]);
 
@@ -2562,8 +2614,8 @@ async function handleTeamStatsShow(interaction: StringSelectMenuInteraction, ses
 
 async function handleStandingsConfPick(interaction: ButtonInteraction, sess: ActionsSession) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_standings_conf:AFC").setLabel("🔵 AFC").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_standings_conf:NFC").setLabel("🔴 NFC").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_standings_conf:AFC").setLabel("🔴 AFC").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_standings_conf:NFC").setLabel("🔵 NFC").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_standings_conf:ALL").setLabel("🌐 Both").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
   );
@@ -2593,7 +2645,7 @@ async function handleStandingsShow(interaction: ButtonInteraction, sess: Actions
       const sorted = [...teams].sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
       const lines  = sorted.map((t, i) => `**${i + 1}.** ${t.teamName} — ${t.wins}W-${t.losses}L (${t.pointDifferential >= 0 ? "+" : ""}${t.pointDifferential} pts)`);
       return new EmbedBuilder()
-        .setColor(conference === "AFC" ? Colors.Blue : Colors.Red)
+        .setColor(conference === "AFC" ? Colors.Red : Colors.Blue)
         .setTitle(`🏈 ${conference} Standings — Season ${season.seasonNumber}`)
         .setDescription(lines.join("\n") || "No data");
     };
@@ -2613,7 +2665,7 @@ async function handleStandingsShow(interaction: ButtonInteraction, sess: Actions
   const lines  = sorted.map((t, i) => `**${i + 1}.** ${t.teamName} — ${t.wins}W-${t.losses}L (${t.pointDifferential >= 0 ? "+" : ""}${t.pointDifferential} pts)`);
 
   const embed = new EmbedBuilder()
-    .setColor(conf === "AFC" ? Colors.Blue : Colors.Red)
+    .setColor(conf === "AFC" ? Colors.Red : Colors.Blue)
     .setTitle(`🏈 ${conf} Standings — Season ${season.seasonNumber}`)
     .setDescription(lines.join("\n"))
     .setTimestamp();
@@ -3030,52 +3082,82 @@ async function handleGlobalPR(interaction: ButtonInteraction, sess: ActionsSessi
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  // Use all linked users cross-server
-  const allUsers = await db.select({
-    discordId: usersTable.discordId,
-    team: usersTable.team,
+  // Step 1: fetch guild members only (for the display list)
+  const guildUsers = await db.select({
+    discordId:       usersTable.discordId,
+    team:            usersTable.team,
     discordUsername: usersTable.discordUsername,
-    balance: usersTable.balance,
-    guildId: usersTable.guildId,
+    walletBalance:   usersTable.balance,
   }).from(usersTable)
-    .where(and(isNotNull(usersTable.team), ne(usersTable.team, ""), ne(usersTable.discordUsername, "Open Slot")));
+    .where(and(
+      eq(usersTable.guildId, gid),
+      isNotNull(usersTable.team),
+      ne(usersTable.team, ""),
+      ne(usersTable.discordUsername, "Open Slot"),
+    ));
 
-  if (!allUsers.length) {
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("🌐 Global Power Rankings").setDescription("No linked users found globally.")], components: [backToHubRow()] });
+  if (!guildUsers.length) {
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("🌐 Global Power Rankings").setDescription("No linked users found in this server.")], components: [backToHubRow()] });
     return;
   }
 
-  const allIds = allUsers.map(u => u.discordId);
-  const records = await db.select({
+  // Step 2: fetch ALL global records (for accurate global rank)
+  const allGlobalRecords = await db.select({
     discordId: globalUserRecordsTable.discordId,
     wins:      globalUserRecordsTable.wins,
     losses:    globalUserRecordsTable.losses,
     pointDiff: globalUserRecordsTable.pointDifferential,
-  }).from(globalUserRecordsTable)
-    .where(inArray(globalUserRecordsTable.discordId, allIds));
+  }).from(globalUserRecordsTable);
 
-  const userMap = new Map(allUsers.map(u => [u.discordId, u]));
+  // Step 3: rank ALL global records by PR score
+  const globalRanked = allGlobalRecords
+    .map(r => ({ discordId: r.discordId, pr: calcPRScore(r.wins ?? 0, r.losses ?? 0, r.pointDiff ?? 0), wins: r.wins ?? 0, losses: r.losses ?? 0, pd: r.pointDiff ?? 0 }))
+    .sort((a, b) => b.pr - a.pr);
 
-  const ranked = records.map(r => {
-    const u    = userMap.get(r.discordId);
-    const wins = r.wins ?? 0;
-    const loss = r.losses ?? 0;
-    const pd   = r.pointDiff ?? 0;
-    return { label: u?.team ?? u?.discordUsername ?? r.discordId, wins, losses: loss, pd, pr: calcPRScore(wins, loss, pd), gp: wins + loss };
-  }).sort((a, b) => b.pr - a.pr).slice(0, 20);
+  const globalRankMap = new Map<string, { rank: number; wins: number; losses: number; pd: number; pr: number }>();
+  globalRanked.forEach((r, i) => globalRankMap.set(r.discordId, { rank: i + 1, wins: r.wins, losses: r.losses, pd: r.pd, pr: r.pr }));
+
+  // Step 4: fetch savings balances for guild users
+  const guildIds = guildUsers.map(u => u.discordId);
+  const savingsRows = guildIds.length
+    ? await db.select({ discordId: userSavingsTable.discordId, balance: userSavingsTable.balance })
+        .from(userSavingsTable)
+        .where(inArray(userSavingsTable.discordId, guildIds))
+    : [];
+  const savingsMap = new Map(savingsRows.map(s => [s.discordId, s.balance]));
+
+  // Step 5: build display rows for guild users (sorted by global rank)
+  const displayRows = guildUsers
+    .map(u => {
+      const g = globalRankMap.get(u.discordId);
+      return {
+        discordId: u.discordId,
+        username:  u.discordUsername ?? u.discordId,
+        team:      u.team ?? "",
+        globalRank: g?.rank ?? 99999,
+        wins:       g?.wins ?? 0,
+        losses:     g?.losses ?? 0,
+        pd:         g?.pd ?? 0,
+        pr:         g?.pr ?? 0,
+        totalCoins: (u.walletBalance ?? 0) + (savingsMap.get(u.discordId) ?? 0),
+      };
+    })
+    .sort((a, b) => a.globalRank - b.globalRank);
 
   const medals = ["🥇", "🥈", "🥉"];
-  const lines  = ranked.map((r, i) => {
-    const badge  = medals[i] ?? `**${ordinal(i + 1)}**`;
-    const winPct = r.gp > 0 ? ((r.wins / r.gp) * 100).toFixed(1) : "0.0";
-    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pd)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)}`;
+  const lines = displayRows.map(r => {
+    const gp      = r.wins + r.losses;
+    const winPct  = gp > 0 ? ((r.wins / gp) * 100).toFixed(1) : "0.0";
+    const rankBadge = medals[r.globalRank - 1] ?? `**#${r.globalRank}**`;
+    const label   = r.team ? `${r.username} (${r.team})` : r.username;
+    return `${rankBadge} ${label} — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pd)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)} | 🪙 ${r.totalCoins.toLocaleString()}`;
   });
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("🌐 Global Power Rankings")
     .setDescription(lines.join("\n") || "No data")
-    .setFooter({ text: "Cross-server all-time cumulative rankings" })
+    .setFooter({ text: `${displayRows.length} members shown • Global rank shown (#) • Coins = wallet + savings` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
@@ -3086,7 +3168,7 @@ async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSes
   await interaction.deferUpdate();
 
   const configMap = await getAllPayoutConfig(gid);
-  const allKeys   = getAllPayoutKeys().filter(k => k.key.startsWith("eos_"));
+  const allKeys   = getAllPayoutKeys();
 
   const cats: Record<string, string[]> = {};
   for (const meta of allKeys) {
@@ -3098,11 +3180,11 @@ async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSes
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
-    .setTitle("💰 EOS Payout Tiers");
+    .setTitle("💰 Payout Tiers");
 
   for (const [cat, items] of Object.entries(cats)) {
-    const chunk = items.slice(0, 20).join("\n");
-    if (chunk) embed.addFields({ name: cat, value: chunk, inline: false });
+    const chunk = items.join("\n");
+    if (chunk) embed.addFields({ name: cat, value: chunk.slice(0, 1024), inline: false });
   }
 
   embed.setTimestamp();
@@ -3162,7 +3244,7 @@ async function handleActiveTeams(interaction: ButtonInteraction, sess: ActionsSe
     return;
   }
 
-  const CONF_EMOJI: Record<string, string> = { AFC: "🔵", NFC: "🔴" };
+  const CONF_EMOJI: Record<string, string> = { AFC: "🔴", NFC: "🔵" };
   const DIV_ORDER = ["East", "North", "South", "West"] as const;
 
   const embed = new EmbedBuilder()
@@ -3215,8 +3297,8 @@ async function handleOpenTeams(interaction: ButtonInteraction, sess: ActionsSess
     .setTitle(`🔴 Open Teams (${openTeams.length} available)`)
     .setTimestamp();
 
-  if (afcOpen.length) embed.addFields({ name: "🔵 AFC", value: afcOpen.map(t => `• ${t}`).join("\n"), inline: true });
-  if (nfcOpen.length) embed.addFields({ name: "🔴 NFC", value: nfcOpen.map(t => `• ${t}`).join("\n"), inline: true });
+  if (afcOpen.length) embed.addFields({ name: "🔴 AFC", value: afcOpen.map(t => `• ${t}`).join("\n"), inline: true });
+  if (nfcOpen.length) embed.addFields({ name: "🔵 NFC", value: nfcOpen.map(t => `• ${t}`).join("\n"), inline: true });
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
 }
