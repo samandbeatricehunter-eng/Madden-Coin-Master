@@ -2140,21 +2140,11 @@ export async function processWeekScores(
 
     console.log(`[mca/week${weekNum}/schedules] Processed: ${gamesProcessed} games, ${gamesDuplicate} dupes, ${gamesCpuVsCpu} cpu-vs-cpu, ${gamesUnregistered} unregistered, ${violations.length} violations`);
 
-    // Reconcile user_records against the full EA schedule — fixes any drift
-    // caused by double-imports, missed increments, or prior dedup bugs.
-    const reconciliationLines = await reconcileRecordsFromSchedule(season, teamMap).catch(err => {
-      console.error(`[mca/week${weekNum}/schedules] Reconciliation error (non-fatal):`, err);
-      return [] as string[];
-    });
-    if (reconciliationLines.length > 0) {
-      console.log(`[mca/week${weekNum}/schedules] Reconciled ${reconciliationLines.length} user record(s)`);
-    }
-
     return {
       ok: true,
       message: `Week ${weekNum}: ${gamesProcessed} game(s) processed${season.catchupMode ? " [CATCHUP MODE — no payouts]" : ""}`,
       gamesProcessed, gamesDuplicate, gamesCpuVsCpu, gamesUnregistered,
-      payoutLines, milestoneLines, resultLines, unregisteredLines, reconciliationLines, violations,
+      payoutLines, milestoneLines, resultLines, unregisteredLines, reconciliationLines: [], violations,
       weekNum, seasonId: season.id, catchupMode: season.catchupMode,
     };
   } catch (err) {
