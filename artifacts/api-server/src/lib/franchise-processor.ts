@@ -19,7 +19,7 @@ import {
   rosterTransactionsTable,
   leagueNewsTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray, isNotNull, desc } from "drizzle-orm";
+import { eq, and, sql, inArray, isNotNull, desc, gte } from "drizzle-orm";
 import {
   detectH2HBlowout,
   detectCpuScoreAnomaly,
@@ -1627,41 +1627,58 @@ export async function syncWeekScoresToSchedule(
 }
 
 /**
- * Cross-references ALL completed H2H games in the EA schedule payload against
- * the current user_records for the season and corrects any discrepancies.
+ * Reads ALL completed+processed games for the season directly from the
+ * franchise_schedule table in the DB, computes authoritative W/L/T for
+ * each linked player, and corrects any discrepancies in user_records.
  *
- * EA sends the full season schedule (past + future) in every import, so the
- * completed-game subset gives us the authoritative cumulative W/L/T totals.
- * We SET the records to the EA-derived values rather than trusting the
- * incremental counters, which can drift from double-imports or bugs.
- *
- * Only genuine H2H games are counted (both human, no force/autopilot flag),
- * matching the same filter used by processWeekScores for W/L writes.
+ * Querying the DB (rather than the MCA import payload) ensures every
+ * week's results are included — not just the games in the current import.
+ * Only games that were actually processed (processedGameId IS NOT NULL)
+ * and have real scores (homeScore/awayScore IS NOT NULL) are counted.
+ * Catchup-mode games are excluded via the processedGameId join to
+ * franchise_processed_games where payoutType != 'catchup'.
  */
 async function reconcileRecordsFromSchedule(
-  games: any[],
   season: { id: number; guildId: string | null },
   teamMap: Map<number, { isHuman: boolean; discordId: string | null; fullName: string; userName: string }>,
 ): Promise<string[]> {
+  // Fetch all processed games for this season from the DB, joined to
+  // franchise_processed_games to filter out catchup-mode games
+  const dbGames = await db
+    .select({
+      homeTeamId: franchiseScheduleTable.homeTeamId,
+      awayTeamId: franchiseScheduleTable.awayTeamId,
+      homeScore:  franchiseScheduleTable.homeScore,
+      awayScore:  franchiseScheduleTable.awayScore,
+      payoutType: franchiseProcessedGamesTable.payoutType,
+    })
+    .from(franchiseScheduleTable)
+    .innerJoin(
+      franchiseProcessedGamesTable,
+      eq(franchiseScheduleTable.processedGameId, franchiseProcessedGamesTable.gameId),
+    )
+    .where(and(
+      eq(franchiseScheduleTable.seasonId, season.id),
+      gte(franchiseScheduleTable.status, MIN_COMPLETED_STATUS),
+      isNotNull(franchiseScheduleTable.homeScore),
+      isNotNull(franchiseScheduleTable.awayScore),
+    ));
+
   const computed = new Map<string, { wins: number; losses: number; ties: number }>();
 
-  for (const g of games) {
-    if (!g || typeof g !== "object") continue;
-    if (Number(g.scheduleStatus ?? g.status ?? 0) < MIN_COMPLETED_STATUS) continue;
+  for (const g of dbGames) {
+    // Exclude catchup-mode games — they were logged without awarding records
+    if (g.payoutType === "catchup") continue;
 
-    const hId = Number(g.homeTeamId ?? -1);
-    const aId = Number(g.awayTeamId ?? -1);
-    if (hId < 0 || aId < 0) continue;
-
-    const hData = teamMap.get(hId);
-    const aData = teamMap.get(aId);
+    const hData = teamMap.get(g.homeTeamId);
+    const aData = teamMap.get(g.awayTeamId);
     if (!hData || !aData) continue;
 
     // Skip games with no linked players on either side
     if (!hData.discordId && !aData.discordId) continue;
 
-    const homeScore = Number(g.homeScore ?? 0);
-    const awayScore = Number(g.awayScore ?? 0);
+    const homeScore = g.homeScore ?? 0;
+    const awayScore = g.awayScore ?? 0;
     const isTie     = homeScore === awayScore;
     const homeWon   = homeScore > awayScore;
 
@@ -2124,7 +2141,7 @@ export async function processWeekScores(
 
     // Reconcile user_records against the full EA schedule — fixes any drift
     // caused by double-imports, missed increments, or prior dedup bugs.
-    const reconciliationLines = await reconcileRecordsFromSchedule(games, season, teamMap).catch(err => {
+    const reconciliationLines = await reconcileRecordsFromSchedule(season, teamMap).catch(err => {
       console.error(`[mca/week${weekNum}/schedules] Reconciliation error (non-fatal):`, err);
       return [] as string[];
     });
