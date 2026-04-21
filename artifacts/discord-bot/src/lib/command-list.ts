@@ -60,7 +60,6 @@ import * as adminStoreSettings     from "../commands/admin-store-settings.js";
 import * as waitlist                from "../commands/waitlist.js";
 import * as globalrecords          from "../commands/globalrecords.js";
 import * as alltimeleaderboard     from "../commands/alltimeleaderboard.js";
-import { seasonPRData, allTimePRData } from "../commands/records.js";
 
 /**
  * Builds the list of slash command JSON payloads to register with Discord.
@@ -149,9 +148,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
   const commands = entries
     .filter(([, include]) => include)
     .map(([m]) => m.data.toJSON());
-
-  // Records commands are named exports, not modules
-  commands.push(seasonPRData.toJSON(), allTimePRData.toJSON());
 
   return commands;
 }

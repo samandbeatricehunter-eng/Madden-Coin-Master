@@ -65,12 +65,6 @@ import * as adminUserData          from "./commands/admin-user-data.js";
 import * as adminStoreSettings     from "./commands/admin-store-settings.js";
 import * as adminOperations        from "./commands/admin-operations.js";
 
-// ── Records / rankings (standalone) ──────────────────────────────────────────
-import {
-  seasonPRData, executeSeasonPR,
-  allTimePRData, executeAllTimePR,
-} from "./commands/records.js";
-
 // ── Events ────────────────────────────────────────────────────────────────────
 import * as interactionCreate from "./events/interactionCreate.js";
 import * as ready             from "./events/ready.js";
@@ -181,9 +175,6 @@ if (!isProduction && !devBotEnabled) {
     waitlist,
     globalrecords,
 
-    // Records (named exports)
-    { data: seasonPRData, execute: executeSeasonPR },
-    { data: allTimePRData, execute: executeAllTimePR },
   ];
 
   for (const command of commands) {

@@ -2545,16 +2545,20 @@ async function handleSeasonPR(interaction: ButtonInteraction, sess: ActionsSessi
 
   const medals = ["🥇", "🥈", "🥉"];
   const lines  = ranked.map((r, i) => {
-    const badge  = medals[i] ?? `**${ordinal(i + 1)}**`;
-    const winPct = r.gp > 0 ? ((r.wins / r.gp) * 100).toFixed(1) : "0.0";
-    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)}`;
+    const badge   = medals[i] ?? `**${ordinal(i + 1)}**`;
+    const winPct  = r.gp > 0 ? ((r.wins / r.gp) * 100).toFixed(1) : "0.0";
+    const postseason = [
+      r.playoffWins + r.playoffLosses > 0 ? `PO: ${r.playoffWins}W-${r.playoffLosses}L` : "",
+      r.superbowlWins + r.superbowlLosses > 0 ? `🏆SB: ${r.superbowlWins}W-${r.superbowlLosses}L` : "",
+    ].filter(Boolean).join(" | ");
+    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)}${postseason ? ` *(${postseason})*` : ""}`;
   });
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
     .setTitle(`📊 Season ${season.seasonNumber} Power Rankings`)
     .setDescription(lines.join("\n"))
-    .setFooter({ text: "PR = 60%×(W-L Diff) + 40%×(Point Diff)" })
+    .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff)" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
@@ -2565,8 +2569,15 @@ async function handleAllTimePR(interaction: ButtonInteraction, sess: ActionsSess
   await interaction.deferUpdate();
 
   const { records } = await getAllTimeRecords();
-  const guildUsers  = await db.select({ discordId: usersTable.discordId }).from(usersTable).where(eq(usersTable.guildId, gid));
+
+  // Load current guild roster: discordId → team (null if not on a team)
+  const guildUsers = await db.select({
+    discordId: usersTable.discordId,
+    team:      usersTable.team,
+  }).from(usersTable).where(eq(usersTable.guildId, gid));
+
   const guildIds    = new Set(guildUsers.map(u => u.discordId));
+  const guildTeamMap = new Map(guildUsers.map(u => [u.discordId, u.team ?? null]));
 
   const filtered = records.filter(r => guildIds.has(r.discordId));
 
@@ -2575,25 +2586,40 @@ async function handleAllTimePR(interaction: ButtonInteraction, sess: ActionsSess
     return;
   }
 
-  const ranked = filtered.map(r => ({
-    ...r,
-    gp: r.wins + r.losses,
-    pr: calcPRScore(r.wins, r.losses, r.pointDifferential),
-    label: r.team ?? r.discordUsername,
-  })).sort((a, b) => b.pr - a.pr);
+  const ranked = filtered.map(r => {
+    const currentTeam = guildTeamMap.get(r.discordId);
+    let teamSuffix: string;
+    if (currentTeam && currentTeam.trim() !== "") {
+      teamSuffix = ` (${currentTeam})`;
+    } else if (r.team && r.team.trim() !== "") {
+      teamSuffix = ` (PREV "${r.team}")`;
+    } else {
+      teamSuffix = "";
+    }
+    return {
+      ...r,
+      gp:    r.wins + r.losses,
+      pr:    calcPRScore(r.wins, r.losses, r.pointDifferential),
+      label: `${r.discordUsername}${teamSuffix}`,
+    };
+  }).sort((a, b) => b.pr - a.pr);
 
   const medals = ["🥇", "🥈", "🥉"];
   const lines  = ranked.map((r, i) => {
-    const badge  = medals[i] ?? `**${ordinal(i + 1)}**`;
-    const winPct = r.gp > 0 ? ((r.wins / r.gp) * 100).toFixed(1) : "0.0";
-    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)}`;
+    const badge   = medals[i] ?? `**${ordinal(i + 1)}**`;
+    const winPct  = r.gp > 0 ? ((r.wins / r.gp) * 100).toFixed(1) : "0.0";
+    const postseason = [
+      r.playoffWins + r.playoffLosses > 0 ? `PO: ${r.playoffWins}W-${r.playoffLosses}L` : "",
+      r.superbowlWins + r.superbowlLosses > 0 ? `🏆SB: ${r.superbowlWins}W-${r.superbowlLosses}L` : "",
+    ].filter(Boolean).join(" | ");
+    return `${badge} **${r.label}** — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pointDifferential)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)}${postseason ? ` *(${postseason})*` : ""}`;
   });
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Purple)
     .setTitle("🏆 All-Time Power Rankings")
     .setDescription(lines.join("\n"))
-    .setFooter({ text: "All-time records across all seasons" })
+    .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff)" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
