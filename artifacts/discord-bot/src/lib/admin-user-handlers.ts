@@ -245,7 +245,10 @@ function cancelRow(label = "✖ Cancel"): ActionRowBuilder<ButtonBuilder> {
 
 export async function handleUdClose(interaction: ButtonInteraction): Promise<void> {
   clearSession(interaction.guildId!, interaction.user.id);
-  await interaction.update({ content: "", embeds: [], components: [] });
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("✖ Hub Closed").setDescription("The Admin User Data Hub has been closed.")],
+    components: [],
+  });
 }
 
 export async function handleUdCancel(interaction: ButtonInteraction): Promise<void> {
