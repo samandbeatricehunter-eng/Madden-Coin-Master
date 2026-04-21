@@ -39,7 +39,8 @@ export async function execute(member: GuildMember): Promise<void> {
       .setColor(Colors.Blue)
       .setTitle("🏈 Getting Started — /actions Command Guide")
       .setDescription(
-        "Everything you need is available through the **/actions** slash command. " +
+        "⚠️ **You will not have access to any private league channels until you've selected a team and been added by a Commissioner.**\n\n" +
+        "Everything you need to get started is available through the **/actions** slash command. " +
         "Here's a quick rundown of what's available:\n\u200B",
       )
       .addFields(

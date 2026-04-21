@@ -1,12 +1,12 @@
 import {
-  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
+  EmbedBuilder, Colors,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  PermissionFlagsBits, TextChannel, Client,
+  TextChannel, Client,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { waitlistTable, usersTable, seasonsTable } from "@workspace/db";
+import { waitlistTable, usersTable } from "@workspace/db";
 import { eq, and, asc, isNotNull } from "drizzle-orm";
-import { isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
+import { getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
 import { NFL_TEAMS } from "../lib/constants.js";
 
 // ── Button ID helpers ─────────────────────────────────────────────────────────
@@ -16,184 +16,10 @@ export const WAITLIST_DENY_PREFIX   = "waitlist_deny:";
 export function waitlistAcceptId(guildId: string) { return `${WAITLIST_ACCEPT_PREFIX}${guildId}`; }
 export function waitlistDenyId(guildId: string)   { return `${WAITLIST_DENY_PREFIX}${guildId}`; }
 
-// ── Command definition ────────────────────────────────────────────────────────
-export const data = new SlashCommandBuilder()
-  .setName("waitlist")
-  .setDescription("Manage the new-member waitlist (admin only)")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addSubcommand(sub =>
-    sub.setName("add")
-      .setDescription("Add a Discord user to the waitlist by their ID")
-      .addStringOption(o =>
-        o.setName("discord_id")
-          .setDescription("The Discord user ID to add to the waitlist")
-          .setRequired(true),
-      ),
-  )
-  .addSubcommand(sub =>
-    sub.setName("remove")
-      .setDescription("Remove a Discord user from the waitlist by their ID")
-      .addStringOption(o =>
-        o.setName("discord_id")
-          .setDescription("The Discord user ID to remove from the waitlist")
-          .setRequired(true),
-      ),
-  )
-  .addSubcommand(sub =>
-    sub.setName("view")
-      .setDescription("View the current waitlist in chronological order"),
-  )
-  .addSubcommand(sub =>
-    sub.setName("notify")
-      .setDescription("Manually send a waitlist DM to a specific user")
-      .addStringOption(o =>
-        o.setName("discord_id")
-          .setDescription("The Discord user ID to notify")
-          .setRequired(true),
-      ),
-  );
-
-// ── Execute ───────────────────────────────────────────────────────────────────
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-
-  const guildId = interaction.guildId!;
-  const adminId = interaction.user.id;
-
-  if (!(await isAdminUser(adminId, guildId))) {
-    await interaction.editReply({ content: "❌ You must be a league admin to use this command." });
-    return;
-  }
-
-  const sub = interaction.options.getSubcommand(true);
-
-  // ── /waitlist add ─────────────────────────────────────────────────────────
-  if (sub === "add") {
-    const targetId = interaction.options.getString("discord_id", true).trim();
-
-    // Check if already on waitlist
-    const [existing] = await db
-      .select({ id: waitlistTable.id, status: waitlistTable.status })
-      .from(waitlistTable)
-      .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, targetId)))
-      .limit(1);
-
-    if (existing) {
-      await interaction.editReply({
-        content: `⚠️ <@${targetId}> is already on the waitlist (status: **${existing.status}**). Use \`/waitlist remove\` first if you need to re-add them.`,
-      });
-      return;
-    }
-
-    await db.insert(waitlistTable).values({
-      guildId,
-      discordId: targetId,
-      addedBy:   adminId,
-      status:    "waiting",
-    });
-
-    // Get their position
-    const all = await db
-      .select({ discordId: waitlistTable.discordId })
-      .from(waitlistTable)
-      .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.status, "waiting")))
-      .orderBy(asc(waitlistTable.addedAt));
-
-    const pos = all.findIndex(r => r.discordId === targetId) + 1;
-
-    await interaction.editReply({
-      content: `✅ <@${targetId}> has been added to the waitlist at position **#${pos}**.`,
-    });
-    return;
-  }
-
-  // ── /waitlist remove ──────────────────────────────────────────────────────
-  if (sub === "remove") {
-    const targetId = interaction.options.getString("discord_id", true).trim();
-
-    const [existing] = await db
-      .select({ id: waitlistTable.id })
-      .from(waitlistTable)
-      .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, targetId)))
-      .limit(1);
-
-    if (!existing) {
-      await interaction.editReply({ content: `⚠️ <@${targetId}> is not on the waitlist.` });
-      return;
-    }
-
-    await db
-      .delete(waitlistTable)
-      .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, targetId)));
-
-    await interaction.editReply({ content: `✅ <@${targetId}> has been removed from the waitlist.` });
-    return;
-  }
-
-  // ── /waitlist view ────────────────────────────────────────────────────────
-  if (sub === "view") {
-    const entries = await db
-      .select()
-      .from(waitlistTable)
-      .where(eq(waitlistTable.guildId, guildId))
-      .orderBy(asc(waitlistTable.addedAt));
-
-    if (entries.length === 0) {
-      await interaction.editReply({ content: "📋 The waitlist is currently empty." });
-      return;
-    }
-
-    const lines = entries.map((e, i) => {
-      const statusEmoji = e.status === "waiting" ? "⏳" : e.status === "notified" ? "📨" : e.status === "accepted" ? "✅" : "❌";
-      const addedDate   = e.addedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-      return `**#${i + 1}** ${statusEmoji} <@${e.discordId}> — added ${addedDate} · status: **${e.status}**`;
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle(`📋 Waitlist (${entries.length} entr${entries.length === 1 ? "y" : "ies"})`)
-      .setDescription(lines.join("\n"))
-      .setFooter({ text: "Users are listed in chronological order — earliest added is #1." })
-      .setTimestamp();
-
-    await interaction.editReply({ embeds: [embed] });
-    return;
-  }
-
-  // ── /waitlist notify ──────────────────────────────────────────────────────
-  if (sub === "notify") {
-    const targetId = interaction.options.getString("discord_id", true).trim();
-
-    const [entry] = await db
-      .select()
-      .from(waitlistTable)
-      .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, targetId)))
-      .limit(1);
-
-    if (!entry) {
-      await interaction.editReply({ content: `⚠️ <@${targetId}> is not on the waitlist. Add them first with \`/waitlist add\`.` });
-      return;
-    }
-
-    const result = await sendWaitlistDm({
-      client:    interaction.client,
-      guild:     interaction.guild!,
-      guildId,
-      discordId: targetId,
-    });
-
-    if (result.success) {
-      await db
-        .update(waitlistTable)
-        .set({ notifiedAt: new Date(), status: "notified" })
-        .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, targetId)));
-      await interaction.editReply({ content: `✅ DM sent to <@${targetId}>.` });
-    } else {
-      await interaction.editReply({ content: `❌ Could not DM <@${targetId}>: ${result.error}` });
-    }
-    return;
-  }
-}
+// ── Slash command removed ─────────────────────────────────────────────────────
+// The /waitlist add, remove, view, and notify subcommands have been retired.
+// Waitlist management is now handled through the /actions button flow (unlinked user hub).
+// This file only exports shared utility functions used by actions-handlers and admin-user-handlers.
 
 // ── Shared: send the waitlist DM ──────────────────────────────────────────────
 export async function sendWaitlistDm(opts: {
