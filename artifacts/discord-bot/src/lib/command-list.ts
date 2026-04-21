@@ -23,7 +23,6 @@ import * as interviewrequest   from "../commands/interviewrequest.js";
 import * as statleaders        from "../commands/statleaders.js";
 import * as availableupgrades  from "../commands/availableupgrades.js";
 import * as viewFreeAgents     from "../commands/viewfreeagents.js";
-import * as viewXp             from "../commands/viewxp.js";
 import * as actions                 from "../commands/actions.js";
 import * as adminOperations         from "../commands/admin-operations.js";
 import * as adminEosTestrun         from "../commands/admin-eos-testrun.js";
@@ -135,7 +134,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
 
     [savings,         economy],
     [viewpayouttiers, economy],
-    [viewXp,          economy],
     [endofseasonpayout,   economy],
     // ── Feature-specific ─────────────────────────────────────────────────────
     [availableupgrades,          anyUpgrade],
