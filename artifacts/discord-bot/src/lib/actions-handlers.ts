@@ -33,7 +33,10 @@ import { getServerSettings, requireMcaEnabled } from "./server-settings.js";
 import { getArticleStandings, getSeasonRecords, getAllTimeRecords } from "./gcs-fallback.js";
 import { devBadge, DEV_LEGEND } from "./dev-trait.js";
 import { weekLabel } from "../commands/advanceweek.js";
-import { INTERVIEW_QUESTIONS, pickThreeIndices } from "../commands/interviewrequest.js";
+import {
+  INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
+  type InterviewType,
+} from "../commands/interviewrequest.js";
 import { buildActionsHubEmbed, buildActionsHubRows } from "../commands/actions.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
@@ -1338,7 +1341,7 @@ async function handleSendCoinsSubmit(interaction: ModalSubmitInteraction, sess: 
 
 async function handleInterview(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
-  const [user, season] = await Promise.all([
+  const [, season] = await Promise.all([
     getOrCreateUser(interaction.user.id, interaction.user.username, gid),
     getOrCreateActiveSeason(gid),
   ]);
@@ -1366,30 +1369,99 @@ async function handleInterview(interaction: ButtonInteraction, sess: ActionsSess
     return;
   }
 
-  const [i1, i2, i3] = pickThreeIndices(INTERVIEW_QUESTIONS.length);
-  const q1 = INTERVIEW_QUESTIONS[i1]!;
-  const q2 = INTERVIEW_QUESTIONS[i2]!;
-  const q3 = INTERVIEW_QUESTIONS[i3]!;
+  // Show type-selection screen
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blurple)
+    .setTitle("🎙️ Request an Interview")
+    .setDescription(
+      `Choose the type of interview you'd like to submit for **${wkLabel}**.\n\n` +
+      "**Pre-Game** — Talk about preparation, game plan, and expectations before the match.\n" +
+      "**Post-Game** — Reflect on what happened, adjustments made, and the result.\n" +
+      "**General** — A non-game-specific interview about your franchise and vision.",
+    )
+    .setFooter({ text: "You'll receive 3 randomly selected questions based on your choice." });
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("interview_typepick:pregame")
+      .setLabel("🏟️ Pre-Game")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("interview_typepick:postgame")
+      .setLabel("📊 Post-Game")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("interview_typepick:general")
+      .setLabel("🎤 General")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.update({ embeds: [embed], components: [row] });
+}
+
+export async function handleInterviewTypePick(interaction: ButtonInteraction) {
+  const type = interaction.customId.split(":")[1] as InterviewType;
+  const gid  = interaction.guildId!;
+
+  const [user, season] = await Promise.all([
+    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
+    getOrCreateActiveSeason(gid),
+  ]);
+  const currentWeek = (season as any).currentWeek ?? "1";
+  const wkLabel     = weekLabel(currentWeek);
+
+  // Re-check one-per-week guard
+  const existing = (await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
+    .from(interviewRequestsTable)
+    .where(and(
+      eq(interviewRequestsTable.discordId, interaction.user.id),
+      eq(interviewRequestsTable.guildId, gid),
+      eq(interviewRequestsTable.week, currentWeek),
+      inArray(interviewRequestsTable.status, ["pending", "approved"]),
+    ))
+    .limit(1))[0];
+
+  if (existing) {
+    const stateLabel = existing.status === "approved" ? "already been approved" : "already been submitted and is pending review";
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Yellow)
+        .setTitle("⚠️ Interview Already Submitted")
+        .setDescription(`Your interview for **${wkLabel}** has ${stateLabel} (ID: \`${existing.id}\`).\nOnly one interview per week.`)],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const pool = getQuestionPool(type);
+  const title = interviewTypeLabel(type);
+  const [i1, i2, i3] = pickThreeIndices(pool.length);
+  const q1 = pool[i1]!;
+  const q2 = pool[i2]!;
+  const q3 = pool[i3]!;
   const indicesStr = `${i1},${i2},${i3}`;
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blurple)
-    .setTitle("🎙️ Post-Game Interview")
+    .setTitle(`🎙️ ${title}`)
     .setDescription(
       `Here are your **3 interview questions** for **${wkLabel}**.\n` +
       `Click **Submit Your Answers** to fill them in.\n\n` +
-      `*Questions are selected randomly from a pool of ${INTERVIEW_QUESTIONS.length}.*`,
+      `*Questions are selected randomly from a pool of ${pool.length}.*`,
     )
     .addFields({ name: "Q1", value: q1 }, { name: "Q2", value: q2 }, { name: "Q3", value: q3 })
-    .setFooter({ text: `${user.team ?? interaction.user.username} • ${wkLabel}` })
+    .setFooter({ text: `${user.team ?? interaction.user.username} • ${wkLabel} • ${title}` })
     .setTimestamp();
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`interview_answer:${interaction.user.id}:${indicesStr}`)
+      .setCustomId(`interview_answer:${interaction.user.id}:${indicesStr}:${type}`)
       .setLabel("📝 Submit Your Answers")
       .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ac_interview")
+      .setLabel("← Back")
+      .setStyle(ButtonStyle.Secondary),
   );
 
   await interaction.update({ embeds: [embed], components: [row] });

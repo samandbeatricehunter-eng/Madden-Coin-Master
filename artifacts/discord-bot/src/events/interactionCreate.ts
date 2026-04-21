@@ -92,8 +92,11 @@ import {
 } from "../lib/server-settings.js";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { buildMemberHelpEmbed } from "../commands/help.js";
-import { INTERVIEW_QUESTIONS } from "../commands/interviewrequest.js";
-import { handleActionsInteraction } from "../lib/actions-handlers.js";
+import {
+  INTERVIEW_QUESTIONS, getQuestionPool, interviewTypeLabel,
+  type InterviewType,
+} from "../commands/interviewrequest.js";
+import { handleActionsInteraction, handleInterviewTypePick } from "../lib/actions-handlers.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import {
   DRAFT_TOGGLE_PREFIX, DRAFT_CLOSE_BUTTON_ID,
@@ -192,6 +195,12 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
     if (handled) return;
+  }
+
+  // ── Interview type picker (pre-game / post-game / general) ───────────────────
+  if (action === "interview_typepick") {
+    await handleInterviewTypePick(interaction);
+    return;
   }
 
   // ── Archetype viewer — archetype nav ─────────────────────────────────────────
@@ -1262,25 +1271,29 @@ async function handleButton(interaction: ButtonInteraction) {
   }
 
   // ── Interview: open answer modal (player-facing) ──────────────────────────
+  // Format: interview_answer:{targetUserId}:{i1,i2,i3}:{type}
   if (action === "interview_answer") {
-    const targetUserId = secondPart!;    // the user who ran /interviewrequest
-    const indicesStr   = userId!;        // format: interview_answer:targetUserId:i1,i2,i3
+    const targetUserId = secondPart!;          // parts[1]
+    const indicesStr   = parts[2]!;            // parts[2] = "i1,i2,i3"
+    const iType        = (parts[3] ?? "postgame") as InterviewType;
 
     if (interaction.user.id !== targetUserId) {
       await interaction.reply({ content: "❌ This interview form isn't yours to fill out.", ephemeral: true });
       return;
     }
 
+    const pool    = getQuestionPool(iType);
     const indices = indicesStr.split(",").map(Number);
-    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
-    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
-    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
+    const q1 = (pool[indices[0]!] ?? INTERVIEW_QUESTIONS[indices[0]!])!;
+    const q2 = (pool[indices[1]!] ?? INTERVIEW_QUESTIONS[indices[1]!])!;
+    const q3 = (pool[indices[2]!] ?? INTERVIEW_QUESTIONS[indices[2]!])!;
 
     const truncLabel = (q: string) => q.length <= 45 ? q : q.slice(0, 42) + "...";
+    const title      = interviewTypeLabel(iType);
 
     const modal = new ModalBuilder()
-      .setCustomId(`interview_answer_modal:${indicesStr}`)
-      .setTitle("🎙️ Post-Game Interview");
+      .setCustomId(`interview_answer_modal:${indicesStr}:${iType}`)
+      .setTitle(`🎙️ ${title}`);
 
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
@@ -2445,12 +2458,14 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
   // ── Interview: submit answers (player-facing modal) ───────────────────────
   if (action === "interview_answer_modal") {
-    // Format: interview_answer_modal:i1,i2,i3
+    // Format: interview_answer_modal:i1,i2,i3:type
     const indicesStr = idStr!;
+    const iType      = (parts[2] ?? "postgame") as InterviewType;
+    const pool       = getQuestionPool(iType);
     const indices    = indicesStr.split(",").map(Number);
-    const q1 = INTERVIEW_QUESTIONS[indices[0]!]!;
-    const q2 = INTERVIEW_QUESTIONS[indices[1]!]!;
-    const q3 = INTERVIEW_QUESTIONS[indices[2]!]!;
+    const q1 = (pool[indices[0]!] ?? INTERVIEW_QUESTIONS[indices[0]!])!;
+    const q2 = (pool[indices[1]!] ?? INTERVIEW_QUESTIONS[indices[1]!])!;
+    const q3 = (pool[indices[2]!] ?? INTERVIEW_QUESTIONS[indices[2]!])!;
     const a1 = interaction.fields.getTextInputValue("a1");
     const a2 = interaction.fields.getTextInputValue("a2");
     const a3 = interaction.fields.getTextInputValue("a3");
@@ -2501,9 +2516,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
 
     // ── Commissioner embed with all 3 Q&A pairs ──────────────────────────────
     const submitPayoutVal = await getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT, interaction.guildId!);
+    const typeLabel = interviewTypeLabel(iType);
     const embed = new EmbedBuilder()
       .setColor(Colors.Blurple)
-      .setTitle("🎙️ Post-Game Interview")
+      .setTitle(`🎙️ ${typeLabel}`)
       .addFields(
         { name: "Player", value: `${interaction.user.toString()} (${requesterTeam})`, inline: true },
         { name: "Week",   value: weekDisplay, inline: true },
