@@ -27,7 +27,7 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
 
   if (mcaVisible) {
     sections.push("**Rosters**\n📋 My Roster · 👥 Any Roster · 🆓 Free Agents · 📊 Player Stats · 🏟️ Team Stats");
-    sections.push("**League Info**\n📈 Standings · 👀 Teams to Watch · 👤 Any User Stats");
+    sections.push("**League Info**\n📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch · 👤 Any User Stats");
   }
 
   const row4Items: string[] = ["🥇 Season PR", "🏆 All-Time PR", "🌐 Global PR"];
@@ -75,6 +75,7 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   if (mcaVisible) {
     sec3.push(
       new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_inthehunt").setLabel("🎯 In The Hunt").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyuserstats").setLabel("👤 Any User Stats").setStyle(ButtonStyle.Secondary),
     );

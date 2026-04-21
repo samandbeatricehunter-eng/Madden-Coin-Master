@@ -327,6 +327,7 @@ export async function handleActionsInteraction(
 
   if (id === "ac_standings")    { await handleStandingsConfPick(interaction as ButtonInteraction, sess); return true; }
   if (id.startsWith("ac_standings_conf:"))   { await handleStandingsShow(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_inthehunt")    { await handleInTheHunt(interaction as ButtonInteraction, sess);    return true; }
   if (id === "ac_teamstowatch") { await handleTeamsToWatch(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyuserstats")         { await handleAnyUserStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id.startsWith("ac_anyus_conf:")) { await handleAnyUserStatsConfPick(interaction as ButtonInteraction, sess); return true; }
@@ -2248,6 +2249,94 @@ async function handleStandingsShow(interaction: ButtonInteraction, sess: Actions
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
+}
+
+async function handleInTheHunt(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  await interaction.deferUpdate();
+
+  const season       = await getOrCreateActiveSeason(gid);
+  const allStandings = await getArticleStandings(season.id, 18);
+
+  if (!allStandings.length) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("🎯 In The Hunt").setDescription("No standings data yet.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const DIVISIONS = ["East", "North", "South", "West"] as const;
+
+  const embeds: EmbedBuilder[] = [];
+
+  for (const conf of ["AFC", "NFC"] as const) {
+    const confTeams = allStandings.filter(t => t.conference === conf);
+    if (!confTeams.length) continue;
+
+    // Division leaders
+    const divWinners = new Set<string>();
+    for (const div of DIVISIONS) {
+      const leader = confTeams
+        .filter(t => t.division === div)
+        .sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential)[0];
+      if (leader) divWinners.add(leader.teamName);
+    }
+
+    const sortedWinners   = confTeams.filter(t =>  divWinners.has(t.teamName)).sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+    const sortedWildCards = confTeams.filter(t => !divWinners.has(t.teamName)).sort((a, b) => b.wins - a.wins || b.pointDifferential - a.pointDifferential);
+    const seeds = [...sortedWinners, ...sortedWildCards];
+
+    const wildCardSeeds = seeds.slice(4, 7);  // seeds 5-7
+    const bubbleTeams   = seeds.slice(7, 10); // seeds 8-10
+    const cutline       = wildCardSeeds[2];   // last team "in"
+
+    const lines: string[] = [];
+
+    lines.push("**Division Leaders (Seeds 1-4):**");
+    sortedWinners.forEach((t, i) => {
+      lines.push(`**#${i + 1}** ${t.teamName} — ${t.wins}-${t.losses}`);
+    });
+
+    if (wildCardSeeds.length) {
+      lines.push("");
+      lines.push("**🎯 Wild Card Race (Seeds 5-7):**");
+      wildCardSeeds.forEach((t, i) => {
+        const pd = t.pointDifferential >= 0 ? `+${t.pointDifferential}` : `${t.pointDifferential}`;
+        lines.push(`✅ **#${i + 5}** ${t.teamName} — ${t.wins}-${t.losses} | PD ${pd} *(IN)*`);
+      });
+    }
+
+    if (bubbleTeams.length && cutline) {
+      lines.push("");
+      lines.push("**⚠️ On The Bubble:**");
+      bubbleTeams.forEach(t => {
+        const gb = cutline.wins - t.wins;
+        const pd = t.pointDifferential >= 0 ? `+${t.pointDifferential}` : `${t.pointDifferential}`;
+        lines.push(`• ${t.teamName} — ${t.wins}-${t.losses} | PD ${pd} *(${gb} win${gb !== 1 ? "s" : ""} back)*`);
+      });
+    } else if (!wildCardSeeds.length) {
+      lines.push("\n*Not enough teams to determine wild card race.*");
+    }
+
+    embeds.push(
+      new EmbedBuilder()
+        .setColor(conf === "AFC" ? Colors.Blue : Colors.Red)
+        .setTitle(`🎯 ${conf} Playoff Hunt — Season ${season.seasonNumber}`)
+        .setDescription(lines.join("\n"))
+        .setTimestamp(),
+    );
+  }
+
+  if (!embeds.length) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("🎯 In The Hunt").setDescription("No conference data available.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  await interaction.editReply({ embeds, components: [backToHubRow()] });
 }
 
 async function handleTeamsToWatch(interaction: ButtonInteraction, sess: ActionsSession) {
