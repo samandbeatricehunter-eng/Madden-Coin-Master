@@ -134,7 +134,7 @@ export async function checkAndNotifyWaitlist(
 
     // 1. Team-specific waiters — notify only if their team is now open
     for (const entry of waiters.filter(w => w.team)) {
-      if (!openSet.has(entry.team!)) continue;
+      if (!openSet.has(entry.team! as any)) continue;
       const result = await sendWaitlistDm({ client, guild, guildId, discordId: entry.discordId, team: entry.team! });
       if (result.success) {
         await db.delete(waitlistTable)

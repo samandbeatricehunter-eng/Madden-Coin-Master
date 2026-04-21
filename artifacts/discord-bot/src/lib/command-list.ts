@@ -56,7 +56,6 @@ import * as adminRepostBanners     from "../commands/admin-repost-banners.js";
 import * as adminPayout            from "../commands/admin-payout.js";
 import * as adminUserData          from "../commands/admin-user-data.js";
 import * as adminStoreSettings     from "../commands/admin-store-settings.js";
-import * as waitlist                from "../commands/waitlist.js";
 import * as globalrecords          from "../commands/globalrecords.js";
 import * as alltimeleaderboard     from "../commands/alltimeleaderboard.js";
 
@@ -119,7 +118,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminServer,        true],
     [adminTeamLogo,      true],
     [adminRepostBanners, true],
-    [waitlist,           true],
     [globalrecords,         true],
     [alltimeleaderboard,    true],
     [adminSetStatTiers,  true],

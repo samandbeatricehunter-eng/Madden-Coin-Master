@@ -17,8 +17,9 @@ import {
   playerSeasonStatsTable, playerStatWeekProcessedTable,
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
   defaultTeamLogosTable,
+  serverSettingsTable, franchiseRostersTable, inventoryTable, legendsTable, customPlayersTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql, ne } from "drizzle-orm";
 import {
   getOrCreateActiveSeason, addBalance, logTransaction,
   getGuildChannel, CHANNEL_KEYS,
@@ -140,6 +141,22 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
 
   if (id === "ao_advance_confirm") {
     await handleAdvanceConfirm(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Set Season Number ─────────────────────────────────────────────────────────
+  if (id === "ao_set_season_num") {
+    await handleSetSeasonNum(interaction as ButtonInteraction);
+    return true;
+  }
+
+  if (id === "ao_set_season_num_sel") {
+    await handleSetSeasonNumSel(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+
+  if (id.startsWith("ao_set_season_num_confirm:")) {
+    await handleSetSeasonNumConfirm(interaction as ButtonInteraction);
     return true;
   }
 
@@ -367,9 +384,161 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     getGuildChannel(guildId, CHANNEL_KEYS.LEAGUE_TWITTER),
   ])).filter((id): id is string => !!id);
 
-  const currentIdx = WEEK_SEQUENCE.indexOf(season.currentWeek ?? "1");
-  const nextIdx    = currentIdx === -1 ? 0 : Math.min(currentIdx + 1, WEEK_SEQUENCE.length - 1);
-  const newWeek    = WEEK_SEQUENCE[nextIdx]!;
+  const currentIdx    = WEEK_SEQUENCE.indexOf(season.currentWeek ?? "1");
+  const wouldClamp    = currentIdx !== -1 && currentIdx + 1 >= WEEK_SEQUENCE.length;
+  const isTrainingEnd = season.currentWeek === "training_camp" && wouldClamp;
+
+  // ── Auto-rollover: Training Camp → Week 1 of next season ─────────────────────
+  let autoRolloverNote = "";
+  if (isTrainingEnd) {
+    const maxSeasons   = await getMaxSeasons(guildId);
+    const nextNumber   = (season.seasonNumber ?? 0) + 1;
+
+    if (nextNumber > maxSeasons) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Red)
+            .setTitle("🏁 Franchise Complete")
+            .setDescription(
+              `This franchise has reached its **${maxSeasons}-season limit**.\n\n` +
+              `Season ${season.seasonNumber} is the final season — you cannot advance past it.\n\n` +
+              `• Use **🔢 Set Season Number** to re-activate any previous season.\n` +
+              `• Or increase the franchise length via \`/admin-initialize\`.`
+            ),
+        ],
+        components: buildAdminOpsRows(),
+      });
+      return;
+    }
+
+    // Rollover current-season legends → permanent (4-cap per user)
+    const PERMANENT_CAP = 4;
+    const currentLegends = await db.select().from(inventoryTable)
+      .where(and(
+        eq(inventoryTable.seasonId, season.id),
+        eq(inventoryTable.itemType, "legend"),
+        sql`${inventoryTable.legendCategory} = 'current'`,
+      ));
+    let legendsPromoted = 0, legendsReturned = 0;
+    const byUser: Record<string, typeof currentLegends> = {};
+    for (const item of currentLegends) {
+      if (!byUser[item.discordId]) byUser[item.discordId] = [];
+      byUser[item.discordId]!.push(item);
+    }
+    for (const [userId, legends] of Object.entries(byUser)) {
+      const [userRow] = await db.select({ team: usersTable.team }).from(usersTable)
+        .where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId))).limit(1);
+      const teamName = userRow?.team ?? null;
+      const [countRow] = await db.select({ c: sql<string>`count(*)` }).from(inventoryTable)
+        .where(and(
+          eq(inventoryTable.discordId, userId),
+          eq(inventoryTable.itemType, "legend"),
+          sql`${inventoryTable.legendCategory} = 'permanent'`,
+        ));
+      const existing  = parseInt(countRow?.c ?? "0", 10);
+      const slotsLeft = Math.max(0, PERMANENT_CAP - existing);
+      const toPromote = legends.slice(0, slotsLeft);
+      const toReturn  = legends.slice(slotsLeft);
+      for (const item of toPromote) {
+        await db.update(inventoryTable)
+          .set({ legendCategory: "permanent", ...(teamName ? { team: teamName } : {}) })
+          .where(eq(inventoryTable.id, item.id));
+        legendsPromoted++;
+      }
+      for (const item of toReturn) {
+        if (item.legendId) {
+          await db.update(legendsTable).set({ isAvailable: true }).where(eq(legendsTable.id, item.legendId));
+        }
+        await db.delete(inventoryTable).where(eq(inventoryTable.id, item.id));
+        await db.update(usersTable)
+          .set({ totalLegendPurchases: sql`GREATEST(0, ${usersTable.totalLegendPurchases} - 1)`, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, userId));
+        legendsReturned++;
+      }
+    }
+
+    // Rollover active custom players → permanent inventory
+    const activeCustomPlayers = await db.select().from(customPlayersTable)
+      .where(and(eq(customPlayersTable.seasonId, season.id), ne(customPlayersTable.status, "refunded")));
+    let customPlayersRolled = 0;
+    const tierToItemType = (tier: string): "custom_player_gold" | "custom_player_silver" | "custom_player_bronze" =>
+      tier === "gold" ? "custom_player_gold" : tier === "silver" ? "custom_player_silver" : "custom_player_bronze";
+    for (const cp of activeCustomPlayers) {
+      const [existingCp] = await db.select({ id: inventoryTable.id }).from(inventoryTable)
+        .where(and(
+          eq(inventoryTable.discordId, cp.discordId),
+          eq(inventoryTable.seasonId, season.id),
+          eq(inventoryTable.itemType, tierToItemType(cp.packageTier)),
+          sql`${inventoryTable.playerName} = ${`${cp.firstName} ${cp.lastName}`}`,
+          sql`${inventoryTable.legendCategory} = 'permanent'`,
+        )).limit(1);
+      if (existingCp) continue;
+      const [cpUser] = await db.select({ team: usersTable.team }).from(usersTable)
+        .where(and(eq(usersTable.discordId, cp.discordId), eq(usersTable.guildId, guildId))).limit(1);
+      await db.insert(inventoryTable).values({
+        discordId:      cp.discordId,
+        seasonId:       season.id,
+        purchaseId:     0,
+        itemType:       tierToItemType(cp.packageTier),
+        playerName:     `${cp.firstName} ${cp.lastName}`,
+        playerPosition: cp.position,
+        legendCategory: "permanent",
+        ...(cpUser?.team ? { team: cpUser.team } : {}),
+      });
+      customPlayersRolled++;
+    }
+
+    // Create new season record
+    await db.update(seasonsTable).set({ isActive: false });
+    const [newSeasonRecord] = await db.insert(seasonsTable)
+      .values({ seasonNumber: nextNumber, isActive: true })
+      .returning();
+
+    // Carry forward MCA teams + rosters
+    const prevTeams = await db.select().from(franchiseMcaTeamsTable)
+      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    let carryTeams = 0, carryRosters = 0;
+    if (newSeasonRecord && prevTeams.length > 0) {
+      const teamRows = prevTeams.map(t => ({
+        seasonId: newSeasonRecord.id, teamId: t.teamId, fullName: t.fullName,
+        nickName: t.nickName, userName: t.userName, isHuman: t.isHuman, discordId: t.discordId,
+      }));
+      await db.insert(franchiseMcaTeamsTable).values(teamRows).onConflictDoNothing();
+      carryTeams = teamRows.length;
+      const prevRosters = await db.select().from(franchiseRostersTable)
+        .where(eq(franchiseRostersTable.seasonId, season.id));
+      if (prevRosters.length > 0) {
+        const rosterRows = prevRosters.map(r => ({
+          seasonId: newSeasonRecord.id, teamId: r.teamId, teamName: r.teamName,
+          discordId: r.discordId, playerId: r.playerId, firstName: r.firstName,
+          lastName: r.lastName, position: r.position, overall: r.overall,
+          devTrait: r.devTrait, age: r.age, jerseyNum: r.jerseyNum,
+          contractYearsLeft: r.contractYearsLeft, attributes: r.attributes,
+        }));
+        for (let i = 0; i < rosterRows.length; i += 500) {
+          await db.insert(franchiseRostersTable).values(rosterRows.slice(i, i + 500)).onConflictDoNothing();
+        }
+        carryRosters = rosterRows.length;
+      }
+    }
+
+    const isLastSeason = nextNumber === maxSeasons;
+    autoRolloverNote = [
+      `🎉 **Season ${nextNumber} of ${maxSeasons} has begun!**` + (isLastSeason ? " ⚠️ This is the final season." : ""),
+      `• ${legendsPromoted} legend(s) moved to permanent vaults${legendsReturned > 0 ? `; ${legendsReturned} returned to store (vault full)` : ""}.`,
+      customPlayersRolled > 0 ? `• ${customPlayersRolled} custom player(s) rolled over to permanent inventories.` : "",
+      carryTeams > 0 ? `• ${carryTeams} team links + ${carryRosters} roster rows carried forward from Season ${season.seasonNumber}.` : "• No roster data to carry forward — MCA import required.",
+    ].filter(Boolean).join("\n");
+    console.log(`[admin-operations] Auto season rollover: Season ${season.seasonNumber} → ${nextNumber} (guildId=${guildId})`);
+
+    // The new active record is newSeasonRecord — we advance week on IT, not season
+    // Override season reference for the week update below
+    Object.assign(season, { id: newSeasonRecord!.id, seasonNumber: nextNumber });
+  }
+
+  const nextIdx = isTrainingEnd ? 0 : (currentIdx === -1 ? 0 : Math.min(currentIdx + 1, WEEK_SEQUENCE.length - 1));
+  const newWeek = WEEK_SEQUENCE[nextIdx]!;
 
   await db.update(seasonsTable)
     .set({ currentWeek: newWeek })
@@ -749,13 +918,17 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
 
   // ── Build reply embed ──────────────────────────────────────────────────────
   const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle("📅 League Week Updated")
+    .setColor(autoRolloverNote ? Colors.Gold : Colors.Green)
+    .setTitle(autoRolloverNote ? "🎉 Season Rollover — Week 1 Begins!" : "📅 League Week Updated")
     .addFields(
       { name: "Previous Week", value: oldLabel,         inline: true },
       { name: "Current Week",  value: `**${newLabel}**`, inline: true },
     )
     .setTimestamp();
+
+  if (autoRolloverNote) {
+    embed.addFields({ name: "🔄 Season Rollover", value: autoRolloverNote });
+  }
 
   if (channelLines.length > 0) {
     embed.addFields({ name: "📺 Matchup Channels", value: channelLines.join("\n") });
@@ -1128,6 +1301,135 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     interaction.guild,
     guildId,
   ).catch(err => console.error("[admin-operations] Waitlist scan error:", err));
+}
+
+// ── Set Season Number ──────────────────────────────────────────────────────────
+
+async function getMaxSeasons(guildId: string): Promise<number> {
+  const [row] = await db.select({ maxSeasons: serverSettingsTable.maxSeasons })
+    .from(serverSettingsTable)
+    .where(eq(serverSettingsTable.guildId, guildId))
+    .limit(1);
+  return row?.maxSeasons ?? 10;
+}
+
+async function handleSetSeasonNum(interaction: ButtonInteraction) {
+  const guildId   = interaction.guildId!;
+  const [season, maxSeasons] = await Promise.all([
+    getOrCreateActiveSeason(guildId),
+    getMaxSeasons(guildId),
+  ]);
+  const current = season.seasonNumber ?? 1;
+
+  const options = Array.from({ length: maxSeasons }, (_, i) => i + 1).map(n =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(`Season ${n}${n === current ? " (current)" : ""}`)
+      .setValue(String(n))
+      .setDefault(n === current),
+  );
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("ao_set_season_num_sel")
+    .setPlaceholder(`Current: Season ${current} of ${maxSeasons}`)
+    .addOptions(options);
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("🔢 Set Season Number")
+        .setDescription(
+          `Select the season number to activate.\n\n` +
+          `Current season: **Season ${current} of ${maxSeasons}**\n\n` +
+          `⚠️ This sets the active season record only — it does **not** roll over inventories or player data. ` +
+          `Use **Advance Week** through Training Camp for a full season rollover.`
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleSetSeasonNumSel(interaction: StringSelectMenuInteraction) {
+  const guildId   = interaction.guildId!;
+  const target    = parseInt(interaction.values[0]!, 10);
+  const maxSeasons = await getMaxSeasons(guildId);
+  const isLast    = target >= maxSeasons;
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(isLast ? Colors.Orange : Colors.Blue)
+        .setTitle("🔢 Confirm Season Change")
+        .setDescription(
+          `Set the active season to **Season ${target} of ${maxSeasons}**?\n\n` +
+          (isLast ? "⚠️ This is the **final season** of the franchise.\n\n" : "") +
+          `This will activate (or create) the Season ${target} record. ` +
+          `Coin balances and inventories are unchanged.`
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ao_set_season_num_confirm:${target}`)
+          .setLabel(`✅ Set to Season ${target}`)
+          .setStyle(isLast ? ButtonStyle.Danger : ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("ao_set_season_num").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleSetSeasonNumConfirm(interaction: ButtonInteraction) {
+  const guildId   = interaction.guildId!;
+  const target    = parseInt(interaction.customId.split(":")[1]!, 10);
+  const maxSeasons = await getMaxSeasons(guildId);
+
+  const existing = await db.select().from(seasonsTable)
+    .where(eq(seasonsTable.seasonNumber, target)).limit(1);
+
+  await db.update(seasonsTable).set({ isActive: false });
+
+  let activeSeason;
+  if (existing.length > 0) {
+    const [updated] = await db.update(seasonsTable)
+      .set({ isActive: true })
+      .where(eq(seasonsTable.seasonNumber, target))
+      .returning();
+    activeSeason = updated;
+  } else {
+    const [created] = await db.insert(seasonsTable)
+      .values({ seasonNumber: target, isActive: true })
+      .returning();
+    activeSeason = created;
+  }
+
+  const isLast = target >= maxSeasons;
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(isLast ? Colors.Orange : Colors.Green)
+        .setTitle(`📅 Season Set to ${target} of ${maxSeasons}`)
+        .setDescription(
+          `The active season is now **Season ${target}**.\n\n` +
+          `Season ID: \`${activeSeason?.id ?? "?"}\`` +
+          (isLast ? "\n\n🏁 **This is the final season of the franchise.**" : "")
+        )
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
 }
 
 // ── Rules Hub ─────────────────────────────────────────────────────────────────
