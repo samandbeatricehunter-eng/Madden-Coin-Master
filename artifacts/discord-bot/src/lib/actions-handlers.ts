@@ -8,7 +8,7 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
-  TextChannel,
+  TextChannel, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -25,7 +25,7 @@ import {
   getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
   getSeasonStats, getSeasonRules, getCoreAttributes, getInventoryCount,
-  getOrSeedRules, getAllSections,
+  getOrSeedRules, getAllSections, isAdminUser,
 } from "./db-helpers.js";
 import {
   getPayoutValue, getAllPayoutConfig, getMilestoneTiers, getAllPayoutKeys,
@@ -241,9 +241,15 @@ export async function handleActionsInteraction(
 
   // ── Hub restore ─────────────────────────────────────────────────────────────
   if (id === "ac_hub") {
+    const settings = await getServerSettings(gid);
+    const member   = (interaction as ButtonInteraction).guild?.members.cache.get(uid)
+      ?? await (interaction as ButtonInteraction).guild?.members.fetch(uid).catch(() => null);
+    const isDiscordAdmin = member?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
+    const isDbAdmin      = await isAdminUser(uid, gid);
+    const isAdmin        = isDiscordAdmin || isDbAdmin;
     await (interaction as ButtonInteraction).update({
-      embeds:     [buildActionsHubEmbed()],
-      components: buildActionsHubRows(),
+      embeds:     [buildActionsHubEmbed(settings, isAdmin)],
+      components: buildActionsHubRows(settings, isAdmin),
     });
     return true;
   }
@@ -355,56 +361,30 @@ async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsS
   const customOn = settings.coinEconomy && settings.customSuperstarsEnabled;
   const legOn    = settings.coinEconomy && settings.legendsEnabled;
 
-  const disabledStyle = ButtonStyle.Secondary;
+  const allButtons: ButtonBuilder[] = [];
+  if (attrOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_attr").setLabel("⭐ Attribute Upgrade").setStyle(ButtonStyle.Primary));
+  if (ageOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_agereset").setLabel("🔄 Age Reset").setStyle(ButtonStyle.Primary));
+  if (devOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_devup").setLabel("📈 Dev Trait Upgrade").setStyle(ButtonStyle.Primary));
+  if (customOn) allButtons.push(new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Success));
+  if (legOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("🏆 Buy a Legend").setStyle(ButtonStyle.Success));
 
-  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ac_buy_attr")
-      .setLabel(attrOn ? "⭐ Attribute Upgrade" : "⭐ Attribute Upgrade (Off)")
-      .setStyle(attrOn ? ButtonStyle.Primary : disabledStyle)
-      .setDisabled(!attrOn),
-    new ButtonBuilder()
-      .setCustomId("ac_buy_agereset")
-      .setLabel(ageOn ? "🔄 Age Reset" : "🔄 Age Reset (Off)")
-      .setStyle(ageOn ? ButtonStyle.Primary : disabledStyle)
-      .setDisabled(!ageOn),
-    new ButtonBuilder()
-      .setCustomId("ac_buy_devup")
-      .setLabel(devOn ? "📈 Dev Trait Upgrade" : "📈 Dev Trait Upgrade (Off)")
-      .setStyle(devOn ? ButtonStyle.Primary : disabledStyle)
-      .setDisabled(!devOn),
-  );
-  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ac_buy_custom")
-      .setLabel(customOn ? "🎨 Custom Player" : "🎨 Custom Player (Off)")
-      .setStyle(customOn ? ButtonStyle.Success : disabledStyle)
-      .setDisabled(!customOn),
-    new ButtonBuilder()
-      .setCustomId("ac_buy_legend")
-      .setLabel(legOn ? "🏆 Buy a Legend" : "🏆 Buy a Legend (Off)")
-      .setStyle(legOn ? ButtonStyle.Success : disabledStyle)
-      .setDisabled(!legOn),
-  );
-
-  const offItems = [
-    !attrOn && "Attribute Upgrades",
-    !ageOn  && "Age Resets",
-    !devOn  && "Dev Upgrades",
-    !customOn && "Custom Players",
-    !legOn  && "Legends",
-  ].filter(Boolean) as string[];
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < allButtons.length; i += 5) {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...allButtons.slice(i, i + 5)));
+  }
+  rows.push(cancelRow());
 
   const embed = new EmbedBuilder()
     .setColor(0x1a1a2e)
     .setTitle("💳 Make a Purchase")
     .setDescription(
-      "Select a purchase type below." +
-      (offItems.length ? `\n\n🔴 Currently disabled: ${offItems.join(", ")}` : "")
+      allButtons.length === 0
+        ? "❌ No purchase types are currently enabled. Please contact a commissioner."
+        : "Select a purchase type below."
     )
     .setTimestamp();
 
-  await interaction.update({ embeds: [embed], components: [row1, row2, cancelRow()] });
+  await interaction.update({ embeds: [embed], components: rows });
 }
 
 // ── Attribute Upgrade ──────────────────────────────────────────────────────────
