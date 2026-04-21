@@ -2,30 +2,18 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction,
   PermissionFlagsBits,
 } from "discord.js";
-import * as adminReverseTransaction  from "./admin-reverse-transaction.js";
 import * as adminSetAdmin            from "./admin-setadmin.js";
 import * as adminFixPlayerNames      from "./admin-fixplayernames.js";
-import * as adminSetStatTier         from "./admin-set-stat-tiers.js";
-import * as adminStatTiers           from "./admin-stat-tiers.js";
 import * as adminCustomPlayerSettings from "./admin-customplayersettings.js";
 import * as adminCustomArchetypes    from "./admin-customarchetypes.js";
 import * as adminServer              from "./adminserver.js";
 import { executeFranchiseLimit, executeFranchiseReset } from "./admin-season.js";
-import { STAT_CATEGORY_CHOICES }     from "../lib/stat-categories.js";
 import { ALL_POSITIONS }             from "../lib/custom-player-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin")
   .setDescription("Commissioner & admin tools")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-
-  .addSubcommand(s => s
-    .setName("reverse_transaction_by_id")
-    .setDescription("Reverse a coin transaction by ID (and optionally its store purchase)")
-    .addIntegerOption(o => o.setName("transaction_id").setDescription("Transaction ID from the commissioner log").setRequired(true).setMinValue(1))
-    .addIntegerOption(o => o.setName("purchase_id").setDescription("Purchase # to also reverse inventory/legend").setRequired(false).setMinValue(1))
-    .addStringOption(o => o.setName("reason").setDescription("Reason for the reversal").setRequired(false).setMaxLength(200))
-  )
 
   // ── admin role management ──────────────────────────────────────────────────
   .addSubcommand(s => s
@@ -47,16 +35,6 @@ export const data = new SlashCommandBuilder()
     .setDescription("Re-sync all player display names from Discord")
   )
 
-  // ── milestone & EOS tier settings ─────────────────────────────────────────
-  .addSubcommand(s => s
-    .setName("set_eos_payout_settings")
-    .setDescription("Set a single tier threshold/payout for an end-of-season stat bonus category")
-    .addStringOption(o => o.setName("category").setDescription("Stat category to configure").setRequired(true).addChoices(...STAT_CATEGORY_CHOICES))
-    .addIntegerOption(o => o.setName("tier").setDescription("Tier number (1 = lowest, 4 = best payout)").setRequired(true).setMinValue(1).setMaxValue(4))
-    .addIntegerOption(o => o.setName("threshold").setDescription("Qualifying value (min for higher-is-better, max for lower-is-better)").setRequired(true).setMinValue(0))
-    .addIntegerOption(o => o.setName("payout").setDescription("Coin payout for reaching this tier").setRequired(true).setMinValue(0))
-    .addIntegerOption(o => o.setName("season_id").setDescription("Season ID (defaults to active season)").setRequired(false).setMinValue(1))
-  )
 
   // ── custom player settings ─────────────────────────────────────────────────
   .addSubcommand(s => s
@@ -114,13 +92,9 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction): Promise<unknown> {
   const sub = interaction.options.getSubcommand(true);
 
-  if (sub === "reverse_transaction_by_id") return adminReverseTransaction.execute(interaction);
-
   if (sub === "set_admin_role" || sub === "revoke_admin_role" || sub === "list_administrators")
     return adminSetAdmin.execute(interaction);
   if (sub === "resync_player_names")      return adminFixPlayerNames.execute(interaction);
-
-  if (sub === "set_eos_payout_settings")  return adminSetStatTier.execute(interaction);
 
   if (sub === "set_custom_player_settings")
     return adminCustomPlayerSettings.execute(interaction);

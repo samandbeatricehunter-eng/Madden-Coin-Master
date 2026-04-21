@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { interviewRequestsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
-import { weekLabel } from "./advanceweek.js";
+import { weekLabel } from "../lib/week-helpers.js";
 
 export const INTERVIEW_PAYOUT = 10;
 

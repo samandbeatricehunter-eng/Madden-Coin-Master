@@ -22,7 +22,7 @@ export function buildActionsHubEmbed(): EmbedBuilder {
       "**Row 4 — Rankings & Payouts**\n" +
       "🥇 Season PR · 🏆 All-Time PR · 🌐 Global PR · 💰 EOS Payouts · 🎯 Milestones\n\n" +
       "**Row 5 — Requests**\n" +
-      "🟢 Active Teams · 🔴 Open Teams · ✈️ Auto-Pilot · 🚨 Report Violation"
+      "🟢 Active Teams · 🔴 Open Teams · ✈️ Auto-Pilot · 📜 Rules · 🚨 Report Violation"
     )
     .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" })
     .setTimestamp();
@@ -60,6 +60,7 @@ export function buildActionsHubRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ac_activeteams").setLabel("🟢 Active Teams").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_openteams").setLabel("🔴 Open Teams").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_autopilot").setLabel("✈️ Auto-Pilot").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_violation").setLabel("🚨 Report Violation").setStyle(ButtonStyle.Danger),
   );
   return [row1, row2, row3, row4, row5];

@@ -25,6 +25,7 @@ import {
   getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
   getSeasonStats, getSeasonRules, getCoreAttributes, getInventoryCount,
+  getOrSeedRules, getAllSections,
 } from "./db-helpers.js";
 import {
   getPayoutValue, getAllPayoutConfig, getMilestoneTiers, getAllPayoutKeys,
@@ -32,7 +33,7 @@ import {
 import { getServerSettings, requireMcaEnabled } from "./server-settings.js";
 import { getArticleStandings, getSeasonRecords, getAllTimeRecords } from "./gcs-fallback.js";
 import { devBadge, DEV_LEGEND } from "./dev-trait.js";
-import { weekLabel } from "../commands/advanceweek.js";
+import { weekLabel } from "./week-helpers.js";
 import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
   type InterviewType,
@@ -77,6 +78,8 @@ interface ActionsSession {
   selectedLegendCost?: number;
   // standings flow
   standingsConf?: "AFC" | "NFC" | "ALL";
+  // rules view flow
+  acRulesSection?: string;
   expiresAt: number;
 }
 
@@ -312,6 +315,14 @@ export async function handleActionsInteraction(
   if (id === "ac_activeteams")  { await handleActiveTeams(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_openteams")    { await handleOpenTeams(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_autopilot")    { await handleAutoPilotModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_rules")        { await handleRulesStart(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rules_section")         { await handleRulesSection(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_rules_goback")          { await handleRulesStart(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rules_display")         { await handleRulesDisplayChoice(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rules_display_full")    { await handleRulesDisplayFull(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rules_display_bynum")   { await handleRulesDisplayByNumModal(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rules_close")           { await handleRulesClose(interaction as ButtonInteraction); return true; }
+  if (id === "ac_modal_rules_bynum")     { await handleRulesByNumSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_violation")    { await handleViolationModal(interaction as ButtonInteraction); return true; }
 
   // Modal submits
@@ -2729,4 +2740,206 @@ async function handleViolationNote(interaction: ButtonInteraction) {
       ),
     );
   await interaction.showModal(modal);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ROW 5 — Rules (read-only view with optional public display)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleRulesStart(interaction: ButtonInteraction, sess: ActionsSession) {
+  const guildId  = interaction.guildId!;
+  const sections = await getAllSections(guildId);
+  const entries  = Object.entries(sections);
+
+  if (entries.length === 0) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("📜 Rules").setDescription("No rule sections have been set up yet.")],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ac_rules_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+    return;
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("ac_rules_section")
+    .setPlaceholder("Select a rules section...")
+    .addOptions(
+      entries.slice(0, 25).map(([key, meta]) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(meta.title.replace(/[\u{1F300}-\u{1FFFF}]/gu, "").trim() || key)
+          .setValue(key),
+      ),
+    );
+
+  const closeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_rules_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle("📜 League Rules")
+        .setDescription("Select a section to view the rules."),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select) as ActionRowBuilder<any>,
+      closeRow,
+    ],
+  });
+}
+
+async function handleRulesSection(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const guildId = interaction.guildId!;
+  const section = interaction.values[0]!;
+  sess.acRulesSection = section;
+
+  const sections = await getAllSections(guildId);
+  const meta     = sections[section];
+  if (!meta) {
+    await interaction.update({ content: "❌ Section not found.", components: [] });
+    return;
+  }
+
+  const rules = await getOrSeedRules(section, guildId);
+  const lines = rules.length > 0
+    ? rules.map((r, i) => `**${i + 1}.** ${r}`)
+    : ["_No rules in this section yet._"];
+
+  const embed = new EmbedBuilder()
+    .setColor(meta.color)
+    .setTitle(meta.title)
+    .setDescription(lines.join("\n\n"))
+    .setFooter({ text: `${rules.length} rule${rules.length !== 1 ? "s" : ""}` });
+
+  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_rules_display").setLabel("📢 Display Publicly").setStyle(ButtonStyle.Primary).setDisabled(rules.length === 0),
+    new ButtonBuilder().setCustomId("ac_rules_goback").setLabel("← Sections").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_rules_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.update({ embeds: [embed], components: [btnRow] });
+}
+
+async function handleRulesDisplayChoice(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.acRulesSection) {
+    await interaction.reply({ content: "❌ Session expired — open /actions again.", ephemeral: true });
+    return;
+  }
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_rules_display_full").setLabel("📋 Full Section").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_rules_display_bynum").setLabel("🔢 By Rule #").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_rules_goback").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle("📢 Display Rules")
+        .setDescription("Choose how to display the rules publicly in this channel:"),
+    ],
+    components: [row],
+  });
+}
+
+async function handleRulesDisplayFull(interaction: ButtonInteraction, sess: ActionsSession) {
+  const guildId = interaction.guildId!;
+  if (!sess.acRulesSection) {
+    await interaction.reply({ content: "❌ Session expired — open /actions again.", ephemeral: true });
+    return;
+  }
+
+  const sections = await getAllSections(guildId);
+  const meta     = sections[sess.acRulesSection]!;
+  const rules    = await getOrSeedRules(sess.acRulesSection, guildId);
+  const lines    = rules.length > 0
+    ? rules.map((r, i) => `**${i + 1}.** ${r}`)
+    : ["_No rules in this section yet._"];
+
+  const embed = new EmbedBuilder()
+    .setColor(meta.color)
+    .setTitle(meta.title)
+    .setDescription(lines.join("\n\n"))
+    .setTimestamp();
+
+  await (interaction.channel as TextChannel | null)?.send({ embeds: [embed] }).catch(console.error);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setDescription("✅ Rules posted to the channel.")],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_rules_goback").setLabel("← Sections").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_rules_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handleRulesDisplayByNumModal(interaction: ButtonInteraction, _sess: ActionsSession) {
+  const modal = new ModalBuilder()
+    .setCustomId("ac_modal_rules_bynum")
+    .setTitle("Display Rule by Number");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("rule_num")
+        .setLabel("Rule Number")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("e.g. 3")
+        .setRequired(true)
+        .setMinLength(1)
+        .setMaxLength(3),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleRulesByNumSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
+  const guildId = interaction.guildId!;
+  if (!sess.acRulesSection) {
+    await interaction.reply({ content: "❌ Session expired — open /actions again.", ephemeral: true });
+    return;
+  }
+
+  const ruleNum = parseInt(interaction.fields.getTextInputValue("rule_num"), 10);
+  if (isNaN(ruleNum) || ruleNum < 1) {
+    await interaction.reply({ content: "❌ Invalid rule number.", ephemeral: true });
+    return;
+  }
+
+  const sections = await getAllSections(guildId);
+  const meta     = sections[sess.acRulesSection]!;
+  const rules    = await getOrSeedRules(sess.acRulesSection, guildId);
+
+  if (ruleNum > rules.length) {
+    await interaction.reply({ content: `❌ Rule #${ruleNum} does not exist. This section has ${rules.length} rule(s).`, ephemeral: true });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(meta.color)
+    .setTitle(`${meta.title} — Rule #${ruleNum}`)
+    .setDescription(rules[ruleNum - 1]!)
+    .setTimestamp();
+
+  await (interaction.channel as TextChannel | null)?.send({ embeds: [embed] }).catch(console.error);
+
+  await interaction.reply({
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setDescription(`✅ Rule #${ruleNum} posted to the channel.`)],
+    ephemeral: true,
+  });
+}
+
+async function handleRulesClose(interaction: ButtonInteraction) {
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.DarkGrey).setDescription("📜 Rules closed.")],
+    components: [],
+  });
 }

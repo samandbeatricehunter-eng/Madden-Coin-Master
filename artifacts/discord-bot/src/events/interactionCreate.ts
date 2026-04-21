@@ -97,7 +97,8 @@ import {
   type InterviewType,
 } from "../commands/interviewrequest.js";
 import { handleActionsInteraction, handleInterviewTypePick } from "../lib/actions-handlers.js";
-import { weekLabel } from "../commands/advanceweek.js";
+import { handleAdminOperationsInteraction } from "../lib/admin-operations-handlers.js";
+import { weekLabel } from "../lib/week-helpers.js";
 import {
   DRAFT_TOGGLE_PREFIX, DRAFT_CLOSE_BUTTON_ID,
   getActiveSession, togglePresence, refreshPresence, endDraftSession,
@@ -194,6 +195,12 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
+    if (handled) return;
+  }
+
+  // ── Admin Operations hub — dispatch all ao_ prefixed interactions ─────────────
+  if (action?.startsWith("ao_")) {
+    const handled = await handleAdminOperationsInteraction(interaction);
     if (handled) return;
   }
 
@@ -1994,7 +2001,7 @@ async function handleButton(interaction: ButtonInteraction) {
         }
         penaltyLines.push(
           ``,
-          `Use \`/admin-reverse-transaction\` or the game settings to apply the OVR reduction.`,
+          `Use the game settings or \`/admin\` tools to apply the OVR reduction.`,
         );
 
         const repeatViolCommChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER) ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"];
@@ -2164,6 +2171,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
+    if (handled) return;
+  }
+
+  // ── Admin Operations hub — dispatch all ao_ prefixed interactions ─────────────
+  if (action?.startsWith("ao_")) {
+    const handled = await handleAdminOperationsInteraction(interaction);
     if (handled) return;
   }
 
@@ -2403,6 +2416,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   // ── Actions hub — dispatch all ac_ prefixed modal submissions ─────────────────
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
+    if (handled) return;
+  }
+
+  // ── Admin Operations hub — dispatch all ao_ prefixed modal submissions ─────────
+  if (action?.startsWith("ao_")) {
+    const handled = await handleAdminOperationsInteraction(interaction);
     if (handled) return;
   }
 

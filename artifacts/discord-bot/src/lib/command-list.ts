@@ -13,7 +13,6 @@ import * as openteams          from "../commands/openteams.js";
 import * as seasonschedule     from "../commands/seasonschedule.js";
 import * as nextschedule       from "../commands/nextschedule.js";
 import * as nextopp            from "../commands/nextopp.js";
-import * as myRoster           from "../commands/my-roster.js";
 import * as savings            from "../commands/savings.js";
 import * as weeklyMatchups     from "../commands/weekly-matchups.js";
 import * as standings          from "../commands/standings.js";
@@ -22,14 +21,13 @@ import * as customarticle      from "../commands/customarticle.js";
 import * as webhookurl         from "../commands/webhookurl.js";
 import * as viewpayouttiers    from "../commands/viewpayouttiers.js";
 import * as interviewrequest   from "../commands/interviewrequest.js";
-import * as advanceweek        from "../commands/advanceweek.js";
 import * as statleaders        from "../commands/statleaders.js";
 import * as availableupgrades  from "../commands/availableupgrades.js";
 import * as viewFreeAgents     from "../commands/viewfreeagents.js";
 import * as viewXp             from "../commands/viewxp.js";
 import * as actions                 from "../commands/actions.js";
+import * as adminOperations         from "../commands/admin-operations.js";
 import * as adminEosTestrun         from "../commands/admin-eos-testrun.js";
-import * as adminStatReimport       from "../commands/admin-stat-reimport.js";
 import * as adminLeagueData         from "../commands/admin-league-data.js";
 import * as adminCancelResendEos    from "../commands/admin-cancel-resend-eos.js";
 import * as adminRebuildHistorical  from "../commands/admin-rebuild-historical.js";
@@ -56,7 +54,6 @@ import * as adminLinkTeam           from "../commands/admin-linkteam.js";
 import * as adminInventory          from "../commands/admin-inventory.js";
 import * as adminInitialize         from "../commands/admin-initialize.js";
 import * as adminServer             from "../commands/adminserver.js";
-import * as adminRules              from "../commands/admin-rules.js";
 import * as adminTeamLogo          from "../commands/admin-team-logo.js";
 import * as adminRepostBanners     from "../commands/admin-repost-banners.js";
 import * as adminPayout            from "../commands/admin-payout.js";
@@ -89,6 +86,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     // ── Always visible ──────────────────────────────────────────────────────
     [admin,              true],
     [actions,            true],
+    [adminOperations,    true],
     [view,               true],
     [help,               true],
     [teamlist,           true],
@@ -96,7 +94,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [seasonschedule,     true],
     [nextschedule,       true],
     [nextopp,            true],
-    [myRoster,           true],
     [weeklyMatchups,     true],
     [standings,          true],
     [h2hrecord,          true],
@@ -104,11 +101,9 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [customarticle,      true],
     [webhookurl,         true],
     [interviewrequest,   true],
-    [advanceweek,        true],
     [statleaders,        true],
     [viewFreeAgents,     true],
     [adminEosTestrun,    true],
-    [adminStatReimport,  true],
     [adminLeagueData,    true],
     [adminCancelResendEos,   true],
     [adminRebuildHistorical, true],
@@ -128,7 +123,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminInventory,        true],
     [adminInitialize,    true],
     [adminServer,        true],
-    [adminRules,         true],
     [adminTeamLogo,      true],
     [adminRepostBanners, true],
     [waitlist,           true],

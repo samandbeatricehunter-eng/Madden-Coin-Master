@@ -822,7 +822,7 @@ These commands are only available to league commissioners/admins.
 /admin-syncmilestones — Sync milestone data from MCA.
 /admin-manualscore — Manually enter a game score.
 /admin-setadmin @user — Grant or revoke admin status.
-/admin-rules — Manage the league rulebook (add/edit/delete rules and sections).
+/admin-operations — Set week, advance week, and manage league rules (add/edit/delete sections).
 /admin-gotw — Set the Game of the Week matchup.
 /admin-potw — Set the Player of the Week.
 /admin-legend — Manage available legends in the store.
@@ -836,7 +836,6 @@ These commands are only available to league commissioners/admins.
 /admin-rollback-franchise — Roll back a franchise import if something went wrong.
 /admin-resendarticle — Resend a generated weekly article.
 /setweek — Manually set the current week number.
-/advanceweek — Advance to the next week.
 /customarticle — Generate a custom AI article.
 /webhookurl — Configure the MCA webhook URL.
 /adminserver — Admin server configuration.
@@ -1124,7 +1123,7 @@ ECONOMY SYSTEM:
 
 MCA IMPORT SYSTEM:
 - The primary data source is the Madden Content Aggregator (MCA) webhook. Commissioners trigger a full sync and the bot ingests players, rosters, standings, schedules, and game results.
-- MCA-dependent commands (/standings, /statleaders, /userstats, /my-roster, /nextopp, /playerstats, /seasonschedule, /h2hrecord, /records, /alltimepr, /viewplayerdetails, /viewroster) are gated by an mcaImportEnabled toggle commissioners can flip.
+- MCA-dependent commands (/standings, /statleaders, /userstats, /nextopp, /playerstats, /seasonschedule, /h2hrecord, /records, /alltimepr, /viewplayerdetails, /viewroster) are gated by an mcaImportEnabled toggle commissioners can flip.
 - The bot stores season data, weekly schedule, franchise schedule, player stats, and team rosters in its PostgreSQL database.
 
 CUSTOM PLAYER SYSTEM:
@@ -1138,10 +1137,10 @@ CUSTOM PLAYER SYSTEM:
 GAME OF THE WEEK (GOTW):
 - Each week, commissioners designate one matchup as GOTW via /admin-gotw.
 - Members can vote for who they think will win in the #game-of-the-week channel by clicking a button on the matchup embed.
-- When /advanceweek runs, the bot auto-pays correct voters for the PREVIOUS week's GOTW before posting the new week's matchups.
+- When Advance Week runs (via /admin-operations), the bot auto-pays correct voters for the PREVIOUS week's GOTW before posting the new week's matchups.
 - If the GOTW result isn't in the DB when the week advances, the payout is skipped with a note.
 
-ADVANCE WEEK FLOW (/advanceweek):
+ADVANCE WEEK FLOW (/admin-operations → Advance Week):
 1. Admin confirms they want to advance.
 2. For regular-season weeks only (not playoffs, not pre-season), the bot automatically:
    a. Pays out correct GOTW voters from the week that just ended.

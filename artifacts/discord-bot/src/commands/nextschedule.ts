@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { franchiseScheduleTable, usersTable, franchiseMcaTeamsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
-import { WEEK_SEQUENCE, weekLabel } from "./advanceweek.js";
+import { WEEK_SEQUENCE, weekLabel } from "../lib/week-helpers.js";
 import { PLAYOFF_WEEK_META } from "../lib/playoff-matchups-runner.js";
 
 const MIN_COMPLETED_STATUS = 2;

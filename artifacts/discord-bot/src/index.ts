@@ -26,7 +26,6 @@ import * as standings        from "./commands/standings.js";
 import * as h2hrecord        from "./commands/h2hrecord.js";
 import * as customarticle    from "./commands/customarticle.js";
 import * as webhookurl       from "./commands/webhookurl.js";
-import * as advanceweek      from "./commands/advanceweek.js";
 import * as statleaders      from "./commands/statleaders.js";
 import * as availableupgrades from "./commands/availableupgrades.js";
 import * as waitlist          from "./commands/waitlist.js";
@@ -34,7 +33,6 @@ import * as globalrecords     from "./commands/globalrecords.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
-import * as adminStatReimport        from "./commands/admin-stat-reimport.js";
 import * as adminLeagueData          from "./commands/admin-league-data.js";
 import * as adminCancelResendEos     from "./commands/admin-cancel-resend-eos.js";
 import * as adminRebuildHistorical   from "./commands/admin-rebuild-historical.js";
@@ -61,12 +59,12 @@ import * as adminLinkTeam           from "./commands/admin-linkteam.js";
 import * as adminInventory          from "./commands/admin-inventory.js";
 import * as adminInitialize         from "./commands/admin-initialize.js";
 import * as adminServer             from "./commands/adminserver.js";
-import * as adminRules              from "./commands/admin-rules.js";
 import * as adminTeamLogo          from "./commands/admin-team-logo.js";
 import * as adminRepostBanners     from "./commands/admin-repost-banners.js";
 import * as adminPayout            from "./commands/admin-payout.js";
 import * as adminUserData          from "./commands/admin-user-data.js";
 import * as adminStoreSettings     from "./commands/admin-store-settings.js";
+import * as adminOperations        from "./commands/admin-operations.js";
 
 // ── Records / rankings (standalone) ──────────────────────────────────────────
 import {
@@ -145,13 +143,11 @@ if (!isProduction && !devBotEnabled) {
     h2hrecord,
     customarticle,
     webhookurl,
-    advanceweek,
     statleaders,
     availableupgrades,
 
     // Admin tools
     adminEosTestrun,
-    adminStatReimport,
     adminLeagueData,
     adminCancelResendEos,
     adminRebuildHistorical,
@@ -181,9 +177,9 @@ if (!isProduction && !devBotEnabled) {
     adminInventory,
     adminInitialize,
     adminServer,
-    adminRules,
     adminTeamLogo,
     adminRepostBanners,
+    adminOperations,
     waitlist,
     globalrecords,
 

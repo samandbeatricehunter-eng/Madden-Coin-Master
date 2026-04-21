@@ -11,7 +11,7 @@ import {
 import { eq, and, desc, sql, ne, inArray, or, isNull } from "drizzle-orm";
 import { getOrCreateActiveSeason, computeStreak } from "../lib/db-helpers.js";
 import { LIMITS } from "../lib/constants.js";
-import { weekLabel } from "./advanceweek.js";
+import { weekLabel } from "../lib/week-helpers.js";
 import { requireMcaEnabled, getServerSettings } from "../lib/server-settings.js";
 
 const MILESTONE_LABELS: Record<number, string> = {

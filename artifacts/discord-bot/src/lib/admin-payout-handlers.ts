@@ -23,7 +23,7 @@ import {
   getPayoutValue, setPayoutValue, getAllPayoutConfig, getMilestoneTiers,
   PAYOUT_KEYS, MILESTONE_TIER_KEYS, type PayoutKey,
 } from "./payout-config.js";
-import { weekLabel } from "../commands/advanceweek.js";
+import { weekLabel } from "./week-helpers.js";
 import { buildPayoutHubEmbed, buildPayoutHubRows } from "../commands/admin-payout.js";
 import { NFL_DIVISION_MAP } from "./constants.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, STAT_CATEGORY_MAP } from "./stat-categories.js";
