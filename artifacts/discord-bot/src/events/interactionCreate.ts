@@ -1136,9 +1136,11 @@ async function handleButton(interaction: ButtonInteraction) {
       } catch (_) {}
     }
 
-    // Look up streamer's team and try to recover the stream URL from the original message
+    // Look up streamer's team scoped to THIS guild — prevents cross-guild team names appearing
     const [streamerUserRow] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
+      .from(usersTable)
+      .where(and(eq(usersTable.discordId, payout.discordId), eq(usersTable.guildId, payout.guildId)))
+      .limit(1);
     const streamerTeam = streamerUserRow?.team ?? null;
 
     let streamUrl = "(see original message)";
@@ -1206,7 +1208,9 @@ async function handleButton(interaction: ButtonInteraction) {
       .where(eq(pendingChannelPayoutsTable.id, payoutId));
 
     const [deniedStreamerRow] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
+      .from(usersTable)
+      .where(and(eq(usersTable.discordId, payout.discordId), eq(usersTable.guildId, payout.guildId)))
+      .limit(1);
 
     const deniedEmbed = new EmbedBuilder()
       .setColor(Colors.Red).setTitle("❌ Stream Payout Denied")
