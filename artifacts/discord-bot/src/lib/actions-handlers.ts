@@ -20,7 +20,7 @@ import {
   guildTweetsTable, autoPilotRequestsTable, ruleViolationsTable,
   playerEaIdsTable, customPlayersTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
@@ -1404,14 +1404,11 @@ export async function handleInterviewTypePick(interaction: ButtonInteraction) {
   const type = interaction.customId.split(":")[1] as InterviewType;
   const gid  = interaction.guildId!;
 
-  const [user, season] = await Promise.all([
-    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
-    getOrCreateActiveSeason(gid),
-  ]);
+  const season = await getOrCreateActiveSeason(gid);
   const currentWeek = (season as any).currentWeek ?? "1";
   const wkLabel     = weekLabel(currentWeek);
 
-  // Re-check one-per-week guard
+  // One-per-week guard — reply ephemerally if already submitted
   const existing = (await db.select({ id: interviewRequestsTable.id, status: interviewRequestsTable.status })
     .from(interviewRequestsTable)
     .where(and(
@@ -1424,47 +1421,62 @@ export async function handleInterviewTypePick(interaction: ButtonInteraction) {
 
   if (existing) {
     const stateLabel = existing.status === "approved" ? "already been approved" : "already been submitted and is pending review";
-    await interaction.update({
-      embeds: [new EmbedBuilder().setColor(Colors.Yellow)
-        .setTitle("⚠️ Interview Already Submitted")
-        .setDescription(`Your interview for **${wkLabel}** has ${stateLabel} (ID: \`${existing.id}\`).\nOnly one interview per week.`)],
-      components: [backToHubRow()],
+    await interaction.reply({
+      ephemeral: true,
+      content: `⚠️ Your interview for **${wkLabel}** has ${stateLabel} (ID: \`${existing.id}\`). Only one interview per week.`,
     });
     return;
   }
 
-  const pool = getQuestionPool(type);
-  const title = interviewTypeLabel(type);
+  // Pick 3 questions and immediately show modal — do NOT update the message
+  // so dismissing the modal (× or Back) naturally returns to type selection.
+  const pool       = getQuestionPool(type);
+  const title      = interviewTypeLabel(type);
   const [i1, i2, i3] = pickThreeIndices(pool.length);
   const q1 = pool[i1]!;
   const q2 = pool[i2]!;
   const q3 = pool[i3]!;
   const indicesStr = `${i1},${i2},${i3}`;
+  const truncLabel = (q: string) => q.length <= 45 ? q : q.slice(0, 42) + "...";
 
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Blurple)
-    .setTitle(`🎙️ ${title}`)
-    .setDescription(
-      `Here are your **3 interview questions** for **${wkLabel}**.\n` +
-      `Click **Submit Your Answers** to fill them in.\n\n` +
-      `*Questions are selected randomly from a pool of ${pool.length}.*`,
-    )
-    .addFields({ name: "Q1", value: q1 }, { name: "Q2", value: q2 }, { name: "Q3", value: q3 })
-    .setFooter({ text: `${user.team ?? interaction.user.username} • ${wkLabel} • ${title}` })
-    .setTimestamp();
+  const modal = new ModalBuilder()
+    .setCustomId(`interview_answer_modal:${indicesStr}:${type}`)
+    .setTitle(`🎙️ ${title}`);
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`interview_answer:${interaction.user.id}:${indicesStr}:${type}`)
-      .setLabel("📝 Submit Your Answers")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("ac_interview")
-      .setLabel("← Back")
-      .setStyle(ButtonStyle.Secondary),
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("a1")
+        .setLabel(truncLabel(q1))
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMinLength(10)
+        .setMaxLength(1000)
+        .setPlaceholder("Type your answer here…"),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("a2")
+        .setLabel(truncLabel(q2))
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMinLength(10)
+        .setMaxLength(1000)
+        .setPlaceholder("Type your answer here…"),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("a3")
+        .setLabel(truncLabel(q3))
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMinLength(10)
+        .setMaxLength(1000)
+        .setPlaceholder("Type your answer here…"),
+    ),
   );
 
-  await interaction.update({ embeds: [embed], components: [row] });
+  await interaction.showModal(modal);
 }
 
 // ── Tweet ─────────────────────────────────────────────────────────────────────
@@ -1586,55 +1598,95 @@ async function handleMyRoster(interaction: ButtonInteraction, sess: ActionsSessi
     return;
   }
 
-  // Find teamId from franchiseMcaTeams
-  const teamRow = (await db.select({ id: franchiseMcaTeamsTable.id })
+  // Find teamId from franchiseMcaTeams — match on nickName first, then fullName as fallback
+  const teamRow = (await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName, nickName: franchiseMcaTeamsTable.nickName })
     .from(franchiseMcaTeamsTable)
     .where(and(
       eq(franchiseMcaTeamsTable.seasonId, seasonId),
-      sql`lower(${franchiseMcaTeamsTable.fullName}) = lower(${user.team})`,
+      or(
+        sql`lower(${franchiseMcaTeamsTable.nickName}) = lower(${user.team})`,
+        sql`lower(${franchiseMcaTeamsTable.fullName}) = lower(${user.team})`,
+      ),
     ))
     .limit(1))[0];
 
   if (!teamRow) {
     await interaction.update({
-      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Team **${user.team}** not found in the franchise database. Make sure MCA data is imported.`)],
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Team **${user.team}** not found in the franchise database. Make sure MCA data is imported.\n\n*Your linked team name is "**${user.team}**" — ask a commissioner to check it matches your franchise data.*`)],
       components: [backToHubRow()],
     });
     return;
   }
 
+  const displayName = teamRow.fullName ?? user.team;
   const embed = new EmbedBuilder();
-  await buildRosterEmbed(gid, seasonId, teamRow.id, user.team, embed);
+  await buildRosterEmbed(gid, seasonId, teamRow.id, displayName, embed);
   await interaction.update({ embeds: [embed], components: [backToHubRow()] });
 }
 
 async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid      = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
-  const teams = await db.select({ id: franchiseMcaTeamsTable.id, fullName: franchiseMcaTeamsTable.fullName, conference: franchiseMcaTeamsTable.conference })
+
+  // Fetch ALL teams (human and CPU) for this season
+  const teams = await db.select({
+    id:         franchiseMcaTeamsTable.id,
+    fullName:   franchiseMcaTeamsTable.fullName,
+    nickName:   franchiseMcaTeamsTable.nickName,
+    conference: franchiseMcaTeamsTable.conference,
+    isHuman:    franchiseMcaTeamsTable.isHuman,
+  })
     .from(franchiseMcaTeamsTable)
-    .where(and(eq(franchiseMcaTeamsTable.seasonId, seasonId), eq(franchiseMcaTeamsTable.isHuman, true)))
+    .where(eq(franchiseMcaTeamsTable.seasonId, seasonId))
     .orderBy(franchiseMcaTeamsTable.conference, franchiseMcaTeamsTable.fullName);
 
   if (!teams.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No teams found. Import MCA data first.")], components: [backToHubRow()] });
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No teams found. Import MCA data first.")],
+      components: [backToHubRow()],
+    });
     return;
   }
 
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ac_anyroster_sel")
-    .setPlaceholder("Select a team…")
-    .addOptions(
-      teams.slice(0, 25).map(t =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${t.fullName} (${t.conference ?? "?"})`)
-          .setValue(String(t.id)),
-      ),
-    );
+  // Split into AFC and NFC; fall back to NFL_DIVISION_MAP if conference field is missing
+  const afcTeams = teams.filter(t => {
+    const conf = t.conference?.toUpperCase();
+    if (conf === "AFC") return true;
+    if (conf === "NFC") return false;
+    return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === "AFC";
+  });
+  const nfcTeams = teams.filter(t => {
+    const conf = t.conference?.toUpperCase();
+    if (conf === "NFC") return true;
+    if (conf === "AFC") return false;
+    return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === "NFC";
+  });
+
+  const makeMenu = (conference: string, list: typeof teams) =>
+    new StringSelectMenuBuilder()
+      .setCustomId("ac_anyroster_sel")
+      .setPlaceholder(`${conference} — pick a team…`)
+      .addOptions(
+        list.slice(0, 25).map(t =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(t.fullName)
+            .setDescription(t.isHuman ? "👤 Human" : "🤖 CPU")
+            .setValue(String(t.id)),
+        ),
+      );
+
+  const components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [];
+  if (afcTeams.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeMenu("AFC", afcTeams)));
+  if (nfcTeams.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeMenu("NFC", nfcTeams)));
+  components.push(cancelRow() as any);
 
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("👥 View Any Roster").setDescription("Select a team to view their roster.")],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("👥 View Any Roster")
+      .setDescription("Select a team from the **AFC** or **NFC** dropdown below to view their full roster.")
+      .setFooter({ text: `${teams.length} teams loaded — 👤 Human · 🤖 CPU` })],
+    components,
   });
 }
 
@@ -1648,7 +1700,12 @@ async function handleAnyRosterShow(interaction: StringSelectMenuInteraction, ses
 
   const embed = new EmbedBuilder();
   await buildRosterEmbed(gid, seasonId, teamId, teamName, embed);
-  await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+
+  const rosterNav = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_anyroster").setLabel("← Back to Teams").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("🏠 Hub").setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.update({ embeds: [embed], components: [rosterNav] });
 }
 
 // ── Free Agents ───────────────────────────────────────────────────────────────
