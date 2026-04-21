@@ -201,9 +201,10 @@ export async function sendWaitlistDm(opts: {
   guild:     { id: string; name: string; channels: any; roles: any; invites?: any };
   guildId:   string;
   discordId: string;
+  team?:     string;  // specific team they were waiting for, if any
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const { client, guild, guildId, discordId } = opts;
+    const { client, guild, guildId, discordId, team } = opts;
 
     // Try to fetch the user
     const user = await client.users.fetch(discordId).catch(() => null);
@@ -228,24 +229,37 @@ export async function sendWaitlistDm(opts: {
       }
     } catch { /* invite creation may fail — that's ok */ }
 
-    // Count open teams so we can say "X team(s)"
-    const takenRows = await db
-      .select({ team: usersTable.team, discordId: usersTable.discordId })
-      .from(usersTable)
-      .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
+    let dmText: string;
 
-    const taken     = new Set(takenRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
-    const openCount = NFL_TEAMS.filter(t => !taken.has(t)).length;
-    const teamWord  = openCount === 1 ? "team has" : "teams have";
+    if (team) {
+      dmText = [
+        `📣 **Good news! The ${team} are available in ${guild.name}!**`,
+        "",
+        `You were waitlisted for the **${team}** and they've just opened up.`,
+        inviteLink ? `\nUse this invite link to join: ${inviteLink}` : "",
+        "",
+        "Click **Accept** to let the commissioners know you want to claim this team, or **Decline** if you're no longer interested.",
+      ].join("\n").trim();
+    } else {
+      // Legacy: count open teams
+      const takenRows = await db
+        .select({ team: usersTable.team, discordId: usersTable.discordId })
+        .from(usersTable)
+        .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
 
-    const dmText = [
-      `📣 **A spot has opened up in the R.E.C. League!**`,
-      "",
-      `You're on the waitlist and **${openCount} ${teamWord}** just become available.`,
-      inviteLink ? `\nUse this invite link to join: ${inviteLink}` : "",
-      "",
-      "Please click **Accept** to let the commissioners know you're ready to join, or **Decline** if you're no longer interested.",
-    ].join("\n").trim();
+      const taken     = new Set(takenRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+      const openCount = NFL_TEAMS.filter(t => !taken.has(t)).length;
+      const teamWord  = openCount === 1 ? "team has" : "teams have";
+
+      dmText = [
+        `📣 **A spot has opened up in the R.E.C. League!**`,
+        "",
+        `You're on the waitlist and **${openCount} ${teamWord}** just become available.`,
+        inviteLink ? `\nUse this invite link to join: ${inviteLink}` : "",
+        "",
+        "Please click **Accept** to let the commissioners know you're ready to join, or **Decline** if you're no longer interested.",
+      ].join("\n").trim();
+    }
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -266,13 +280,13 @@ export async function sendWaitlistDm(opts: {
 }
 
 // ── Auto-scan: called after /advanceweek completes ────────────────────────────
+// Processes team-specific waitlist entries (team column set) and legacy entries (no team).
 export async function checkAndNotifyWaitlist(
   client:  Client,
   guild:   any,
   guildId: string,
 ): Promise<void> {
   try {
-    // Get waiting entries in order
     const waiters = await db
       .select()
       .from(waitlistTable)
@@ -281,30 +295,66 @@ export async function checkAndNotifyWaitlist(
 
     if (waiters.length === 0) return;
 
-    // Count open teams
+    // Compute open teams
     const takenRows = await db
       .select({ team: usersTable.team, discordId: usersTable.discordId })
       .from(usersTable)
       .where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
 
-    const taken     = new Set(takenRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
-    const openCount = NFL_TEAMS.filter(t => !taken.has(t)).length;
+    const taken    = new Set(takenRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+    const openSet  = new Set(NFL_TEAMS.filter(t => !taken.has(t)));
 
-    if (openCount === 0) return;
+    if (openSet.size === 0) return;
 
-    // Notify up to openCount users (however many slots opened = how many to notify)
-    const toNotify = waiters.slice(0, openCount);
+    // 1. Team-specific waiters — notify only if their team is now open
+    for (const entry of waiters.filter(w => w.team)) {
+      if (!openSet.has(entry.team!)) continue;
+      const result = await sendWaitlistDm({ client, guild, guildId, discordId: entry.discordId, team: entry.team! });
+      if (result.success) {
+        await db.delete(waitlistTable)
+          .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, entry.discordId)));
+      }
+    }
 
+    // 2. Legacy waiters (no team) — notify first N by open slot count
+    const legacyWaiters = waiters.filter(w => !w.team);
+    const toNotify      = legacyWaiters.slice(0, openSet.size);
     for (const entry of toNotify) {
       const result = await sendWaitlistDm({ client, guild, guildId, discordId: entry.discordId });
       if (result.success) {
-        await db
-          .update(waitlistTable)
+        await db.update(waitlistTable)
           .set({ notifiedAt: new Date(), status: "notified" })
           .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, entry.discordId)));
       }
     }
   } catch (err) {
     console.error("[waitlist] checkAndNotifyWaitlist error:", err);
+  }
+}
+
+// ── Team-unlink trigger: DM anyone waitlisted for this specific team ──────────
+export async function notifyTeamWaitlist(opts: {
+  team:    string;
+  guildId: string;
+  client:  Client;
+  guild:   { id: string; name: string; channels: any; roles: any; invites?: any };
+}): Promise<void> {
+  try {
+    const { team, guildId, client, guild } = opts;
+
+    const waiters = await db
+      .select()
+      .from(waitlistTable)
+      .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.team, team), eq(waitlistTable.status, "waiting")));
+
+    for (const entry of waiters) {
+      const result = await sendWaitlistDm({ client, guild, guildId, discordId: entry.discordId, team });
+      if (result.success) {
+        await db.delete(waitlistTable)
+          .where(and(eq(waitlistTable.guildId, guildId), eq(waitlistTable.discordId, entry.discordId)));
+      }
+    }
+  } catch (err) {
+    console.error("[waitlist] notifyTeamWaitlist error:", err);
   }
 }

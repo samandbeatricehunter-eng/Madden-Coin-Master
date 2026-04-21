@@ -89,6 +89,8 @@ interface ActionsSession {
   standingsConf?: "AFC" | "NFC" | "ALL";
   // rules view flow
   acRulesSection?: string;
+  // team request / waitlist flow
+  pendingTeamRequest?: string;
   expiresAt: number;
 }
 
@@ -375,13 +377,18 @@ export async function handleActionsInteraction(
   if (id === "ac_rules_close")           { await handleRulesClose(interaction as ButtonInteraction); return true; }
   if (id === "ac_modal_rules_bynum")     { await handleRulesByNumSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_violation")         { await handleViolationModal(interaction as ButtonInteraction); return true; }
-  if (id === "ac_req_openteam")      { await handleReqOpenTeam(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_req_addwaitlist")   { await handleReqAddWaitlist(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_req_rmwaitlist")    { await handleReqRmWaitlist(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_req_rmwl_confirm")  { await handleReqRmWaitlistConfirm(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_openteam")          { await handleReqOpenTeam(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_openteam_sel_afc" ||
+      id === "ac_req_openteam_sel_nfc")  { await handleReqOpenTeamSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_req_openteam_submit")   { await handleReqOpenTeamSubmit(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_addwaitlist")       { await handleReqAddWaitlist(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_waitlist_sel_afc" ||
+      id === "ac_req_waitlist_sel_nfc")  { await handleReqWaitlistSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_req_waitlist_next")     { await handleReqWaitlistNext(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_rmwaitlist")        { await handleReqRmWaitlist(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_req_rmwl_confirm")      { await handleReqRmWaitlistConfirm(interaction as ButtonInteraction, sess); return true; }
 
   // Modal submits
-  if (id === "ac_modal_req_openteam") { await handleReqOpenTeamSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_tweet")      { await handleTweetSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_sendcoins")  { await handleSendCoinsSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_wageramount") { await handleWagerAmountSubmit(interaction as ModalSubmitInteraction, sess); return true; }
@@ -3135,26 +3142,46 @@ async function handleActiveTeams(interaction: ButtonInteraction, sess: ActionsSe
   await interaction.deferUpdate();
 
   const users = await db.select({
-    discordId:       usersTable.discordId,
-    discordUsername: usersTable.discordUsername,
-    team:            usersTable.team,
-    balance:         usersTable.balance,
+    discordId: usersTable.discordId,
+    team:      usersTable.team,
   }).from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team), ne(usersTable.team, ""), ne(usersTable.discordUsername, "Open Slot")))
-    .orderBy(usersTable.team);
+    .where(and(
+      eq(usersTable.guildId, gid),
+      isNotNull(usersTable.team),
+      ne(usersTable.team, ""),
+    ));
 
-  if (!users.length) {
+  // Build a map of team → discordId, excluding open slots and unlinked placeholders
+  const activeMap = new Map<string, string>();
+  for (const u of users) {
+    if (!u.discordId.startsWith("unlinked_") && u.team) activeMap.set(u.team, u.discordId);
+  }
+
+  if (!activeMap.size) {
     await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("🟢 Active Teams").setDescription("No active teams found.")], components: [backToHubRow()] });
     return;
   }
 
-  const lines = users.map((u, i) => `**${i + 1}.** ${u.team} — <@${u.discordId}>`);
+  const CONF_EMOJI: Record<string, string> = { AFC: "🔵", NFC: "🔴" };
+  const DIV_ORDER = ["East", "North", "South", "West"] as const;
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
-    .setTitle(`🟢 Active Teams (${users.length})`)
-    .setDescription(lines.join("\n"))
+    .setTitle(`🟢 Active Teams (${activeMap.size})`)
     .setTimestamp();
+
+  for (const conf of ["AFC", "NFC"] as const) {
+    for (const div of DIV_ORDER) {
+      const divTeams = NFL_TEAMS.filter(t => NFL_DIVISION_MAP[t]?.conference === conf && NFL_DIVISION_MAP[t]?.division === div);
+      const activeLines = divTeams
+        .filter(t => activeMap.has(t))
+        .map(t => `• **${t}** — <@${activeMap.get(t)!}>`);
+
+      if (activeLines.length) {
+        embed.addFields({ name: `${CONF_EMOJI[conf]} ${conf} ${div}`, value: activeLines.join("\n"), inline: true });
+      }
+    }
+  }
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
 }
@@ -3671,40 +3698,171 @@ async function handleRulesClose(interaction: ButtonInteraction) {
 //  UNLINKED USER — Request handlers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function handleReqOpenTeam(interaction: ButtonInteraction, sess: ActionsSession) {
-  const modal = new ModalBuilder()
-    .setCustomId("ac_modal_req_openteam")
-    .setTitle("Request an Open Team");
+// ── Helpers: build open-team and all-team dual dropdowns ─────────────────────
 
-  modal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId("team_name")
-        .setLabel("Which team are you requesting?")
-        .setPlaceholder("e.g. Kansas City Chiefs")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true),
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId("reason")
-        .setLabel("Why do you want this team? (optional)")
-        .setPlaceholder("Any background info for the commissioner…")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false),
-    ),
-  );
+function buildOpenTeamSelectRows(
+  afcOpen: string[],
+  nfcOpen: string[],
+  selected?: string,
+): ActionRowBuilder<StringSelectMenuBuilder>[] {
+  const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
 
-  await interaction.showModal(modal);
+  if (afcOpen.length) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("ac_req_openteam_sel_afc")
+      .setPlaceholder("🔵 AFC — Pick an open team")
+      .addOptions(afcOpen.map(t =>
+        new StringSelectMenuOptionBuilder().setLabel(t).setValue(t).setDefault(t === selected),
+      ));
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
+  }
+
+  if (nfcOpen.length) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("ac_req_openteam_sel_nfc")
+      .setPlaceholder("🔴 NFC — Pick an open team")
+      .addOptions(nfcOpen.map(t =>
+        new StringSelectMenuOptionBuilder().setLabel(t).setValue(t).setDefault(t === selected),
+      ));
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
+  }
+
+  return rows;
 }
 
-async function handleReqOpenTeamSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
-  const gid      = interaction.guildId!;
-  const uid      = interaction.user.id;
-  const teamName = interaction.fields.getTextInputValue("team_name").trim();
-  const reason   = interaction.fields.getTextInputValue("reason").trim() || "No reason provided.";
+function buildAllTeamSelectRows(
+  selected?: string,
+): ActionRowBuilder<StringSelectMenuBuilder>[] {
+  const afc = NFL_TEAMS.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
+  const nfc = NFL_TEAMS.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
 
-  await interaction.deferReply({ ephemeral: true });
+  const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
+
+  const afcMenu = new StringSelectMenuBuilder()
+    .setCustomId("ac_req_waitlist_sel_afc")
+    .setPlaceholder("🔵 AFC — Pick your target team")
+    .addOptions(afc.map(t =>
+      new StringSelectMenuOptionBuilder().setLabel(t).setValue(t).setDefault(t === selected),
+    ));
+  rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(afcMenu));
+
+  const nfcMenu = new StringSelectMenuBuilder()
+    .setCustomId("ac_req_waitlist_sel_nfc")
+    .setPlaceholder("🔴 NFC — Pick your target team")
+    .addOptions(nfc.map(t =>
+      new StringSelectMenuOptionBuilder().setLabel(t).setValue(t).setDefault(t === selected),
+    ));
+  rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(nfcMenu));
+
+  return rows;
+}
+
+// ── Request Open Team: step 1 — show dual dropdowns with open teams ───────────
+
+async function handleReqOpenTeam(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  await interaction.deferUpdate();
+
+  sess.pendingTeamRequest = undefined;
+
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
+
+  const taken    = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  const open     = NFL_TEAMS.filter(t => !taken.has(t));
+  const afcOpen  = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
+  const nfcOpen  = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
+
+  if (!open.length) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Grey)
+        .setTitle("🔴 No Open Teams")
+        .setDescription("All 32 teams are currently claimed. You can add yourself to the waitlist instead.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const selectRows = buildOpenTeamSelectRows(afcOpen, nfcOpen);
+  const actionRow  = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_req_openteam_submit").setLabel("✅ Submit Request").setStyle(ButtonStyle.Success).setDisabled(true),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  ) as ActionRowBuilder<any>;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle("🏈 Request an Open Team")
+    .setDescription("Pick a team from either dropdown below, then click **Submit Request**.\n\n⚠️ You may only select **one team**. Selecting from one conference clears the other.");
+
+  await interaction.editReply({ embeds: [embed], components: [...selectRows, actionRow] });
+}
+
+// ── Request Open Team: step 2 — user selects a team ─────────────────────────
+
+async function handleReqOpenTeamSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const gid  = interaction.guildId!;
+  const team = interaction.values[0]!;
+  await interaction.deferUpdate();
+
+  sess.pendingTeamRequest = team;
+
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
+
+  const taken   = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  const open    = NFL_TEAMS.filter(t => !taken.has(t));
+  const afcOpen = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
+  const nfcOpen = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
+
+  const selectRows = buildOpenTeamSelectRows(afcOpen, nfcOpen, team);
+  const actionRow  = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_req_openteam_submit").setLabel("✅ Submit Request").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  ) as ActionRowBuilder<any>;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle("🏈 Request an Open Team")
+    .setDescription(`Pick a team from either dropdown below, then click **Submit Request**.\n\n✅ **Selected:** ${team}\n\nClick **Submit Request** to send your request to the commissioner.`);
+
+  await interaction.editReply({ embeds: [embed], components: [...selectRows, actionRow] });
+}
+
+// ── Request Open Team: step 3 — submit to commissioner log ───────────────────
+
+async function handleReqOpenTeamSubmit(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid  = interaction.guildId!;
+  const uid  = interaction.user.id;
+  const team = sess.pendingTeamRequest;
+  await interaction.deferUpdate();
+
+  if (!team) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Team Selected").setDescription("Please select a team from the dropdown first.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  // Verify team is still open at submit time
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
+
+  const taken = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  if (taken.has(team)) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Orange)
+        .setTitle("⚠️ Team No Longer Available")
+        .setDescription(`The **${team}** were claimed since you started browsing. Please go back and pick another team.`)],
+      components: [backToHubRow()],
+    });
+    return;
+  }
 
   const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
     ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
@@ -3717,22 +3875,24 @@ async function handleReqOpenTeamSubmit(interaction: ModalSubmitInteraction, sess
           .setColor(Colors.Yellow)
           .setTitle("🔔 Open Team Request")
           .setDescription(`<@${uid}> has requested an open team.`)
-          .addFields(
-            { name: "🏈 Team Requested", value: teamName, inline: true },
-            { name: "📝 Reason",         value: reason,   inline: false },
-          )
+          .addFields({ name: "🏈 Team Requested", value: team, inline: true })
           .setTimestamp()],
       }).catch(console.error);
     }
   }
 
+  sess.pendingTeamRequest = undefined;
+
   await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ Request Submitted")
-      .setDescription(`Your request for **${teamName}** has been sent to the commissioner. You'll be notified once a decision is made.`)],
+      .setDescription(`Your request for the **${team}** has been sent to the commissioner. You'll be notified once a decision is made.`)],
+    components: [backToHubRow()],
   });
 }
+
+// ── Add to Waitlist: step 1 — show dual dropdowns with ALL teams ──────────────
 
 async function handleReqAddWaitlist(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
@@ -3740,7 +3900,109 @@ async function handleReqAddWaitlist(interaction: ButtonInteraction, sess: Action
   await interaction.deferUpdate();
 
   // Check if already on waitlist
-  const [existing] = await db.select({ id: waitlistTable.id, status: waitlistTable.status })
+  const [existing] = await db.select({ id: waitlistTable.id, status: waitlistTable.status, team: waitlistTable.team })
+    .from(waitlistTable)
+    .where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
+
+  if (existing) {
+    const teamInfo = existing.team ? ` for the **${existing.team}**` : "";
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("⚠️ Already on Waitlist")
+        .setDescription(`You're already on the waitlist${teamInfo} (status: **${existing.status}**).\n\nUse **Remove from Waitlist** if you'd like to change your team preference.`)],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  sess.pendingTeamRequest = undefined;
+
+  const selectRows = buildAllTeamSelectRows();
+  const actionRow  = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_req_waitlist_next").setLabel("📋 Add to Waitlist").setStyle(ButtonStyle.Primary).setDisabled(true),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  ) as ActionRowBuilder<any>;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle("📋 Add to Waitlist")
+    .setDescription(
+      "Pick the **specific team** you want to waitlist for, then click **Add to Waitlist**.\n\n" +
+      "If that team is already open, you'll be redirected to Request it directly.\n" +
+      "If it's taken, you'll be added to the waitlist and notified when they become available.",
+    );
+
+  await interaction.editReply({ embeds: [embed], components: [...selectRows, actionRow] });
+}
+
+// ── Add to Waitlist: step 2 — user selects their target team ─────────────────
+
+async function handleReqWaitlistSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const team = interaction.values[0]!;
+  await interaction.deferUpdate();
+
+  sess.pendingTeamRequest = team;
+
+  const selectRows = buildAllTeamSelectRows(team);
+  const actionRow  = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_req_waitlist_next").setLabel("📋 Add to Waitlist").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  ) as ActionRowBuilder<any>;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle("📋 Add to Waitlist")
+    .setDescription(
+      "Pick the **specific team** you want to waitlist for, then click **Add to Waitlist**.\n\n" +
+      `✅ **Selected:** ${team}\n\nClick **Add to Waitlist** to continue.`,
+    );
+
+  await interaction.editReply({ embeds: [embed], components: [...selectRows, actionRow] });
+}
+
+// ── Add to Waitlist: step 3 — check open/taken and act ───────────────────────
+
+async function handleReqWaitlistNext(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid  = interaction.guildId!;
+  const uid  = interaction.user.id;
+  const team = sess.pendingTeamRequest;
+  await interaction.deferUpdate();
+
+  if (!team) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Team Selected").setDescription("Please select a team from the dropdown first.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  // Check if team is open or taken
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
+
+  const taken = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+
+  if (!taken.has(team)) {
+    // Team is open — redirect to Request Open Team flow
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("🟢 Team Is Open!")
+        .setDescription(`The **${team}** are actually available right now! Use **Request Open Team** to claim them directly instead of waiting.`)],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ac_req_openteam").setLabel("🏈 Request Open Team").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+    return;
+  }
+
+  // Team is taken — add to waitlist
+  const [existing] = await db.select({ id: waitlistTable.id })
     .from(waitlistTable)
     .where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
 
@@ -3749,13 +4011,13 @@ async function handleReqAddWaitlist(interaction: ButtonInteraction, sess: Action
       embeds: [new EmbedBuilder()
         .setColor(Colors.Yellow)
         .setTitle("⚠️ Already on Waitlist")
-        .setDescription(`You're already on the waitlist with status **${existing.status}**. A commissioner will reach out when a spot opens.`)],
+        .setDescription("You're already on the waitlist. Use **Remove from Waitlist** first if you want to change your team preference.")],
       components: [backToHubRow()],
     });
     return;
   }
 
-  await db.insert(waitlistTable).values({ guildId: gid, discordId: uid, addedBy: uid, status: "waiting" });
+  await db.insert(waitlistTable).values({ guildId: gid, discordId: uid, addedBy: uid, team, status: "waiting" });
 
   // Notify commissioner
   const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
@@ -3765,50 +4027,56 @@ async function handleReqAddWaitlist(interaction: ButtonInteraction, sess: Action
     if (channel?.isTextBased()) {
       await (channel as TextChannel).send({
         embeds: [new EmbedBuilder()
-          .setColor(Colors.Green)
+          .setColor(Colors.Blue)
           .setTitle("📋 Waitlist Request")
-          .setDescription(`<@${uid}> has self-added to the waitlist and is waiting for an open spot.`)
+          .setDescription(`<@${uid}> has added themselves to the waitlist for the **${team}**.`)
           .setTimestamp()],
       }).catch(console.error);
     }
   }
 
+  sess.pendingTeamRequest = undefined;
+
   await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ Added to Waitlist")
-      .setDescription("You've been added to the waitlist! A commissioner will contact you when a team spot becomes available.")],
+      .setDescription(`You've been added to the waitlist for the **${team}**!\n\nYou'll receive a DM when the ${team} become available. The commissioner has also been notified.`)],
     components: [backToHubRow()],
   });
 }
+
+// ── Remove from Waitlist: confirm step ───────────────────────────────────────
 
 async function handleReqRmWaitlist(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
   const uid = interaction.user.id;
   await interaction.deferUpdate();
 
-  const [existing] = await db.select({ id: waitlistTable.id, status: waitlistTable.status })
+  const [existing] = await db.select({ id: waitlistTable.id, status: waitlistTable.status, team: waitlistTable.team })
     .from(waitlistTable)
     .where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
 
   if (!existing) {
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Grey).setDescription("You are not currently on the waitlist.")],
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle("ℹ️ Not on Waitlist").setDescription("You are not currently on the waitlist.")],
       components: [backToHubRow()],
     });
     return;
   }
 
+  const teamInfo = existing.team ? ` for the **${existing.team}**` : "";
+
   const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_req_rmwl_confirm").setLabel("✅ Yes, Remove Me").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Cancel").setStyle(ButtonStyle.Secondary),
-  );
+  ) as ActionRowBuilder<any>;
 
   await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Yellow)
       .setTitle("⚠️ Confirm Waitlist Removal")
-      .setDescription(`You are currently on the waitlist (status: **${existing.status}**).\n\nAre you sure you want to remove yourself?`)],
+      .setDescription(`You are currently on the waitlist${teamInfo} (status: **${existing.status}**).\n\nAre you sure you want to remove yourself?`)],
     components: [confirmRow],
   });
 }
@@ -3818,7 +4086,13 @@ async function handleReqRmWaitlistConfirm(interaction: ButtonInteraction, sess: 
   const uid = interaction.user.id;
   await interaction.deferUpdate();
 
+  const [existing] = await db.select({ team: waitlistTable.team })
+    .from(waitlistTable)
+    .where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
+
   await db.delete(waitlistTable).where(and(eq(waitlistTable.guildId, gid), eq(waitlistTable.discordId, uid)));
+
+  const teamInfo = existing?.team ? ` (${existing.team})` : "";
 
   const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
     ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
@@ -3829,14 +4103,17 @@ async function handleReqRmWaitlistConfirm(interaction: ButtonInteraction, sess: 
         embeds: [new EmbedBuilder()
           .setColor(Colors.Grey)
           .setTitle("📋 Waitlist Removal")
-          .setDescription(`<@${uid}> has removed themselves from the waitlist.`)
+          .setDescription(`<@${uid}> has removed themselves from the waitlist${teamInfo}.`)
           .setTimestamp()],
       }).catch(console.error);
     }
   }
 
   await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✅ Removed from Waitlist").setDescription("You've been removed from the waitlist. You can re-add yourself at any time.")],
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Removed from Waitlist")
+      .setDescription("You've been removed from the waitlist. You can re-add yourself at any time.")],
     components: [backToHubRow()],
   });
 }

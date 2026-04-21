@@ -1107,6 +1107,7 @@ export const waitlistTable = pgTable("waitlist", {
   guildId:     text("guild_id").notNull(),
   discordId:   text("discord_id").notNull(),
   addedBy:     text("added_by").notNull(),            // admin discordId who added them
+  team:        text("team"),                          // specific team they're waiting for (null = any open spot)
   addedAt:     timestamp("added_at").notNull().defaultNow(),
   notifiedAt:  timestamp("notified_at"),              // last DM notification sent
   status:      text("status").notNull().default("waiting"), // "waiting" | "notified" | "accepted" | "denied"

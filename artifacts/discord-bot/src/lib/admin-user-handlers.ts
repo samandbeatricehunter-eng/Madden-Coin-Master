@@ -38,6 +38,7 @@ import {
 import { NFL_TEAMS, NFL_DIVISION_MAP } from "./constants.js";
 import { getPayoutValue, setPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { buildUserDataHubEmbed, buildUserDataHubRows } from "../commands/admin-user-data.js";
+import { notifyTeamWaitlist } from "../commands/waitlist.js";
 
 // ── Session management ─────────────────────────────────────────────────────────
 
@@ -825,6 +826,14 @@ export async function handleUdUnlinkConfirm(interaction: ButtonInteraction): Pro
   await db.update(usersTable)
     .set({ team: null, playoffSeed: null, playoffConference: null, updatedAt: new Date() })
     .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
+
+  // DM anyone waitlisted for this specific team (fire-and-forget)
+  notifyTeamWaitlist({
+    team,
+    guildId,
+    client: interaction.client,
+    guild:  interaction.guild! as any,
+  }).catch(err => console.error("[admin-user] notifyTeamWaitlist error:", err));
 
   const guildSeasonIds = db.select({ id: seasonsTable.id }).from(seasonsTable).where(eq(seasonsTable.guildId, guildId));
   const deleted = await db.delete(userRecordsTable)
