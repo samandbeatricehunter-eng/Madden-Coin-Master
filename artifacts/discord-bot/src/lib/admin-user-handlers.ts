@@ -557,6 +557,11 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
     }); return;
   }
 
+  // Remove placeholder FIRST — must happen before insert to avoid unique (team, guildId) conflict
+  await db.delete(usersTable)
+    .where(and(eq(usersTable.discordId, `unlinked_${teamName.toLowerCase()}`), eq(usersTable.guildId, guildId)))
+    .catch(() => null);
+
   // Upsert the user row
   const [existing] = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
     .from(usersTable)
@@ -580,11 +585,6 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
       .set({ team: teamName, discordUsername: targetUser.username, updatedAt: new Date() })
       .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, guildId)));
   }
-
-  // Remove placeholder if present
-  await db.delete(usersTable)
-    .where(and(eq(usersTable.discordId, `unlinked_${teamName.toLowerCase()}`), eq(usersTable.guildId, guildId)))
-    .catch(() => null);
 
   // Remove from waitlist
   await db.delete(waitlistTable)
