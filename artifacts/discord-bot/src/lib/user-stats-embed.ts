@@ -62,11 +62,17 @@ export async function appendUserStatsFields(
       eq(inventoryTable.discordId, uid),
     ));
 
+  // Custom players scoped to this guild via seasonId → seasonsTable.guildId join
   const customPlayerRows = await db.select({
     firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
     position:  customPlayersTable.position,  packageTier: customPlayersTable.packageTier,
   }).from(customPlayersTable)
-    .where(and(eq(customPlayersTable.discordId, uid), ne(customPlayersTable.status, "refunded")));
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(and(
+      eq(customPlayersTable.discordId, uid),
+      eq(seasonsTable.guildId, gid),
+      ne(customPlayersTable.status, "refunded"),
+    ));
 
   const savings = savingsRow?.balance ?? 0;
   const total   = user.balance + savings;

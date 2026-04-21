@@ -2382,11 +2382,17 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
       eq(inventoryTable.discordId, targetId),
     ));
 
+  // Custom players scoped to this guild via seasonId → seasonsTable.guildId join
   const customPlayerRows = await db.select({
     firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
     position: customPlayersTable.position, packageTier: customPlayersTable.packageTier,
   }).from(customPlayersTable)
-    .where(and(eq(customPlayersTable.discordId, targetId), ne(customPlayersTable.status, "refunded")));
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(and(
+      eq(customPlayersTable.discordId, targetId),
+      eq(seasonsTable.guildId, gid),
+      ne(customPlayersTable.status, "refunded"),
+    ));
 
   const savings = savingsRow?.balance ?? 0;
   const total   = targetUser.balance + savings;
