@@ -1208,3 +1208,34 @@ export const ruleViolationsTable = pgTable("rule_violations", {
 });
 
 export type RuleViolation = typeof ruleViolationsTable.$inferSelect;
+
+// ── Global playoff seeding rules config (single global row) ──────────────────
+// Stores the NFL seeding tiebreaker reference scraped from the official rules.
+// Used by any command that needs to compute or display playoff seeding rules.
+export interface PlayoffSeedingRules {
+  description: string;
+  sourceUrl: string;
+  lastUpdated: string;
+  playoffTeamsPerConference: number;
+  divisionWinners: number;
+  wildcardBerths: number;
+  seedingOrder: {
+    seeds1to4: string;
+    seeds5to7: string;
+  };
+  tiebreakerChainSameDivision: string[];
+  tiebreakerChainDifferentDivision: string[];
+  bracketFormat: {
+    wildCard: string;
+    divisional: string;
+    conference: string;
+    superBowl: string;
+  };
+}
+
+export const playoffSeedingConfigTable = pgTable("playoff_seeding_config", {
+  id:        serial("id").primaryKey(),
+  rulesJson: json("rules_json").notNull().$type<PlayoffSeedingRules>(),
+  sourceUrl: text("source_url"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

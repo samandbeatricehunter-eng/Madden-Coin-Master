@@ -117,6 +117,13 @@ import {
   handleTsRepairRecords,
   handleTsResyncData,
   handleTsEosTestRun,
+  handleTsRepairPlayoff,
+  handleTsPlayoffProceed,
+  handleTsPlayoffConfirm,
+  handleTsPlayoffCancel,
+  handleTsEosManual,
+  handleTsEosManualConfirm,
+  handleTsEosManualCancel,
 } from "../lib/admin-troubleshoot-handlers.js";
 import {
   handleLeagueDataButton,
@@ -210,9 +217,16 @@ async function handleButton(interaction: ButtonInteraction) {
   const [action, secondPart, userId, purchaseType] = parts;
 
   // ── Admin troubleshoot panel buttons ─────────────────────────────────────────
-  if (action === "ts_repair_records") { await handleTsRepairRecords(interaction); return; }
-  if (action === "ts_resync_data")    { await handleTsResyncData(interaction);    return; }
-  if (action === "ts_eos_testrun")    { await handleTsEosTestRun(interaction);    return; }
+  if (action === "ts_repair_records")    { await handleTsRepairRecords(interaction);    return; }
+  if (action === "ts_resync_data")       { await handleTsResyncData(interaction);       return; }
+  if (action === "ts_eos_testrun")       { await handleTsEosTestRun(interaction);       return; }
+  if (action === "ts_repair_playoff")    { await handleTsRepairPlayoff(interaction);    return; }
+  if (action === "ts_playoff_proceed")   { await handleTsPlayoffProceed(interaction);   return; }
+  if (action === "ts_playoff_confirm")   { await handleTsPlayoffConfirm(interaction);   return; }
+  if (action === "ts_playoff_cancel")    { await handleTsPlayoffCancel(interaction);    return; }
+  if (action === "ts_eos_manual")        { await handleTsEosManual(interaction);        return; }
+  if (action === "ts_eos_manual_confirm"){ await handleTsEosManualConfirm(interaction); return; }
+  if (action === "ts_eos_manual_cancel") { await handleTsEosManualCancel(interaction);  return; }
 
   // ── League Data wizard — all ld_ prefixed buttons ─────────────────────────
   if (action?.startsWith("ld_")) {
