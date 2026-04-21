@@ -24,7 +24,7 @@ import { eq, and, desc, sql, isNotNull, isNull, ne, sum, max, inArray } from "dr
 import {
   getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
-  getSeasonStats, getSeasonRules, getCoreAttributes,
+  getSeasonStats, getSeasonRules, getCoreAttributes, getInventoryCount,
 } from "./db-helpers.js";
 import {
   getPayoutValue, getAllPayoutConfig, getMilestoneTiers, getAllPayoutKeys,
@@ -35,11 +35,12 @@ import { devBadge, DEV_LEGEND } from "./dev-trait.js";
 import { weekLabel } from "../commands/advanceweek.js";
 import { INTERVIEW_QUESTIONS, pickThreeIndices } from "../commands/interviewrequest.js";
 import { buildActionsHubEmbed, buildActionsHubRows } from "../commands/actions.js";
-import { aupSessions } from "../commands/attribute-up-interactions.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
-import { ATTRIBUTES, CORE_ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP } from "./constants.js";
+import { ATTRIBUTES, CORE_ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS } from "./constants.js";
+import { createSession } from "./custom-player-session.js";
+import { buildAttrPage, buildAttrDropdown, buildNavRow, aupSessions } from "../commands/attribute-up-interactions.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -330,21 +331,63 @@ export async function handleActionsInteraction(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const settings = await getServerSettings(gid);
+
+  const attrOn   = settings.coinEconomy && settings.attributeUpgradesEnabled;
+  const ageOn    = settings.coinEconomy && settings.ageResetsEnabled;
+  const devOn    = settings.coinEconomy && settings.devUpgradesEnabled;
+  const customOn = settings.coinEconomy && settings.customSuperstarsEnabled;
+  const legOn    = settings.coinEconomy && settings.legendsEnabled;
+
+  const disabledStyle = ButtonStyle.Secondary;
+
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ac_buy_attr")
+      .setLabel(attrOn ? "⭐ Attribute Upgrade" : "⭐ Attribute Upgrade (Off)")
+      .setStyle(attrOn ? ButtonStyle.Primary : disabledStyle)
+      .setDisabled(!attrOn),
+    new ButtonBuilder()
+      .setCustomId("ac_buy_agereset")
+      .setLabel(ageOn ? "🔄 Age Reset" : "🔄 Age Reset (Off)")
+      .setStyle(ageOn ? ButtonStyle.Primary : disabledStyle)
+      .setDisabled(!ageOn),
+    new ButtonBuilder()
+      .setCustomId("ac_buy_devup")
+      .setLabel(devOn ? "📈 Dev Trait Upgrade" : "📈 Dev Trait Upgrade (Off)")
+      .setStyle(devOn ? ButtonStyle.Primary : disabledStyle)
+      .setDisabled(!devOn),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ac_buy_custom")
+      .setLabel(customOn ? "🎨 Custom Player" : "🎨 Custom Player (Off)")
+      .setStyle(customOn ? ButtonStyle.Success : disabledStyle)
+      .setDisabled(!customOn),
+    new ButtonBuilder()
+      .setCustomId("ac_buy_legend")
+      .setLabel(legOn ? "🏆 Buy a Legend" : "🏆 Buy a Legend (Off)")
+      .setStyle(legOn ? ButtonStyle.Success : disabledStyle)
+      .setDisabled(!legOn),
+  );
+
+  const offItems = [
+    !attrOn && "Attribute Upgrades",
+    !ageOn  && "Age Resets",
+    !devOn  && "Dev Upgrades",
+    !customOn && "Custom Players",
+    !legOn  && "Legends",
+  ].filter(Boolean) as string[];
+
   const embed = new EmbedBuilder()
     .setColor(0x1a1a2e)
     .setTitle("💳 Make a Purchase")
-    .setDescription("Select a purchase type below.")
+    .setDescription(
+      "Select a purchase type below." +
+      (offItems.length ? `\n\n🔴 Currently disabled: ${offItems.join(", ")}` : "")
+    )
     .setTimestamp();
-
-  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_buy_attr").setLabel("⭐ Attribute Upgrade").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_buy_agereset").setLabel("🔄 Age Reset").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_buy_devup").setLabel("📈 Dev Trait Upgrade").setStyle(ButtonStyle.Primary),
-  );
-  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("🏆 Buy a Legend").setStyle(ButtonStyle.Secondary),
-  );
 
   await interaction.update({ embeds: [embed], components: [row1, row2, cancelRow()] });
 }
@@ -455,7 +498,8 @@ async function handleBuyAttrStart(interaction: StringSelectMenuInteraction, sess
   const settings = await getServerSettings(gid);
   const legacyMode = settings.legacyCoreAttrMode ?? false;
 
-  aupSessions.set(`${uid}:${playerId}`, {
+  const sKey = `${uid}:${playerId}`;
+  aupSessions.set(sKey, {
     invokerId: uid,
     targetId: uid,
     playerName,
@@ -467,17 +511,15 @@ async function handleBuyAttrStart(interaction: StringSelectMenuInteraction, sess
     legacyCoreAttrMode: legacyMode,
   });
 
-  // Show instruction to use the attribute page (acknowledge the interaction)
-  await interaction.update({
-    embeds: [new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle(`⭐ Attribute Upgrade — ${playerName}`)
-      .setDescription(
-        `Player loaded. Use \`/buy-attribute\` and search for **${playerName}** to complete the interactive attribute upgrade flow.\n\n` +
-        `*Tip: The interactive UI is best experienced through the dedicated \`/buy-attribute\` command which gives you paginated attribute groups.*`,
-      )],
-    components: [backToHubRow()],
-  });
+  // Render the paginated attribute browser directly
+  const rules   = await getSeasonRules(season);
+  const session = aupSessions.get(sKey)!;
+
+  const embed    = buildAttrPage(session, rules, coreSet);
+  const dropdown = buildAttrDropdown(session, rules, sKey, coreSet);
+  const navRow   = buildNavRow(session, sKey);
+
+  await interaction.update({ embeds: [embed], components: [dropdown, navRow] });
 }
 
 // ── Age Reset ─────────────────────────────────────────────────────────────────
@@ -831,18 +873,75 @@ async function handleBuyDevUpExecute(interaction: ButtonInteraction, sess: Actio
 // ── Buy Custom Player info ─────────────────────────────────────────────────────
 
 async function handleBuyCustomInfo(interaction: ButtonInteraction) {
-  await interaction.update({
-    embeds: [new EmbedBuilder()
-      .setColor(Colors.Gold)
-      .setTitle("🎨 Custom Player Builder")
-      .setDescription(
-        "The Custom Player Builder requires a detailed multi-step setup and is available through the dedicated command.\n\n" +
-        "Use **`/buy-customplayer`** to start the interactive custom player creation flow.\n\n" +
-        "That command will walk you through:\n" +
-        "• Package tier selection\n• Position & archetype\n• Dev trait\n• Abilities & signature package"
-      )],
-    components: [backToHubRow()],
-  });
+  await interaction.deferUpdate();
+
+  const gid       = interaction.guildId!;
+  const discordId = interaction.user.id;
+  const season    = await getOrCreateActiveSeason(gid);
+
+  const invCount = await getInventoryCount(discordId, season.id);
+
+  const combined = invCount.legends + invCount.customs;
+  const cap      = LIMITS.maxLegendsPlusCustomPlayers;
+
+  if (combined >= cap) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("❌ Season Inventory Full")
+        .setDescription(
+          `You already have **${combined}** combined legends and custom players this season ` +
+          `(max **${cap}**). You cannot add another custom player.`,
+        )
+        .addFields(
+          { name: "Legends",        value: `${invCount.legends}`, inline: true },
+          { name: "Custom Players", value: `${invCount.customs}`, inline: true },
+          { name: "Limit",          value: `${cap} combined`,     inline: true },
+        )],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const sessionId = createSession(discordId, gid, season.id);
+  const slotsLeft = cap - combined;
+
+  const warningEmbed = new EmbedBuilder()
+    .setColor(Colors.Yellow)
+    .setTitle("⚠️ Before You Start — Draft Pick Required")
+    .setDescription(
+      "Purchasing a custom player **does not automatically place them on your roster**.\n\n" +
+      "You must use **a draft pick** to select your custom player during the annual draft. " +
+      "If you do not have a draft pick available, you will not be able to add this player to your team.",
+    )
+    .addFields(
+      {
+        name: "What happens after you purchase?",
+        value:
+          "1. You build your player's position, archetype, attributes, and appearance.\n" +
+          "2. A commissioner adds them to the MCA draft class.\n" +
+          "3. You use a draft pick to select them in the draft.\n" +
+          "4. They join your roster once drafted.",
+      },
+      {
+        name: "Season inventory slots",
+        value: `You have **${combined}** of **${cap}** slots used. **${slotsLeft}** slot${slotsLeft !== 1 ? "s" : ""} remaining.`,
+      },
+    )
+    .setFooter({ text: "Make sure you have a draft pick saved before proceeding." });
+
+  const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ccp_preconfirm:${sessionId}`)
+      .setLabel("✅ I understand, start building")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`ccp_cancel:${sessionId}`)
+      .setLabel("❌ Cancel")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.editReply({ embeds: [warningEmbed], components: [confirmRow] });
 }
 
 // ── Buy Legend ─────────────────────────────────────────────────────────────────

@@ -183,7 +183,7 @@ async function loadUsedCoreAttrs(
 }
 
 // ── Build paginated attribute embed ───────────────────────────────────────────
-function buildAttrPage(
+export function buildAttrPage(
   session: AupSession,
   rules: { coreAttrCost: number; nonCoreAttrCost: number },
   coreSet: Set<string>,
@@ -222,7 +222,7 @@ function buildAttrPage(
   return embed;
 }
 
-function buildAttrDropdown(
+export function buildAttrDropdown(
   session: AupSession,
   rules: { coreAttrCost: number; nonCoreAttrCost: number },
   sKey: string,
@@ -268,7 +268,7 @@ function buildAttrDropdown(
   );
 }
 
-function buildNavRow(session: AupSession, sKey: string) {
+export function buildNavRow(session: AupSession, sKey: string) {
   const totalPages = Math.ceil(ATTRIBUTES.length / ATTRS_PER_PAGE);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
