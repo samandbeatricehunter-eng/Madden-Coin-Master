@@ -489,51 +489,83 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
       customPlayersRolled++;
     }
 
-    // Create new season record
-    await db.update(seasonsTable).set({ isActive: false });
-    const [newSeasonRecord] = await db.insert(seasonsTable)
-      .values({ seasonNumber: nextNumber, isActive: true })
-      .returning();
+    // Activate Season N+1 — prefer the record pre-seeded at Superbowl → Offseason;
+    // fall back to creating a fresh one if that step was skipped.
+    await db.update(seasonsTable)
+      .set({ isActive: false })
+      .where(eq(seasonsTable.guildId, guildId));
 
-    // Carry forward MCA teams + rosters
-    const prevTeams = await db.select().from(franchiseMcaTeamsTable)
-      .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    const existingNext = await db.select().from(seasonsTable)
+      .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.seasonNumber, nextNumber)))
+      .limit(1);
+
+    let newSeasonRecord: { id: number; seasonNumber: number } | undefined;
     let carryTeams = 0, carryRosters = 0;
-    if (newSeasonRecord && prevTeams.length > 0) {
-      const teamRows = prevTeams.map(t => ({
-        seasonId: newSeasonRecord.id, teamId: t.teamId, fullName: t.fullName,
-        nickName: t.nickName, userName: t.userName, isHuman: t.isHuman, discordId: t.discordId,
-      }));
-      await db.insert(franchiseMcaTeamsTable).values(teamRows).onConflictDoNothing();
-      carryTeams = teamRows.length;
-      const prevRosters = await db.select().from(franchiseRostersTable)
-        .where(eq(franchiseRostersTable.seasonId, season.id));
-      if (prevRosters.length > 0) {
-        const rosterRows = prevRosters.map(r => ({
-          seasonId: newSeasonRecord.id, teamId: r.teamId, teamName: r.teamName,
-          discordId: r.discordId, playerId: r.playerId, firstName: r.firstName,
-          lastName: r.lastName, position: r.position, overall: r.overall,
-          devTrait: r.devTrait, age: r.age, jerseyNum: r.jerseyNum,
-          contractYearsLeft: r.contractYearsLeft, attributes: r.attributes,
-        }));
-        for (let i = 0; i < rosterRows.length; i += 500) {
-          await db.insert(franchiseRostersTable).values(rosterRows.slice(i, i + 500)).onConflictDoNothing();
+
+    if (existingNext.length > 0) {
+      // Season N+1 was already seeded at Superbowl → Offseason — just activate it.
+      const [activated] = await db.update(seasonsTable)
+        .set({ isActive: true })
+        .where(eq(seasonsTable.id, existingNext[0]!.id))
+        .returning({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber });
+      newSeasonRecord = activated;
+      // Count existing carry-forward rows for the summary note
+      const [tc] = await db.select({ c: sql<string>`count(*)` }).from(franchiseMcaTeamsTable)
+        .where(eq(franchiseMcaTeamsTable.seasonId, existingNext[0]!.id));
+      const [rc] = await db.select({ c: sql<string>`count(*)` }).from(franchiseRostersTable)
+        .where(eq(franchiseRostersTable.seasonId, existingNext[0]!.id));
+      carryTeams  = parseInt(tc?.c ?? "0", 10);
+      carryRosters = parseInt(rc?.c ?? "0", 10);
+    } else {
+      // Fallback: create Season N+1 and copy teams/rosters now
+      const [created] = await db.insert(seasonsTable)
+        .values({ guildId, seasonNumber: nextNumber, isActive: true })
+        .returning({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber });
+      newSeasonRecord = created;
+
+      if (newSeasonRecord) {
+        const prevTeams = await db.select().from(franchiseMcaTeamsTable)
+          .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+        if (prevTeams.length > 0) {
+          const teamRows = prevTeams.map(t => ({
+            seasonId: newSeasonRecord!.id, teamId: t.teamId, fullName: t.fullName,
+            nickName: t.nickName, userName: t.userName, isHuman: t.isHuman, discordId: t.discordId,
+          }));
+          await db.insert(franchiseMcaTeamsTable).values(teamRows).onConflictDoNothing();
+          carryTeams = teamRows.length;
+
+          const prevRosters = await db.select().from(franchiseRostersTable)
+            .where(eq(franchiseRostersTable.seasonId, season.id));
+          if (prevRosters.length > 0) {
+            const rosterRows = prevRosters.map(r => ({
+              seasonId: newSeasonRecord!.id, teamId: r.teamId, teamName: r.teamName,
+              discordId: r.discordId, playerId: r.playerId, firstName: r.firstName,
+              lastName: r.lastName, position: r.position, overall: r.overall,
+              devTrait: r.devTrait, age: r.age, jerseyNum: r.jerseyNum,
+              contractYearsLeft: r.contractYearsLeft, attributes: r.attributes,
+            }));
+            for (let i = 0; i < rosterRows.length; i += 500) {
+              await db.insert(franchiseRostersTable).values(rosterRows.slice(i, i + 500)).onConflictDoNothing();
+            }
+            carryRosters = rosterRows.length;
+          }
         }
-        carryRosters = rosterRows.length;
       }
     }
 
     const isLastSeason = nextNumber === maxSeasons;
+    const rosterNote = carryTeams > 0
+      ? `• ${carryTeams} team links + ${carryRosters} roster rows active for Season ${nextNumber}.`
+      : "• No roster data seeded — MCA import required.";
     autoRolloverNote = [
       `🎉 **Season ${nextNumber} of ${maxSeasons} has begun!**` + (isLastSeason ? " ⚠️ This is the final season." : ""),
       `• ${legendsPromoted} legend(s) moved to permanent vaults${legendsReturned > 0 ? `; ${legendsReturned} returned to store (vault full)` : ""}.`,
       customPlayersRolled > 0 ? `• ${customPlayersRolled} custom player(s) rolled over to permanent inventories.` : "",
-      carryTeams > 0 ? `• ${carryTeams} team links + ${carryRosters} roster rows carried forward from Season ${season.seasonNumber}.` : "• No roster data to carry forward — MCA import required.",
+      rosterNote,
     ].filter(Boolean).join("\n");
     console.log(`[admin-operations] Auto season rollover: Season ${season.seasonNumber} → ${nextNumber} (guildId=${guildId})`);
 
-    // The new active record is newSeasonRecord — we advance week on IT, not season
-    // Override season reference for the week update below
+    // Point season reference at the new active record for the week update below
     Object.assign(season, { id: newSeasonRecord!.id, seasonNumber: nextNumber });
   }
 
@@ -1063,13 +1095,92 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     })();
   }
 
-  // ── Offseason historical post + channel wipes ─────────────────────────────
+  // ── Offseason historical post + channel wipes + roster carryforward ──────
   if (newWeek === "offseason") {
     (async () => {
       try {
         await runOffseasonHistoricalPost(interaction.client, season.id, season.seasonNumber);
       } catch (err) {
         console.error("[admin-operations] Offseason historical post error:", err);
+      }
+
+      // ── Auto-carryforward: seed Season N+1 with current season's roster ─────
+      try {
+        const maxSeasons  = await getMaxSeasons(guildId);
+        const nextNumber  = (season.seasonNumber ?? 0) + 1;
+
+        if (nextNumber <= maxSeasons) {
+          // Create Season N+1 as inactive staging record (idempotent)
+          const existingNext = await db.select({ id: seasonsTable.id })
+            .from(seasonsTable)
+            .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.seasonNumber, nextNumber)))
+            .limit(1);
+
+          let nextSeasonId: number;
+          if (existingNext.length > 0) {
+            nextSeasonId = existingNext[0]!.id;
+          } else {
+            const [created] = await db.insert(seasonsTable)
+              .values({ guildId, seasonNumber: nextNumber, isActive: false })
+              .returning({ id: seasonsTable.id });
+            nextSeasonId = created!.id;
+          }
+
+          // Upsert team links from Season N → Season N+1
+          const prevTeams = await db.select().from(franchiseMcaTeamsTable)
+            .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+          let carryTeams = 0;
+          for (const t of prevTeams) {
+            await db.insert(franchiseMcaTeamsTable)
+              .values({
+                seasonId: nextSeasonId, teamId: t.teamId, fullName: t.fullName,
+                nickName: t.nickName, userName: t.userName, isHuman: t.isHuman,
+                discordId: t.discordId, updatedAt: new Date(),
+              })
+              .onConflictDoUpdate({
+                target: [franchiseMcaTeamsTable.seasonId, franchiseMcaTeamsTable.teamId],
+                set: {
+                  fullName: t.fullName, nickName: t.nickName, userName: t.userName,
+                  isHuman: t.isHuman, discordId: t.discordId, updatedAt: new Date(),
+                },
+              });
+            carryTeams++;
+          }
+
+          // Replace rosters in Season N+1 with Season N's most recent import
+          await db.delete(franchiseRostersTable).where(eq(franchiseRostersTable.seasonId, nextSeasonId));
+          const prevRosters = await db.select().from(franchiseRostersTable)
+            .where(eq(franchiseRostersTable.seasonId, season.id));
+          let carryRosters = 0;
+          if (prevRosters.length > 0) {
+            const rosterRows = prevRosters.map(r => ({
+              seasonId: nextSeasonId, teamId: r.teamId, teamName: r.teamName,
+              discordId: r.discordId, playerId: r.playerId, firstName: r.firstName,
+              lastName: r.lastName, position: r.position, overall: r.overall,
+              devTrait: r.devTrait, age: r.age, jerseyNum: r.jerseyNum,
+              contractYearsLeft: r.contractYearsLeft, attributes: r.attributes,
+            }));
+            for (let i = 0; i < rosterRows.length; i += 500) {
+              await db.insert(franchiseRostersTable).values(rosterRows.slice(i, i + 500));
+            }
+            carryRosters = rosterRows.length;
+          }
+
+          console.log(`[admin-operations] Offseason carryforward: ${carryTeams} teams + ${carryRosters} rosters seeded into Season ${nextNumber} (id=${nextSeasonId})`);
+          await interaction.followUp({
+            content:
+              `📋 **Season ${nextNumber} roster seeded automatically.**\n` +
+              `• ${carryTeams} team links + ${carryRosters} roster rows copied from Season ${season.seasonNumber ?? "N"}.\n` +
+              `MCA will overwrite with fresh data on next import.`,
+            ephemeral: true,
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error("[admin-operations] Offseason carryforward error:", err);
+        await interaction.followUp({
+          content: `⚠️ Season roster carryforward failed — check bot logs. You can re-run manually with \`/season carryforward\` if needed.`,
+          ephemeral: true,
+        }).catch(() => {});
       }
 
       for (const chId of offseasonWipeIds) {

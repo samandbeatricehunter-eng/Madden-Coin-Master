@@ -281,10 +281,6 @@ export const data = new SlashCommandBuilder()
     );
   })
   .addSubcommand(sub =>
-    sub.setName("carryforward")
-      .setDescription("Manually copy team links + roster data from the previous season into the current season"),
-  )
-  .addSubcommand(sub =>
     sub.setName("resetweekstats")
       .setDescription("Clear stat dedup records + player season stats so EA export can re-import them fresh")
       .addBooleanOption(o => o
@@ -673,100 +669,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
     return;
   }
-  // ── /season carryforward ──────────────────────────────────────────────────
-  if (sub === "carryforward") {
-    const seasons = await db.select().from(seasonsTable).orderBy(sql`${seasonsTable.seasonNumber} DESC`).limit(2);
-    const currentSeason = seasons.find(s => s.isActive) ?? seasons[0];
-    const prevSeason    = seasons.find(s => !s.isActive) ?? seasons[1];
-
-    if (!currentSeason) {
-      return interaction.editReply({ content: "❌ No active season found." });
-    }
-    if (!prevSeason || prevSeason.id === currentSeason.id) {
-      return interaction.editReply({ content: "❌ No previous season found to carry forward from." });
-    }
-
-    const prevTeams = await db.select().from(franchiseMcaTeamsTable)
-      .where(eq(franchiseMcaTeamsTable.seasonId, prevSeason.id));
-
-    if (prevTeams.length === 0) {
-      return interaction.editReply({ content: `❌ No team data found for Season ${prevSeason.seasonNumber} to carry forward.` });
-    }
-
-    // Upsert teams — preserve any season-3 rows already written by MCA stubs
-    const teamRows = prevTeams.map(t => ({
-      seasonId:  currentSeason.id,
-      teamId:    t.teamId,
-      fullName:  t.fullName,
-      nickName:  t.nickName,
-      userName:  t.userName,
-      isHuman:   t.isHuman,
-      discordId: t.discordId,
-      updatedAt: new Date(),
-    }));
-
-    let carryTeams = 0;
-    for (const row of teamRows) {
-      await db.insert(franchiseMcaTeamsTable)
-        .values(row)
-        .onConflictDoUpdate({
-          target: [franchiseMcaTeamsTable.seasonId, franchiseMcaTeamsTable.teamId],
-          set: {
-            fullName:  row.fullName,
-            nickName:  row.nickName,
-            userName:  row.userName,
-            isHuman:   row.isHuman,
-            discordId: row.discordId,
-            updatedAt: row.updatedAt,
-          },
-        });
-      carryTeams++;
-    }
-
-    // Copy roster rows — delete existing season-N stubs first, then insert
-    await db.delete(franchiseRostersTable).where(eq(franchiseRostersTable.seasonId, currentSeason.id));
-    const prevRosters = await db.select().from(franchiseRostersTable)
-      .where(eq(franchiseRostersTable.seasonId, prevSeason.id));
-
-    let carryRosters = 0;
-    if (prevRosters.length > 0) {
-      const rosterRows = prevRosters.map(r => ({
-        seasonId:          currentSeason.id,
-        teamId:            r.teamId,
-        teamName:          r.teamName,
-        discordId:         r.discordId,
-        playerId:          r.playerId,
-        firstName:         r.firstName,
-        lastName:          r.lastName,
-        position:          r.position,
-        overall:           r.overall,
-        devTrait:          r.devTrait,
-        age:               r.age,
-        jerseyNum:         r.jerseyNum,
-        contractYearsLeft: r.contractYearsLeft,
-        attributes:        r.attributes,
-      }));
-      for (let i = 0; i < rosterRows.length; i += 500) {
-        await db.insert(franchiseRostersTable).values(rosterRows.slice(i, i + 500));
-      }
-      carryRosters = rosterRows.length;
-    }
-
-    return interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Roster Carry-Forward Complete")
-          .setDescription(
-            `Copied from **Season ${prevSeason.seasonNumber}** into **Season ${currentSeason.seasonNumber}**:\n\n` +
-            `• **${carryTeams}** team links\n` +
-            `• **${carryRosters}** roster rows\n\n` +
-            `All roster commands will now work. MCA will overwrite with fresh data on next import.`
-          ),
-      ],
-    });
-  }
-
   // ── /season resetweekstats ────────────────────────────────────────────────
   if (sub === "resetweekstats") {
     const confirmed = interaction.options.getBoolean("confirm") ?? false;
