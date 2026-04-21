@@ -171,9 +171,37 @@ export async function execute(interaction: Interaction) {
     return;
   }
 
-  if (interaction.isButton())           { await handleButton(interaction);    return; }
-  if (interaction.isStringSelectMenu()) { await handleSelectMenu(interaction); return; }
-  if (interaction.isModalSubmit())      { await handleModal(interaction); }
+  if (interaction.isButton()) {
+    try { await handleButton(interaction); }
+    catch (err) {
+      console.error(`[button] ${interaction.customId}:`, err);
+      const msg = { content: "❌ Something went wrong. Please try again.", ephemeral: true };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
+    }
+    return;
+  }
+
+  if (interaction.isStringSelectMenu()) {
+    try { await handleSelectMenu(interaction); }
+    catch (err) {
+      console.error(`[select] ${interaction.customId}:`, err);
+      const msg = { content: "❌ Something went wrong. Please try again.", ephemeral: true };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
+    }
+    return;
+  }
+
+  if (interaction.isModalSubmit()) {
+    try { await handleModal(interaction); }
+    catch (err) {
+      console.error(`[modal] ${interaction.customId}:`, err);
+      const msg = { content: "❌ Something went wrong. Please try again.", ephemeral: true };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
+    }
+  }
 }
 
 // ── Button handler ─────────────────────────────────────────────────────────────
