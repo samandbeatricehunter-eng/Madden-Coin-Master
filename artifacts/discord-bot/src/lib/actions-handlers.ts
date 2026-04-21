@@ -39,6 +39,7 @@ import {
   type InterviewType,
 } from "../commands/interviewrequest.js";
 import { buildActionsHubEmbed, buildActionsHubRows } from "../commands/actions.js";
+import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
@@ -1077,6 +1078,16 @@ async function handleBuyLegendExecute(interaction: ButtonInteraction, sess: Acti
 
 // ── Wager ─────────────────────────────────────────────────────────────────────
 
+/** Convert a currentWeek string (e.g. "1", "wildcard") to the integer weekIndex
+ *  stored in franchise_schedule rows. Regular seasons are 0-based; playoffs use
+ *  the canonical 1018/1019/1020/1022 values from PLAYOFF_WEEK_META. */
+function weekKeyToIndex(weekKey: string): number | null {
+  const num = parseInt(weekKey, 10);
+  if (!isNaN(num) && num >= 1 && num <= 18) return num - 1;
+  const meta = PLAYOFF_WEEK_META[weekKey];
+  return meta ? meta.weekIndex : null;
+}
+
 async function handleWagerStart(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
   const settings = await getServerSettings(gid);
@@ -1086,7 +1097,20 @@ async function handleWagerStart(interaction: ButtonInteraction, sess: ActionsSes
   }
 
   const season = await getOrCreateActiveSeason(gid);
-  const scheduleRows = await db.select({
+  const currentWeekStr = (season as any).currentWeek ?? "1";
+  const weekIndex = weekKeyToIndex(currentWeekStr);
+
+  if (weekIndex === null) {
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Orange)
+      .setTitle("⚔️ Place a Wager")
+      .setDescription("No schedule data found for the current week. Use **`/wager`** directly to challenge an opponent.\n\nOr ask a commissioner to import the schedule from MCA.");
+    await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+    return;
+  }
+
+  // Primary query using the correct integer weekIndex
+  let scheduleRows = await db.select({
     id:           franchiseScheduleTable.id,
     weekIndex:    franchiseScheduleTable.weekIndex,
     homeTeamName: franchiseScheduleTable.homeTeamName,
@@ -1095,12 +1119,27 @@ async function handleWagerStart(interaction: ButtonInteraction, sess: ActionsSes
   }).from(franchiseScheduleTable)
     .where(and(
       eq(franchiseScheduleTable.seasonId, season.id),
-      eq(franchiseScheduleTable.weekIndex, (season as any).currentWeek ?? 1),
+      eq(franchiseScheduleTable.weekIndex, weekIndex),
     ))
     .limit(25);
 
+  // Fallback: playoff weeks may be stored without the 1000-offset if MCA sent weekType=1
+  if (scheduleRows.length === 0 && weekIndex >= 1000) {
+    scheduleRows = await db.select({
+      id:           franchiseScheduleTable.id,
+      weekIndex:    franchiseScheduleTable.weekIndex,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      status:       franchiseScheduleTable.status,
+    }).from(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId, season.id),
+        eq(franchiseScheduleTable.weekIndex, weekIndex - 1000),
+      ))
+      .limit(25);
+  }
+
   if (!scheduleRows.length) {
-    // Fallback: manual wager form (no schedule data)
     const embed = new EmbedBuilder()
       .setColor(Colors.Orange)
       .setTitle("⚔️ Place a Wager")
@@ -1115,7 +1154,7 @@ async function handleWagerStart(interaction: ButtonInteraction, sess: ActionsSes
     .addOptions(
       scheduleRows.map(g =>
         new StringSelectMenuOptionBuilder()
-          .setLabel(`${g.homeTeamName} vs ${g.awayTeamName} (Week ${g.weekIndex})`)
+          .setLabel(`${g.homeTeamName} vs ${g.awayTeamName}`)
           .setValue(String(g.id)),
       ),
     );
