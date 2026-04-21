@@ -232,8 +232,40 @@ function getWeekLabel(weekType: "reg" | "pre", weekNum: number): string {
   return `Regular Season Week ${weekNum}`;
 }
 
+// ── Import mode picker ─────────────────────────────────────────────────────────
+function buildImportModeContent() {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle("📥 Import Data Only — Choose Mode")
+    .setDescription(
+      "**📥 Import + Payouts**\n" +
+      "Normal import — stats are stored and coin payouts are issued for game results.\n\n" +
+      "**📦 Reimport — No Payouts**\n" +
+      "Stats are stored but **no coins are awarded and W/L records are not updated**.\n" +
+      "Use this when reimporting missing weeks (e.g. Weeks 3 & 4) or correcting data after a clear.",
+    )
+    .setFooter({ text: "No payouts will be triggered in Reimport mode" });
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ld_import_mode:0")
+      .setLabel("📥 Import + Payouts")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("ld_import_mode:1")
+      .setLabel("📦 Reimport — No Payouts")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("ld_cancel_to_main")
+      .setLabel("✕ Cancel")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
 // ── Connected status + week select ─────────────────────────────────────────────
-async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: string; eaLeagueId: number; platform: string }) {
+async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: string; eaLeagueId: number; platform: string }, skipPayouts = false) {
   const [season] = await db
     .select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber, currentWeek: seasonsTable.currentWeek })
     .from(seasonsTable)
@@ -270,9 +302,12 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
 
   const hasOptions = options.length > 0;
 
+  const modeNote = skipPayouts ? "\n\n⚠️ **Reimport mode — No Payouts:** Stats will be stored but no coins will be awarded and W/L records will not be updated." : "";
+  const footerBase = connInfo ? `League ID: ${connInfo.eaLeagueId}` : (conn ? `League ID: ${conn.eaLeagueId}` : "No connection");
+
   const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle(connInfo ? "✅ Connected! Select Week to Import" : "📥 Select Week to Import")
+    .setColor(skipPayouts ? Colors.Orange : Colors.Green)
+    .setTitle(connInfo ? "✅ Connected! Select Week to Import" : (skipPayouts ? "📦 Reimport — No Payouts · Select Week" : "📥 Select Week to Import"))
     .setDescription(
       (connInfo
         ? `**League:** ${connInfo.leagueName} · **Platform:** ${connInfo.platform.toUpperCase()}\n\n`
@@ -282,23 +317,26 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
         : `Select a week to import from EA.\n\n` +
           `Current week: **${currentWeekNum <= 18 ? `Week ${currentWeekNum}` : (PLAYOFF_ROUNDS.find(r => r.weekNum === currentWeekNum)?.label ?? `Week ${currentWeekNum}`)}**\n` +
           `Available: Weeks 1–${Math.min(maxWeek, 18)}` +
-          (maxWeek >= 19 ? ` + ${PLAYOFF_ROUNDS.filter(r => r.weekNum <= maxWeek).map(r => r.label.replace("🏆 ", "")).join(", ")}` : "")),
+          (maxWeek >= 19 ? ` + ${PLAYOFF_ROUNDS.filter(r => r.weekNum <= maxWeek).map(r => r.label.replace("🏆 ", "")).join(", ")}` : "")) +
+      modeNote,
     )
-    .setFooter({ text: connInfo ? `League ID: ${connInfo.eaLeagueId}` : (conn ? `League ID: ${conn.eaLeagueId}` : "No connection") });
+    .setFooter({ text: skipPayouts ? `${footerBase} · Reimport mode — no payouts` : footerBase });
 
   if (!hasOptions) {
     return { embeds: [embed], components: [cancelRow()] };
   }
 
+  const payFlag = skipPayouts ? "1" : "0";
+
   const select = new StringSelectMenuBuilder()
-    .setCustomId("ld_select_week")
+    .setCustomId(`ld_select_week:${payFlag}`)
     .setPlaceholder("Select a week or playoff round to import…")
     .addOptions(options);
 
   const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
   const proceedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId("ld_proceed:0")
+      .setCustomId(`ld_proceed:0:${payFlag}`)
       .setLabel("⬆ Select a week first")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(true),
@@ -356,7 +394,10 @@ async function guardAdmin(interaction: ButtonInteraction | ModalSubmitInteractio
 export async function handleLeagueDataButton(interaction: ButtonInteraction): Promise<void> {
   if (!(await guardAdmin(interaction))) return;
 
-  const [action, param] = interaction.customId.split(":");
+  const idParts = interaction.customId.split(":");
+  const action  = idParts[0]!;
+  const param   = idParts[1];
+  const flagPart = idParts[2] ?? "0";   // "0" = with payouts, "1" = no payouts
   const guildId = interaction.guildId!;
 
   // ── Back to main menu ──────────────────────────────────────────────────────
@@ -378,7 +419,7 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
     return;
   }
 
-  // ── Import Only: skip to week select ──────────────────────────────────────
+  // ── Import Only: show mode picker (payouts on/off) ────────────────────────
   if (action === "ld_import_only") {
     const conn = await loadEAConnection(guildId).catch(() => null);
     if (!conn) {
@@ -396,7 +437,14 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
       } as any);
       return;
     }
-    const content = await buildWeekSelectContent(guildId);
+    await interaction.update(buildImportModeContent() as any);
+    return;
+  }
+
+  // ── Import mode selected: 0 = with payouts, 1 = no payouts ───────────────
+  if (action === "ld_import_mode") {
+    const skipPayouts = param === "1";
+    const content = await buildWeekSelectContent(guildId, undefined, skipPayouts);
     await interaction.update(content as any);
     return;
   }
@@ -499,13 +547,16 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
   // ── Proceed with import ────────────────────────────────────────────────────
   if (action === "ld_proceed") {
     const parts = (param ?? "").split("_"); // format: "reg_3" or "pre_3"
-    const weekType = (parts[0] ?? "reg") as "reg" | "pre";
-    const weekNum  = parseInt(parts[1] ?? "0", 10);
+    const weekType    = (parts[0] ?? "reg") as "reg" | "pre";
+    const weekNum     = parseInt(parts[1] ?? "0", 10);
+    const skipPayouts = flagPart === "1";
 
     if (!weekNum || weekNum < 1) {
       await interaction.reply({ content: "❌ Invalid week selection.", ephemeral: true });
       return;
     }
+
+    const wkLabel = weekType === "pre" ? `Preseason Week ${weekNum}` : `Regular Season Week ${weekNum}`;
 
     await interaction.deferUpdate();
 
@@ -513,7 +564,10 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
       embeds: [
         new EmbedBuilder()
           .setColor(Colors.Yellow)
-          .setDescription(`⏳ Importing **${weekType === "pre" ? "Preseason" : "Regular Season"} Week ${weekNum}** from EA…`),
+          .setDescription(
+            `⏳ Importing **${wkLabel}** from EA…` +
+            (skipPayouts ? "\n\n📦 Reimport mode — no coin payouts will be triggered." : ""),
+          ),
       ],
       components: [],
     });
@@ -523,6 +577,7 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
         guildId,
         weekNum,
         weekType,
+        skipPayouts,
         guild: interaction.guild,
         editReply: data => interaction.editReply(data),
       });
@@ -655,7 +710,9 @@ export async function handleLeagueDataModal(interaction: ModalSubmitInteraction)
 export async function handleLeagueDataSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   if (!(await guardAdmin(interaction))) return;
 
-  const [action] = interaction.customId.split(":");
+  const parts   = interaction.customId.split(":");
+  const action  = parts[0]!;
+  const flagStr = parts[1] ?? "0";          // "0" = with payouts, "1" = no payouts
   const guildId  = interaction.guildId!;
   const userId   = interaction.user.id;
   const value    = interaction.values[0] ?? "";
@@ -719,6 +776,8 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
   // ── Week selection ─────────────────────────────────────────────────────────
   if (action === "ld_select_week") {
     // value format: "reg:3" or "reg:19" (playoff) or "pre:1"
+    // flagStr from customId carries the skipPayouts flag ("0" or "1")
+    const skipPayouts = flagStr === "1";
     const [stage, weekStr] = value.split(":");
     const weekNum  = parseInt(weekStr ?? "0", 10);
     const stageKey = stage === "pre" ? "pre" : "reg";
@@ -733,21 +792,24 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
       .limit(1);
 
     const currentWeekNum = season ? (parseInt(season.currentWeek ?? "1", 10) || 1) : 1;
-    const maxWeek = currentWeekNum; // include current week and all previous weeks
+    const maxWeek = currentWeekNum;
+
+    const modeNote = skipPayouts ? "\n\n⚠️ **Reimport mode — No Payouts:** Coins will not be awarded and W/L records will not be updated." : "";
 
     const embed = new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle("📥 Select Week to Import")
+      .setColor(skipPayouts ? Colors.Orange : Colors.Green)
+      .setTitle(skipPayouts ? "📦 Reimport — No Payouts · Select Week" : "📥 Select Week to Import")
       .setDescription(
         `**Selected: ${chosen}**\n\n` +
         (conn
           ? `League: **${conn.leagueName}** · Platform: **${conn.token.platform.toUpperCase()}**\n\n`
           : "") +
-        `Click **Proceed with Import** to start, or pick a different week from the dropdown.`,
+        `Click **Proceed with Import** to start, or pick a different week from the dropdown.` +
+        modeNote,
       )
       .setFooter({ text: conn ? `League ID: ${conn.eaLeagueId}` : "No connection info" });
 
-    // Rebuild the dropdown with the same options as the initial view, marking selected
+    // Rebuild the dropdown with the same options, marking selected; carry the flag in customId
     const options: StringSelectMenuOptionBuilder[] = [];
     for (let w = 1; w <= Math.min(maxWeek, 18); w++) {
       options.push(
@@ -772,14 +834,14 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
 
     const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId("ld_select_week")
+        .setCustomId(`ld_select_week:${flagStr}`)
         .setPlaceholder(chosen)
         .addOptions(options),
     );
 
     const proceedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(`ld_proceed:${stageKey}_${weekNum}`)
+        .setCustomId(`ld_proceed:${stageKey}_${weekNum}:${flagStr}`)
         .setLabel(`⬆ Proceed with Import — ${chosen}`)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
@@ -880,13 +942,14 @@ async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild
 }
 
 export async function runWeekImport(ctx: {
-  guildId:   string;
-  weekNum:   number;
-  weekType:  "reg" | "pre";
-  guild:     Guild | null | undefined;
-  editReply: (data: any) => Promise<any>;
+  guildId:      string;
+  weekNum:      number;
+  weekType:     "reg" | "pre";
+  guild:        Guild | null | undefined;
+  editReply:    (data: any) => Promise<any>;
+  skipPayouts?: boolean;
 }): Promise<void> {
-  const { guildId, weekNum, weekType, guild, editReply } = ctx;
+  const { guildId, weekNum, weekType, guild, editReply, skipPayouts = false } = ctx;
 
   const conn = await loadEAConnection(guildId);
   if (!conn) {
@@ -975,7 +1038,8 @@ export async function runWeekImport(ctx: {
   const teamRes = await postToApi(`${weekBase}/team`, stats.teamStats);
   results.push({ name: "teamStats", ...teamRes });
 
-  const schedRes = await postToApi(`${weekBase}/schedules`, stats.schedules);
+  const schedulesUrl = skipPayouts ? `${weekBase}/schedules?skipPayouts=1` : `${weekBase}/schedules`;
+  const schedRes = await postToApi(schedulesUrl, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
 
   try {
@@ -997,8 +1061,17 @@ export async function runWeekImport(ctx: {
   );
 
   const embed = new EmbedBuilder()
-    .setColor(overallOk ? Colors.Green : failCount > 0 || !rostersAllOk ? Colors.Yellow : Colors.Red)
-    .setTitle(`📥 Import Complete — ${wkLabel}`)
+    .setColor(
+      !overallOk                        ? (failCount > 0 || !rostersAllOk ? Colors.Yellow : Colors.Red) :
+      skipPayouts                       ? Colors.Orange :
+                                          Colors.Green,
+    )
+    .setTitle(skipPayouts ? `📦 Reimport Complete (No Payouts) — ${wkLabel}` : `📥 Import Complete — ${wkLabel}`)
+    .setDescription(
+      skipPayouts
+        ? "✅ Stats stored. **No coins were awarded** and **W/L records were not updated** — reimport mode was active.\n\nRun **Repair User Records** from `/admin-troubleshoot` if W/L counts look off."
+        : null,
+    )
     .addFields(
       { name: "📊 Player & Team Stats", value: statsLines.join("\n") || "none" },
       { name: "🏈 Roster Sync",         value: rosterSummary },
@@ -1007,7 +1080,6 @@ export async function runWeekImport(ctx: {
         : `⚠️ ${successCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "roster errors"}`,
       },
     )
-    .setDescription("No payouts were triggered. Run **Repair User Records** from `/admin-troubleshoot` if W/L counts look off.")
     .setFooter({ text: `League ID: ${eaLeagueId} · Platform: ${platform.toUpperCase()}` })
     .setTimestamp();
 

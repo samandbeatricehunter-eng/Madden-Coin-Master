@@ -1787,6 +1787,7 @@ export async function processWeekScores(
   weekNum: number,
   weekType = "reg",
   eaLeagueId = 0,
+  skipPayouts = false,
 ): Promise<WeekScoresResult> {
   const zero: WeekScoresResult = {
     ok: false, message: "", gamesProcessed: 0, gamesDuplicate: 0,
@@ -1913,8 +1914,8 @@ export async function processWeekScores(
         );
       }
 
-      // ── Catchup mode: log result + mark processed, skip all payouts/coins ──
-      if (season.catchupMode) {
+      // ── Catchup mode / skipPayouts: log result + mark processed, skip all payouts/coins ──
+      if (season.catchupMode || skipPayouts) {
         const hiScore    = Math.max(homeScore, awayScore);
         const loScore    = Math.min(homeScore, awayScore);
         const winnerName = homeWon ? hData.fullName : aData.fullName;

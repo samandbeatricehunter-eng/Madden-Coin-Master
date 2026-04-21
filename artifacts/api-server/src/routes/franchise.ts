@@ -377,12 +377,13 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 // The MCA sends scores here (NOT /scores). This is the primary payout trigger.
 // Handles both regular season (weekType=reg) and playoffs (weekType=post, etc.)
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/schedules", validateKey, async (req, res) => {
-  const weekNum   = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
-  const weekType  = String(req.params["weekType"] ?? "reg").toLowerCase();
-  const leagueId  = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const weekNum    = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType   = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const leagueId   = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const skipPayouts = String(req.query["skipPayouts"] ?? "0") === "1";
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-schedules.json`, req.body);
   res.status(200).json({ status: "received" });
-  console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}), processing...`);
+  console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}, skipPayouts=${skipPayouts}), processing...`);
 
   // Resolve guild-scoped channels and sync schedule concurrently.
   const [, channels] = await Promise.all([
@@ -391,7 +392,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   ]);
   const { commCh, genCh } = channels;
 
-  const result = await processWeekScores(req.body, weekNum, weekType, leagueId).catch(err => ({
+  const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
