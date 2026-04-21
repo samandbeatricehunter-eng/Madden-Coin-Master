@@ -7,56 +7,62 @@ import { eq, or } from "drizzle-orm";
 // ─────────────────────────────────────────────────────────────────────────────
 // EA API constants — CURRENT: Madden 26
 //
-// HOW TO UPDATE FOR A NEW MADDEN YEAR
+// HOW TO UPDATE FOR MADDEN 27 (and future years)
 // ─────────────────────────────────────────────────────────────────────────────
-// Every year EA ships a new Madden Companion App (MCA). Five constants below
-// change with every release (AUTH_SOURCE, CLIENT_SECRET, CLIENT_ID,
-// MACHINE_KEY, and all the year-stamped strings in the four maps).
-// Everything else — Blaze server hostname, endpoint names, OAuth URLs, request
-// payload shape — has been identical across Madden 24, 25, and 26.
+// Confirmed by cross-referencing Snallabot's open-source commit history
+// (github.com/snallabot/snallabot-service) across M25 → M26:
 //
-// TWO WAYS TO FIND THE NEW VALUES (both take under 30 minutes):
+// ┌─────────────────┬──────────────────────┬──────────────────────┬───────────┐
+// │ Constant        │ Madden 25            │ Madden 26            │ Changes?  │
+// ├─────────────────┼──────────────────────┼──────────────────────┼───────────┤
+// │ AUTH_SOURCE     │ 317239               │ 317239               │ NO ✅     │
+// │ MACHINE_KEY     │ 444d362e8e067fe2     │ 444d362e8e067fe2     │ NO ✅     │
+// │ CLIENT_ID       │ MCA_25_COMP_APP      │ MCA_26_COMP_APP      │ YES (num) │
+// │ CLIENT_SECRET   │ wfGAWnrx..._20240731 │ teJpJ9cS..._20250910 │ YES (new) │
+// └─────────────────┴──────────────────────┴──────────────────────┴───────────┘
 //
-// ── Method A: Decompile the APK (easiest, no phone needed) ───────────────────
-//   1. Download the new MCA APK from apkpure.com or apkmirror.com
-//      (search "Madden NFL 27 Companion" once it's live on the Play Store)
-//   2. Upload the APK to https://www.decompiler.com  (free, no install)
-//      — or run locally: jadx -d output/ MaddenCompanion.apk
-//   3. In the decompiled output, search for:
-//        "MCA_2"            → finds CLIENT_ID  (e.g. "MCA_27_COMP_APP")
-//        "authentication_source"  → finds AUTH_SOURCE (the integer beside it)
-//        "client_secret"    → finds CLIENT_SECRET (the long string beside it)
-//        "machineProfileKey"→ finds MACHINE_KEY (16-char hex string)
-//   4. The entitlement tag pattern is always  MADDEN_<2-digit-year><PLATFORM>
-//      e.g. MADDEN_27PS5, MADDEN_27XBSX — just bump the number.
-//   5. The Blaze service pattern is always  madden-20<2-digit-year>-<platform>
-//      e.g. madden-2027-ps5, madden-2027-xbsx — just bump the year.
+// For Madden 27 you can predict with near-certainty:
+//   AUTH_SOURCE  = 317239               (unchanged two years running)
+//   MACHINE_KEY  = "444d362e8e067fe2"   (unchanged two years running)
+//   CLIENT_ID    = "MCA_27_COMP_APP"    (pattern is perfectly consistent)
+//   TWO_DIGIT_YEAR = "27", YEAR = "2027" (just bump the numbers in the four maps)
 //
-// ── Method B: Network intercept (most reliable, confirms live values) ─────────
-//   1. Install Android Studio and create a Pixel emulator (API level 30 or lower
-//      — older Android lets you install user CAs without root).
-//   2. Install mitmproxy (https://mitmproxy.org) and its certificate on the emulator.
-//   3. Install the new MCA APK on the emulator and open it.
-//   4. Log in with your EA account and navigate to your league.
-//   5. In mitmproxy, look at the POST to accounts.ea.com/connect/token —
-//      the request body contains client_id, client_secret, authentication_source.
-//   6. The POST to wal2.tools.gos.bio-iad.ea.com/wal/authentication/login shows
-//      productName, which matches PLATFORM_TO_PRODUCT_NAME.
+// The ONLY value you cannot predict is CLIENT_SECRET — a long opaque string.
+// Its suffix is a datestamp (YYYYMMDDHHMMSS) of when EA generated it.
+//   M25 secret ends: _20240731135155  (generated ~1 week before M25's Aug 2024 launch)
+//   M26 secret ends: _20250910175618  (generated ~3 weeks after M26's Aug 2025 launch)
+// So the new secret exists on EA's servers at or near launch — you just need to find it.
 //
-// ── After you have the values ─────────────────────────────────────────────────
-// Update the five constants below + do a find-and-replace on "26" → "27" (and
-// "2026" → "2027") in the four maps. That is the entire migration.
+// ── HOW TO GET THE NEW CLIENT_SECRET ON DAY 1 ────────────────────────────────
+// Snallabot's GitHub is the fastest source — they update their ea_constants.ts
+// as soon as they crack the new year's creds. Watch:
+//   https://github.com/snallabot/snallabot-service/commits/main/src/dashboard/ea_constants.ts
+// For M26 they committed the creds on Nov 23, 2025 (~3 months after release).
+// With community help that timeline can be much shorter.
+//
+// If you want to find it yourself (any of these work):
+//   A. Decompile the new MCA APK:
+//      - Download from apkpure.com or apkmirror.com ("Madden NFL 27 Companion")
+//      - Upload to https://www.decompiler.com (free, browser-based)
+//      - Search for "client_secret" — the long string next to it is what you need
+//   B. Network intercept (most reliable):
+//      - Run MCA on an Android emulator through mitmproxy (mitmproxy.org)
+//      - The POST to accounts.ea.com/connect/token shows it in the request body
+//
+// ── AFTER YOU HAVE THE SECRET ────────────────────────────────────────────────
+// Only three lines to change:
+//   1. CLIENT_ID    → "MCA_27_COMP_APP"
+//   2. CLIENT_SECRET → (new value from above)
+//   3. Find-replace "26" → "27" and "2026" → "2027" in the four maps below
 // ─────────────────────────────────────────────────────────────────────────────
 
-// YEAR-SPECIFIC — update these every Madden release:
-//   AUTH_SOURCE   → integer beside "authentication_source" in APK / network capture
-//   CLIENT_SECRET → long string beside "client_secret" in APK / network capture
-//   CLIENT_ID     → string matching "MCA_<YY>_COMP_APP" pattern in APK
-//   MACHINE_KEY   → 16-char hex string beside "machineProfileKey" in APK
+// STABLE across M25 and M26 — almost certainly unchanged for M27:
 const AUTH_SOURCE   = 317239;
+const MACHINE_KEY   = "444d362e8e067fe2";
+
+// YEAR-SPECIFIC — bump the number in CLIENT_ID + get new CLIENT_SECRET (see above):
 const CLIENT_SECRET = "teJpJ9cSXFqZAuKNW8IuHpy8D4dwWPoVrPoek38iCnrGbrUSfjqnHMBAv8iCVjeSm_20250910175618";
 const CLIENT_ID     = "MCA_26_COMP_APP";
-const MACHINE_KEY   = "444d362e8e067fe2";
 
 // STABLE — does not change year to year:
 const REDIRECT_URL  = "http://127.0.0.1/success";
