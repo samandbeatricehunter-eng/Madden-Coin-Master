@@ -4,7 +4,7 @@
  */
 import {
   ButtonInteraction, StringSelectMenuInteraction, ModalSubmitInteraction,
-  EmbedBuilder, Colors, TextChannel, ChannelType,
+  EmbedBuilder, Colors, TextChannel, ChannelType, MessageFlags,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
@@ -46,6 +46,7 @@ import { buildUserDataHubEmbed, buildUserDataHubRows } from "./admin-user-handle
 import { buildTroubleshootEmbed, buildTroubleshootRows } from "./admin-troubleshoot-handlers.js";
 import { buildLeagueDataMainMenu } from "./league-data-handlers.js";
 import { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "./server-settings.js";
+import { setGuildChannel } from "./db-helpers.js";
 import { rebuildHistoricalChannel } from "./wildcard-automation.js";
 import OpenAI from "openai";
 
@@ -370,6 +371,20 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
   // ── Server Settings hub ───────────────────────────────────────────────────────
   if (id === "ao_server_settings") {
     await handleServerSettingsHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Manual Channel Link picker ────────────────────────────────────────────────
+  if (id === "ao_manual_channel_link") {
+    await handleManualChannelLinkPicker(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_manual_ch_select") {
+    await handleManualChannelSelect(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+  if (id.startsWith("ao_modal_manual_ch")) {
+    await handleManualChannelModal(interaction as ModalSubmitInteraction);
     return true;
   }
 
@@ -1104,9 +1119,140 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
 async function handleServerSettingsHub(interaction: ButtonInteraction) {
   const guildId  = interaction.guildId!;
   const settings = await getServerSettings(guildId);
+  const baseRows  = buildSettingsRows(settings) as ActionRowBuilder<any>[];
+
+  const manualLinkRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ao_manual_channel_link")
+      .setLabel("🔗 Manual Channel Link")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ao_hub_back")
+      .setLabel("← Back to Hub")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ao_hub_close")
+      .setLabel("✖ Close")
+      .setStyle(ButtonStyle.Danger),
+  ) as ActionRowBuilder<any>;
+
   await (interaction as any).update({
     embeds: [buildSettingsEmbed(settings)],
-    components: buildSettingsRows(settings) as ActionRowBuilder<any>[],
+    components: [...baseRows, manualLinkRow],
+  });
+}
+
+// ── Manual Channel Link ────────────────────────────────────────────────────────
+
+const MANUAL_LINKABLE: { label: string; value: string; description: string }[] = [
+  { label: "Commissioner Log",    value: CHANNEL_KEYS.COMMISSIONER_LOG,    description: "General commissioner log"        },
+  { label: "Transaction Log",     value: CHANNEL_KEYS.TRANSACTION_LOG,     description: "Coin movement transactions"      },
+  { label: "Upgrades Log",        value: CHANNEL_KEYS.UPGRADES_LOG,        description: "Dev/age/attribute upgrades"      },
+  { label: "Draft Purchases Log", value: CHANNEL_KEYS.DRAFT_PURCHASES_LOG, description: "Legend & custom player purchases" },
+  { label: "Import Log",          value: CHANNEL_KEYS.IMPORT_LOG,          description: "Week import confirmations"       },
+  { label: "Violation Log",       value: CHANNEL_KEYS.VIOLATION_LOG,       description: "Rule violation reports"         },
+  { label: "Commissioner",        value: CHANNEL_KEYS.COMMISSIONER,        description: "Legacy fallback channel"        },
+  { label: "Transactions",        value: CHANNEL_KEYS.TRANSACTIONS,        description: "Legacy transaction channel"     },
+  { label: "Announcements",       value: CHANNEL_KEYS.ANNOUNCEMENTS,       description: "League announcements"           },
+  { label: "Matchups",            value: CHANNEL_KEYS.MATCHUPS,            description: "Weekly matchups post"           },
+  { label: "Schedule",            value: CHANNEL_KEYS.SCHEDULE,            description: "Season schedule"               },
+  { label: "GOTW",                value: CHANNEL_KEYS.GOTW,                description: "Game of the Week poll"         },
+  { label: "League Twitter",      value: CHANNEL_KEYS.LEAGUE_TWITTER,      description: "AI Twitter feed"               },
+  { label: "Headlines",           value: CHANNEL_KEYS.HEADLINES,           description: "Media headlines"               },
+  { label: "GOTY",                value: CHANNEL_KEYS.GOTY,                description: "Game of the Year"              },
+  { label: "Draft Tracker",       value: CHANNEL_KEYS.DRAFT_TRACKER,       description: "Draft tracker"                 },
+  { label: "Payouts",             value: CHANNEL_KEYS.PAYOUTS,             description: "Payout announcements"         },
+  { label: "Welcome",             value: CHANNEL_KEYS.WELCOME,             description: "New member welcome"            },
+  { label: "General",             value: CHANNEL_KEYS.GENERAL,             description: "General channel"              },
+  { label: "Stream",              value: CHANNEL_KEYS.STREAM,              description: "Stream notifications"          },
+  { label: "Highlights",          value: CHANNEL_KEYS.HIGHLIGHTS,          description: "Game highlights"              },
+];
+
+async function handleManualChannelLinkPicker(interaction: ButtonInteraction) {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("ao_manual_ch_select")
+    .setPlaceholder("Select a channel function to link…")
+    .addOptions(
+      MANUAL_LINKABLE.map(item =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(item.label)
+          .setValue(item.value)
+          .setDescription(item.description),
+      ),
+    );
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
+  const embed = new EmbedBuilder()
+    .setTitle("🔗 Manual Channel Link")
+    .setDescription(
+      "Choose which bot function to link to a Discord channel.\n\n" +
+      "After selecting, you'll be prompted to paste the channel ID (right-click a channel → **Copy Channel ID** with Developer Mode on).\n\n" +
+      "Leave the ID blank to **clear** the link (messages will fall back to the commissioner channel).",
+    )
+    .setColor(0x5865f2);
+
+  await (interaction as any).update({
+    embeds: [embed],
+    components: [row as ActionRowBuilder<any>],
+  });
+}
+
+async function handleManualChannelSelect(interaction: StringSelectMenuInteraction) {
+  const key       = interaction.values[0];
+  const keyLabel  = MANUAL_LINKABLE.find(k => k.value === key)?.label ?? key;
+
+  const modal = new ModalBuilder()
+    .setCustomId(`ao_modal_manual_ch:${key}`)
+    .setTitle(`Link: ${keyLabel}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("channel_id")
+          .setLabel("Channel ID (blank = clear / use fallback)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. 1234567890123456789")
+          .setRequired(false)
+          .setMaxLength(25),
+      ),
+    );
+
+  await interaction.showModal(modal);
+}
+
+async function handleManualChannelModal(interaction: ModalSubmitInteraction) {
+  const guildId  = interaction.guildId!;
+  const [, key]  = interaction.customId.split(":");
+  if (!key) {
+    await interaction.reply({ content: "❌ Invalid state — please try again.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const rawId = interaction.fields.getTextInputValue("channel_id").trim();
+  const keyLabel = MANUAL_LINKABLE.find(k => k.value === key)?.label ?? key;
+
+  if (!rawId) {
+    await setGuildChannel(guildId, key, null);
+    await interaction.reply({
+      content: `✅ **${keyLabel}** channel link cleared — messages will fall back to the commissioner channel.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Validate it looks like a snowflake
+  if (!/^\d{17,20}$/.test(rawId)) {
+    await interaction.reply({
+      content: "❌ That doesn't look like a valid channel ID (must be 17–20 digits). Right-click a channel and choose **Copy Channel ID**.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await setGuildChannel(guildId, key, rawId);
+  await interaction.reply({
+    content: `✅ **${keyLabel}** linked to <#${rawId}>.`,
+    flags: MessageFlags.Ephemeral,
   });
 }
 

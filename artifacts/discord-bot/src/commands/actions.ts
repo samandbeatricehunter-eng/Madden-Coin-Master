@@ -8,8 +8,8 @@ import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason, getSeasonRules }
 import { appendUserStatsFields } from "../lib/user-stats-embed.js";
 
 export const data = new SlashCommandBuilder()
-  .setName("actions")
-  .setDescription("League hub — coins, wagers, rosters, standings, PR, and more in one place");
+  .setName("menu")
+  .setDescription("League menu — coins, wagers, rosters, standings, PR, and more in one place");
 
 export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean): EmbedBuilder {
   const mcaVisible  = settings.mcaImportEnabled || isAdmin;
@@ -38,12 +38,12 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
 
   return new EmbedBuilder()
     .setColor(0x1a1a2e)
-    .setTitle("🏈 League Actions Hub")
+    .setTitle("🏈 /menu — League Menu")
     .setDescription(
       "Select any action below. All menus are private (visible only to you).\n\n" +
       sections.join("\n\n")
     )
-    .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" });
+    .setFooter({ text: "/menu — selections expire after 15 minutes" });
 }
 
 export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean): ActionRowBuilder<ButtonBuilder>[] {
@@ -113,7 +113,7 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
 export function buildUnlinkedHubEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setTitle("🏈 League Actions Hub — Unlinked")
+    .setTitle("🏈 /menu — Unlinked")
     .setDescription(
       "You are not currently linked to a team in this league.\n\n" +
       "**Team Requests**\n" +
@@ -180,9 +180,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
-    .setTitle(`🏈 League Actions Hub — ${user.team ?? interaction.user.username}`)
+    .setTitle(`🏈 /menu — ${user.team ?? interaction.user.username}`)
     .setDescription("Select any action below. All menus are private (visible only to you).")
-    .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" });
+    .setFooter({ text: "/menu — selections expire after 15 minutes" });
 
   await appendUserStatsFields(embed, uid, gid, user, season, settings, rules, interaction.user.displayAvatarURL());
 

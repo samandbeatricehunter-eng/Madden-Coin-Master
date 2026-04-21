@@ -398,7 +398,10 @@ export async function handleActionsInteraction(
   // Commissioner autopilot approve/deny
   if (id.startsWith("ac_ap_approve:")) { await handleApproveAutoPilot(interaction as ButtonInteraction); return true; }
   if (id.startsWith("ac_ap_deny:"))    { await handleDenyAutoPilot(interaction as ButtonInteraction); return true; }
-  if (id.startsWith("ac_rv_note:"))    { await handleViolationNote(interaction as ButtonInteraction); return true; }
+  if (id.startsWith("ac_rv_note:"))         { await handleViolationNote(interaction as ButtonInteraction); return true; }
+  if (id.startsWith("ac_rv_approve:"))      { await handleViolationApprove(interaction as ButtonInteraction); return true; }
+  if (id.startsWith("ac_rv_deny:"))         { await handleViolationDeny(interaction as ButtonInteraction); return true; }
+  if (id.startsWith("ac_rv_deny_submit:"))  { await handleViolationDenySubmit(interaction as ModalSubmitInteraction); return true; }
 
   return false;
 }
@@ -3491,6 +3494,15 @@ async function handleViolationModal(interaction: ButtonInteraction) {
           .setMaxLength(900)
           .setPlaceholder("Provide details, evidence links, context, etc."),
       ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("media_urls")
+          .setLabel("Media URLs (optional, space or comma separated)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(500)
+          .setPlaceholder("https://... (screenshots, clips, etc.)"),
+      ),
     );
   await interaction.showModal(modal);
 }
@@ -3500,15 +3512,22 @@ async function handleViolationSubmit(interaction: ModalSubmitInteraction, sess: 
   const violationType = interaction.fields.getTextInputValue("violation_type").trim();
   const offender      = interaction.fields.getTextInputValue("offender").trim();
   const rawDesc       = interaction.fields.getTextInputValue("description").trim();
+  const rawMedia      = interaction.fields.getTextInputValue("media_urls").trim();
   const description   = `[${violationType}] Against: ${offender}\n\n${rawDesc}`;
   const gid           = interaction.guildId!;
+
+  // Parse media URLs (space or comma separated)
+  const mediaUrls = rawMedia
+    ? rawMedia.split(/[\s,]+/).map(u => u.trim()).filter(u => u.startsWith("http"))
+    : [];
 
   const [season, user] = await Promise.all([
     getOrCreateActiveSeason(gid),
     getOrCreateUser(interaction.user.id, interaction.user.username, gid),
   ]);
 
-  await db.insert(ruleViolationsTable).values({
+  // Insert and retrieve the new violation ID
+  const [inserted] = await db.insert(ruleViolationsTable).values({
     reporterId:   interaction.user.id,
     guildId:      gid,
     seasonId:     season.id,
@@ -3516,11 +3535,15 @@ async function handleViolationSubmit(interaction: ModalSubmitInteraction, sess: 
     opponentTeam: offender,
     weekNumber,
     description,
+    mediaUrls,
     status:       "pending",
-  });
+  }).returning({ id: ruleViolationsTable.id });
+
+  const violationId = inserted?.id ?? 0;
 
   // Send to commissioner log
-  const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
+  const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.VIOLATION_LOG)
+    ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
     ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
 
   if (logChannelId) {
@@ -3533,18 +3556,38 @@ async function handleViolationSubmit(interaction: ModalSubmitInteraction, sess: 
         .addFields(
           { name: "⚠️ Violation Type",  value: violationType, inline: true },
           { name: "👤 Offender",         value: offender,      inline: true },
-          { name: "📝 Description",      value: description,   inline: false },
+          { name: "📅 Week",             value: weekNumber,    inline: true },
+          { name: "📝 Description",      value: rawDesc,       inline: false },
         )
-        .setTimestamp();
+        .setTimestamp()
+        .setFooter({ text: `Violation ID: ${violationId}` });
+
+      if (mediaUrls.length > 0) {
+        reportEmbed.addFields({ name: "🖼️ Media", value: mediaUrls.join("\n"), inline: false });
+        if (mediaUrls[0]) reportEmbed.setImage(mediaUrls[0]);
+      }
 
       const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
+          .setCustomId(`ac_rv_approve:${violationId}`)
+          .setLabel("✅ Approve")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`ac_rv_deny:${violationId}`)
+          .setLabel("❌ Deny")
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
           .setCustomId(`ac_rv_note:${interaction.user.id}`)
-          .setLabel("📋 Add Commissioner Note")
+          .setLabel("📋 Add Note")
           .setStyle(ButtonStyle.Secondary),
       );
 
-      await (channel as TextChannel).send({ embeds: [reportEmbed], components: [btnRow] }).catch(console.error);
+      const commMsg = await (channel as TextChannel).send({ embeds: [reportEmbed], components: [btnRow] }).catch(() => null);
+      if (commMsg && violationId) {
+        await db.update(ruleViolationsTable)
+          .set({ commMessageId: commMsg.id })
+          .where(eq(ruleViolationsTable.id, violationId));
+      }
     }
   }
 
@@ -3554,6 +3597,156 @@ async function handleViolationSubmit(interaction: ModalSubmitInteraction, sess: 
       .setColor(Colors.Orange)
       .setTitle("🚨 Violation Report Submitted")
       .setDescription(`Your report against **${offender}** for **${violationType}** has been sent to the commissioners.\n\nThey will review it and take appropriate action.`)],
+  });
+}
+
+async function handleViolationApprove(interaction: ButtonInteraction) {
+  const violationId = parseInt(interaction.customId.split(":")[1] ?? "0", 10);
+  if (!violationId) { await interaction.reply({ content: "❌ Invalid violation ID.", ephemeral: true }); return; }
+
+  const gid = interaction.guildId!;
+  const [violation] = await db.select().from(ruleViolationsTable)
+    .where(and(eq(ruleViolationsTable.id, violationId), eq(ruleViolationsTable.guildId, gid)));
+  if (!violation) { await interaction.reply({ content: "❌ Violation not found.", ephemeral: true }); return; }
+
+  await db.update(ruleViolationsTable)
+    .set({ status: "approved" })
+    .where(eq(ruleViolationsTable.id, violationId));
+
+  // Post to VIOLATION_LOG channel
+  const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.VIOLATION_LOG)
+    ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
+    ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
+
+  if (logChannelId) {
+    const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+    if (ch?.isTextBased()) {
+      const approvedEmbed = new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Violation Approved")
+        .addFields(
+          { name: "📝 Description", value: violation.description ?? "N/A", inline: false },
+          { name: "👤 Offender",    value: violation.opponentTeam ?? "N/A", inline: true },
+          { name: "📅 Week",        value: violation.weekNumber ?? "N/A",   inline: true },
+          { name: "🔍 Reviewed by", value: `<@${interaction.user.id}>`,     inline: true },
+        )
+        .setTimestamp()
+        .setFooter({ text: `Violation ID: ${violationId}` });
+
+      if (violation.mediaUrls?.length) {
+        approvedEmbed.addFields({ name: "🖼️ Media", value: violation.mediaUrls.join("\n"), inline: false });
+        if (violation.mediaUrls[0]) approvedEmbed.setImage(violation.mediaUrls[0]);
+      }
+      await (ch as TextChannel).send({ embeds: [approvedEmbed] }).catch(console.error);
+    }
+  }
+
+  // DM reporter
+  if (violation.reporterId) {
+    const reporter = await interaction.client.users.fetch(violation.reporterId).catch(() => null);
+    if (reporter) {
+      await reporter.send({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("✅ Violation Report Approved")
+          .setDescription(`Your violation report (ID: ${violationId}) has been **approved** by the commissioners.\n\nThank you for keeping the league fair.`)
+          .setTimestamp()],
+      }).catch(console.error);
+    }
+  }
+
+  // Update the original commissioner message to show resolved state
+  await interaction.update({
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId("ac_rv_noop")
+          .setLabel("✅ Approved")
+          .setStyle(ButtonStyle.Success)
+          .setDisabled(true),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handleViolationDeny(interaction: ButtonInteraction) {
+  const violationId = interaction.customId.split(":")[1] ?? "0";
+  const modal = new ModalBuilder()
+    .setCustomId(`ac_rv_deny_submit:${violationId}`)
+    .setTitle("Deny Violation Report")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("reason")
+          .setLabel("Reason for denial")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(800)
+          .setPlaceholder("Explain why the report is being denied…"),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+async function handleViolationDenySubmit(interaction: ModalSubmitInteraction) {
+  const violationId = parseInt(interaction.customId.split(":")[1] ?? "0", 10);
+  const reason      = interaction.fields.getTextInputValue("reason").trim();
+  const gid         = interaction.guildId!;
+
+  if (!violationId) { await interaction.reply({ content: "❌ Invalid violation ID.", ephemeral: true }); return; }
+
+  const [violation] = await db.select().from(ruleViolationsTable)
+    .where(and(eq(ruleViolationsTable.id, violationId), eq(ruleViolationsTable.guildId, gid)));
+  if (!violation) { await interaction.reply({ content: "❌ Violation not found.", ephemeral: true }); return; }
+
+  await db.update(ruleViolationsTable)
+    .set({ status: "denied" })
+    .where(eq(ruleViolationsTable.id, violationId));
+
+  // DM reporter with deny reason
+  if (violation.reporterId) {
+    const reporter = await interaction.client.users.fetch(violation.reporterId).catch(() => null);
+    if (reporter) {
+      await reporter.send({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Violation Report Denied")
+          .setDescription(`Your violation report (ID: ${violationId}) has been **denied** by the commissioners.`)
+          .addFields({ name: "📋 Reason", value: reason, inline: false })
+          .setTimestamp()],
+      }).catch(console.error);
+    }
+  }
+
+  // Try to update the original commissioner message buttons
+  try {
+    const logChannelId = await getGuildChannel(gid, CHANNEL_KEYS.VIOLATION_LOG)
+      ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
+      ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER);
+    if (logChannelId && violation.commMessageId) {
+      const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+      if (ch?.isTextBased()) {
+        const msg = await (ch as TextChannel).messages.fetch(violation.commMessageId).catch(() => null);
+        if (msg) {
+          await msg.edit({
+            components: [
+              new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                  .setCustomId("ac_rv_noop")
+                  .setLabel("❌ Denied")
+                  .setStyle(ButtonStyle.Danger)
+                  .setDisabled(true),
+              ) as ActionRowBuilder<any>,
+            ],
+          }).catch(console.error);
+        }
+      }
+    }
+  } catch { /* swallow */ }
+
+  await interaction.reply({
+    ephemeral: true,
+    content: `✅ Violation #${violationId} has been denied and the reporter has been notified.`,
   });
 }
 

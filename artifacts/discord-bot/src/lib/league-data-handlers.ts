@@ -30,6 +30,8 @@ import {
   TextInputBuilder,
   TextInputStyle,
   Guild,
+  TextChannel,
+  Client,
 } from "discord.js";
 import axios from "axios";
 import { db } from "@workspace/db";
@@ -63,7 +65,7 @@ import {
   type TokenInfo,
 } from "./ea-client.js";
 
-import { isAdminUser } from "./db-helpers.js";
+import { isAdminUser, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 
 // ── In-memory pending sessions (multi-league selection flow) ──────────────────
 type PendingSession = {
@@ -1104,6 +1106,21 @@ export async function runWeekImport(ctx: {
       .setLabel("← Back to Menu")
       .setStyle(ButtonStyle.Secondary),
   );
+
+  // ── Post to IMPORT_LOG channel (silent, non-fatal) ─────────────────────────
+  try {
+    const client = guild?.client;
+    if (client) {
+      const importChannelId =
+        await getGuildChannel(guildId, CHANNEL_KEYS.IMPORT_LOG)
+        ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG)
+        ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+      if (importChannelId) {
+        const ch = await client.channels.fetch(importChannelId).catch(() => null);
+        if (ch?.isTextBased()) await (ch as TextChannel).send({ embeds: [embed] }).catch(console.error);
+      }
+    }
+  } catch { /* non-fatal */ }
 
   await editReply({ embeds: [embed], components: [returnRow] });
 }

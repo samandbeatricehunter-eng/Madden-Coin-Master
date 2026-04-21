@@ -13,23 +13,27 @@ export const PRIMARY_GUILD_ID = "1476251181524189438";
 
 // ── Channel keys used across the bot ─────────────────────────────────────────
 export const CHANNEL_KEYS = {
-  GENERAL:        "general",
-  COMMISSIONER:     "commissioner",
-  COMMISSIONER_LOG: "commissioner_log",
-  MATCHUPS:       "matchups",
-  SCHEDULE:       "schedule",
-  GOTW:           "gotw",
-  LEAGUE_TWITTER: "league_twitter",
-  HEADLINES:      "headlines",
-  DRAFT_TRACKER:  "draft_tracker",
-  PAYOUTS:        "payouts",
-  VIOLATION_LOG:  "violation_log",
-  GOTY:           "goty",
-  TRANSACTIONS:   "transactions",
-  WELCOME:        "welcome",
-  ANNOUNCEMENTS:  "announcements",
-  STREAM:         "stream",
-  HIGHLIGHTS:     "highlights",
+  GENERAL:           "general",
+  COMMISSIONER:      "commissioner",
+  COMMISSIONER_LOG:  "commissioner_log",
+  MATCHUPS:          "matchups",
+  SCHEDULE:          "schedule",
+  GOTW:              "gotw",
+  LEAGUE_TWITTER:    "league_twitter",
+  HEADLINES:         "headlines",
+  DRAFT_TRACKER:     "draft_tracker",
+  PAYOUTS:           "payouts",
+  VIOLATION_LOG:     "violation_log",
+  GOTY:              "goty",
+  TRANSACTIONS:      "transactions",       // legacy key kept for backward compat
+  TRANSACTION_LOG:   "transaction_log",    // coin movements, wagers, payouts
+  UPGRADES_LOG:      "upgrades_log",       // attribute / devtrait / agereset purchases
+  DRAFT_PURCHASES_LOG: "draft_purchases_log", // legend + custom player purchases
+  IMPORT_LOG:        "import_log",         // MCA data import confirmations
+  WELCOME:           "welcome",
+  ANNOUNCEMENTS:     "announcements",
+  STREAM:            "stream",
+  HIGHLIGHTS:        "highlights",
 } as const;
 
 // Hardcoded fallback IDs for the primary guild (backward compatibility).
@@ -90,8 +94,14 @@ export async function getGuildChannel(guildId: string, key: string): Promise<str
 
 /**
  * Upsert a per-guild channel ID (called by /initialize-server after creating channels).
+ * Pass null to clear/remove a channel link (messages fall back to COMMISSIONER_LOG).
  */
-export async function setGuildChannel(guildId: string, key: string, channelId: string): Promise<void> {
+export async function setGuildChannel(guildId: string, key: string, channelId: string | null): Promise<void> {
+  if (channelId === null) {
+    await db.delete(guildChannelsTable)
+      .where(and(eq(guildChannelsTable.guildId, guildId), eq(guildChannelsTable.channelKey, key)));
+    return;
+  }
   await db.insert(guildChannelsTable)
     .values({ guildId, channelKey: key, channelId })
     .onConflictDoUpdate({

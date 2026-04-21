@@ -2,9 +2,10 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits,
 } from "discord.js";
+import { isAdminUser } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
-  .setName("admin-operations")
+  .setName("admin-menu")
   .setDescription("Admin hub — manage week, season, payouts, rules, and all league settings")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
@@ -74,6 +75,19 @@ export function buildAdminOpsRows(): ActionRowBuilder<ButtonBuilder>[] {
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  const gid  = interaction.guildId!;
+  const uid  = interaction.user.id;
+
+  // Allow Discord server admins AND bot-assigned admins
+  const member = await interaction.guild?.members.fetch(uid).catch(() => null);
+  const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+  const isBotAdmin     = await isAdminUser(uid, gid);
+
+  if (!isDiscordAdmin && !isBotAdmin) {
+    await interaction.reply({ content: "❌ You do not have permission to use this command.", ephemeral: true });
+    return;
+  }
+
   await interaction.reply({
     embeds: [buildAdminOpsEmbed()],
     components: buildAdminOpsRows(),
