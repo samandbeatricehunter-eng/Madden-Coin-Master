@@ -16,10 +16,10 @@ import {
   gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable,
   playerSeasonStatsTable, playerStatWeekProcessedTable,
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
-  defaultTeamLogosTable,
+  defaultTeamLogosTable, waitlistTable,
   serverSettingsTable, franchiseRostersTable, inventoryTable, legendsTable, customPlayersTable,
 } from "@workspace/db";
-import { eq, and, sql, ne } from "drizzle-orm";
+import { eq, and, sql, ne, desc } from "drizzle-orm";
 import {
   getOrCreateActiveSeason, addBalance, logTransaction,
   getGuildChannel, CHANNEL_KEYS,
@@ -32,7 +32,6 @@ import { runEosAutoPost } from "./eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { sendArticleChunked } from "./send-article.js";
 import { runWeeklyMatchupsFlow } from "./weekly-matchups-runner.js";
-import { postFullSeasonScheduleToChannel } from "./season-schedule-post.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults, autoDivisionBonus } from "./playoff-matchups-runner.js";
 import axios from "axios";
 import { autoPayoutPlayoffGotw, purgeChannel } from "./gotw-helpers.js";
@@ -42,6 +41,18 @@ import { buildMatchupBanner, resolveLogoBuf } from "./matchup-image.js";
 import { generateMatchupBreakdown } from "./matchup-ai-breakdown.js";
 import { globalLogoPath } from "./gcs-reader.js";
 import { buildAdminOpsEmbed, buildAdminOpsRows } from "../commands/admin-operations.js";
+import { buildPayoutHubEmbed, buildPayoutHubRows } from "./admin-payout-handlers.js";
+import { buildUserDataHubEmbed, buildUserDataHubRows } from "./admin-user-handlers.js";
+import { buildTroubleshootEmbed, buildTroubleshootRows } from "./admin-troubleshoot-handlers.js";
+import { buildLeagueDataMainMenu } from "./league-data-handlers.js";
+import { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "./server-settings.js";
+import { rebuildHistoricalChannel } from "./wildcard-automation.js";
+import OpenAI from "openai";
+
+const openaiClient = new OpenAI({
+  baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
+  apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "dummy",
+});
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -51,6 +62,8 @@ interface AoSession {
   guildId: string;
   userId: string;
   rulesSection?: string;
+  rulesPage?: number;
+  adminsAddPage?: number;
   expiresAt: number;
 }
 
@@ -72,30 +85,65 @@ function getAoSession(guildId: string, userId: string): AoSession {
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
-function buildRulesEmbed(section: string, sectionMeta: { title: string; color: number }, rules: string[]): EmbedBuilder {
-  const lines = rules.length > 0
-    ? rules.map((r, i) => `**${i + 1}.** ${r}`)
-    : ["_No rules in this section yet._"];
+const RULES_PAGE_CHAR_LIMIT = 3800;
+
+function buildRulesPages(rules: string[]): string[] {
+  if (rules.length === 0) return ["_No rules in this section yet._"];
+  const pages: string[] = [];
+  let current = "";
+  for (let i = 0; i < rules.length; i++) {
+    const line = `**${i + 1}.** ${rules[i]}`;
+    const candidate = current ? current + "\n\n" + line : line;
+    if (candidate.length > RULES_PAGE_CHAR_LIMIT && current) {
+      pages.push(current);
+      current = line;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) pages.push(current);
+  return pages;
+}
+
+function buildRulesEmbed(
+  section: string,
+  sectionMeta: { title: string; color: number },
+  rules: string[],
+  page = 0,
+): EmbedBuilder {
+  const pages   = buildRulesPages(rules);
+  const maxPage = Math.max(0, pages.length - 1);
+  const safePage = Math.min(Math.max(0, page), maxPage);
+  const content  = pages[safePage] ?? "_No rules in this section yet._";
+  const footer   = pages.length > 1
+    ? `Section: ${section} · ${rules.length} rule${rules.length !== 1 ? "s" : ""} · Page ${safePage + 1}/${pages.length}`
+    : `Section: ${section} · ${rules.length} rule${rules.length !== 1 ? "s" : ""}`;
 
   return new EmbedBuilder()
     .setColor(sectionMeta.color)
     .setTitle(sectionMeta.title)
-    .setDescription(lines.join("\n\n"))
-    .setFooter({ text: `Section: ${section} · ${rules.length} rule${rules.length !== 1 ? "s" : ""}` });
+    .setDescription(content)
+    .setFooter({ text: footer });
 }
 
-function buildRulesButtons(rulesCount: number): ActionRowBuilder<ButtonBuilder>[] {
-  const editDisabled  = rulesCount === 0;
+function buildRulesButtonsWithPage(rulesCount: number, page: number, totalPages: number): ActionRowBuilder<ButtonBuilder>[] {
+  const editDisabled   = rulesCount === 0;
   const deleteDisabled = rulesCount === 0;
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_rules_add").setLabel("➕ Add Rule").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_rules_edit").setLabel("✏️ Edit Rule").setStyle(ButtonStyle.Primary).setDisabled(editDisabled),
     new ButtonBuilder().setCustomId("ao_rules_delete").setLabel("🗑️ Delete Rule").setStyle(ButtonStyle.Danger).setDisabled(deleteDisabled),
     new ButtonBuilder().setCustomId("ao_rules_back_sections").setLabel("← Sections").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
-  return [row];
+  if (totalPages <= 1) return [row1];
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`ao_rules_page:${page - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+    new ButtonBuilder().setCustomId(`ao_rules_page:${page + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+  );
+  return [row1, row2];
 }
+
 
 // ── Main dispatch ──────────────────────────────────────────────────────────────
 
@@ -197,23 +245,942 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     return true;
   }
 
-  // Modal submits
+  // Rules pagination
+  if (id.startsWith("ao_rules_page:")) {
+    await handleRulesPage(interaction as ButtonInteraction, sess);
+    return true;
+  }
+
+  // Modal submits — Rules
   if (id === "ao_modal_rules_add") {
     await handleModalRulesAdd(interaction as ModalSubmitInteraction, sess);
     return true;
   }
-
   if (id === "ao_modal_rules_edit") {
     await handleModalRulesEdit(interaction as ModalSubmitInteraction, sess);
     return true;
   }
-
   if (id === "ao_modal_rules_delete") {
     await handleModalRulesDelete(interaction as ModalSubmitInteraction, sess);
     return true;
   }
 
+  // ── Payouts hub ───────────────────────────────────────────────────────────────
+  if (id === "ao_payouts") {
+    await handlePayoutsHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Post Matchups/GOTW ────────────────────────────────────────────────────────
+  if (id === "ao_post_matchups") {
+    await handlePostMatchups(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_post_matchups_confirm") {
+    await handlePostMatchupsConfirm(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Post Game Channels ────────────────────────────────────────────────────────
+  if (id === "ao_post_game_channels") {
+    await handlePostGameChannels(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Post Custom Article ───────────────────────────────────────────────────────
+  if (id === "ao_post_custom_article") {
+    await handlePostCustomArticle(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_custom_article") {
+    await handleModalCustomArticle(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
+  // ── Rerun Media Cycle ─────────────────────────────────────────────────────────
+  if (id === "ao_rerun_media") {
+    await handleRerunMedia(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Rerun Season Historical ───────────────────────────────────────────────────
+  if (id === "ao_rerun_hist") {
+    await handleRerunHist(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Waitlist hub ──────────────────────────────────────────────────────────────
+  if (id === "ao_waitlist") {
+    await handleWaitlistHub(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id.startsWith("ao_waitlist_edit:")) {
+    await handleWaitlistEdit(interaction as ButtonInteraction, sess);
+    return true;
+  }
+  if (id === "ao_modal_waitlist_edit") {
+    await handleModalWaitlistEdit(interaction as ModalSubmitInteraction);
+    return true;
+  }
+  if (id.startsWith("ao_waitlist_delete:")) {
+    await handleWaitlistDelete(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Admins hub ────────────────────────────────────────────────────────────────
+  if (id === "ao_admins") {
+    await handleAdminsHub(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_admins_add") {
+    await handleAdminsAdd(interaction as ButtonInteraction, sess);
+    return true;
+  }
+  if (id === "ao_admins_add_sel") {
+    await handleAdminsAddSel(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+  if (id === "ao_admins_delete") {
+    await handleAdminsDelete(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_admins_delete_sel") {
+    await handleAdminsDeleteSel(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+
+  // ── League Data hub ───────────────────────────────────────────────────────────
+  if (id === "ao_league_data") {
+    await handleLeagueDataHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── User Data hub ─────────────────────────────────────────────────────────────
+  if (id === "ao_user_data") {
+    await handleUserDataHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Store Settings hub ────────────────────────────────────────────────────────
+  if (id === "ao_store_settings") {
+    await handleStoreSettingsHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Server Settings hub ───────────────────────────────────────────────────────
+  if (id === "ao_server_settings") {
+    await handleServerSettingsHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Troubleshoot hub ──────────────────────────────────────────────────────────
+  if (id === "ao_troubleshoot") {
+    await handleTroubleshootHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Report Bug ────────────────────────────────────────────────────────────────
+  if (id === "ao_report_bug") {
+    await handleReportBug(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_report_bug") {
+    await handleModalReportBug(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
   return false;
+}
+
+// ── Payouts Hub ────────────────────────────────────────────────────────────────
+
+async function handlePayoutsHub(interaction: ButtonInteraction) {
+  await interaction.update({
+    embeds: [buildPayoutHubEmbed()],
+    components: buildPayoutHubRows() as ActionRowBuilder<any>[],
+  });
+}
+
+// ── Post Matchups/GOTW ─────────────────────────────────────────────────────────
+
+async function handlePostMatchups(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+  const week    = weekLabel(season.currentWeek ?? "1");
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("📋 Post Matchups/GOTW")
+        .setDescription(
+          `This will re-run the full weekly matchups flow for **${week}**.\n\n` +
+          "• Posts matchup embeds to the matchups channel\n" +
+          "• Posts a GOTW poll to the GOTW channel\n" +
+          "• Creates game channels if not already created\n\n" +
+          "⚠️ This does **not** award payouts or advance the week."
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_post_matchups_confirm").setLabel("✅ Confirm & Post").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handlePostMatchupsConfirm(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("📋 Posting Matchups...")
+        .setDescription("Running the matchups flow — please wait."),
+    ],
+    components: [],
+  });
+
+  try {
+    const season = await getOrCreateActiveSeason(guildId);
+    const weekNum = parseInt(season.currentWeek ?? "1", 10);
+    const displayWeekNum = isNaN(weekNum) ? 1 : weekNum;
+
+    await runWeeklyMatchupsFlow({
+      client:         interaction.client,
+      guild:          interaction.guild,
+      season,
+      displayWeekNum,
+      payoutWeekIndex: null,
+      guildId,
+      replyFn: async ({ content, components }) => {
+        await interaction.followUp({ content, components: components ?? [], ephemeral: true }).catch(() => {});
+      },
+    });
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("✅ Matchups Posted")
+          .setDescription(`Matchup flow completed for **${weekLabel(season.currentWeek ?? "1")}**.`),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+  } catch (err) {
+    console.error("[admin-operations] Post Matchups error:", err);
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Matchups Post Failed")
+          .setDescription(`Error: ${err}`),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+  }
+}
+
+// ── Post Game Channels ─────────────────────────────────────────────────────────
+
+async function handlePostGameChannels(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+  const week    = weekLabel(season.currentWeek ?? "1");
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blurple)
+        .setTitle("🎮 Post Game Channels")
+        .setDescription(
+          `Re-posting matchup banners and AI breakdowns to all game channels for **${week}**.\n\n` +
+          "Use the slash command `/adminrepostbanners` to run this operation.\n\n" +
+          "_(This triggers image generation and AI breakdown for every game channel — it may take 30–90 seconds.)_"
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+// ── Post Custom Article ────────────────────────────────────────────────────────
+
+async function handlePostCustomArticle(interaction: ButtonInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_custom_article")
+    .setTitle("Post Custom AI Article");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("article_prompt")
+        .setLabel("Article Topic / Prompt")
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder("e.g. Write a feature piece on the MVP race heading into playoffs...")
+        .setRequired(true)
+        .setMaxLength(1500),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleModalCustomArticle(interaction: ModalSubmitInteraction) {
+  const guildId = interaction.guildId!;
+  const prompt  = interaction.fields.getTextInputValue("article_prompt").trim();
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const headlinesChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.HEADLINES);
+    if (!headlinesChannelId) {
+      await interaction.editReply({ content: "❌ No headlines channel configured. Set it via `/adminserver link_channel`." });
+      return;
+    }
+
+    const channel = (interaction.client.channels.cache.get(headlinesChannelId)
+      ?? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null)) as TextChannel | null;
+    if (!channel?.isTextBased()) {
+      await interaction.editReply({ content: "❌ Headlines channel not found or inaccessible." });
+      return;
+    }
+
+    const response = await openaiClient.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are an award-winning sports journalist covering The R.E.C. League — a competitive Madden NFL franchise simulation league.",
+            "Write in a bold, energetic, ESPN-style voice.",
+            "Use vivid prose paragraphs. Do NOT use markdown headers (##, ###) or bullet points — just flowing, punchy paragraphs.",
+            "Keep the article between 400–600 words unless the prompt implies a shorter piece.",
+            "IMPORTANT: Always start your response with a single line in exactly this format:",
+            "HEADLINE: <your headline here>",
+            "Then leave one blank line, then write the article body.",
+          ].join("\n"),
+        },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: 1200,
+      temperature: 0.85,
+    });
+
+    const raw = response.choices[0]?.message?.content ?? "";
+    const lines = raw.split("\n");
+    const headlineLine = lines.find(l => l.startsWith("HEADLINE:"));
+    const headline = headlineLine ? headlineLine.replace("HEADLINE:", "").trim() : "Breaking News";
+    const bodyStart = headlineLine ? lines.indexOf(headlineLine) + 2 : 0;
+    const article   = lines.slice(bodyStart).join("\n").trim();
+
+    const header = `📰 **${headline}**\n\n`;
+    await (sendArticleChunked as Function)(channel, header, article);
+
+    await interaction.editReply({ content: `✅ Custom article posted to <#${headlinesChannelId}>.` });
+  } catch (err) {
+    console.error("[admin-operations] Custom article error:", err);
+    await interaction.editReply({ content: `❌ Failed to generate or post article: ${err}` });
+  }
+}
+
+// ── Rerun Media Cycle ──────────────────────────────────────────────────────────
+
+async function handleRerunMedia(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("🐦 Rerunning Media Cycle...")
+        .setDescription("Triggering league Twitter burst for the current week..."),
+    ],
+    components: [],
+  });
+
+  try {
+    triggerWeekAdvanceTweets(interaction.client, guildId);
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("✅ Media Cycle Triggered")
+          .setDescription("League Twitter burst has been triggered for this week. Posts will appear shortly."),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+  } catch (err) {
+    console.error("[admin-operations] Rerun media error:", err);
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Media Cycle Failed")
+          .setDescription(`Error: ${err}`),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+  }
+}
+
+// ── Rerun Season Historical ────────────────────────────────────────────────────
+
+async function handleRerunHist(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("📜 Rebuilding Historical Records Channel...")
+        .setDescription("This may take a moment — please wait."),
+    ],
+    components: [],
+  });
+
+  try {
+    const season = await getOrCreateActiveSeason(guildId);
+    const guild  = interaction.guild;
+    if (!guild) throw new Error("Guild not available.");
+
+    await rebuildHistoricalChannel(interaction.client, season.id, season.seasonNumber ?? season.id, guild);
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("✅ Historical Channel Rebuilt")
+          .setDescription(`Season ${season.seasonNumber ?? season.id} historical records channel has been rebuilt.`),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+  } catch (err) {
+    console.error("[admin-operations] Rerun historical error:", err);
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Historical Rebuild Failed")
+          .setDescription(`Error: ${err}`),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+  }
+}
+
+// ── Waitlist Hub ───────────────────────────────────────────────────────────────
+
+async function handleWaitlistHub(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+
+  const entries = await db.select()
+    .from(waitlistTable)
+    .where(and(
+      eq(waitlistTable.guildId, guildId),
+      eq(waitlistTable.status, "waiting"),
+    ))
+    .orderBy(waitlistTable.addedAt);
+
+  const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  if (entries.length === 0) {
+    await (interaction as any).update({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("📋 Waitlist")
+          .setDescription("✅ No users are currently on the waitlist."),
+      ],
+      components: [backRow],
+    });
+    return;
+  }
+
+  const lines = entries.map((e, i) =>
+    `**${i + 1}.** <@${e.discordId}>${e.team ? ` — waiting for: **${e.team}**` : " — any open team"} ` +
+    `(added <t:${Math.floor(e.addedAt.getTime() / 1000)}:R>)`
+  );
+
+  const btnRows: ActionRowBuilder<ButtonBuilder>[] = [];
+  const PAGE_SIZE = 3;
+  for (let i = 0; i < Math.min(entries.length, PAGE_SIZE * 5); i += PAGE_SIZE) {
+    const slice = entries.slice(i, i + PAGE_SIZE);
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      ...slice.map((e, j) => {
+        const idx = i + j;
+        return new ButtonBuilder()
+          .setCustomId(`ao_waitlist_edit:${e.id}`)
+          .setLabel(`✏️ #${idx + 1} Edit`)
+          .setStyle(ButtonStyle.Primary);
+      }),
+      ...slice.map((e, j) => {
+        const idx = i + j;
+        return new ButtonBuilder()
+          .setCustomId(`ao_waitlist_delete:${e.id}`)
+          .setLabel(`🗑️ #${idx + 1} Delete`)
+          .setStyle(ButtonStyle.Danger);
+      }),
+    );
+    btnRows.push(row);
+  }
+  btnRows.push(backRow);
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("📋 Waitlist")
+        .setDescription(lines.join("\n\n"))
+        .setFooter({ text: `${entries.length} user${entries.length !== 1 ? "s" : ""} waiting` }),
+    ],
+    components: btnRows as ActionRowBuilder<any>[],
+  });
+}
+
+async function handleWaitlistEdit(interaction: ButtonInteraction, _sess: AoSession) {
+  const entryId = parseInt(interaction.customId.split(":")[1]!, 10);
+  const guildId = interaction.guildId!;
+
+  const [entry] = await db.select().from(waitlistTable)
+    .where(and(eq(waitlistTable.id, entryId), eq(waitlistTable.guildId, guildId)))
+    .limit(1);
+
+  if (!entry) {
+    await interaction.reply({ content: "❌ Waitlist entry not found.", ephemeral: true });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_waitlist_edit")
+    .setTitle("Edit Waitlist Entry");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("entry_id")
+        .setLabel("Entry ID (do not change)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(String(entry.id))
+        .setRequired(true),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("team")
+        .setLabel("Team they're waiting for (blank = any)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(entry.team ?? "")
+        .setRequired(false)
+        .setMaxLength(50),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleModalWaitlistEdit(interaction: ModalSubmitInteraction) {
+  const guildId = interaction.guildId!;
+  const entryId = parseInt(interaction.fields.getTextInputValue("entry_id"), 10);
+  const team    = interaction.fields.getTextInputValue("team").trim() || null;
+
+  if (isNaN(entryId)) {
+    await interaction.reply({ content: "❌ Invalid entry ID.", ephemeral: true });
+    return;
+  }
+
+  const [updated] = await db.update(waitlistTable)
+    .set({ team })
+    .where(and(eq(waitlistTable.id, entryId), eq(waitlistTable.guildId, guildId)))
+    .returning();
+
+  if (!updated) {
+    await interaction.reply({ content: "❌ Entry not found.", ephemeral: true });
+    return;
+  }
+
+  await interaction.reply({
+    content: `✅ Updated waitlist entry for <@${updated.discordId}>${team ? ` — now waiting for **${team}**` : " — now waiting for any open team"}.`,
+    ephemeral: true,
+  });
+}
+
+async function handleWaitlistDelete(interaction: ButtonInteraction) {
+  const entryId = parseInt(interaction.customId.split(":")[1]!, 10);
+  const guildId = interaction.guildId!;
+
+  const [deleted] = await db.delete(waitlistTable)
+    .where(and(eq(waitlistTable.id, entryId), eq(waitlistTable.guildId, guildId)))
+    .returning();
+
+  if (!deleted) {
+    await interaction.reply({ content: "❌ Entry not found or already deleted.", ephemeral: true });
+    return;
+  }
+
+  await interaction.reply({
+    content: `🗑️ Removed <@${deleted.discordId}> from the waitlist.`,
+    ephemeral: true,
+  });
+}
+
+// ── Admins Hub ─────────────────────────────────────────────────────────────────
+
+const ADMIN_CAP = 4;
+
+async function handleAdminsHub(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+
+  const admins = await db.select({
+    discordId:       usersTable.discordId,
+    discordUsername: usersTable.discordUsername,
+    team:            usersTable.team,
+  })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId)));
+
+  const lines = admins.length > 0
+    ? admins.map((a, i) =>
+        `**${i + 1}.** <@${a.discordId}> (${a.discordUsername})${a.team ? ` — ${a.team}` : ""}`
+      )
+    : ["_No bot admins set._"];
+
+  const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_admins_add").setLabel("➕ Add Admin").setStyle(ButtonStyle.Success)
+      .setDisabled(admins.length >= ADMIN_CAP),
+    new ButtonBuilder().setCustomId("ao_admins_delete").setLabel("🗑️ Remove Admin").setStyle(ButtonStyle.Danger)
+      .setDisabled(admins.length === 0),
+    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("🛡️ View/Edit Admins")
+        .setDescription(lines.join("\n"))
+        .setFooter({ text: `${admins.length}/${ADMIN_CAP} admin slots used` }),
+    ],
+    components: [backRow as ActionRowBuilder<any>],
+  });
+}
+
+async function handleAdminsAdd(interaction: ButtonInteraction, _sess: AoSession) {
+  const guildId = interaction.guildId!;
+
+  const currentAdmins = await db.select({ discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId)));
+
+  if (currentAdmins.length >= ADMIN_CAP) {
+    await interaction.reply({ content: `❌ Admin cap (${ADMIN_CAP}) reached. Remove an admin first.`, ephemeral: true });
+    return;
+  }
+
+  const adminIds = new Set(currentAdmins.map(a => a.discordId));
+  const nonAdmins = await db.select({
+    discordId:       usersTable.discordId,
+    discordUsername: usersTable.discordUsername,
+    team:            usersTable.team,
+  })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, false)))
+    .orderBy(usersTable.discordUsername)
+    .limit(25);
+
+  const eligible = nonAdmins.filter(u => !adminIds.has(u.discordId));
+
+  if (eligible.length === 0) {
+    await interaction.reply({ content: "❌ No eligible users found to promote.", ephemeral: true });
+    return;
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("ao_admins_add_sel")
+    .setPlaceholder("Select a user to grant admin...")
+    .addOptions(
+      eligible.map(u =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${u.discordUsername}${u.team ? ` (${u.team})` : ""}`)
+          .setValue(u.discordId)
+          .setDescription(u.team ?? "No team linked"),
+      ),
+    );
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("➕ Add Admin")
+        .setDescription(`Select a user to grant bot-admin status. (${ADMIN_CAP - currentAdmins.length} slot${ADMIN_CAP - currentAdmins.length !== 1 ? "s" : ""} remaining)`),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select) as ActionRowBuilder<any>,
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_admins").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handleAdminsAddSel(interaction: StringSelectMenuInteraction) {
+  const guildId      = interaction.guildId!;
+  const targetId     = interaction.values[0]!;
+
+  const currentCount = (await db.select({ discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId)))).length;
+
+  if (currentCount >= ADMIN_CAP) {
+    await interaction.reply({ content: `❌ Admin cap (${ADMIN_CAP}) reached.`, ephemeral: true });
+    return;
+  }
+
+  const [result] = await db.update(usersTable)
+    .set({ isAdmin: true, updatedAt: new Date() })
+    .where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, guildId)))
+    .returning({ discordUsername: usersTable.discordUsername });
+
+  if (!result) {
+    await interaction.reply({ content: "❌ User not found.", ephemeral: true });
+    return;
+  }
+
+  await interaction.reply({
+    content: `✅ <@${targetId}> (${result.discordUsername}) has been granted bot-admin status.`,
+    ephemeral: true,
+  });
+}
+
+async function handleAdminsDelete(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+
+  const admins = await db.select({
+    discordId:       usersTable.discordId,
+    discordUsername: usersTable.discordUsername,
+    team:            usersTable.team,
+  })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId)));
+
+  if (admins.length === 0) {
+    await interaction.reply({ content: "❌ No admins to remove.", ephemeral: true });
+    return;
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("ao_admins_delete_sel")
+    .setPlaceholder("Select admin to remove...")
+    .addOptions(
+      admins.map(a =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${a.discordUsername}${a.team ? ` (${a.team})` : ""}`)
+          .setValue(a.discordId)
+          .setDescription(a.team ?? "No team linked"),
+      ),
+    );
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Orange)
+        .setTitle("🗑️ Remove Admin")
+        .setDescription("Select the admin to remove. This will revoke their bot-admin access immediately."),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select) as ActionRowBuilder<any>,
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_admins").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handleAdminsDeleteSel(interaction: StringSelectMenuInteraction) {
+  const guildId  = interaction.guildId!;
+  const targetId = interaction.values[0]!;
+
+  const [result] = await db.update(usersTable)
+    .set({ isAdmin: false, updatedAt: new Date() })
+    .where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, guildId)))
+    .returning({ discordUsername: usersTable.discordUsername });
+
+  if (!result) {
+    await interaction.reply({ content: "❌ User not found.", ephemeral: true });
+    return;
+  }
+
+  await interaction.reply({
+    content: `✅ Bot-admin status revoked for <@${targetId}> (${result.discordUsername}).`,
+    ephemeral: true,
+  });
+}
+
+// ── League Data Hub ────────────────────────────────────────────────────────────
+
+async function handleLeagueDataHub(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const menu    = await buildLeagueDataMainMenu(guildId);
+  await (interaction as any).update(menu);
+}
+
+// ── User Data Hub ──────────────────────────────────────────────────────────────
+
+async function handleUserDataHub(interaction: ButtonInteraction) {
+  await (interaction as any).update({
+    embeds: [buildUserDataHubEmbed()],
+    components: buildUserDataHubRows() as ActionRowBuilder<any>[],
+  });
+}
+
+// ── Store Settings Hub ─────────────────────────────────────────────────────────
+
+async function handleStoreSettingsHub(interaction: ButtonInteraction) {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("🏪 Store & Purchase Settings")
+    .setDescription(
+      "Use the buttons below to manage your league's store settings.\n\n" +
+      "📋 **Archetypes** — Browse and edit custom player archetype attributes\n" +
+      "⭐ **Legend Templates** — Set base attribute templates for each legend model\n" +
+      "💰 **Prices & Caps** — Set prices and purchase limits for all store items"
+    )
+    .setFooter({ text: "Changes take effect immediately" });
+
+  await (interaction as any).update({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ss_arch").setLabel("📋 Archetypes").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ss_lt").setLabel("⭐ Legend Templates").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ss_pc").setLabel("💰 Prices & Caps").setStyle(ButtonStyle.Success),
+      ) as ActionRowBuilder<any>,
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ss_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+// ── Server Settings Hub ────────────────────────────────────────────────────────
+
+async function handleServerSettingsHub(interaction: ButtonInteraction) {
+  const guildId  = interaction.guildId!;
+  const settings = await getServerSettings(guildId);
+  await (interaction as any).update({
+    embeds: [buildSettingsEmbed(settings)],
+    components: buildSettingsRows(settings) as ActionRowBuilder<any>[],
+  });
+}
+
+// ── Troubleshoot Hub ───────────────────────────────────────────────────────────
+
+async function handleTroubleshootHub(interaction: ButtonInteraction) {
+  await (interaction as any).update({
+    embeds: [buildTroubleshootEmbed()],
+    components: buildTroubleshootRows() as ActionRowBuilder<any>[],
+  });
+}
+
+// ── Report Bug ─────────────────────────────────────────────────────────────────
+
+async function handleReportBug(interaction: ButtonInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_report_bug")
+    .setTitle("Report a Bug");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("bug_title")
+        .setLabel("Bug Title / Summary")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("e.g. GOTW bonus not awarded in Week 7")
+        .setRequired(true)
+        .setMaxLength(200),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("bug_description")
+        .setLabel("Description / Steps to Reproduce")
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder("Describe what happened, what you expected, and any relevant details...")
+        .setRequired(true)
+        .setMaxLength(1500),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleModalReportBug(interaction: ModalSubmitInteraction) {
+  const guildId     = interaction.guildId!;
+  const title       = interaction.fields.getTextInputValue("bug_title").trim();
+  const description = interaction.fields.getTextInputValue("bug_description").trim();
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const commLogChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG);
+    if (commLogChannelId) {
+      const ch = (interaction.client.channels.cache.get(commLogChannelId)
+        ?? await interaction.client.channels.fetch(commLogChannelId).catch(() => null)) as TextChannel | null;
+      if (ch?.isTextBased()) {
+        await (ch as TextChannel).send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(Colors.Red)
+              .setTitle(`🐛 Bug Report: ${title}`)
+              .setDescription(description)
+              .setFooter({ text: `Reported by ${interaction.user.username} (${interaction.user.id})` })
+              .setTimestamp(),
+          ],
+        });
+      }
+    }
+
+    await interaction.editReply({ content: `✅ Bug report submitted: **${title}**. It has been logged to the commissioner log.` });
+  } catch (err) {
+    console.error("[admin-operations] Bug report error:", err);
+    await interaction.editReply({ content: `❌ Failed to submit bug report: ${err}` });
+  }
 }
 
 // ── Set Week ───────────────────────────────────────────────────────────────────
@@ -1427,31 +2394,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         console.error("[admin-operations] Refund button removal error:", err);
       }
 
-      try {
-        const postedWeeks = await postFullSeasonScheduleToChannel(
-          interaction.client,
-          season.id,
-          season.seasonNumber ?? season.id,
-          { guildId },
-        );
-        if (postedWeeks > 0) {
-          await interaction.followUp({
-            content: `📅 Full Season ${season.seasonNumber} schedule (${postedWeeks} weeks) posted.`,
-            ephemeral: true,
-          }).catch(() => {});
-        } else {
-          await interaction.followUp({
-            content: `⚠️ Could not auto-post season schedule — no schedule data found.`,
-            ephemeral: true,
-          }).catch(() => {});
-        }
-      } catch (err) {
-        console.error("[admin-operations] Auto season schedule post error:", err);
-        await interaction.followUp({
-          content: `⚠️ Season schedule auto-post failed: ${err}.`,
-          ephemeral: true,
-        }).catch(() => {});
-      }
     })();
   }
 
@@ -1707,6 +2649,7 @@ async function handleRulesSection(interaction: StringSelectMenuInteraction, sess
   const guildId = interaction.guildId!;
   const section = interaction.values[0]!;
   sess.rulesSection = section;
+  sess.rulesPage    = 0;
 
   const sections = await getAllSections(guildId);
   const meta     = sections[section];
@@ -1715,9 +2658,38 @@ async function handleRulesSection(interaction: StringSelectMenuInteraction, sess
     return;
   }
 
-  const rules = await getOrSeedRules(section, guildId);
-  const embed = buildRulesEmbed(section, meta, rules);
-  const btns  = buildRulesButtons(rules.length);
+  const rules      = await getOrSeedRules(section, guildId);
+  const totalPages = buildRulesPages(rules).length;
+  const embed      = buildRulesEmbed(section, meta, rules, 0);
+  const btns       = buildRulesButtonsWithPage(rules.length, 0, totalPages);
+
+  await interaction.update({ embeds: [embed], components: btns });
+}
+
+async function handleRulesPage(interaction: ButtonInteraction, sess: AoSession) {
+  const guildId = interaction.guildId!;
+  const page    = parseInt(interaction.customId.split(":")[1] ?? "0", 10);
+  const section = sess.rulesSection;
+
+  if (!section) {
+    await interaction.reply({ content: "❌ Session expired — please start over.", ephemeral: true });
+    return;
+  }
+
+  sess.rulesPage = page;
+
+  const sections = await getAllSections(guildId);
+  const meta     = sections[section];
+  if (!meta) {
+    await interaction.update({ content: "❌ Section not found.", components: [] });
+    return;
+  }
+
+  const rules      = await getOrSeedRules(section, guildId);
+  const totalPages = buildRulesPages(rules).length;
+  const safePage   = Math.min(Math.max(0, page), Math.max(0, totalPages - 1));
+  const embed      = buildRulesEmbed(section, meta, rules, safePage);
+  const btns       = buildRulesButtonsWithPage(rules.length, safePage, totalPages);
 
   await interaction.update({ embeds: [embed], components: btns });
 }
@@ -1875,7 +2847,9 @@ async function handleModalRulesAdd(interaction: ModalSubmitInteraction, sess: Ao
 
   const sections = await getAllSections(guildId);
   const meta     = sections[sess.rulesSection]!;
-  const embed    = buildRulesEmbed(sess.rulesSection, meta, rules);
+  const totalPages = buildRulesPages(rules).length;
+  const page       = Math.min(sess.rulesPage ?? 0, Math.max(0, totalPages - 1));
+  const embed    = buildRulesEmbed(sess.rulesSection, meta, rules, page);
 
   await interaction.reply({
     embeds: [
@@ -1885,7 +2859,7 @@ async function handleModalRulesAdd(interaction: ModalSubmitInteraction, sess: Ao
         .setDescription(`Rule **#${rules.length}** has been added to **${meta.title}**.`),
       embed,
     ],
-    components: buildRulesButtons(rules.length),
+    components: buildRulesButtonsWithPage(rules.length, page, totalPages),
     ephemeral: true,
   });
 }
@@ -1918,9 +2892,11 @@ async function handleModalRulesEdit(interaction: ModalSubmitInteraction, sess: A
   rules[ruleNum - 1] = newText;
   await setRules(sess.rulesSection, rules, interaction.user.id, guildId);
 
-  const sections = await getAllSections(guildId);
-  const meta     = sections[sess.rulesSection]!;
-  const embed    = buildRulesEmbed(sess.rulesSection, meta, rules);
+  const sections  = await getAllSections(guildId);
+  const meta      = sections[sess.rulesSection]!;
+  const totalPages = buildRulesPages(rules).length;
+  const page       = Math.min(sess.rulesPage ?? 0, Math.max(0, totalPages - 1));
+  const embed      = buildRulesEmbed(sess.rulesSection, meta, rules, page);
 
   await interaction.reply({
     embeds: [
@@ -1930,7 +2906,7 @@ async function handleModalRulesEdit(interaction: ModalSubmitInteraction, sess: A
         .setDescription(`Rule **#${ruleNum}** in **${meta.title}** has been updated.`),
       embed,
     ],
-    components: buildRulesButtons(rules.length),
+    components: buildRulesButtonsWithPage(rules.length, page, totalPages),
     ephemeral: true,
   });
 }
@@ -1957,9 +2933,11 @@ async function handleModalRulesDelete(interaction: ModalSubmitInteraction, sess:
   const [deleted] = rules.splice(ruleNum - 1, 1);
   await setRules(sess.rulesSection, rules, interaction.user.id, guildId);
 
-  const sections = await getAllSections(guildId);
-  const meta     = sections[sess.rulesSection]!;
-  const embed    = buildRulesEmbed(sess.rulesSection, meta, rules);
+  const sections   = await getAllSections(guildId);
+  const meta       = sections[sess.rulesSection]!;
+  const totalPages = buildRulesPages(rules).length;
+  const page       = Math.min(sess.rulesPage ?? 0, Math.max(0, totalPages - 1));
+  const embed      = buildRulesEmbed(sess.rulesSection, meta, rules, page);
 
   await interaction.reply({
     embeds: [
@@ -1973,7 +2951,7 @@ async function handleModalRulesDelete(interaction: ModalSubmitInteraction, sess:
         ),
       embed,
     ],
-    components: buildRulesButtons(rules.length),
+    components: buildRulesButtonsWithPage(rules.length, page, totalPages),
     ephemeral: true,
   });
 }

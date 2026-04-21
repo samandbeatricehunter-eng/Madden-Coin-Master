@@ -25,20 +25,17 @@ import * as viewFreeAgents     from "../commands/viewfreeagents.js";
 import * as actions                 from "../commands/actions.js";
 import * as adminOperations         from "../commands/admin-operations.js";
 import * as adminEosTestrun         from "../commands/admin-eos-testrun.js";
-import * as adminLeagueData         from "../commands/admin-league-data.js";
 import * as adminCancelResendEos    from "../commands/admin-cancel-resend-eos.js";
 import * as adminRebuildHistorical  from "../commands/admin-rebuild-historical.js";
 import * as draftPresence           from "../commands/draft-presence.js";
 import * as adminResendArticle      from "../commands/admin-resendarticle.js";
 import * as adminCatchup            from "../commands/admin-catchup.js";
-import * as adminPostFullSeasonSchedule from "../commands/admin-postfullseasonschedule.js";
 import * as adminRollbackFranchise  from "../commands/admin-rollback-franchise.js";
 import * as adminResetSeasonStats   from "../commands/admin-reset-season-stats.js";
 import * as endofseasonpayout       from "../commands/endofseasonpayout.js";
 import * as adminSetStatTiers       from "../commands/admin-set-stat-tiers.js";
 import * as adminStatTiers          from "../commands/admin-stat-tiers.js";
 import * as adminLegendVault        from "../commands/admin-legendvault.js";
-import * as adminTroubleshoot       from "../commands/admin-troubleshoot.js";
 import * as adminRepairTeamLinks   from "../commands/admin-repair-teamlinks.js";
 import * as adminMilestoneAudit     from "../commands/admin-milestone-audit.js";
 import * as adminCustomArcetypes    from "../commands/admin-customarchetypes.js";
@@ -52,9 +49,6 @@ import * as adminInitialize         from "../commands/admin-initialize.js";
 import * as adminServer             from "../commands/adminserver.js";
 import * as adminTeamLogo          from "../commands/admin-team-logo.js";
 import * as adminRepostBanners     from "../commands/admin-repost-banners.js";
-import * as adminPayout            from "../commands/admin-payout.js";
-import * as adminUserData          from "../commands/admin-user-data.js";
-import * as adminStoreSettings     from "../commands/admin-store-settings.js";
 import * as globalrecords          from "../commands/globalrecords.js";
 import * as alltimeleaderboard     from "../commands/alltimeleaderboard.js";
 
@@ -95,16 +89,11 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [statleaders,        true],
     [viewFreeAgents,     true],
     [adminEosTestrun,    true],
-    [adminLeagueData,    true],
     [adminCancelResendEos,   true],
     [adminRebuildHistorical, true],
     [draftPresence,      true],
     [adminResendArticle, true],
     [adminCatchup,       true],
-    [adminPayout,        true],
-    [adminUserData,      true],
-    [adminStoreSettings, true],
-    [adminPostFullSeasonSchedule, true],
     [adminRollbackFranchise, true],
     [adminResetSeasonStats,  true],
     [adminEosReapprove,  true],
@@ -130,13 +119,14 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [endofseasonpayout,   economy],
     // ── Feature-specific ─────────────────────────────────────────────────────
     [adminLegendVault,           legends],
-    [adminTroubleshoot,          true],
     [adminRepairTeamLinks,       true],
     [adminMilestoneAudit,        true],
     [adminCustomArcetypes,       custom],
     [adminCustomPlayerSettings,  custom],
     [adminFixPlayerNames,        custom],
   ];
+
+  void anyUpgrade;
 
   const commands = entries
     .filter(([, include]) => include)

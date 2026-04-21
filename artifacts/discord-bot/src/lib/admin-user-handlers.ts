@@ -37,8 +37,37 @@ import {
 } from "./db-helpers.js";
 import { NFL_TEAMS, NFL_DIVISION_MAP } from "./constants.js";
 import { getPayoutValue, setPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
-import { buildUserDataHubEmbed, buildUserDataHubRows } from "../commands/admin-user-data.js";
 import { notifyTeamWaitlist } from "../commands/waitlist.js";
+
+// ── User Data Hub Embed / Rows (moved from admin-user-data.ts) ─────────────────
+
+export function buildUserDataHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle("👤 User Data Management Hub")
+    .setDescription(
+      "Select an action below. All menus are ephemeral (only visible to you).\n\n" +
+      "**Row 1 — User Actions**\n" +
+      "🔵 View All User Teams | ⬛ Link New User | 🔴 Unlink User\n" +
+      "⬛ View/Edit User Data | 🔴 Delete User Data"
+    )
+    .setFooter({ text: "Admin User Data Hub — selections expire after 15 minutes" })
+    .setTimestamp();
+}
+
+export function buildUserDataHubRows(): ActionRowBuilder<ButtonBuilder>[] {
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ud_view_teams").setLabel("View All User Teams").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ud_link").setLabel("Link New User").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ud_unlink").setLabel("Unlink User").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ud_view_edit").setLabel("View/Edit User Data").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ud_delete").setLabel("Delete User Data").setStyle(ButtonStyle.Danger),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ud_close").setLabel("✖ Close Hub").setStyle(ButtonStyle.Danger),
+  );
+  return [row1, row2];
+}
 
 // ── Session management ─────────────────────────────────────────────────────────
 

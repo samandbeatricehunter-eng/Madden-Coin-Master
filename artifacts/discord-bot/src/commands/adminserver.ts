@@ -3,9 +3,8 @@ import {
   PermissionFlagsBits, EmbedBuilder, Colors,
 } from "discord.js";
 import { isAdminUser, setGuildChannel, getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
-import {
-  getServerSettings, buildSettingsEmbed, buildSettingsRows,
-} from "../lib/server-settings.js";
+
+export { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "../lib/server-settings.js";
 
 // Human-readable label → DB key for /adminserver link_channel
 const LINKABLE_KEYS: Record<string, string> = {
@@ -32,10 +31,6 @@ export const data = new SlashCommandBuilder()
   .setName("adminserver")
   .setDescription("Server administration commands")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addSubcommand(sub =>
-    sub.setName("server_bot_settings")
-      .setDescription("Toggle server features on/off (coin economy, store items, wagers, trade block)")
-  )
   .addSubcommand(sub =>
     sub.setName("link_channel")
       .setDescription("Register an existing Discord channel for a bot function (stream, highlights, gotw, etc.)")
@@ -84,16 +79,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (!isDiscordAdmin && !isDbAdmin) {
     await interaction.reply({ content: "❌ You don't have permission to use this command.", ephemeral: true });
-    return;
-  }
-
-  if (sub === "server_bot_settings") {
-    const settings = await getServerSettings(interaction.guildId!);
-    await interaction.reply({
-      embeds:     [buildSettingsEmbed(settings)],
-      components: buildSettingsRows(settings),
-      ephemeral:  true,
-    });
     return;
   }
 

@@ -6,7 +6,6 @@ import * as adminSetAdmin            from "./admin-setadmin.js";
 import * as adminFixPlayerNames      from "./admin-fixplayernames.js";
 import * as adminCustomPlayerSettings from "./admin-customplayersettings.js";
 import * as adminCustomArchetypes    from "./admin-customarchetypes.js";
-import * as adminServer              from "./adminserver.js";
 import { executeFranchiseLimit, executeFranchiseReset } from "./admin-season.js";
 import { ALL_POSITIONS }             from "../lib/custom-player-helpers.js";
 
@@ -64,10 +63,6 @@ export const data = new SlashCommandBuilder()
 
   // ── server settings ────────────────────────────────────────────────────────
   .addSubcommand(s => s
-    .setName("server_bot_settings")
-    .setDescription("Toggle server features on/off (coin economy, store items, wagers, trade block)")
-  )
-  .addSubcommand(s => s
     .setName("server_franchise_limit")
     .setDescription("Set the maximum number of seasons allowed in this franchise (1–50)")
     .addIntegerOption(o => o
@@ -100,7 +95,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return adminCustomPlayerSettings.execute(interaction);
   if (sub === "edit_archetype")           return adminCustomArchetypes.execute(interaction);
 
-  if (sub === "server_bot_settings")      return adminServer.execute(interaction);
   if (sub === "server_franchise_limit")   return executeFranchiseLimit(interaction);
   if (sub === "server_franchise_reset")   return executeFranchiseReset(interaction);
 
@@ -113,7 +107,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
   try {
     const sub = interaction.options.getSubcommand();
-
+    void sub;
     await interaction.respond([]).catch(() => {});
   } catch {
     await interaction.respond([]).catch(() => {});
