@@ -1017,6 +1017,21 @@ export async function runWeekImport(ctx: {
     components: [],
   });
 
+  // ── When reimporting (skipPayouts=true), erase the week's previously stored ──
+  // data BEFORE posting new stats so nothing is double-counted in the cumulative
+  // season tables. This subtracts the per-week delta snapshot, removes the dedup
+  // markers, and clears schedule rows — the import pipeline then runs cleanly.
+  if (skipPayouts) {
+    await editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Clearing existing **${wkLabel}** data before reimport…`)],
+      components: [],
+    });
+    const clearRes = await postToApi(`${weekBase}/clear`, {});
+    if (!clearRes.ok) {
+      console.warn(`[ld/import] clearWeek returned HTTP ${clearRes.status} — proceeding anyway`);
+    }
+  }
+
   const results: { name: string; ok: boolean; status: number; skipped?: boolean }[] = [];
 
   for (const [statType, urlSuffix] of [
@@ -1069,7 +1084,7 @@ export async function runWeekImport(ctx: {
     .setTitle(skipPayouts ? `📦 Reimport Complete (No Payouts) — ${wkLabel}` : `📥 Import Complete — ${wkLabel}`)
     .setDescription(
       skipPayouts
-        ? "✅ Stats stored. **No coins were awarded** and **W/L records were not updated** — reimport mode was active.\n\nRun **Repair User Records** from `/admin-troubleshoot` if W/L counts look off."
+        ? "✅ Previous week data was cleared first, then fresh stats were stored. **No coins were awarded** and **W/L records were not updated** — reimport mode was active.\n\nRun **Repair User Records** from `/admin-troubleshoot` if W/L counts look off."
         : null,
     )
     .addFields(

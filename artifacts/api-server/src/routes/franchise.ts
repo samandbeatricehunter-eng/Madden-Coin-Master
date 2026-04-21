@@ -15,6 +15,7 @@ import {
   processLeagueNews,
   repairTeamLinks,
   getOrCreateActiveSeason,
+  clearWeekData,
 } from "../lib/franchise-processor.js";
 import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaStorage.js";
@@ -303,6 +304,19 @@ for (const statType of ["passing", "rushing", "receiving", "defense", "kicking",
     },
   );
 }
+
+// ── /week/:weekType/:weekNum/clear — erase week data for reimport ─────────────
+// Subtracts per-week deltas from cumulative stats tables, removes the processed
+// markers and schedule rows so the standard import pipeline runs cleanly again.
+// Called automatically by "Reimport - No Payouts" before each weekly stat import.
+router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/clear", validateKey, async (req, res) => {
+  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const result = await clearWeekData(weekType, weekNum, leagueId).catch(err => ({ ok: false, message: String(err) }));
+  res.status(result.ok ? 200 : 500).json(result);
+  console.log(`[clearWeek] ${weekType} week ${weekNum}: ${result.message}`);
+});
 
 // ── Playoff round label helper ─────────────────────────────────────────────────
 function weekLabel(weekType: string, weekNum: number): string {

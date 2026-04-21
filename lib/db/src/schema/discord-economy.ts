@@ -547,6 +547,79 @@ export const playerStatWeekProcessedTable = pgTable("player_stat_week_processed"
     .on(t.seasonId, t.weekType, t.weekNum, t.statType),
 }));
 
+// ── Per-week player stat deltas (used to undo a week's accumulation on reimport) ──
+// Stores the exact values that were accumulated into playerSeasonStatsTable for each
+// (season, weekType, weekNum, statType, player) so they can be subtracted on reimport.
+export const playerWeekStatsDeltaTable = pgTable("player_week_stats_delta", {
+  id:          serial("id").primaryKey(),
+  seasonId:    integer("season_id").notNull(),
+  weekType:    text("week_type").notNull(),
+  weekNum:     integer("week_num").notNull(),
+  statType:    text("stat_type").notNull(),
+  playerId:    integer("player_id").notNull(),
+  // Additive stat fields — only the relevant ones for each statType are non-null
+  passYds:        integer("pass_yds"),
+  passTDs:        integer("pass_tds"),
+  passAtt:        integer("pass_att"),
+  passComp:       integer("pass_comp"),
+  passInts:       integer("pass_ints"),
+  timesSacked:    integer("times_sacked"),
+  rushYds:        integer("rush_yds"),
+  rushTDs:        integer("rush_tds"),
+  rushAtt:        integer("rush_att"),
+  fumbles:        integer("fumbles"),
+  recYds:         integer("rec_yds"),
+  recTDs:         integer("rec_tds"),
+  recRec:         integer("rec_rec"),
+  sacks:          integer("sacks"),
+  defInts:        integer("def_ints"),
+  totalTackles:   integer("total_tackles"),
+  tackleSolo:     integer("tackle_solo"),
+  tackleAssist:   integer("tackle_assist"),
+  defFumblesRec:  integer("def_fumbles_rec"),
+  forcedFumbles:  integer("forced_fumbles"),
+  tacklesForLoss: integer("tackles_for_loss"),
+  defTDs:         integer("def_tds"),
+  fgMade:         integer("fg_made"),
+  fgAtt:          integer("fg_att"),
+  xpMade:         integer("xp_made"),
+  xpAtt:          integer("xp_att"),
+  puntAtt:        integer("punt_att"),
+  puntYds:        integer("punt_yds"),
+  puntIn20:       integer("punt_in_20"),
+  puntTouchbacks: integer("punt_touchbacks"),
+  krAtt:          integer("kr_att"),
+  krYds:          integer("kr_yds"),
+  krTDs:          integer("kr_tds"),
+  prAtt:          integer("pr_att"),
+  prYds:          integer("pr_yds"),
+  prTDs:          integer("pr_tds"),
+}, (t) => ({
+  uniq: uniqueIndex("player_week_stats_delta_uniq")
+    .on(t.seasonId, t.weekType, t.weekNum, t.statType, t.playerId),
+}));
+
+// ── Per-week team stat deltas (used to undo a week's accumulation on reimport) ──
+export const teamWeekStatsDeltaTable = pgTable("team_week_stats_delta", {
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  weekType:     text("week_type").notNull(),
+  weekNum:      integer("week_num").notNull(),
+  teamId:       integer("team_id").notNull(),
+  offYds:       integer("off_yds"),
+  offPassYds:   integer("off_pass_yds"),
+  offRushYds:   integer("off_rush_yds"),
+  offTDs:       integer("off_tds"),
+  defPassYds:   integer("def_pass_yds"),
+  defRushYds:   integer("def_rush_yds"),
+  defTDs:       integer("def_tds"),
+  defFumblesRec: integer("def_fumbles_rec"),
+  turnoverDiff: integer("turnover_diff"),
+}, (t) => ({
+  uniq: uniqueIndex("team_week_stats_delta_uniq")
+    .on(t.seasonId, t.weekType, t.weekNum, t.teamId),
+}));
+
 // ── GOTW recommendation history (4-week cooldown tracking) ────────────────────
 export const gotwHistoryTable = pgTable("gotw_history", {
   id:          serial("id").primaryKey(),

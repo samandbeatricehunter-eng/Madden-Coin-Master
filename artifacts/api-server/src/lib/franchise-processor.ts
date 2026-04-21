@@ -16,6 +16,8 @@ import {
   teamSeasonStatsTable,
   playerSeasonStatsTable,
   playerStatWeekProcessedTable,
+  playerWeekStatsDeltaTable,
+  teamWeekStatsDeltaTable,
   rosterTransactionsTable,
   leagueNewsTable,
 } from "@workspace/db";
@@ -744,6 +746,7 @@ export async function processTeamWeekStats(
     let loggedTeamSample = false;
 
     const ops: Promise<any>[] = [];
+    const teamDeltaRows: (typeof teamWeekStatsDeltaTable.$inferInsert)[] = [];
     let upserted = 0;
 
     for (const t of stats) {
@@ -777,6 +780,14 @@ export async function processTeamWeekStats(
       const turnoverDiff  = getTurnoverDiff(t);
       const wins          = getN(t, "wins","totalWins","seasonWins");
       const losses        = getN(t, "losses","totalLosses","seasonLosses");
+
+      // Collect per-week team delta for reimport rollback (only additive fields, not GREATEST)
+      teamDeltaRows.push({
+        seasonId: season.id, weekType, weekNum, teamId,
+        offYds, offPassYds, offRushYds, offTDs,
+        defPassYds, defRushYds, defTDs,
+        defFumblesRec, turnoverDiff,
+      });
 
       ops.push(
         db.insert(teamSeasonStatsTable)
@@ -822,6 +833,13 @@ export async function processTeamWeekStats(
     }
 
     await Promise.all(ops);
+
+    // Store per-week team deltas for reimport rollback
+    if (teamDeltaRows.length > 0) {
+      await db.insert(teamWeekStatsDeltaTable)
+        .values(teamDeltaRows)
+        .onConflictDoNothing();
+    }
 
     await db.insert(playerStatWeekProcessedTable).values({
       seasonId: season.id, weekType, weekNum,
@@ -1105,6 +1123,7 @@ export async function processPlayerWeekStats(
     const priorStatsMap = new Map(priorStatRows.map(r => [r.playerId, r]));
 
     const ops: Promise<any>[] = [];
+    const deltaRows: (typeof playerWeekStatsDeltaTable.$inferInsert)[] = [];
     let upserted = 0;
     let loggedSample = false;
     const statViolations: ViolationRecord[] = [];
@@ -1290,6 +1309,14 @@ export async function processPlayerWeekStats(
         };
       }
 
+      // Collect this player's per-week delta for reimport rollback
+      if (Object.keys(insertFields).length > 0) {
+        deltaRows.push({
+          seasonId: season.id, weekType, weekNum, statType, playerId,
+          ...insertFields,
+        } as typeof playerWeekStatsDeltaTable.$inferInsert);
+      }
+
       ops.push(
         db.insert(playerSeasonStatsTable)
           .values({
@@ -1325,6 +1352,15 @@ export async function processPlayerWeekStats(
       statType,
       recordCount: upserted,
     });
+
+    // ── Store per-week delta snapshot so this week can be cleared on reimport ──
+    // deltaFields is the set of plain numeric values accumulated for each player.
+    // Re-built here from the insertFields collected during the loop above.
+    if (deltaRows.length > 0) {
+      await db.insert(playerWeekStatsDeltaTable)
+        .values(deltaRows)
+        .onConflictDoNothing();
+    }
 
     console.log(`[mca/week${weekNum}/${statType}] Upserted ${upserted} records, ${statViolations.length} violations`);
     return { ok: true, message: `${statType} week ${weekNum}: upserted ${upserted} records`, details: { upserted }, violations: statViolations };
@@ -2890,6 +2926,158 @@ export async function processLeagueNews(body: unknown, eaLeagueId = 0): Promise<
     return { ok: true, message: `${upserted} news items imported`, details: { seasonId: season.id, count: upserted } };
   } catch (err) {
     console.error("[mca/news] Error:", err);
+    return { ok: false, message: String(err) };
+  }
+}
+
+// ── clearWeekData — erase a specific week's data so it can be cleanly reimported ──
+// Subtracts per-week deltas from cumulative season stats tables, then deletes the
+// processed markers and schedule rows so the normal import pipeline runs fresh.
+// Called automatically by the "Reimport - No Payouts" flow when the week was
+// previously imported.
+export async function clearWeekData(
+  weekType: string,
+  weekNum: number,
+  eaLeagueId = 0,
+): Promise<ProcessResult> {
+  try {
+    const season = await getOrCreateActiveSeason(eaLeagueId);
+    const seasonId = season.id;
+    const isPlayoff = weekType !== "reg" && weekType !== "pre";
+    const weekIndex = isPlayoff ? resolvePlayoffWeekIndex(weekType, weekNum) : weekNum - 1;
+
+    // ── 1. Subtract player stat deltas from cumulative season totals ─────────
+    const playerDeltas = await db.select()
+      .from(playerWeekStatsDeltaTable)
+      .where(and(
+        eq(playerWeekStatsDeltaTable.seasonId, seasonId),
+        eq(playerWeekStatsDeltaTable.weekType, weekType),
+        eq(playerWeekStatsDeltaTable.weekNum, weekNum),
+      ));
+
+    if (playerDeltas.length > 0) {
+      const playerOps = playerDeltas.map((d) =>
+        db.update(playerSeasonStatsTable)
+          .set({
+            passYds:        d.passYds        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.passYds}        - ${d.passYds})`        : undefined,
+            passTDs:        d.passTDs        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.passTDs}        - ${d.passTDs})`        : undefined,
+            passAtt:        d.passAtt        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.passAtt}        - ${d.passAtt})`        : undefined,
+            passComp:       d.passComp       != null ? sql`GREATEST(0, ${playerSeasonStatsTable.passComp}       - ${d.passComp})`       : undefined,
+            passInts:       d.passInts       != null ? sql`GREATEST(0, ${playerSeasonStatsTable.passInts}       - ${d.passInts})`       : undefined,
+            timesSacked:    d.timesSacked    != null ? sql`GREATEST(0, ${playerSeasonStatsTable.timesSacked}    - ${d.timesSacked})`    : undefined,
+            rushYds:        d.rushYds        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.rushYds}        - ${d.rushYds})`        : undefined,
+            rushTDs:        d.rushTDs        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.rushTDs}        - ${d.rushTDs})`        : undefined,
+            rushAtt:        d.rushAtt        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.rushAtt}        - ${d.rushAtt})`        : undefined,
+            fumbles:        d.fumbles        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.fumbles}        - ${d.fumbles})`        : undefined,
+            recYds:         d.recYds         != null ? sql`GREATEST(0, ${playerSeasonStatsTable.recYds}         - ${d.recYds})`         : undefined,
+            recTDs:         d.recTDs         != null ? sql`GREATEST(0, ${playerSeasonStatsTable.recTDs}         - ${d.recTDs})`         : undefined,
+            recRec:         d.recRec         != null ? sql`GREATEST(0, ${playerSeasonStatsTable.recRec}         - ${d.recRec})`         : undefined,
+            sacks:          d.sacks          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.sacks}          - ${d.sacks})`          : undefined,
+            defInts:        d.defInts        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.defInts}        - ${d.defInts})`        : undefined,
+            totalTackles:   d.totalTackles   != null ? sql`GREATEST(0, ${playerSeasonStatsTable.totalTackles}   - ${d.totalTackles})`   : undefined,
+            tackleSolo:     d.tackleSolo     != null ? sql`GREATEST(0, ${playerSeasonStatsTable.tackleSolo}     - ${d.tackleSolo})`     : undefined,
+            tackleAssist:   d.tackleAssist   != null ? sql`GREATEST(0, ${playerSeasonStatsTable.tackleAssist}   - ${d.tackleAssist})`   : undefined,
+            defFumblesRec:  d.defFumblesRec  != null ? sql`GREATEST(0, ${playerSeasonStatsTable.defFumblesRec}  - ${d.defFumblesRec})`  : undefined,
+            forcedFumbles:  d.forcedFumbles  != null ? sql`GREATEST(0, ${playerSeasonStatsTable.forcedFumbles}  - ${d.forcedFumbles})`  : undefined,
+            tacklesForLoss: d.tacklesForLoss != null ? sql`GREATEST(0, ${playerSeasonStatsTable.tacklesForLoss} - ${d.tacklesForLoss})` : undefined,
+            defTDs:         d.defTDs         != null ? sql`GREATEST(0, ${playerSeasonStatsTable.defTDs}         - ${d.defTDs})`         : undefined,
+            fgMade:         d.fgMade         != null ? sql`GREATEST(0, ${playerSeasonStatsTable.fgMade}         - ${d.fgMade})`         : undefined,
+            fgAtt:          d.fgAtt          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.fgAtt}          - ${d.fgAtt})`          : undefined,
+            xpMade:         d.xpMade         != null ? sql`GREATEST(0, ${playerSeasonStatsTable.xpMade}         - ${d.xpMade})`         : undefined,
+            xpAtt:          d.xpAtt          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.xpAtt}          - ${d.xpAtt})`          : undefined,
+            puntAtt:        d.puntAtt        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.puntAtt}        - ${d.puntAtt})`        : undefined,
+            puntYds:        d.puntYds        != null ? sql`GREATEST(0, ${playerSeasonStatsTable.puntYds}        - ${d.puntYds})`        : undefined,
+            puntIn20:       d.puntIn20       != null ? sql`GREATEST(0, ${playerSeasonStatsTable.puntIn20}       - ${d.puntIn20})`       : undefined,
+            puntTouchbacks: d.puntTouchbacks != null ? sql`GREATEST(0, ${playerSeasonStatsTable.puntTouchbacks} - ${d.puntTouchbacks})` : undefined,
+            krAtt:          d.krAtt          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.krAtt}          - ${d.krAtt})`          : undefined,
+            krYds:          d.krYds          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.krYds}          - ${d.krYds})`          : undefined,
+            krTDs:          d.krTDs          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.krTDs}          - ${d.krTDs})`          : undefined,
+            prAtt:          d.prAtt          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.prAtt}          - ${d.prAtt})`          : undefined,
+            prYds:          d.prYds          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.prYds}          - ${d.prYds})`          : undefined,
+            prTDs:          d.prTDs          != null ? sql`GREATEST(0, ${playerSeasonStatsTable.prTDs}          - ${d.prTDs})`          : undefined,
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(playerSeasonStatsTable.seasonId, seasonId),
+            eq(playerSeasonStatsTable.playerId, d.playerId),
+          ))
+      );
+      await Promise.all(playerOps);
+      console.log(`[clearWeek] Subtracted ${playerDeltas.length} player deltas for season ${seasonId} ${weekType} week ${weekNum}`);
+    }
+
+    // Delete the player delta rows for this week
+    await db.delete(playerWeekStatsDeltaTable)
+      .where(and(
+        eq(playerWeekStatsDeltaTable.seasonId, seasonId),
+        eq(playerWeekStatsDeltaTable.weekType, weekType),
+        eq(playerWeekStatsDeltaTable.weekNum, weekNum),
+      ));
+
+    // ── 2. Subtract team stat deltas from cumulative season totals ──────────
+    const teamDeltas = await db.select()
+      .from(teamWeekStatsDeltaTable)
+      .where(and(
+        eq(teamWeekStatsDeltaTable.seasonId, seasonId),
+        eq(teamWeekStatsDeltaTable.weekType, weekType),
+        eq(teamWeekStatsDeltaTable.weekNum, weekNum),
+      ));
+
+    if (teamDeltas.length > 0) {
+      const teamOps = teamDeltas.map((d) =>
+        db.update(teamSeasonStatsTable)
+          .set({
+            offYds:       d.offYds       != null ? sql`GREATEST(0, ${teamSeasonStatsTable.offYds}       - ${d.offYds})`       : undefined,
+            offPassYds:   d.offPassYds   != null ? sql`GREATEST(0, ${teamSeasonStatsTable.offPassYds}   - ${d.offPassYds})`   : undefined,
+            offRushYds:   d.offRushYds   != null ? sql`GREATEST(0, ${teamSeasonStatsTable.offRushYds}   - ${d.offRushYds})`   : undefined,
+            offTDs:       d.offTDs       != null ? sql`GREATEST(0, ${teamSeasonStatsTable.offTDs}       - ${d.offTDs})`       : undefined,
+            defPassYds:   d.defPassYds   != null ? sql`GREATEST(0, ${teamSeasonStatsTable.defPassYds}   - ${d.defPassYds})`   : undefined,
+            defRushYds:   d.defRushYds   != null ? sql`GREATEST(0, ${teamSeasonStatsTable.defRushYds}   - ${d.defRushYds})`   : undefined,
+            defTDs:       d.defTDs       != null ? sql`GREATEST(0, ${teamSeasonStatsTable.defTDs}       - ${d.defTDs})`       : undefined,
+            defFumblesRec: d.defFumblesRec != null ? sql`GREATEST(0, ${teamSeasonStatsTable.defFumblesRec} - ${d.defFumblesRec})` : undefined,
+            turnoverDiff: d.turnoverDiff != null ? sql`${teamSeasonStatsTable.turnoverDiff} - ${d.turnoverDiff}` : undefined,
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(teamSeasonStatsTable.seasonId, seasonId),
+            eq(teamSeasonStatsTable.teamId, d.teamId),
+          ))
+      );
+      await Promise.all(teamOps);
+      console.log(`[clearWeek] Subtracted ${teamDeltas.length} team deltas for season ${seasonId} ${weekType} week ${weekNum}`);
+    }
+
+    // Delete the team delta rows for this week
+    await db.delete(teamWeekStatsDeltaTable)
+      .where(and(
+        eq(teamWeekStatsDeltaTable.seasonId, seasonId),
+        eq(teamWeekStatsDeltaTable.weekType, weekType),
+        eq(teamWeekStatsDeltaTable.weekNum, weekNum),
+      ));
+
+    // ── 3. Remove the processed markers so the import pipeline runs fresh ────
+    await db.delete(playerStatWeekProcessedTable)
+      .where(and(
+        eq(playerStatWeekProcessedTable.seasonId, seasonId),
+        eq(playerStatWeekProcessedTable.weekType, weekType),
+        eq(playerStatWeekProcessedTable.weekNum, weekNum),
+      ));
+
+    // ── 4. Delete the schedule rows for this week (will be re-inserted on import) ─
+    await db.delete(franchiseScheduleTable)
+      .where(and(
+        eq(franchiseScheduleTable.seasonId, seasonId),
+        eq(franchiseScheduleTable.weekIndex, weekIndex),
+      ));
+
+    console.log(`[clearWeek] Season ${seasonId} ${weekType} week ${weekNum} (weekIndex ${weekIndex}) cleared — ready for reimport`);
+    return {
+      ok: true,
+      message: `Week ${weekNum} data cleared (${playerDeltas.length} player deltas, ${teamDeltas.length} team deltas). Ready for reimport.`,
+      details: { seasonId, weekType, weekNum, weekIndex, playerDeltasCleared: playerDeltas.length, teamDeltasCleared: teamDeltas.length },
+    };
+  } catch (err) {
+    console.error("[clearWeek] Error:", err);
     return { ok: false, message: String(err) };
   }
 }
