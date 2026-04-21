@@ -37,13 +37,46 @@ export async function execute(member: GuildMember): Promise<void> {
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Blue)
-      .setTitle("🏈 Getting Started")
+      .setTitle("🏈 Getting Started — /actions Command Guide")
       .setDescription(
-        "Use the **/actions** command to get started:\n\n" +
-        "• **View Open Teams** — browse all available teams and request the one you want\n" +
-        "• **View Any Roster** — check out any team's players before deciding\n" +
-        "• **Request Waitlist** — if your preferred team isn't available, add yourself to the waitlist\n\n" +
-        "A commissioner will reach out once your request has been reviewed.",
+        "Everything you need is available through the **/actions** slash command. " +
+        "Here's a quick rundown of what's available:\n\u200B",
+      )
+      .addFields(
+        {
+          name: "📋 Team Requests",
+          value: [
+            "🔴 **View Open Teams** — see every NFL team that's currently available to claim",
+            "🟢 **View User Teams** — browse all active league members and their teams",
+            "📬 **Request Open Team** — submit a team request directly to a commissioner",
+            "📋 **Add to Waitlist** — join the waitlist if no team is available right now",
+            "❌ **Remove from Waitlist** — remove yourself from the waitlist at any time",
+          ].join("\n"),
+          inline: false,
+        },
+        {
+          name: "🔍 Browse the League",
+          value: [
+            "👥 **View Any Roster** — check out any team's current player roster",
+            "📊 **Player Stats & Ratings** — view any player's season stats and attribute ratings",
+            "🏟️ **Team Stats** — see any team's season offensive and defensive stats",
+          ].join("\n"),
+          inline: false,
+        },
+        {
+          name: "📈 League Info",
+          value: [
+            "📈 **Standings** — current AFC and NFC standings",
+            "🎯 **In The Hunt** — playoff picture and wild card race",
+            "👀 **Teams to Watch** — highlighted storylines and must-see matchups",
+          ].join("\n"),
+          inline: false,
+        },
+        {
+          name: "\u200B",
+          value: "Once a commissioner links you to a team you'll unlock the full hub — coin economy, wagers, PR rankings, interview requests, and more.",
+          inline: false,
+        },
       );
 
     const lines = [

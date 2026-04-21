@@ -28,7 +28,7 @@ import {
   payoutRequestsTable, pendingChannelPayoutsTable, pendingEosPayoutsTable,
   franchiseMcaTeamsTable, franchiseRostersTable, teamSeasonStatsTable,
   playerSeasonStatsTable, globalUserRecordsTable, waitlistTable,
-  interviewRequestsTable,
+  interviewRequestsTable, rulesTable,
 } from "@workspace/db";
 import { eq, and, isNotNull, inArray, or, desc, sum, sql } from "drizzle-orm";
 import {
@@ -691,6 +691,37 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
   embed.setTimestamp().setFooter({ text: `Linked by ${interaction.user.username}` });
 
   await interaction.editReply({ embeds: [embed] });
+
+  // ── DM the newly linked user with League Info rule #1 (league name & password) ──
+  (async () => {
+    try {
+      const [leagueInfoRow] = await db.select({ rules: rulesTable.rules })
+        .from(rulesTable)
+        .where(and(eq(rulesTable.guildId, guildId), eq(rulesTable.section, "league_info")));
+
+      const rule1 = leagueInfoRow?.rules?.[0];
+      if (!rule1) return;
+
+      const dmEmbed = new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle(`🏈 Welcome to the R.E.C. League — You've Been Linked to ${teamName}!`)
+        .setDescription(
+          `You've been added to the league as the **${teamName}**.\n\n` +
+          "Here's everything you need to join the in-game league:\n\u200B",
+        )
+        .addFields(
+          { name: "📋 League Info", value: rule1, inline: false },
+          { name: "\u200B", value: "Use the **/actions** command in the server to access your hub — roster, coins, wagers, standings, and more.", inline: false },
+        )
+        .setTimestamp();
+
+      await targetUser.send({ embeds: [dmEmbed] }).catch(err => {
+        console.error(`[ud_link] Could not DM league info to ${discordId}:`, err);
+      });
+    } catch (err) {
+      console.error("[ud_link] Error sending league info DM:", err);
+    }
+  })();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
