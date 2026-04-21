@@ -26,7 +26,6 @@ import * as h2hrecord        from "./commands/h2hrecord.js";
 import * as customarticle    from "./commands/customarticle.js";
 import * as webhookurl       from "./commands/webhookurl.js";
 import * as statleaders      from "./commands/statleaders.js";
-import * as availableupgrades from "./commands/availableupgrades.js";
 import * as waitlist          from "./commands/waitlist.js";
 import * as globalrecords     from "./commands/globalrecords.js";
 
@@ -136,7 +135,6 @@ if (!isProduction && !devBotEnabled) {
     customarticle,
     webhookurl,
     statleaders,
-    availableupgrades,
 
     // Admin tools
     adminEosTestrun,

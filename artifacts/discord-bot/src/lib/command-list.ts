@@ -21,7 +21,6 @@ import * as webhookurl         from "../commands/webhookurl.js";
 import * as viewpayouttiers    from "../commands/viewpayouttiers.js";
 import * as interviewrequest   from "../commands/interviewrequest.js";
 import * as statleaders        from "../commands/statleaders.js";
-import * as availableupgrades  from "../commands/availableupgrades.js";
 import * as viewFreeAgents     from "../commands/viewfreeagents.js";
 import * as actions                 from "../commands/actions.js";
 import * as adminOperations         from "../commands/admin-operations.js";
@@ -135,7 +134,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [viewpayouttiers, economy],
     [endofseasonpayout,   economy],
     // ── Feature-specific ─────────────────────────────────────────────────────
-    [availableupgrades,          anyUpgrade],
     [adminLegendVault,           legends],
     [adminTroubleshoot,          true],
     [adminRepairTeamLinks,       true],

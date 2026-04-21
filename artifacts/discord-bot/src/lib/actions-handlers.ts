@@ -38,7 +38,8 @@ import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
   type InterviewType,
 } from "../commands/interviewrequest.js";
-import { buildActionsHubEmbed, buildActionsHubRows } from "../commands/actions.js";
+import { buildActionsHubRows } from "../commands/actions.js";
+import { appendUserStatsFields } from "./user-stats-embed.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
@@ -247,14 +248,26 @@ export async function handleActionsInteraction(
 
   // ── Hub restore ─────────────────────────────────────────────────────────────
   if (id === "ac_hub") {
-    const settings = await getServerSettings(gid);
-    const member   = (interaction as ButtonInteraction).guild?.members.cache.get(uid)
-      ?? await (interaction as ButtonInteraction).guild?.members.fetch(uid).catch(() => null);
-    const isDiscordAdmin = member?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
+    const btn = interaction as ButtonInteraction;
+    await btn.deferUpdate();
+    const [settings, member, user, season] = await Promise.all([
+      getServerSettings(gid),
+      btn.guild?.members.cache.get(uid) ?? btn.guild?.members.fetch(uid).catch(() => null),
+      getOrCreateUser(uid, btn.user.username, gid),
+      getOrCreateActiveSeason(gid),
+    ]);
+    const isDiscordAdmin = (member as import("discord.js").GuildMember | null | undefined)?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
     const isDbAdmin      = await isAdminUser(uid, gid);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
-    await (interaction as ButtonInteraction).update({
-      embeds:     [buildActionsHubEmbed(settings, isAdmin)],
+    const rules          = await getSeasonRules(season);
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle(`🏈 League Actions Hub — ${user.team ?? btn.user.username}`)
+      .setDescription("Select any action below. All menus are private (visible only to you).")
+      .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" });
+    await appendUserStatsFields(embed, uid, gid, user, season, settings, rules, btn.user.displayAvatarURL());
+    await btn.editReply({
+      embeds:     [embed],
       components: buildActionsHubRows(settings, isAdmin),
     });
     return true;
@@ -315,7 +328,6 @@ export async function handleActionsInteraction(
   if (id === "ac_standings")    { await handleStandingsConfPick(interaction as ButtonInteraction, sess); return true; }
   if (id.startsWith("ac_standings_conf:"))   { await handleStandingsShow(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_teamstowatch") { await handleTeamsToWatch(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_myuserstats")  { await handleMyUserStats(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyuserstats")         { await handleAnyUserStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id.startsWith("ac_anyus_conf:")) { await handleAnyUserStatsConfPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyus_sel")            { await handleAnyUserStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
@@ -2270,101 +2282,6 @@ async function handleTeamsToWatch(interaction: ButtonInteraction, sess: ActionsS
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
 }
 
-async function handleMyUserStats(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid = interaction.guildId!;
-  const uid = interaction.user.id;
-  await interaction.deferUpdate();
-
-  const [user, season, savingsRow] = await Promise.all([
-    getOrCreateUser(uid, interaction.user.username, gid),
-    getOrCreateActiveSeason(gid),
-    db.select({ balance: userSavingsTable.balance }).from(userSavingsTable).where(eq(userSavingsTable.discordId, uid)).limit(1).then(r => r[0]),
-  ]);
-
-  const [recordRow, seasonStatsRow, globalRecord, eaIds, lastTxns] = await Promise.all([
-    db.select().from(userRecordsTable).where(and(eq(userRecordsTable.discordId, uid), eq(userRecordsTable.seasonId, season.id))).limit(1).then(r => r[0]),
-    getSeasonStats(uid, season.id),
-    db.select({ wins: globalUserRecordsTable.wins, losses: globalUserRecordsTable.losses })
-      .from(globalUserRecordsTable).where(eq(globalUserRecordsTable.discordId, uid)).limit(1).then(r => r[0]),
-    db.select({ eaId: playerEaIdsTable.eaId, console: playerEaIdsTable.console, slot: playerEaIdsTable.slot })
-      .from(playerEaIdsTable).where(eq(playerEaIdsTable.discordId, uid)).orderBy(playerEaIdsTable.slot),
-    db.select({ amount: coinTransactionsTable.amount, description: coinTransactionsTable.description, createdAt: coinTransactionsTable.createdAt })
-      .from(coinTransactionsTable)
-      .where(and(eq(coinTransactionsTable.discordId, uid), eq(coinTransactionsTable.guildId, gid)))
-      .orderBy(desc(coinTransactionsTable.createdAt)).limit(10),
-  ]);
-
-  const legendRows = await db.select({ legendName: inventoryTable.legendName, legendCategory: inventoryTable.legendCategory })
-    .from(inventoryTable)
-    .where(and(eq(inventoryTable.discordId, uid), eq(inventoryTable.itemType, "legend")));
-
-  const customPlayerRows = await db.select({
-    firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
-    position: customPlayersTable.position, packageTier: customPlayersTable.packageTier,
-  }).from(customPlayersTable)
-    .where(and(eq(customPlayersTable.discordId, uid), ne(customPlayersTable.status, "refunded")));
-
-  const savings = savingsRow?.balance ?? 0;
-  const total   = user.balance + savings;
-  const ssW     = recordRow?.wins          ?? 0;
-  const ssL     = recordRow?.losses        ?? 0;
-  const atW     = globalRecord?.wins       ?? 0;
-  const atL     = globalRecord?.losses     ?? 0;
-  const sbW     = recordRow?.superbowlWins ?? 0;
-
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Blue)
-    .setTitle(`🧑 ${user.team ?? interaction.user.username} — User Stats`)
-    .setThumbnail(interaction.user.displayAvatarURL())
-    .addFields(
-      { name: "💰 Balance",       value: `Wallet: **${user.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
-      { name: "📊 Season Record", value: `${ssW}W-${ssL}L`, inline: true },
-      { name: "🏆 All-Time",      value: `${atW}W-${atL}L | ${sbW} SB${sbW !== 1 ? "s" : ""}`, inline: true },
-    );
-
-  if (eaIds.length) {
-    embed.addFields({ name: "🎮 EA IDs", value: eaIds.map(e => `${e.console.toUpperCase()}: **${e.eaId}**`).join("\n"), inline: false });
-  }
-
-  if (seasonStatsRow) {
-    const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
-    embed.addFields({
-      name: "🛒 This Season's Purchases",
-      value: `Core: ${coreAttrPurchased ?? 0} | Non-Core: ${nonCoreAttrPurchased ?? 0} | Dev Ups: ${devUpsPurchased ?? 0} | Age Resets: ${ageResetsPurchased ?? 0}`,
-      inline: false,
-    });
-  }
-
-  const vaultLegends   = legendRows.filter(l => l.legendCategory === "permanent");
-  const currentLegends = legendRows.filter(l => l.legendCategory !== "permanent");
-  if (legendRows.length) {
-    const parts: string[] = [];
-    if (currentLegends.length) parts.push(`Season: ${currentLegends.map(l => l.legendName).join(", ")}`);
-    if (vaultLegends.length)   parts.push(`Vault: ${vaultLegends.map(l => l.legendName).join(", ")}`);
-    embed.addFields({ name: "🏅 Legends", value: parts.join("\n"), inline: false });
-  }
-
-  if (customPlayerRows.length) {
-    embed.addFields({
-      name: "⚡ Custom Players",
-      value: customPlayerRows.map(p => `${p.firstName} ${p.lastName} (${p.position}) — ${p.packageTier}`).join("\n"),
-      inline: false,
-    });
-  }
-
-  if (lastTxns.length) {
-    const txLines = lastTxns.map(t => {
-      const sign = t.amount >= 0 ? "+" : "";
-      const ts   = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:d>`;
-      return `${ts} **${sign}${t.amount.toLocaleString()}** — ${t.description}`;
-    });
-    embed.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
-  }
-
-  embed.setTimestamp();
-  await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
-}
-
 async function handleAnyUserStatsTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
   await interaction.update({
     embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("👤 Any User Stats — Pick Conference")],
@@ -2429,7 +2346,12 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
   const gid      = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const season = await getOrCreateActiveSeason(gid);
+  const [season, settings] = await Promise.all([
+    getOrCreateActiveSeason(gid),
+    getServerSettings(gid),
+  ]);
+  const rules = await getSeasonRules(season);
+
   const [targetUser, savingsRow, recordRow, seasonStatsRow, globalRecord, eaIds, lastTxns] = await Promise.all([
     db.select().from(usersTable).where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, gid))).limit(1).then(r => r[0]),
     db.select({ balance: userSavingsTable.balance }).from(userSavingsTable).where(eq(userSavingsTable.discordId, targetId)).limit(1).then(r => r[0]),
@@ -2450,9 +2372,15 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
     return;
   }
 
+  // Legends scoped to this guild via seasonId → seasonsTable.guildId join
   const legendRows = await db.select({ legendName: inventoryTable.legendName, legendCategory: inventoryTable.legendCategory })
     .from(inventoryTable)
-    .where(and(eq(inventoryTable.discordId, targetId), eq(inventoryTable.itemType, "legend")));
+    .innerJoin(seasonsTable, eq(inventoryTable.seasonId, seasonsTable.id))
+    .where(and(
+      eq(inventoryTable.itemType, "legend"),
+      eq(seasonsTable.guildId, gid),
+      eq(inventoryTable.discordId, targetId),
+    ));
 
   const customPlayerRows = await db.select({
     firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
@@ -2483,9 +2411,17 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
 
   if (seasonStatsRow) {
     const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
+    const ecoOn   = settings.coinEconomy;
+    const attrOn  = ecoOn && settings.attributeUpgradesEnabled;
+    const devOn   = ecoOn && settings.devUpgradesEnabled;
+    const ageOn   = ecoOn && settings.ageResetsEnabled;
+    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0} (${rules.coreAttrCap})`       : `${coreAttrPurchased ?? 0} (n/a)`;
+    const nonCoreFmt = attrOn ? `${nonCoreAttrPurchased ?? 0} (${rules.nonCoreAttrCap})` : `${nonCoreAttrPurchased ?? 0} (n/a)`;
+    const devFmt     = devOn  ? `${devUpsPurchased ?? 0} (${rules.devUpsCap})`           : `${devUpsPurchased ?? 0} (n/a)`;
+    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0} (${rules.ageResetsCap})`     : `${ageResetsPurchased ?? 0} (n/a)`;
     embed.addFields({
       name: "🛒 This Season's Purchases",
-      value: `Core: ${coreAttrPurchased ?? 0} | Non-Core: ${nonCoreAttrPurchased ?? 0} | Dev Ups: ${devUpsPurchased ?? 0} | Age Resets: ${ageResetsPurchased ?? 0}`,
+      value: `Core: ${coreFmt} | Non-Core: ${nonCoreFmt} | Dev Ups: ${devFmt} | Age Resets: ${ageFmt}`,
       inline: false,
     });
   }

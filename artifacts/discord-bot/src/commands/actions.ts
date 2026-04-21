@@ -1,10 +1,11 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, Colors,
 } from "discord.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import type { ServerSettings } from "../lib/server-settings.js";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
+import { appendUserStatsFields } from "../lib/user-stats-embed.js";
 
 export const data = new SlashCommandBuilder()
   .setName("actions")
@@ -26,7 +27,7 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
 
   if (mcaVisible) {
     sections.push("**Rosters**\n📋 My Roster · 👥 Any Roster · 🆓 Free Agents · 📊 Player Stats · 🏟️ Team Stats");
-    sections.push("**League Info**\n📈 Standings · 👀 Teams to Watch · 🧑 My Stats · 👤 Any User Stats");
+    sections.push("**League Info**\n📈 Standings · 👀 Teams to Watch · 👤 Any User Stats");
   }
 
   const row4Items: string[] = ["🥇 Season PR", "🏆 All-Time PR", "🌐 Global PR"];
@@ -42,8 +43,7 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
       "Select any action below. All menus are private (visible only to you).\n\n" +
       sections.join("\n\n")
     )
-    .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" })
-    .setTimestamp();
+    .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" });
 }
 
 export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean): ActionRowBuilder<ButtonBuilder>[] {
@@ -76,7 +76,6 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
     sec3.push(
       new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_myuserstats").setLabel("🧑 My User Stats").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyuserstats").setLabel("👤 Any User Stats").setStyle(ButtonStyle.Secondary),
     );
   }
@@ -112,17 +111,32 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const gid = interaction.guildId!;
-  const [settings, member] = await Promise.all([
+  const uid = interaction.user.id;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const [settings, member, user, season] = await Promise.all([
     getServerSettings(gid),
-    interaction.guild?.members.fetch(interaction.user.id).catch(() => null),
+    interaction.guild?.members.fetch(uid).catch(() => null),
+    getOrCreateUser(uid, interaction.user.username, gid),
+    getOrCreateActiveSeason(gid),
   ]);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
-  const isDbAdmin      = await isAdminUser(interaction.user.id, gid);
+  const isDbAdmin      = await isAdminUser(uid, gid);
   const isAdmin        = isDiscordAdmin || isDbAdmin;
 
-  await interaction.reply({
-    embeds:     [buildActionsHubEmbed(settings, isAdmin)],
+  const rules = await getSeasonRules(season);
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(`🏈 League Actions Hub — ${user.team ?? interaction.user.username}`)
+    .setDescription("Select any action below. All menus are private (visible only to you).")
+    .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" });
+
+  await appendUserStatsFields(embed, uid, gid, user, season, settings, rules, interaction.user.displayAvatarURL());
+
+  await interaction.editReply({
+    embeds:     [embed],
     components: buildActionsHubRows(settings, isAdmin),
-    ephemeral:  true,
   });
 }
