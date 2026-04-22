@@ -2307,54 +2307,108 @@ function resolveAbilities(p: any): PlayerAbilities | null {
 
   const result: PlayerAbilities = {};
 
+  // Helper: extract a single ability name from an item (string, object, or nested)
+  const extractName = (item: any): string | null => {
+    if (!item) return null;
+    if (typeof item === "string") return item.trim() || null;
+    if (typeof item === "object") {
+      const n = item.abilityName ?? item.name ?? item.label ?? item.displayName
+        ?? item.abilityId ?? item.id ?? item.ability ?? null;
+      if (n && typeof n === "string") return n.trim() || null;
+      // Handle nested { ability: { name: "..." } }
+      if (item.ability && typeof item.ability === "object") {
+        const nn = item.ability.name ?? item.ability.abilityName ?? item.ability.id ?? null;
+        if (nn && typeof nn === "string") return nn.trim() || null;
+      }
+    }
+    return null;
+  };
+
+  // Helper: flatten an array-or-single-item into names
+  const extractNames = (raw: any): string[] => {
+    const names: string[] = [];
+    const items = Array.isArray(raw) ? raw : [raw];
+    for (const item of items) {
+      const n = extractName(item);
+      if (n) names.push(n);
+    }
+    return names;
+  };
+
   // ── Zone ability (X-Factor only) ────────────────────────────────────────────
   // Possible field names from EA MCA API (Madden 24-26):
   const zoneRaw =
-    p.signatureSlotList ??       // array of {abilityId, ...} or plain string
-    p.playerZoneAbility   ??
-    p.zoneAbility         ??
-    p.signatureAbilityName ??
-    p.signatureAbility    ??
+    p.signatureSlotList       ??   // array of {abilityId, ...} or plain string
+    p.playerZoneAbility       ??
+    p.zoneAbility             ??
+    p.signatureAbilityName    ??
+    p.signatureAbility        ??
+    p.playerSignatureAbility  ??
+    p.xFactorZoneAbility      ??
+    p.xfactorZoneAbility      ??
+    p.zoneAbilityName         ??
     null;
 
   if (zoneRaw != null) {
     if (typeof zoneRaw === "string" && zoneRaw.trim().length > 0) {
       result.zone = zoneRaw.trim();
     } else if (Array.isArray(zoneRaw) && zoneRaw.length > 0) {
-      // Pull the first slot's ability name/id
-      const slot = zoneRaw[0];
-      const name = typeof slot === "string" ? slot
-        : (slot?.abilityName ?? slot?.name ?? slot?.abilityId ?? slot?.id ?? null);
-      if (name && typeof name === "string" && name.trim().length > 0) {
-        result.zone = String(name).trim();
-      }
+      const name = extractName(zoneRaw[0]);
+      if (name) result.zone = name;
+    } else if (typeof zoneRaw === "object" && zoneRaw !== null) {
+      const name = extractName(zoneRaw);
+      if (name) result.zone = name;
     }
   }
 
   // ── Superstar / active abilities ────────────────────────────────────────────
-  // Possible field names:
+  // Possible field names (Madden 24-26, all known variants):
   const activeRaw =
-    p.activeAbilityList  ??   // most common in Madden 25/26
-    p.playerAbilityList  ??
-    p.abilitiesSlotList  ??
-    p.abilitySlotList    ??
-    p.packageAbility     ??   // single ability as fallback
+    p.activeAbilityList       ??   // most common in Madden 25/26
+    p.playerAbilityList       ??
+    p.abilitiesSlotList       ??
+    p.abilitySlotList         ??
+    p.superstarAbilityList    ??
+    p.ssAbilityList           ??
+    p.playerAbilities         ??   // sometimes a sub-object with .superstar / .abilities
+    p.abilities               ??   // plain array
+    p.packageAbility          ??   // single ability as fallback
+    p.superstarAbility        ??
     null;
 
   if (activeRaw != null) {
-    const names: string[] = [];
-    const process = (item: any) => {
-      if (!item) return;
-      if (typeof item === "string" && item.trim().length > 0) {
-        names.push(item.trim());
-      } else if (typeof item === "object") {
-        const n = item.abilityName ?? item.name ?? item.abilityId ?? item.id ?? null;
-        if (n && typeof n === "string" && n.trim().length > 0) names.push(String(n).trim());
+    // Handle nested object like { superstar: [...], zone: "..." }
+    if (!Array.isArray(activeRaw) && typeof activeRaw === "object" && activeRaw !== null) {
+      const sub = activeRaw.superstar ?? activeRaw.abilities ?? activeRaw.abilityList ?? activeRaw.list ?? null;
+      if (sub != null) {
+        const names = extractNames(sub);
+        if (names.length) result.superstar = names;
+      } else {
+        // Try to extract a single name from the object itself
+        const n = extractName(activeRaw);
+        if (n) result.superstar = [n];
       }
-    };
-    if (Array.isArray(activeRaw)) activeRaw.forEach(process);
-    else process(activeRaw);
-    if (names.length > 0) result.superstar = names;
+    } else {
+      const names = extractNames(activeRaw);
+      if (names.length) result.superstar = names;
+    }
+  }
+
+  // Debug log: if devTrait >= 2 but we still couldn't find abilities, log the player's keys
+  // so we can add any new MCA field names in the future.
+  if (!result.zone && !result.superstar) {
+    const knownAbilKeys = new Set([
+      "signatureSlotList","playerZoneAbility","zoneAbility","signatureAbilityName","signatureAbility",
+      "playerSignatureAbility","xFactorZoneAbility","xfactorZoneAbility","zoneAbilityName",
+      "activeAbilityList","playerAbilityList","abilitiesSlotList","abilitySlotList",
+      "superstarAbilityList","ssAbilityList","playerAbilities","abilities","packageAbility","superstarAbility",
+    ]);
+    const abilityFields = Object.keys(p).filter(k => knownAbilKeys.has(k) || k.toLowerCase().includes("abilit") || k.toLowerCase().includes("zone") || k.toLowerCase().includes("signature"));
+    if (abilityFields.length > 0) {
+      console.warn(`[abilities] devTrait=${devTrait} player=${p.firstName} ${p.lastName} — found ability-related keys but couldn't extract: ${abilityFields.join(", ")}`);
+    } else {
+      console.info(`[abilities] devTrait=${devTrait} player=${p.firstName} ${p.lastName} — no ability fields found in payload. Keys: ${Object.keys(p).slice(0, 20).join(", ")}`);
+    }
   }
 
   // Only store if we found something

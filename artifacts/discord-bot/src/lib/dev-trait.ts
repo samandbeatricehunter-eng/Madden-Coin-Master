@@ -7,10 +7,19 @@ export const DEV_EMOJI = {
 export const DEV_LEGEND =
   `${DEV_EMOJI.xfactor} = X-Factor  ${DEV_EMOJI.superstar} = Superstar  ${DEV_EMOJI.star} = Star`;
 
-/** Returns a dev-trait badge string (with leading space) or empty string for Normal. */
+/** Returns a dev-trait badge string (with leading space) or empty string for Normal.
+ *  Uses custom emoji — safe in embed descriptions/field values, NOT in select menu labels. */
 export function devBadge(trait: number): string {
   if (trait >= 3) return ` ${DEV_EMOJI.xfactor}`;
   if (trait === 2) return ` ${DEV_EMOJI.superstar}`;
   if (trait === 1) return ` ${DEV_EMOJI.star}`;
+  return "";
+}
+
+/** Plain-text dev badge safe for StringSelectMenuOptionBuilder.setLabel() (no custom emoji). */
+export function devBadgeText(trait: number): string {
+  if (trait >= 3) return " [XF]";
+  if (trait === 2) return " [SS]";
+  if (trait === 1) return " [★]";
   return "";
 }

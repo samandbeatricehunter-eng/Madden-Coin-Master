@@ -33,7 +33,7 @@ import {
 } from "./payout-config.js";
 import { getServerSettings, requireMcaEnabled } from "./server-settings.js";
 import { getArticleStandings, getSeasonRecords, getAllTimeRecords } from "./gcs-fallback.js";
-import { devBadge, DEV_LEGEND, DEV_EMOJI } from "./dev-trait.js";
+import { devBadge, devBadgeText, DEV_LEGEND, DEV_EMOJI } from "./dev-trait.js";
 import { weekLabel } from "./week-helpers.js";
 import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
@@ -300,19 +300,19 @@ type StatsRow   = typeof playerSeasonStatsTable.$inferSelect;
 function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, seasonNum: number): EmbedBuilder[] {
   const fullName  = `${roster.firstName} ${roster.lastName}`;
   const jersey    = roster.jerseyNum != null ? `#${roster.jerseyNum}` : "";
-  const title     = `🃏 ${fullName} — ${jersey} ${roster.position}`;
+  const title     = `${fullName} — ${jersey} ${roster.position}`;
   const teamLine  = `**Team:** ${roster.teamName}`;
   const devLabel  = DEV_TRAIT_LABELS[roster.devTrait] ?? `Dev ${roster.devTrait}`;
-  const archetype = roster.archetypeAbbrev ? roster.archetypeAbbrev.replace(/_/g, " ") : "—";
+  const devBadgeVal = devBadge(roster.devTrait ?? 0);
   const attrs     = (roster.attributes ?? {}) as Record<string, number | string>;
   const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
-  const TOTAL     = 4;
+  const TOTAL     = 3;
   const portrait  = roster.portraitUrl ?? eaPortraitUrl(roster.playerId);
 
   // ── Bio helpers ────────────────────────────────────────────────────────────
   const contractStr = roster.contractYearsLeft == null ? "Unknown"
     : roster.contractYearsLeft <= 0 ? "Free Agent"
-    : roster.contractYearsLeft === 1 ? "📋 Contract Year"
+    : roster.contractYearsLeft === 1 ? "Contract Year"
     : `${roster.contractYearsLeft} yrs remaining`;
 
   const rawH = attrs["height"] ?? attrs["heightInches"];
@@ -322,32 +322,51 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   const weightStr = rawW != null && Number(rawW) > 0 ? `${Number(rawW)} lbs` : null;
   const physLine = heightStr && weightStr ? `${heightStr} / ${weightStr}` : heightStr ?? weightStr ?? null;
 
-  const rawHand = attrs["handedness"] ?? attrs["throwingHand"] ?? attrs["playerHandedness"];
-  const handStr = rawHand != null ? String(rawHand) : null;
-
-  const rawConf = attrs["conf"] ?? attrs["confidence"];
-  const confStr = rawConf != null ? String(rawConf) : null;
-
   const rawCollege = attrs["college"] ?? attrs["collegeName"] ?? attrs["playerCollege"];
   const collegeStr = rawCollege != null && String(rawCollege).trim() !== "" ? String(rawCollege) : null;
 
-  // ── Page 1: Identity & Bio ─────────────────────────────────────────────────
+  // ── Season stats helpers ───────────────────────────────────────────────────
+  const statLines: { title: string; line: string }[] = [];
+  if (stats) {
+    for (const section of STAT_SECTIONS) {
+      const parts = section.stats
+        .filter(s => { const v = (stats as any)[s.key]; return v != null && v !== 0; })
+        .map(s => {
+          const v = (stats as any)[s.key] as number;
+          return `**${s.label}:** ${s.isFloat ? v.toFixed(1) : v.toLocaleString()}`;
+        });
+      // Inject completion % directly into passing section
+      if (section.title.includes("Pass") && stats.passAtt > 0) {
+        const pct = ((stats.passComp / stats.passAtt) * 100).toFixed(1);
+        parts.push(`**Pct:** ${pct}%`);
+      }
+      if (parts.length) statLines.push({ title: section.title, line: parts.join("  ·  ") });
+    }
+  }
+
+  // ── Page 1: Bio + Season Stats ─────────────────────────────────────────────
   const p1 = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(title)
     .setDescription(teamLine)
     .addFields(
-      { name: "📊 Overall",   value: String(roster.overall),                           inline: true },
-      { name: "🎂 Age",       value: roster.age != null ? String(roster.age) : "—",    inline: true },
-      { name: "🔢 Jersey",    value: jersey || "—",                                     inline: true },
-      { name: "🏅 Dev Trait", value: devLabel,                                          inline: true },
-      { name: "📝 Contract",  value: contractStr,                                       inline: true },
-      { name: "🎯 Archetype", value: archetype,                                         inline: true },
+      { name: "Overall",    value: String(roster.overall),                        inline: true },
+      { name: "Age",        value: roster.age != null ? String(roster.age) : "—", inline: true },
+      { name: "Jersey",     value: jersey || "—",                                  inline: true },
+      { name: "Dev Trait",  value: devBadgeVal ? `${devBadgeVal} ${devLabel}` : devLabel, inline: true },
+      { name: "Contract",   value: contractStr,                                    inline: true },
     );
-  if (physLine)    p1.addFields({ name: "📏 Height / Weight", value: physLine,    inline: true });
-  if (confStr)     p1.addFields({ name: "😤 Confidence",      value: confStr,     inline: true });
-  if (handStr)     p1.addFields({ name: "✋ Hand",             value: handStr,     inline: true });
-  if (collegeStr)  p1.addFields({ name: "🎓 College",         value: collegeStr,  inline: true });
+  if (physLine)   p1.addFields({ name: "Height / Weight", value: physLine,   inline: true });
+  if (collegeStr) p1.addFields({ name: "College",         value: collegeStr, inline: true });
+
+  // Stats section on page 1
+  if (statLines.length) {
+    for (const { title: stTitle, line } of statLines) {
+      p1.addFields({ name: stTitle, value: line, inline: false });
+    }
+  } else {
+    p1.addFields({ name: "Season Stats", value: "*No stats recorded yet this season.*", inline: false });
+  }
   p1.setFooter({ text: `Page 1/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
   // ── Page 2: Abilities ─────────────────────────────────────────────────────
@@ -370,38 +389,8 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   }
   p2.setFooter({ text: `Page 2/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
-  // ── Page 3: Season Stats ──────────────────────────────────────────────────
+  // ── Page 3: In-Game Attributes ────────────────────────────────────────────
   const p3 = new EmbedBuilder()
-    .setColor(Colors.Gold)
-    .setTitle(title)
-    .setDescription(teamLine);
-
-  if (stats) {
-    let anyStats = false;
-    for (const section of STAT_SECTIONS) {
-      const lines = section.stats
-        .filter(s => { const v = (stats as any)[s.key]; return v != null && v !== 0; })
-        .map(s => {
-          const v = (stats as any)[s.key] as number;
-          return `**${s.label}:** ${s.isFloat ? v.toFixed(1) : v.toLocaleString()}`;
-        });
-      if (lines.length) {
-        anyStats = true;
-        p3.addFields({ name: section.title, value: lines.join("  ·  "), inline: false });
-      }
-    }
-    if (stats.passAtt > 0) {
-      const pct = ((stats.passComp / stats.passAtt) * 100).toFixed(1);
-      p3.addFields({ name: "📐 Completion %", value: `${pct}%`, inline: true });
-    }
-    if (!anyStats) p3.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
-  } else {
-    p3.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
-  }
-  p3.setFooter({ text: `Page 3/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
-
-  // ── Page 4: In-Game Attributes ────────────────────────────────────────────
-  const p4 = new EmbedBuilder()
     .setColor(0x2b2d31)
     .setTitle(title)
     .setDescription(teamLine);
@@ -423,23 +412,22 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
     }
     if (pairs.length) {
       hasAnyAttr = true;
-      p4.addFields({ name: group.label, value: pairs.join("  "), inline: false });
+      p3.addFields({ name: group.label, value: pairs.join("  "), inline: false });
     }
   }
-  // Catch any remaining attribute keys not covered above (skip bio/page-1 fields)
   const unknown = Object.entries(numAttrs)
     .filter(([k, v]) => !knownKeys.has(k) && !ATTR_PAGE_SKIP.has(k) && typeof v === "number")
     .map(([k, v]) => `${k.replace(/Rating$/, "")} **${v}**`);
   if (unknown.length) {
     hasAnyAttr = true;
-    p4.addFields({ name: "📦 Other", value: unknown.slice(0, 20).join("  "), inline: false });
+    p3.addFields({ name: "📦 Other", value: unknown.slice(0, 20).join("  "), inline: false });
   }
-  if (!hasAnyAttr) p4.addFields({ name: "📊 Attributes", value: "*No attribute data available.*", inline: false });
-  p4.setFooter({ text: `Page 4/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
+  if (!hasAnyAttr) p3.addFields({ name: "Attributes", value: "*No attribute data available.*", inline: false });
+  p3.setFooter({ text: `Page 3/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
-  if (portrait) { p1.setThumbnail(portrait); p2.setThumbnail(portrait); p3.setThumbnail(portrait); p4.setThumbnail(portrait); }
+  if (portrait) p1.setThumbnail(portrait);
 
-  return [p1, p2, p3, p4];
+  return [p1, p2, p3];
 }
 
 // ── Roster card — shared team-stats embed builder ──────────────────────────────
@@ -2495,7 +2483,7 @@ async function showPlayerDropdown(
     .setPlaceholder(`Select a ${position}…`)
     .addOptions(players.slice(0, 25).map(p =>
       new StringSelectMenuOptionBuilder()
-        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadge(p.devTrait ?? 0)}`)
+        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadgeText(p.devTrait ?? 0)}`)
         .setValue(String(p.playerId)),
     ));
 
@@ -2569,7 +2557,7 @@ async function handleRcCardPage(interaction: ButtonInteraction, sess: ActionsSes
     return;
   }
   const page = Number(interaction.customId.split(":")[1]);
-  if (!Number.isFinite(page) || page < 1 || page > 4) return;
+  if (!Number.isFinite(page) || page < 1 || page > 3) return;
   sess.rosterCardPage = page;
   await showPlayerCardPage(interaction, sess);
 }
