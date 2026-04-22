@@ -224,13 +224,13 @@ const ATTR_ABBR: Record<string, string> = {
   pursuitRating: "PUR", tackleRating: "TAK", hitPowerRating: "HPW",
   manCoverRating: "MCV", zoneCoverRating: "ZCV", pressRating: "PRS", playRecRating: "PRC",
   kickPowerRating: "KPW", kickAccuracyRating: "KAC",
-  puntPowerRating: "PNP", puntAccuracyRating: "PNA", kickReturnRating: "KRR",
+  puntPowerRating: "PNP", puntAccuracyRating: "PNA", kickReturnRating: "KR",
   // ── Abbreviated aliases (alternate MCA payload format) ───────────────────────
   accel: "ACC", jump: "JMP", tough: "TGH",
   bCV: "BCV", carry: "CAR",
   cIT: "CIT", routeRunDeep: "DRR", routeRunMed: "MRR", routeRunShort: "SRR", specCatch: "SPC",
   finesseMoves: "FMV",
-  kickAcc: "KAC", kickRet: "KRR", longSnap: "LSN",
+  kickAcc: "KAC", kickRet: "KR", longSnap: "LSN",
   throwAccDeep: "DAC", throwAccMid: "MAC", throwAccShort: "SAC",
   truck: "TRK",
   conf: "CNF", confidence: "CNF",
@@ -2788,46 +2788,60 @@ const FA_TEAM_ID_BROWSE = 999;
 const ABBR_TO_ATTR_KEY: Record<string, string> = {
   SPD: "speedRating", ACC: "accelerationRating", AGI: "agilityRating",
   STR: "strengthRating", JMP: "jumpingRating", AWR: "awareRating",
-  STA: "staminaRating", INJ: "injuryRating", TGH: "toughnessRating",
+  COD: "changeOfDirectionRating",
   THP: "throwPowerRating", SAC: "throwAccuracyShortRating", MAC: "throwAccuracyMidRating",
   DAC: "throwAccuracyDeepRating", TOR: "throwOnRunRating", TUP: "throwUnderPressureRating",
   BSK: "breakSackRating", PAC: "playActionRating",
   CAR: "carryingRating", BCV: "bCVisionRating", ELU: "elusivenessRating",
-  BTK: "breakTackleRating", SFA: "stiffArmRating", SPM: "spinMoveRating",
-  JKM: "jukeMoveRating", TRK: "truckingRating", COD: "changeOfDirectionRating",
-  CTH: "catchRating", CIT: "catchInTrafficRating", SPC: "spectacularCatchRating",
-  SRR: "shortRouteRunRating", MRR: "medRouteRunRating", DRR: "deepRouteRunRating",
-  RLS: "releaseRating", PBK: "passBlockRating", RBK: "runBlockRating",
-  IBL: "impactBlockRating", PBP: "passBlockPowerRating", PBF: "passBlockFinesseRating",
+  BTK: "breakTackleRating", TRK: "truckingRating",
+  CTH: "catchRating", SRR: "shortRouteRunRating", MRR: "medRouteRunRating", DRR: "deepRouteRunRating",
+  SFA: "stiffArmRating", SPM: "spinMoveRating", JKM: "jukeMoveRating",
+  CIT: "catchInTrafficRating", SPC: "spectacularCatchRating", RLS: "releaseRating",
+  PBK: "passBlockRating", RBK: "runBlockRating", IBL: "impactBlockRating",
+  PBP: "passBlockPowerRating", PBF: "passBlockFinesseRating",
   RBP: "runBlockPowerRating", RBF: "runBlockFinesseRating", LBK: "leadBlockRating",
   PMV: "powerMovesRating", FMV: "finessMovesRating", BSH: "blockShedRating",
   PUR: "pursuitRating", TAK: "tackleRating", HPW: "hitPowerRating",
   MCV: "manCoverRating", ZCV: "zoneCoverRating", PRS: "pressRating", PRC: "playRecRating",
-  KPW: "kickPowerRating", KAC: "kickAccuracyRating", PNP: "puntPowerRating",
-  PNA: "puntAccuracyRating", KRR: "kickReturnRating",
+  // Kicking — used by primary sort (not attr sort dropdown)
+  KPW: "kickPowerRating", KAC: "kickAccuracyRating", KR: "kickReturnRating",
 };
 
-const AP_ATTR_GROUP_A = ["SPD","ACC","AGI","STR","JMP","AWR","STA","INJ","TGH","THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC","CAR"];
-const AP_ATTR_GROUP_B = ["BCV","ELU","BTK","SFA","SPM","JKM","TRK","COD","CTH","CIT","SPC","SRR","MRR","DRR","RLS","PBK","RBK","PMV","FMV","BSH","PUR","TAK","MCV"];
+// Group A — Offensive (24): athletic/throwing/ball-carrying/receiving
+const AP_ATTR_GROUP_A = [
+  "SPD","ACC","AGI","STR","JMP","AWR","COD",
+  "THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC",
+  "CAR","BCV","ELU","BTK","TRK",
+  "CTH","SRR","MRR","DRR",
+];
+// Group B — Defensive / Blocking / Skill (24): blocking, pass rush, run D, coverage, individual skills
+const AP_ATTR_GROUP_B = [
+  "PBK","RBK","IBL","PBP","PBF","RBP","RBF","LBK",
+  "PMV","FMV","BSH",
+  "PUR","TAK","HPW",
+  "MCV","ZCV","PRS","PRC",
+  "SFA","SPM","JKM","RLS","SPC","CIT",
+];
 
 const AP_ATTR_NAMES: Record<string, string> = {
+  // Offensive
   SPD: "Speed", ACC: "Acceleration", AGI: "Agility", STR: "Strength", JMP: "Jumping",
-  AWR: "Awareness", STA: "Stamina", INJ: "Injury", TGH: "Toughness",
+  AWR: "Awareness", COD: "Change of Direction",
   THP: "Throw Power", SAC: "Short Acc", MAC: "Mid Acc", DAC: "Deep Acc",
   TOR: "Throw on Run", TUP: "Throw Under Press", BSK: "Break Sack", PAC: "Play Action",
-  CAR: "Carrying", BCV: "Ball Carrier Vision", ELU: "Elusiveness",
-  BTK: "Break Tackle", SFA: "Stiff Arm", SPM: "Spin Move", JKM: "Juke Move",
-  TRK: "Trucking", COD: "Change of Direction",
-  CTH: "Catching", CIT: "Catch in Traffic", SPC: "Spec Catch",
-  SRR: "Short Route Run", MRR: "Mid Route Run", DRR: "Deep Route Run", RLS: "Release",
+  CAR: "Carrying", BCV: "Ball Carrier Vision", ELU: "Elusiveness", BTK: "Break Tackle", TRK: "Trucking",
+  CTH: "Catching", SRR: "Short Route Run", MRR: "Mid Route Run", DRR: "Deep Route Run",
+  // Defensive / Blocking / Skill
   PBK: "Pass Block", RBK: "Run Block", IBL: "Impact Block",
   PBP: "Pass Block Power", PBF: "Pass Block Finesse",
   RBP: "Run Block Power", RBF: "Run Block Finesse", LBK: "Lead Block",
   PMV: "Power Moves", FMV: "Finesse Moves", BSH: "Block Shed",
   PUR: "Pursuit", TAK: "Tackle", HPW: "Hit Power",
   MCV: "Man Coverage", ZCV: "Zone Coverage", PRS: "Press", PRC: "Play Recognition",
-  KPW: "Kick Power", KAC: "Kick Accuracy", PNP: "Punt Power",
-  PNA: "Punt Accuracy", KRR: "Kick Return",
+  SFA: "Stiff Arm", SPM: "Spin Move", JKM: "Juke Move", RLS: "Release",
+  SPC: "Spec Catch", CIT: "Catch in Traffic",
+  // Kicking sort labels (used in primary sort summary display)
+  KPW: "Kick Power", KAC: "Kick Accuracy", KR: "Kick Return",
 };
 
 function buildApOrderBy(sess: ActionsSession): SQL[] {
@@ -2846,11 +2860,24 @@ function buildApOrderBy(sess: ActionsSession): SQL[] {
       case "height":   exprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
       case "weight":   exprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
       case "contract": exprs.push(sql.raw(`contract_years_left ${dir} NULLS LAST`)); break;
+      // Kicking sorts (always DESC — no ASC variant exposed)
+      case "kpw": exprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
+      case "kac": exprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
+      case "kr":  exprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
     }
   }
   if (!exprs.length) exprs.push(desc(franchiseRostersTable.overall));
   return exprs;
 }
+
+const SORT_PRIMARY_LABELS: Record<string, string> = {
+  overall_desc: "OVR ↓", overall_asc: "OVR ↑",
+  age_asc: "Age ↑", age_desc: "Age ↓",
+  height_desc: "Height ↓", height_asc: "Height ↑",
+  weight_desc: "Weight ↓", weight_asc: "Weight ↑",
+  contract_asc: "Contract ↑", contract_desc: "Contract ↓",
+  kpw_desc: "KPW ↓", kac_desc: "KAC ↓", kr_desc: "KR ↓",
+};
 
 function buildApFilterSummary(sess: ActionsSession): string {
   const parts: string[] = [];
@@ -2860,16 +2887,7 @@ function buildApFilterSummary(sess: ActionsSession): string {
     parts.push(`Dev: ${devLabels[sess.apDevFilter] ?? sess.apDevFilter}`);
   }
   if (sess.apAttrSort) parts.push(`Sort attr: ${AP_ATTR_NAMES[sess.apAttrSort] ?? sess.apAttrSort} ↓`);
-  if (sess.apSortPrimary) {
-    const label: Record<string, string> = {
-      overall_desc: "OVR ↓", overall_asc: "OVR ↑",
-      age_asc: "Age ↑", age_desc: "Age ↓",
-      height_desc: "Height ↓", height_asc: "Height ↑",
-      weight_desc: "Weight ↓", weight_asc: "Weight ↑",
-      contract_asc: "Contract ↑", contract_desc: "Contract ↓",
-    };
-    parts.push(`Sort: ${label[sess.apSortPrimary] ?? sess.apSortPrimary}`);
-  }
+  if (sess.apSortPrimary) parts.push(`Sort: ${SORT_PRIMARY_LABELS[sess.apSortPrimary] ?? sess.apSortPrimary}`);
   return parts.length ? `**Active filters:** ${parts.join(" · ")}` : "";
 }
 
@@ -2941,6 +2959,9 @@ async function showFaPlayerList(
       case "age":      orderExprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
       case "height":   orderExprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
       case "weight":   orderExprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
+      case "kpw": orderExprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
+      case "kac": orderExprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
+      case "kr":  orderExprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
     }
   }
   if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
@@ -2974,11 +2995,11 @@ async function showFaPlayerList(
   const filterSummaryParts: string[] = [];
   if (sess.faNameFilter) filterSummaryParts.push(`Name: "${sess.faNameFilter}"`);
   if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
-    const dl: Record<number, string> = { 0: "Normal", 1: "Star", 2: "SS", 3: "XF", 99: "SS+XF" };
+    const dl: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "SS", 3: "XF", 99: "SS+XF" };
     filterSummaryParts.push(`Dev: ${dl[sess.faDevFilter] ?? sess.faDevFilter}`);
   }
   if (sess.faAttrSort) filterSummaryParts.push(`Sort attr: ${AP_ATTR_NAMES[sess.faAttrSort] ?? sess.faAttrSort} ↓`);
-  if (sess.faSortPrimary) filterSummaryParts.push(`Sort: ${sess.faSortPrimary.replace("_", " ")}`);
+  if (sess.faSortPrimary) filterSummaryParts.push(`Sort: ${SORT_PRIMARY_LABELS[sess.faSortPrimary] ?? sess.faSortPrimary}`);
   const filterSummary = filterSummaryParts.length ? `**Filters:** ${filterSummaryParts.join(" · ")}` : "";
 
   const menu = new StringSelectMenuBuilder()
@@ -3295,6 +3316,9 @@ function buildSharedFilterComponents(
       new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sortPrimary === "weight_asc"),
       new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sortPrimary === "contract_asc"),
       new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sortPrimary === "contract_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("🦵 Kick Power ↓ (KPW)").setValue("kpw_desc").setDefault(sortPrimary === "kpw_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("🎯 Kick Accuracy ↓ (KAC)").setValue("kac_desc").setDefault(sortPrimary === "kac_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("💨 Kick Return ↓ (KR)").setValue("kr_desc").setDefault(sortPrimary === "kr_desc"),
       new StringSelectMenuOptionBuilder().setLabel("— Clear Sort —").setValue("clear"),
     ]);
 
@@ -3499,7 +3523,7 @@ function buildFaFilterSummary(sess: ActionsSession): string {
     parts.push(`Dev: ${devLabels[sess.faDevFilter] ?? sess.faDevFilter}`);
   }
   if (sess.faAttrSort) parts.push(`Sort attr: ${AP_ATTR_NAMES[sess.faAttrSort] ?? sess.faAttrSort} ↓`);
-  if (sess.faSortPrimary) parts.push(`Sort: ${sess.faSortPrimary.replace("_", " ")}`);
+  if (sess.faSortPrimary) parts.push(`Sort: ${SORT_PRIMARY_LABELS[sess.faSortPrimary] ?? sess.faSortPrimary}`);
   return parts.length ? `**Active filters:** ${parts.join(" · ")}` : "";
 }
 
@@ -3612,6 +3636,11 @@ async function handleFaFilterNameSubmit(interaction: ModalSubmitInteraction, ses
     switch (field) {
       case "overall":  orderExprs.push(sql.raw(`overall ${dir}`)); break;
       case "age":      orderExprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
+      case "height":   orderExprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
+      case "weight":   orderExprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
+      case "kpw": orderExprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
+      case "kac": orderExprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
+      case "kr":  orderExprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
     }
   }
   if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
