@@ -3672,6 +3672,10 @@ async function handleApFilterNameSubmit(interaction: ModalSubmitInteraction, ses
 async function handleApFilterApply(interaction: ButtonInteraction, sess: ActionsSession) {
   if (!sess.apPos || !sess.apSeasonId) { await handleAllPlayersPosPick(interaction, sess); return; }
   await showApPlayerList(interaction, sess);
+  sess.apNameFilter = undefined;
+  sess.apDevFilters = [];
+  sess.apSortStack  = [];
+  sess.apSortPage   = 0;
 }
 
 async function handleApFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
@@ -3871,6 +3875,10 @@ async function handleFaFilterNameSubmit(interaction: ModalSubmitInteraction, ses
 async function handleFaFilterApply(interaction: ButtonInteraction, sess: ActionsSession) {
   if (!sess.faPos || !sess.faSeasonId) { await handleFreeAgentsPosPick(interaction, sess); return; }
   await showFaPlayerList(interaction, sess);
+  sess.faNameFilter = undefined;
+  sess.faDevFilters = [];
+  sess.faSortStack  = [];
+  sess.faSortPage   = 0;
 }
 
 async function handleFaFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
