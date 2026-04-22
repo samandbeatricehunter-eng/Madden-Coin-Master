@@ -58,10 +58,9 @@ export function buildMemberHelpEmbed(
 
   if (economy) {
     const econLines = [
-      "`/balance` — Check your current coin balance",
-      "`/sendcoins @user [amount]` — Send coins to another player",
+      "Use **/menu** to check your coin balance, send coins, manage savings, and place wagers",
     ];
-    if (wagers) econLines.push("`/wager @user [amount]` — Challenge a player to a coin wager");
+    if (wagers) econLines.push("  → **/menu → Wager** — Challenge a player to a coin wager");
     embed.addFields({ name: "💰 Economy", value: econLines.join("\n") });
   }
 
@@ -72,7 +71,7 @@ export function buildMemberHelpEmbed(
   if (devUpgrades)  storeCommands.push("`/buy-devup [player] [type]` — Dev upgrade (Star / Superstar / X-Factor)");
   if (ageResets)    storeCommands.push("`/buy-agereset [player]` — Reset a player's age");
   if (custom)       storeCommands.push("`/buy-customplayer` — Build and buy a custom player slot");
-  storeCommands.push("`/inventory` — View your current season inventory");
+  storeCommands.push("**/menu → Purchase** — Browse and manage your inventory in the hub");
 
   if (economy) {
     embed.addFields({ name: "🛒 Store — Commands", value: storeCommands.join("\n") });
@@ -97,7 +96,7 @@ export function buildMemberHelpEmbed(
         "**Payouts are issued automatically** when game data is uploaded via the Madden Companion App.",
         "  → H2H Win **+50 coins** | H2H Loss **+20 coins** | CPU Win **+20 coins**",
         "",
-        "`/interviewrequest` — Submit a post-game interview for **+10 coins**",
+        "**/menu → Interview** — Submit a post-game interview for **+10 coins**",
         "  → One per week · Game must be uploaded from MCA first",
         "  → H2H players get an expanded question pool",
         "  → All interview payouts require commissioner approval",
@@ -110,29 +109,20 @@ export function buildMemberHelpEmbed(
       name: "📊 Rankings & Stats",
       value: [
         "`/userstats [@user]` — Detailed season stats for yourself or any member",
-        "`/recenth2h @user` — View recent H2H game history",
+        "`/h2hrecord @user` — View H2H record vs another member",
         "`/seasonpr` — Current season power rankings",
         "`/alltimepr` — All-time power rankings across all seasons",
         "`/globalrecords` — This server's members ranked globally (W/L, PD, wallet, SB)",
-        "`/alltimeleaderboard` — Top 25 all-time players across every server ever",
         "`/availableupgrades` — See remaining upgrades + which core attrs are locked per player",
       ].join("\n"),
     },
     {
-      name: "📅 Schedule & Teams",
+      name: "📅 Schedule, Teams & Rules",
       value: [
-        "`/seasonschedule` — Full current-season schedule",
-        "`/nextopp [@user]` — Your next opponent (or any member's)",
-        "`/teamlist` — All members and their linked NFL teams",
-        "`/openteams` — Unclaimed teams available for new members",
-      ].join("\n"),
-    },
-    {
-      name: "📋 League Rules",
-      value: [
-        "`/rules [section]` — Display all rules in a section",
-        "`/rules [section] [rule_number]` — Quote a single rule",
-        "`/rules [section] [rule_number] @user` — Share a rule with a member (posts publicly)",
+        "**/menu → Schedule** — Full current-season schedule (private, visible only to you)",
+        "**/menu → Rules** — Browse the full league rulebook",
+        "**/menu → Standings** — Current season standings with In The Hunt & Teams to Watch",
+        "**/menu → Rosters** — Browse any team's roster, All Players, Free Agents, and player cards",
       ].join("\n"),
     },
   );
@@ -282,14 +272,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             "`/seasonpr` — Post current season power rankings",
             "`/alltimepr` — Post all-time power rankings",
             "`/globalrecords` — This server's players ranked globally (W/L, PD, SB, wallet)",
-            "`/alltimeleaderboard` — Top 25 all-time across every server (no team filter)",
             "📋 **PR Formula:** 60% × (W−L) + 40% × Point Differential",
           ].join("\n"),
         },
         {
           name: "🔄 MCA Webhook & Full Sync",
           value: [
-            "`/webhookurl` — View the MCA webhook URL to paste into the Madden Companion App",
+            "**MCA webhook URL** — View via `/adminserver` → Server Settings or the Admin Operations hub",
             "`/admin-catchup on` — Enable catchup mode (records stats only, no payouts)",
             "`/admin-catchup off` — Disable catchup mode (resume normal payouts)",
             "`/admin-catchup status` — Check whether catchup mode is active",
@@ -302,7 +291,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           value: [
             "`/advanceweek [week]` — Advance the league week and post the recap article",
             "`/admin-resendarticle week:N` — Regenerate and post the recap for any previous week",
-            "`/customarticle [prompt]` — Generate a custom AI article and post it to headlines",
+            "**Post Custom Article** — Available via the Admin Operations hub (`/admin-operations`)",
+            "**Post Matchups/GOTW** — Available via the Admin Operations hub (`/admin-operations`)",
             "`/endofseasonpayout` — Run end-of-season playoff ranking bonuses",
             "Playoff flows (seeds, division bonus, matchups, payouts) run **automatically** when advancing weeks",
           ].join("\n"),

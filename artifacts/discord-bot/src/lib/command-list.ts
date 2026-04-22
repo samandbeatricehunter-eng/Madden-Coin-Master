@@ -1,27 +1,8 @@
 import type { ServerSettings } from "@workspace/db";
 
 import * as admin              from "../commands/admin.js";
-import * as view               from "../commands/view.js";
 import * as help               from "../commands/help.js";
-import * as balance            from "../commands/balance.js";
-import * as sendcoins          from "../commands/sendcoins.js";
-import * as inventory          from "../commands/inventory.js";
-import * as recentH2H          from "../commands/recentH2H.js";
-import * as teamlist           from "../commands/teamlist.js";
-import * as openteams          from "../commands/openteams.js";
-import * as seasonschedule     from "../commands/seasonschedule.js";
-import * as nextschedule       from "../commands/nextschedule.js";
-import * as nextopp            from "../commands/nextopp.js";
-import * as savings            from "../commands/savings.js";
-import * as weeklyMatchups     from "../commands/weekly-matchups.js";
-
 import * as h2hrecord          from "../commands/h2hrecord.js";
-import * as customarticle      from "../commands/customarticle.js";
-import * as webhookurl         from "../commands/webhookurl.js";
-import * as viewpayouttiers    from "../commands/viewpayouttiers.js";
-import * as interviewrequest   from "../commands/interviewrequest.js";
-import * as statleaders        from "../commands/statleaders.js";
-import * as viewFreeAgents     from "../commands/viewfreeagents.js";
 import * as actions                 from "../commands/actions.js";
 import * as adminOperations         from "../commands/admin-operations.js";
 import * as adminEosTestrun         from "../commands/admin-eos-testrun.js";
@@ -50,7 +31,6 @@ import * as adminServer             from "../commands/adminserver.js";
 import * as adminTeamLogo          from "../commands/admin-team-logo.js";
 import * as adminRepostBanners     from "../commands/admin-repost-banners.js";
 import * as globalrecords          from "../commands/globalrecords.js";
-import * as alltimeleaderboard     from "../commands/alltimeleaderboard.js";
 
 /**
  * Builds the list of slash command JSON payloads to register with Discord.
@@ -73,21 +53,8 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [admin,              true],
     [actions,            true],
     [adminOperations,    true],
-    [view,               true],
     [help,               true],
-    [teamlist,           true],
-    [openteams,          true],
-    [seasonschedule,     true],
-    [nextschedule,       true],
-    [nextopp,            true],
-    [weeklyMatchups,     true],
     [h2hrecord,          true],
-    [recentH2H,          true],
-    [customarticle,      true],
-    [webhookurl,         true],
-    [interviewrequest,   true],
-    [statleaders,        true],
-    [viewFreeAgents,     true],
     [adminEosTestrun,    true],
     [adminCancelResendEos,   true],
     [adminRebuildHistorical, true],
@@ -105,17 +72,10 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminTeamLogo,      true],
     [adminRepostBanners, true],
     [globalrecords,         true],
-    [alltimeleaderboard,    true],
     [adminSetStatTiers,  true],
     [adminStatTiers,     true],
 
     // ── Economy — hidden when coinEconomy is off ─────────────────────────────
-    [balance,         economy],
-    [sendcoins,       economy],
-    [inventory,       economy],
-
-    [savings,         economy],
-    [viewpayouttiers, economy],
     [endofseasonpayout,   economy],
     // ── Feature-specific ─────────────────────────────────────────────────────
     [adminLegendVault,           legends],

@@ -126,7 +126,14 @@ export async function buildLeagueDataMainMenu(guildId: string) {
       .setStyle(ButtonStyle.Danger),
   );
 
-  return { embeds: [embed], components: [row] };
+  const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ao_hub_back")
+      .setLabel("← Back to Hub")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  return { embeds: [embed], components: [row, backRow] };
 }
 
 // ── Step 1: Show EA login link ─────────────────────────────────────────────────

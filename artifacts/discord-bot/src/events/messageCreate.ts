@@ -710,25 +710,20 @@ const HELP_TEXT = `
 COMMAND REFERENCE
 ═══════════════════════════════
 
-── ECONOMY ──
-/balance — Shows your current coin balance.
-/sendcoins @user [amount] — Send coins directly to another league member.
-/wager @user [amount] — Challenge another member to a coin wager on your upcoming H2H game. Both sides must accept. Winner collects the coins automatically when results are uploaded. Commissioners can void wagers.
-/userstats [@user] — View your own (or another user's) full stats: record, point diff, all-time H2H, coin balance, and more.
-
-── SAVINGS ──
-/savings balance — Check how many coins are in your savings account.
-/savings deposit [amount] — Move coins from your wallet into savings to earn interest.
-/savings withdraw [amount] — Pull coins back out of savings into your wallet.
-/savings set-rate (admin only) — Commissioners use this to set the interest rate for the savings account.
+── /menu HUB ──
+Most member features are accessible from /menu — a private interactive hub. Use it for:
+• Coin balance, send coins, savings, and wagers (/menu → Bank or Wager)
+• Post-game interviews for +10 coins (/menu → Interview)
+• Your season schedule (/menu → Schedule)
+• Roster browser, free agents, player cards (/menu → Rosters)
+• Standings, PR rankings, user stats (/menu → Standings / Season PR / All-Time PR)
+• League rulebook (/menu → Rules)
+• Report a violation, tweet, auto-pilot requests
 
 ── COIN PAYOUTS (automatic) ──
 Coins are awarded automatically when MCA game results are uploaded by the commissioners:
   H2H Win: +50 coins · H2H Loss: +20 coins · CPU Win: +20 coins
 There is no payout for CPU losses.
-
-── INTERVIEW ──
-/interviewrequest — Submit a weekly media interview for +10 coins. Limited to once per week. Requires commissioner approval before coins are awarded.
 
 ── STORE ──
 /viewstore — Browse everything available in the store with current prices and your remaining limits for this season.
@@ -737,31 +732,17 @@ There is no payout for CPU losses.
 /purchase attribute — Spend coins to permanently upgrade a specific rating on a player already on your roster. Core attributes cost more and have tighter limits. Applied to your MCA roster by commissioners.
 /purchase devup — Spend coins to boost a player's development trait (Normal → Star, or Star → Superstar). Max 2 per season. Applied by commissioners.
 /purchase agereset — Spend coins to roll back a player's age in MCA, extending their career. Max 2 per season. Applied by commissioners.
-/inventory — View everything currently in your inventory (legends claimed, custom players, upgrades pending delivery).
 /availableupgrades — See which upgrades are still available to you this season based on your remaining limits.
 
 ── STORE PRICING & LIMITS (commissioners may adjust — use /viewstore for live prices) ──
 {{SEASON_PRICING}}
 
-── RULES ──
-/rules — Lists all rule sections in the league rulebook.
-/rules [section] — Shows all rules under a specific section (e.g. /rules Gameplay).
-/rules [section] [rule_number] — Shows a specific rule. (e.g. /rules Gameplay 3)
-/rules [section] [rule_number] @user — Shows the rule and mentions a user at the same time (useful for calling someone out).
-
-── SCHEDULE & STANDINGS ──
-/seasonschedule — View the full schedule for the current season.
-/nextopp [@user] — See your next scheduled opponent (or another user's).
-/weeklyMatchups — Shows this week's matchups.
-/teamlist — Lists all teams and which member controls them.
-/openteams — Lists teams that are currently available/unowned.
-/standings — Current league standings.
-/statleaders — Leaderboard of top statistical performers.
-
 ── RECORDS & HISTORY ──
-/recenth2h @user — View recent head-to-head results for a specific user.
+/h2hrecord @user — View head-to-head record vs a specific member.
+/userstats [@user] — View your own (or another user's) full stats.
 /seasonpr — Season personal records leaderboard.
 /alltimepr — All-time personal records leaderboard.
+/globalrecords — This server's members ranked globally (W/L, PD, wallet, SB).
 
 ═══════════════════════════════
 HOW THE ANNUAL DRAFT WORKS

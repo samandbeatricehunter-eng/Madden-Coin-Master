@@ -26,7 +26,7 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
   sections.push(`**Economy & Social**\n${row1Items.join(" · ")}`);
 
   if (mcaVisible) {
-    sections.push("**Rosters**\n📋 My Roster · 👥 Rosters\n*(All Players, Free Agents, Player Cards & Team Stats accessible inside Rosters)*");
+    sections.push("**Rosters & Schedule**\n📋 My Roster · 👥 Rosters · 📅 Schedule\n*(All Players, Free Agents, Player Cards & Team Stats accessible inside Rosters)*");
     sections.push("**League Info**\n📈 Standings *(In The Hunt & Teams to Watch inside Standings)*\n👤 Any User Stats");
   }
 
@@ -61,10 +61,11 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
     new ButtonBuilder().setCustomId("ac_tweet").setLabel("🐦 Tweet").setStyle(ButtonStyle.Secondary),
   );
 
-  // ── Row 2: Roster & League Info ─────────────────────────────────────────────
+  // ── Row 2: Roster, Schedule & League Info ───────────────────────────────────
   const sec2: ButtonBuilder[] = [];
   if (mcaVisible) {
     sec2.push(
+      new ButtonBuilder().setCustomId("ac_schedule").setLabel("📅 Schedule").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_myroster").setLabel("📋 My Roster").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),

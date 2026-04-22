@@ -4,29 +4,12 @@ import { getOrCreateActiveSeason, normalizeDefensivePositions, PRIMARY_GUILD_ID 
 
 // ── Unified admin + view commands ────────────────────────────────────────────
 import * as admin         from "./commands/admin.js";
-import * as view          from "./commands/view.js";
-
 
 // ── User commands ─────────────────────────────────────────────────────────────
 import * as actions          from "./commands/actions.js";
 import * as help             from "./commands/help.js";
-import * as balance          from "./commands/balance.js";
-import * as sendcoins        from "./commands/sendcoins.js";
-import * as inventory        from "./commands/inventory.js";
-import * as recentH2H        from "./commands/recentH2H.js";
-import * as teamlist         from "./commands/teamlist.js";
-import * as openteams        from "./commands/openteams.js";
-import * as seasonschedule   from "./commands/seasonschedule.js";
-import * as nextschedule     from "./commands/nextschedule.js";
-import * as nextopp          from "./commands/nextopp.js";
-import * as savings          from "./commands/savings.js";
-import * as weeklyMatchups   from "./commands/weekly-matchups.js";
-
 import * as h2hrecord        from "./commands/h2hrecord.js";
-import * as customarticle    from "./commands/customarticle.js";
-import * as webhookurl       from "./commands/webhookurl.js";
-import * as statleaders      from "./commands/statleaders.js";
-import * as globalrecords     from "./commands/globalrecords.js";
+import * as globalrecords    from "./commands/globalrecords.js";
 
 // ── Admin tools ───────────────────────────────────────────────────────────────
 import * as adminEosTestrun          from "./commands/admin-eos-testrun.js";
@@ -104,28 +87,14 @@ if (!isProduction && !devBotEnabled) {
   client.commands = new Collection();
 
   const commands = [
-    // Unified admin & view
+    // Unified admin
     admin,
-    view,
 
     // User-facing commands
     actions,
     help,
-    balance,
-    sendcoins,
-    inventory,
-    recentH2H,
-    teamlist,
-    openteams,
-    seasonschedule,
-    nextschedule,
-    nextopp,
-    savings,
-    weeklyMatchups,
     h2hrecord,
-    customarticle,
-    webhookurl,
-    statleaders,
+    globalrecords,
 
     // Admin tools
     adminEosTestrun,
@@ -154,8 +123,6 @@ if (!isProduction && !devBotEnabled) {
     adminTeamLogo,
     adminRepostBanners,
     adminOperations,
-    globalrecords,
-
   ];
 
   for (const command of commands) {
