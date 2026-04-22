@@ -37,10 +37,10 @@ export async function execute(member: GuildMember): Promise<void> {
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Blue)
-      .setTitle("🏈 Getting Started — /actions Command Guide")
+      .setTitle("🏈 Getting Started — /menu Command Guide")
       .setDescription(
         "⚠️ **You will not have access to any private league channels until you've selected a team and been added by a Commissioner.**\n\n" +
-        "Everything you need to get started is available through the **/actions** slash command. " +
+        "Everything you need to get started is available through the **/menu** slash command. " +
         "Here's a quick rundown of what's available:\n\u200B",
       )
       .addFields(

@@ -741,7 +741,7 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
         )
         .addFields(
           { name: "📋 League Info", value: rule1, inline: false },
-          { name: "\u200B", value: "Use the **/actions** command in the server to access your hub — roster, coins, wagers, standings, and more.", inline: false },
+          { name: "\u200B", value: "Use the **/menu** command in the server to access your hub — roster, coins, wagers, standings, and more.", inline: false },
         )
         .setTimestamp();
 

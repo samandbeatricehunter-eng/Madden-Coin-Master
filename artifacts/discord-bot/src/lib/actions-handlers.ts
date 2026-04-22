@@ -3851,7 +3851,7 @@ async function handleRulesSection(interaction: StringSelectMenuInteraction, sess
 
 async function handleRulesDisplayChoice(interaction: ButtonInteraction, sess: ActionsSession) {
   if (!sess.acRulesSection) {
-    await interaction.reply({ content: "❌ Session expired — open /actions again.", ephemeral: true });
+    await interaction.reply({ content: "❌ Session expired — open /menu again.", ephemeral: true });
     return;
   }
 
@@ -3875,7 +3875,7 @@ async function handleRulesDisplayChoice(interaction: ButtonInteraction, sess: Ac
 async function handleRulesDisplayFull(interaction: ButtonInteraction, sess: ActionsSession) {
   const guildId = interaction.guildId!;
   if (!sess.acRulesSection) {
-    await interaction.reply({ content: "❌ Session expired — open /actions again.", ephemeral: true });
+    await interaction.reply({ content: "❌ Session expired — open /menu again.", ephemeral: true });
     return;
   }
 
@@ -3929,7 +3929,7 @@ async function handleRulesDisplayByNumModal(interaction: ButtonInteraction, _ses
 async function handleRulesByNumSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
   const guildId = interaction.guildId!;
   if (!sess.acRulesSection) {
-    await interaction.reply({ content: "❌ Session expired — open /actions again.", ephemeral: true });
+    await interaction.reply({ content: "❌ Session expired — open /menu again.", ephemeral: true });
     return;
   }
 
