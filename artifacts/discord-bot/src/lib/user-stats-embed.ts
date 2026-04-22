@@ -18,6 +18,10 @@ type User   = typeof usersTable.$inferSelect;
 type Season = typeof seasonsTable.$inferSelect;
 type SeasonRules = { coreAttrCap: number; nonCoreAttrCap: number; devUpsCap: number; ageResetsCap: number; [k: string]: unknown };
 
+function fmtDiff(pd: number): string {
+  return pd >= 0 ? `+${pd.toLocaleString()}` : `${pd.toLocaleString()}`;
+}
+
 /**
  * Fetches all secondary stats rows and appends them as embed fields.
  * Mutates and returns the passed embed for chaining.
@@ -39,8 +43,11 @@ export async function appendUserStatsFields(
       .where(and(eq(userRecordsTable.discordId, uid), eq(userRecordsTable.seasonId, season.id)))
       .limit(1).then(r => r[0]),
     getSeasonStats(uid, season.id),
-    db.select({ wins: globalUserRecordsTable.wins, losses: globalUserRecordsTable.losses })
-      .from(globalUserRecordsTable).where(eq(globalUserRecordsTable.discordId, uid)).limit(1).then(r => r[0]),
+    db.select({
+      wins: globalUserRecordsTable.wins,
+      losses: globalUserRecordsTable.losses,
+      pointDifferential: globalUserRecordsTable.pointDifferential,
+    }).from(globalUserRecordsTable).where(eq(globalUserRecordsTable.discordId, uid)).limit(1).then(r => r[0]),
     db.select({ eaId: playerEaIdsTable.eaId, console: playerEaIdsTable.console, slot: playerEaIdsTable.slot })
       .from(playerEaIdsTable).where(eq(playerEaIdsTable.discordId, uid)).orderBy(playerEaIdsTable.slot),
     db.select({ amount: coinTransactionsTable.amount, description: coinTransactionsTable.description, createdAt: coinTransactionsTable.createdAt })
@@ -48,6 +55,42 @@ export async function appendUserStatsFields(
       .where(and(eq(coinTransactionsTable.discordId, uid), eq(coinTransactionsTable.guildId, gid)))
       .orderBy(desc(coinTransactionsTable.createdAt)).limit(10),
   ]);
+
+  // All season records for this user across all seasons (for global + guild all-time aggregation)
+  const allUserSeasonRecords = await db.select({
+    seasonId:       userRecordsTable.seasonId,
+    wins:           userRecordsTable.wins,
+    losses:         userRecordsTable.losses,
+    pointDifferential: userRecordsTable.pointDifferential,
+    playoffWins:    userRecordsTable.playoffWins,
+    playoffLosses:  userRecordsTable.playoffLosses,
+    superbowlWins:  userRecordsTable.superbowlWins,
+    superbowlLosses: userRecordsTable.superbowlLosses,
+  }).from(userRecordsTable).where(eq(userRecordsTable.discordId, uid));
+
+  // Guild season IDs (for guild all-time scope)
+  const guildSeasonIds = (await db.select({ id: seasonsTable.id }).from(seasonsTable)
+    .where(eq(seasonsTable.guildId, gid))).map(s => s.id);
+  const guildSeasonIdSet = new Set(guildSeasonIds);
+
+  // Aggregate: global PO/SB (all seasons, all guilds) and guild all-time
+  let globalPW = 0, globalPL = 0, globalSW = 0, globalSL = 0;
+  let guildW = 0, guildL = 0, guildPD = 0, guildPW = 0, guildPL = 0, guildSW = 0, guildSL = 0;
+  for (const r of allUserSeasonRecords) {
+    globalPW += r.playoffWins;
+    globalPL += r.playoffLosses;
+    globalSW += r.superbowlWins;
+    globalSL += r.superbowlLosses;
+    if (guildSeasonIdSet.has(r.seasonId)) {
+      guildW  += r.wins;
+      guildL  += r.losses;
+      guildPD += r.pointDifferential;
+      guildPW += r.playoffWins;
+      guildPL += r.playoffLosses;
+      guildSW += r.superbowlWins;
+      guildSL += r.superbowlLosses;
+    }
+  }
 
   // Legends scoped to this guild via seasonId → seasonsTable.guildId join
   const legendRows = await db.select({
@@ -76,18 +119,43 @@ export async function appendUserStatsFields(
 
   const savings = savingsRow?.balance ?? 0;
   const total   = user.balance + savings;
-  const ssW     = recordRow?.wins          ?? 0;
-  const ssL     = recordRow?.losses        ?? 0;
-  const atW     = globalRecord?.wins       ?? 0;
-  const atL     = globalRecord?.losses     ?? 0;
-  const sbW     = recordRow?.superbowlWins ?? 0;
+  const ssW     = recordRow?.wins              ?? 0;
+  const ssL     = recordRow?.losses            ?? 0;
+  const ssPOW   = recordRow?.playoffWins       ?? 0;
+  const ssPOL   = recordRow?.playoffLosses     ?? 0;
+  const ssSBW   = recordRow?.superbowlWins     ?? 0;
+  const ssSBL   = recordRow?.superbowlLosses   ?? 0;
+  const ssPD    = recordRow?.pointDifferential ?? 0;
+
+  const glbW    = globalRecord?.wins               ?? 0;
+  const glbL    = globalRecord?.losses             ?? 0;
+  const glbPD   = globalRecord?.pointDifferential  ?? 0;
+
+  // Build season record value
+  const seasonParts: string[] = [`${ssW}W-${ssL}L`];
+  if (ssPD !== 0) seasonParts.push(`PD: ${fmtDiff(ssPD)}`);
+  if (ssPOW + ssPOL > 0) seasonParts.push(`PO: ${ssPOW}W-${ssPOL}L`);
+  if (ssSBW + ssSBL > 0) seasonParts.push(`🏆SB: ${ssSBW}W-${ssSBL}L`);
+
+  // Build global record value
+  const glbParts: string[] = [`${glbW}W-${glbL}L`];
+  if (glbPD !== 0) glbParts.push(`PD: ${fmtDiff(glbPD)}`);
+  if (globalPW + globalPL > 0) glbParts.push(`PO: ${globalPW}W-${globalPL}L`);
+  if (globalSW + globalSL > 0) glbParts.push(`🏆SB: ${globalSW}W-${globalSL}L`);
+
+  // Build guild all-time record value
+  const guildParts: string[] = [`${guildW}W-${guildL}L`];
+  if (guildPD !== 0) guildParts.push(`PD: ${fmtDiff(guildPD)}`);
+  if (guildPW + guildPL > 0) guildParts.push(`PO: ${guildPW}W-${guildPL}L`);
+  if (guildSW + guildSL > 0) guildParts.push(`🏆SB: ${guildSW}W-${guildSL}L`);
 
   embed
     .setThumbnail(avatarUrl)
     .addFields(
-      { name: "💰 Balance",       value: `Wallet: **${user.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
-      { name: "📊 Season Record", value: `${ssW}W-${ssL}L`, inline: true },
-      { name: "🏆 All-Time",      value: `${atW}W-${atL}L | ${sbW} SB${sbW !== 1 ? "s" : ""}`, inline: true },
+      { name: "💰 Balance",        value: `Wallet: **${user.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
+      { name: "📊 Season Record",  value: seasonParts.join(" | "), inline: true },
+      { name: "🌐 Global Record",  value: glbParts.join(" | "), inline: true },
+      { name: "🏆 Guild All-Time", value: guildParts.join(" | "), inline: false },
     );
 
   if (eaIds.length) {
@@ -101,10 +169,10 @@ export async function appendUserStatsFields(
     const devOn   = ecoOn && settings.devUpgradesEnabled;
     const ageOn   = ecoOn && settings.ageResetsEnabled;
 
-    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0} (${rules.coreAttrCap})`    : `${coreAttrPurchased ?? 0} (n/a)`;
+    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0} (${rules.coreAttrCap})`       : `${coreAttrPurchased ?? 0} (n/a)`;
     const nonCoreFmt = attrOn ? `${nonCoreAttrPurchased ?? 0} (${rules.nonCoreAttrCap})` : `${nonCoreAttrPurchased ?? 0} (n/a)`;
-    const devFmt     = devOn  ? `${devUpsPurchased ?? 0} (${rules.devUpsCap})`         : `${devUpsPurchased ?? 0} (n/a)`;
-    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0} (${rules.ageResetsCap})`   : `${ageResetsPurchased ?? 0} (n/a)`;
+    const devFmt     = devOn  ? `${devUpsPurchased ?? 0} (${rules.devUpsCap})`            : `${devUpsPurchased ?? 0} (n/a)`;
+    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0} (${rules.ageResetsCap})`      : `${ageResetsPurchased ?? 0} (n/a)`;
 
     embed.addFields({
       name:   "🛒 This Season's Purchases",

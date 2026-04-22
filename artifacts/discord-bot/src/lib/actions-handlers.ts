@@ -105,6 +105,10 @@ interface ActionsSession {
   faCardPlayerId?: number;
   faCardPage?: number;
   faSeasonId?: number;
+  faDevFilter?: number;
+  faSortPrimary?: string;
+  faAttrSort?: string;
+  faNameFilter?: string;
   // all-players browse/filter flow
   apPos?: string;
   apCardPlayerId?: number;
@@ -191,13 +195,13 @@ function sortByCanonical(positions: string[]): string[] {
   });
 }
 
-// ── Keys that are displayed elsewhere (page 1) and should NOT appear on the attributes page ──
+// ── Keys that are displayed elsewhere (page 1/bio) and should NOT appear on the attributes page ──
 const ATTR_PAGE_SKIP = new Set([
-  "conf", "confidence",
   "height", "heightInches", "weight",
   "throwAcc", "throwAccuracy",
   "handedness", "throwingHand", "playerHandedness",
   "college", "collegeName", "playerCollege",
+  // conf/confidence shown on page 1 bio section
 ]);
 
 const ATTR_ABBR: Record<string, string> = {
@@ -228,12 +232,14 @@ const ATTR_ABBR: Record<string, string> = {
   finesseMoves: "FMV",
   kickAcc: "KAC", kickRet: "KRR", longSnap: "LSN",
   throwAccDeep: "DAC", throwAccMid: "MAC", throwAccShort: "SAC",
+  truck: "TRK",
+  conf: "CNF", confidence: "CNF",
 };
 
 const ATTR_GROUPS: { label: string; keys: string[] }[] = [
   { label: "⚡ Physical / Athletic", keys: ["speedRating","accelerationRating","accel","agilityRating","strengthRating","jumpingRating","jump","awareRating","staminaRating","injuryRating","toughnessRating","tough"] },
   { label: "🏈 Throwing",            keys: ["throwPowerRating","throwAccuracyShortRating","throwAccShort","throwAccuracyMidRating","throwAccMid","throwAccuracyDeepRating","throwAccDeep","throwOnRunRating","throwUnderPressureRating","breakSackRating","playActionRating"] },
-  { label: "🏃 Ball Carrying",       keys: ["caryingRating","carryingRating","carry","bCVisionRating","ballCarrierVisionRating","bCV","elusivenessRating","breakTackleRating","stiffArmRating","spinMoveRating","jukeMoveRating","truckingRating","changeOfDirectionRating"] },
+  { label: "🏃 Ball Carrying",       keys: ["caryingRating","carryingRating","carry","bCVisionRating","ballCarrierVisionRating","bCV","elusivenessRating","breakTackleRating","stiffArmRating","spinMoveRating","jukeMoveRating","truckingRating","truck","changeOfDirectionRating"] },
   { label: "🙌 Receiving",           keys: ["catchRating","catchInTrafficRating","cIT","spectacularCatchRating","specCatch","shortRouteRunRating","routeRunShort","medRouteRunRating","routeRunMed","deepRouteRunRating","routeRunDeep","releaseRating"] },
   { label: "🛡️ Blocking",            keys: ["passBlockRating","runBlockRating","impactBlockRating","passBlockPowerRating","passBlockFinesseRating","runBlockPowerRating","runBlockFinesseRating","leadBlockRating"] },
   { label: "🔴 Pass Rush",           keys: ["powerMovesRating","finessMovesRating","finesseMoves","blockShedRating"] },
@@ -373,6 +379,9 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
     );
   if (physLine)   p1.addFields({ name: "Height / Weight", value: physLine,   inline: true });
   if (collegeStr) p1.addFields({ name: "College",         value: collegeStr, inline: true });
+  const rawConf = attrs["conf"] ?? attrs["confidence"];
+  const confVal = rawConf != null ? Number(rawConf) : NaN;
+  if (!isNaN(confVal) && confVal > 0) p1.addFields({ name: "🧠 Confidence", value: String(confVal), inline: true });
 
   // Stats section on page 1
   if (statLines.length) {
@@ -680,11 +689,20 @@ export async function handleActionsInteraction(
   if (id === "ac_ap_filter_dev")         { await handleApFilterDev(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_ap_filter_attr1")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 1); return true; }
   if (id === "ac_ap_filter_attr2")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 2); return true; }
-  if (id === "ac_ap_filter_attr3")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 3); return true; }
   if (id === "ac_ap_filter_apply")       { await handleApFilterApply(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_ap_filter_clear")       { await handleApFilterClear(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_ap_filter_name")        { await handleApFilterNameModal(interaction as ButtonInteraction); return true; }
   if (id === "ac_modal_ap_name")         { await handleApFilterNameSubmit(interaction as ModalSubmitInteraction, sess); return true; }
+  // FA Filter
+  if (id === "ac_fa_filter")             { await handleFaFilterScreen(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_filter_dev")         { await handleFaFilterDev(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_fa_filter_sort")        { await handleFaFilterSort(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_fa_filter_attr1")       { await handleFaFilterAttr(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_fa_filter_attr2")       { await handleFaFilterAttr(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_fa_filter_apply")       { await handleFaFilterApply(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_filter_clear")       { await handleFaFilterClear(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_filter_name")        { await handleFaFilterNameModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_modal_fa_name")         { await handleFaFilterNameSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_teamstats")             { await handleTeamStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_teamstats_sel")         { await handleTeamStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
 
@@ -2790,8 +2808,7 @@ const ABBR_TO_ATTR_KEY: Record<string, string> = {
 };
 
 const AP_ATTR_GROUP_A = ["SPD","ACC","AGI","STR","JMP","AWR","STA","INJ","TGH","THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC","CAR"];
-const AP_ATTR_GROUP_B = ["BCV","ELU","BTK","SFA","SPM","JKM","TRK","COD","CTH","CIT","SPC","SRR","MRR","DRR","RLS","PBK","RBK","IBL"];
-const AP_ATTR_GROUP_C = ["PBP","PBF","RBP","RBF","LBK","PMV","FMV","BSH","PUR","TAK","HPW","MCV","ZCV","PRS","PRC","KPW","KAC","PNP","PNA","KRR"];
+const AP_ATTR_GROUP_B = ["BCV","ELU","BTK","SFA","SPM","JKM","TRK","COD","CTH","CIT","SPC","SRR","MRR","DRR","RLS","PBK","RBK","PMV","FMV","BSH","PUR","TAK","MCV"];
 
 const AP_ATTR_NAMES: Record<string, string> = {
   SPD: "Speed", ACC: "Acceleration", AGI: "Agility", STR: "Strength", JMP: "Jumping",
@@ -2893,6 +2910,41 @@ async function showFaPlayerList(
   const pos = sess.faPos!;
   const seasonId = sess.faSeasonId!;
 
+  const conditions: SQL<unknown>[] = [
+    eq(franchiseRostersTable.seasonId, seasonId),
+    eq(franchiseRostersTable.teamId, FA_TEAM_ID_BROWSE),
+    sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
+  ];
+  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
+    if (sess.faDevFilter === 99) {
+      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
+    } else {
+      conditions.push(eq(franchiseRostersTable.devTrait, sess.faDevFilter));
+    }
+  }
+  if (sess.faNameFilter) {
+    const namePat = `%${sess.faNameFilter}%`;
+    conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
+  }
+
+  const orderExprs: SQL[] = [];
+  if (sess.faAttrSort && ABBR_TO_ATTR_KEY[sess.faAttrSort]) {
+    const key = ABBR_TO_ATTR_KEY[sess.faAttrSort]!;
+    orderExprs.push(sql.raw(`(attributes->>'${key}')::numeric DESC NULLS LAST`));
+  }
+  if (sess.faSortPrimary) {
+    const parts2 = sess.faSortPrimary.split("_");
+    const dir = parts2[parts2.length - 1] === "asc" ? "ASC" : "DESC";
+    const field = parts2.slice(0, -1).join("_");
+    switch (field) {
+      case "overall":  orderExprs.push(sql.raw(`overall ${dir}`)); break;
+      case "age":      orderExprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
+      case "height":   orderExprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
+      case "weight":   orderExprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
+    }
+  }
+  if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
+
   const players = await db.select({
     playerId:  franchiseRostersTable.playerId,
     firstName: franchiseRostersTable.firstName,
@@ -2901,12 +2953,8 @@ async function showFaPlayerList(
     devTrait:  franchiseRostersTable.devTrait,
     age:       franchiseRostersTable.age,
   }).from(franchiseRostersTable)
-    .where(and(
-      eq(franchiseRostersTable.seasonId, seasonId),
-      eq(franchiseRostersTable.teamId, FA_TEAM_ID_BROWSE),
-      sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
-    ))
-    .orderBy(desc(franchiseRostersTable.overall))
+    .where(and(...conditions))
+    .orderBy(...orderExprs)
     .limit(24);
 
   if (!players.length) {
@@ -2922,6 +2970,17 @@ async function showFaPlayerList(
     return;
   }
 
+  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || sess.faSortPrimary || sess.faAttrSort);
+  const filterSummaryParts: string[] = [];
+  if (sess.faNameFilter) filterSummaryParts.push(`Name: "${sess.faNameFilter}"`);
+  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
+    const dl: Record<number, string> = { 0: "Normal", 1: "Star", 2: "SS", 3: "XF", 99: "SS+XF" };
+    filterSummaryParts.push(`Dev: ${dl[sess.faDevFilter] ?? sess.faDevFilter}`);
+  }
+  if (sess.faAttrSort) filterSummaryParts.push(`Sort attr: ${AP_ATTR_NAMES[sess.faAttrSort] ?? sess.faAttrSort} ↓`);
+  if (sess.faSortPrimary) filterSummaryParts.push(`Sort: ${sess.faSortPrimary.replace("_", " ")}`);
+  const filterSummary = filterSummaryParts.length ? `**Filters:** ${filterSummaryParts.join(" · ")}` : "";
+
   const menu = new StringSelectMenuBuilder()
     .setCustomId("ac_fa_player")
     .setPlaceholder("Select a free agent to view their card…")
@@ -2935,10 +2994,11 @@ async function showFaPlayerList(
   await interaction.update({
     embeds: [new EmbedBuilder().setColor(Colors.Green)
       .setTitle(`🆓 Free Agents — ${pos}`)
-      .setDescription(`Top ${players.length} free agents. Select one for their player card.\n${DEV_LEGEND}`)],
+      .setDescription(`Top ${players.length} free agents. Select one for their player card.\n${DEV_LEGEND}${filterSummary ? `\n${filterSummary}` : ""}`)],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_fa_filter").setLabel("🔍 Filter / Sort").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("ac_freeagents").setLabel("← Back").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
       ),
@@ -3202,33 +3262,39 @@ async function handleApBackToPlayers(interaction: ButtonInteraction, sess: Actio
 
 // ── All Players — Filter / Sort screen ────────────────────────────────────────
 
-function buildApFilterComponents(sess: ActionsSession): ActionRowBuilder<StringSelectMenuBuilder>[] {
+// Shared filter component builder — works for both AP and FA (prefix = "ac_ap" or "ac_fa")
+function buildSharedFilterComponents(
+  prefix: string,
+  devFilter: number | undefined,
+  sortPrimary: string | undefined,
+  attrSort: string | undefined,
+): ActionRowBuilder<StringSelectMenuBuilder>[] {
   const devMenu = new StringSelectMenuBuilder()
-    .setCustomId("ac_ap_filter_dev")
+    .setCustomId(`${prefix}_filter_dev`)
     .setPlaceholder("Filter: Dev Trait (any)")
     .addOptions([
-      new StringSelectMenuOptionBuilder().setLabel("Any Dev Trait").setValue("-1").setDefault(!sess.apDevFilter || sess.apDevFilter < 0),
-      new StringSelectMenuOptionBuilder().setLabel("Normal only").setValue("0").setDefault(sess.apDevFilter === 0),
-      new StringSelectMenuOptionBuilder().setLabel("Star [★] only").setValue("1").setDefault(sess.apDevFilter === 1),
-      new StringSelectMenuOptionBuilder().setLabel("Superstar [SS] only").setValue("2").setDefault(sess.apDevFilter === 2),
-      new StringSelectMenuOptionBuilder().setLabel("X-Factor [XF] only").setValue("3").setDefault(sess.apDevFilter === 3),
-      new StringSelectMenuOptionBuilder().setLabel("SS + XF only").setValue("99").setDefault(sess.apDevFilter === 99),
+      new StringSelectMenuOptionBuilder().setLabel("Any Dev Trait").setValue("-1").setDefault(!devFilter || devFilter < 0),
+      new StringSelectMenuOptionBuilder().setLabel("Normal only").setValue("0").setDefault(devFilter === 0),
+      new StringSelectMenuOptionBuilder().setLabel("Star [★] only").setValue("1").setDefault(devFilter === 1),
+      new StringSelectMenuOptionBuilder().setLabel("Superstar [SS] only").setValue("2").setDefault(devFilter === 2),
+      new StringSelectMenuOptionBuilder().setLabel("X-Factor [XF] only").setValue("3").setDefault(devFilter === 3),
+      new StringSelectMenuOptionBuilder().setLabel("SS + XF only").setValue("99").setDefault(devFilter === 99),
     ]);
 
   const sortMenu = new StringSelectMenuBuilder()
-    .setCustomId("ac_ap_filter_sort")
+    .setCustomId(`${prefix}_filter_sort`)
     .setPlaceholder("Sort By (default: Overall ↓)")
     .addOptions([
-      new StringSelectMenuOptionBuilder().setLabel("Overall: High → Low").setValue("overall_desc").setDefault(sess.apSortPrimary === "overall_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Overall: Low → High").setValue("overall_asc").setDefault(sess.apSortPrimary === "overall_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Age: Youngest First").setValue("age_asc").setDefault(sess.apSortPrimary === "age_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Age: Oldest First").setValue("age_desc").setDefault(sess.apSortPrimary === "age_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Height: Tallest First").setValue("height_desc").setDefault(sess.apSortPrimary === "height_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Height: Shortest First").setValue("height_asc").setDefault(sess.apSortPrimary === "height_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Weight: Heaviest First").setValue("weight_desc").setDefault(sess.apSortPrimary === "weight_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sess.apSortPrimary === "weight_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sess.apSortPrimary === "contract_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sess.apSortPrimary === "contract_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Overall: High → Low").setValue("overall_desc").setDefault(sortPrimary === "overall_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Overall: Low → High").setValue("overall_asc").setDefault(sortPrimary === "overall_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Age: Youngest First").setValue("age_asc").setDefault(sortPrimary === "age_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Age: Oldest First").setValue("age_desc").setDefault(sortPrimary === "age_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Height: Tallest First").setValue("height_desc").setDefault(sortPrimary === "height_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Height: Shortest First").setValue("height_asc").setDefault(sortPrimary === "height_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Weight: Heaviest First").setValue("weight_desc").setDefault(sortPrimary === "weight_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sortPrimary === "weight_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sortPrimary === "contract_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sortPrimary === "contract_desc"),
       new StringSelectMenuOptionBuilder().setLabel("— Clear Sort —").setValue("clear"),
     ]);
 
@@ -3236,22 +3302,26 @@ function buildApFilterComponents(sess: ActionsSession): ActionRowBuilder<StringS
     new StringSelectMenuBuilder().setCustomId(cid).setPlaceholder("Sort by Attribute…")
       .addOptions([
         new StringSelectMenuOptionBuilder().setLabel("— No attribute sort —").setValue("none")
-          .setDefault(!sess.apAttrSort || !group.includes(sess.apAttrSort)),
+          .setDefault(!attrSort || !group.includes(attrSort)),
         ...group.map(abbr =>
           new StringSelectMenuOptionBuilder()
             .setLabel(`${AP_ATTR_NAMES[abbr] ?? abbr} (${abbr})`)
             .setValue(abbr)
-            .setDefault(sess.apAttrSort === abbr),
+            .setDefault(attrSort === abbr),
         ),
       ]);
 
+  // Only 2 attr rows (+ dev + sort + button = 5 total, within Discord's 5-row limit)
   return [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(devMenu),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sortMenu),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu("ac_ap_filter_attr1", AP_ATTR_GROUP_A)),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu("ac_ap_filter_attr2", AP_ATTR_GROUP_B)),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu("ac_ap_filter_attr3", AP_ATTR_GROUP_C)),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr1`, AP_ATTR_GROUP_A)),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr2`, AP_ATTR_GROUP_B)),
   ];
+}
+
+function buildApFilterComponents(sess: ActionsSession): ActionRowBuilder<StringSelectMenuBuilder>[] {
+  return buildSharedFilterComponents("ac_ap", sess.apDevFilter, sess.apSortPrimary, sess.apAttrSort);
 }
 
 async function showApFilterScreen(
@@ -3417,6 +3487,197 @@ async function handleApFilterClear(interaction: ButtonInteraction, sess: Actions
   sess.apSortPrimary = undefined;
   sess.apAttrSort = undefined;
   await showApFilterScreen(interaction, sess);
+}
+
+// ── Free Agents — Filter / Sort screen ────────────────────────────────────────
+
+function buildFaFilterSummary(sess: ActionsSession): string {
+  const parts: string[] = [];
+  if (sess.faNameFilter) parts.push(`Name: "${sess.faNameFilter}"`);
+  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
+    const devLabels: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "Superstar [SS]", 3: "X-Factor [XF]", 99: "SS + XF" };
+    parts.push(`Dev: ${devLabels[sess.faDevFilter] ?? sess.faDevFilter}`);
+  }
+  if (sess.faAttrSort) parts.push(`Sort attr: ${AP_ATTR_NAMES[sess.faAttrSort] ?? sess.faAttrSort} ↓`);
+  if (sess.faSortPrimary) parts.push(`Sort: ${sess.faSortPrimary.replace("_", " ")}`);
+  return parts.length ? `**Active filters:** ${parts.join(" · ")}` : "";
+}
+
+async function showFaFilterScreen(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const summary = buildFaFilterSummary(sess);
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle(`🔍 Filter / Sort — FA ${sess.faPos ?? "Free Agents"}`)
+    .setDescription(
+      "Set filters and sort options, then click **Apply & View**.\n" +
+      "Attribute sort takes priority over primary sort.\n\n" +
+      (summary ? summary : "*No active filters.*"),
+    );
+
+  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || sess.faSortPrimary || sess.faAttrSort);
+  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_fa_filter_name")
+      .setLabel(sess.faNameFilter ? `Name: "${sess.faNameFilter}"` : "🔍 Search by Name")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_fa_filter_apply").setLabel("✅ Apply & View").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_fa_filter_clear").setLabel("🗑 Clear All").setStyle(ButtonStyle.Danger).setDisabled(!hasFilters),
+    new ButtonBuilder().setCustomId("ac_fa_back_to_players").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  const filterRows = buildSharedFilterComponents("ac_fa", sess.faDevFilter, sess.faSortPrimary, sess.faAttrSort);
+  await interaction.update({ embeds: [embed], components: [...filterRows as any[], btnRow as any] });
+}
+
+async function handleFaFilterScreen(interaction: ButtonInteraction, sess: ActionsSession) {
+  await showFaFilterScreen(interaction, sess);
+}
+
+async function handleFaFilterSort(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  sess.faSortPrimary = interaction.values[0] === "clear" ? undefined : interaction.values[0];
+  await showFaFilterScreen(interaction, sess);
+}
+
+async function handleFaFilterDev(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  sess.faDevFilter = Number(interaction.values[0]);
+  await showFaFilterScreen(interaction, sess);
+}
+
+async function handleFaFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const val = interaction.values[0]!;
+  sess.faAttrSort = val === "none" ? undefined : val;
+  await showFaFilterScreen(interaction, sess);
+}
+
+async function handleFaFilterNameModal(interaction: ButtonInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId("ac_modal_fa_name")
+    .setTitle("Search FA by Player Last Name")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("fa_name_input")
+          .setLabel("Last name (partial match)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. Smith, Allen, Mahomes")
+          .setRequired(false)
+          .setMaxLength(50),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+async function handleFaFilterNameSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
+  const raw = interaction.fields.getTextInputValue("fa_name_input").trim();
+  sess.faNameFilter = raw.length ? raw : undefined;
+  await interaction.deferUpdate();
+  if (!sess.faPos || !sess.faSeasonId) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Use /menu to start again.")],
+      components: [],
+    });
+    return;
+  }
+  // Re-query FA player list (can't call interaction.update after modal deferUpdate — must use editReply)
+  const pos = sess.faPos!;
+  const seasonId = sess.faSeasonId!;
+  const conditions: SQL<unknown>[] = [
+    eq(franchiseRostersTable.seasonId, seasonId),
+    eq(franchiseRostersTable.teamId, FA_TEAM_ID_BROWSE),
+    sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
+  ];
+  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
+    if (sess.faDevFilter === 99) {
+      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
+    } else {
+      conditions.push(eq(franchiseRostersTable.devTrait, sess.faDevFilter));
+    }
+  }
+  if (sess.faNameFilter) {
+    const namePat = `%${sess.faNameFilter}%`;
+    conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
+  }
+
+  const orderExprs: SQL[] = [];
+  if (sess.faAttrSort && ABBR_TO_ATTR_KEY[sess.faAttrSort]) {
+    orderExprs.push(sql.raw(`(attributes->>'${ABBR_TO_ATTR_KEY[sess.faAttrSort]}')::numeric DESC NULLS LAST`));
+  }
+  if (sess.faSortPrimary) {
+    const parts2 = sess.faSortPrimary.split("_");
+    const dir = parts2[parts2.length - 1] === "asc" ? "ASC" : "DESC";
+    const field = parts2.slice(0, -1).join("_");
+    switch (field) {
+      case "overall":  orderExprs.push(sql.raw(`overall ${dir}`)); break;
+      case "age":      orderExprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
+    }
+  }
+  if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
+
+  const players = await db.select({
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+    age:       franchiseRostersTable.age,
+  }).from(franchiseRostersTable)
+    .where(and(...conditions))
+    .orderBy(...orderExprs)
+    .limit(24);
+
+  const filterSummary = buildFaFilterSummary(sess);
+  if (!players.length) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle(`🆓 Free Agents — ${pos}`)
+        .setDescription(`No free agents found.\n\n${filterSummary}`)],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_fa_filter").setLabel("🔍 Filter / Sort").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_freeagents").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      )],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_fa_player")
+    .setPlaceholder("Select a free agent to view their card…")
+    .addOptions(players.map(p =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadgeText(p.devTrait ?? 0)}`)
+        .setDescription(`Age: ${p.age ?? "?"}`)
+        .setValue(String(p.playerId)),
+    ));
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Green)
+      .setTitle(`🆓 Free Agents — ${pos}`)
+      .setDescription(`${players.length} results.\n${DEV_LEGEND}\n${filterSummary}`)],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_fa_filter").setLabel("🔍 Filter / Sort").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_freeagents").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleFaFilterApply(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.faPos || !sess.faSeasonId) { await handleFreeAgentsPosPick(interaction, sess); return; }
+  await showFaPlayerList(interaction, sess);
+}
+
+async function handleFaFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
+  sess.faNameFilter = undefined;
+  sess.faDevFilter = undefined;
+  sess.faSortPrimary = undefined;
+  sess.faAttrSort = undefined;
+  await showFaFilterScreen(interaction, sess);
 }
 
 // ── Player Stats — removed; stats accessible via player cards in Rosters/FA/AP ─
@@ -4300,16 +4561,23 @@ async function handleOpenTeams(interaction: ButtonInteraction, sess: ActionsSess
     return;
   }
 
-  const afcOpen = openTeams.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
-  const nfcOpen = openTeams.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
-
   const embed = new EmbedBuilder()
     .setColor(Colors.Red)
     .setTitle(`🔴 Open Teams (${openTeams.length} available)`)
     .setTimestamp();
 
-  if (afcOpen.length) embed.addFields({ name: "🔴 AFC", value: afcOpen.map(t => `• ${t}`).join("\n"), inline: true });
-  if (nfcOpen.length) embed.addFields({ name: "🔵 NFC", value: nfcOpen.map(t => `• ${t}`).join("\n"), inline: true });
+  const OPEN_CONF_EMOJI: Record<string, string> = { AFC: "🔴", NFC: "🔵" };
+  const DIV_ORDER_OPEN = ["East", "North", "South", "West"] as const;
+  for (const conf of ["AFC", "NFC"] as const) {
+    for (const div of DIV_ORDER_OPEN) {
+      const divTeams = openTeams
+        .filter(t => NFL_DIVISION_MAP[t]?.conference === conf && NFL_DIVISION_MAP[t]?.division === div)
+        .sort();
+      if (divTeams.length) {
+        embed.addFields({ name: `${OPEN_CONF_EMOJI[conf]} ${conf} ${div}`, value: divTeams.map(t => `• ${t}`).join("\n"), inline: true });
+      }
+    }
+  }
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
 }
