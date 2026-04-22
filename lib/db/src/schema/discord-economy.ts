@@ -10,6 +10,9 @@ export const purchaseTypeEnum = pgEnum("purchase_type", [
   "custom_player_gold",
   "custom_player_silver",
   "custom_player_bronze",
+  "contract_extension",
+  "salary_reduction",
+  "bonus_reduction",
 ]);
 
 export const purchaseStatusEnum = pgEnum("purchase_status", [
@@ -79,6 +82,13 @@ export const seasonsTable = pgTable("seasons", {
   coreAttributesOverride: text("core_attributes_override"),
   // When true: MCA exports accumulate stats only — no payouts, no Discord notifications
   catchupMode: boolean("catchup_mode").notNull().default(false),
+  // Contract / Roster Mod overrides
+  contractExtensionCostOverride: integer("contract_extension_cost_override"),
+  contractExtensionCapOverride:  integer("contract_extension_cap_override"),  // per-season per-user
+  salaryReductionCostOverride:   integer("salary_reduction_cost_override"),
+  salaryReductionCapOverride:    integer("salary_reduction_cap_override"),    // per-season per-user
+  bonusReductionCostOverride:    integer("bonus_reduction_cost_override"),
+  bonusReductionCapOverride:     integer("bonus_reduction_cap_override"),     // per-season per-user
 }, (t) => ({
   uniqGuildSeason: uniqueIndex("seasons_guild_season_idx").on(t.guildId, t.seasonNumber),
 }));
@@ -144,6 +154,9 @@ export const seasonStatsTable = pgTable("season_stats", {
   devUpsPurchased: integer("dev_ups_purchased").notNull().default(0),
   ageResetsPurchased: integer("age_resets_purchased").notNull().default(0),
   legendsPurchasedThisSeason: integer("legends_purchased_this_season").notNull().default(0),
+  contractExtensionsPurchased: integer("contract_extensions_purchased").notNull().default(0),
+  salaryReductionsPurchased:   integer("salary_reductions_purchased").notNull().default(0),
+  bonusReductionsPurchased:    integer("bonus_reductions_purchased").notNull().default(0),
 });
 
 export const gameTypeEnum = pgEnum("game_type", ["regular_season", "playoff", "superbowl"]);
@@ -847,6 +860,13 @@ export const serverSettingsTable = pgTable("server_settings", {
   mcaImportEnabled:        boolean("mca_import_enabled").notNull().default(true),
   legacyCoreAttrMode:      boolean("legacy_core_attr_mode").notNull().default(false),
   maxSeasons:              integer("max_seasons").notNull().default(10),
+  // Contract / Roster Mod feature toggles
+  contractExtensionsEnabled: boolean("contract_extensions_enabled").notNull().default(true),
+  salaryReductionsEnabled:   boolean("salary_reductions_enabled").notNull().default(true),
+  bonusReductionsEnabled:    boolean("bonus_reductions_enabled").notNull().default(true),
+  // Career caps for salary/bonus reductions (per player, across all seasons) — null = no cap
+  salaryReductionCareerCap: integer("salary_reduction_career_cap"),
+  bonusReductionCareerCap:  integer("bonus_reduction_career_cap"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

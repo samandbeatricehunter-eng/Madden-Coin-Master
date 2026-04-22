@@ -6,9 +6,9 @@ import {
 import { db } from "@workspace/db";
 import {
   legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTable,
-  franchiseRostersTable, franchiseMcaTeamsTable,
+  franchiseRostersTable, franchiseMcaTeamsTable, seasonsTable,
 } from "@workspace/db";
-import { eq, and, sql, asc, ilike, or } from "drizzle-orm";
+import { eq, and, sql, asc, ilike, or, inArray, ne } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   getLegendPurchaseHistory, deductBalance, getInventoryCount, logTransaction, getSeasonRules,
@@ -140,6 +140,75 @@ export const data = new SlashCommandBuilder()
           .setDescription("Team owner (defaults to yourself)")
           .setRequired(false)
       )
+  )
+
+  // ── Contract Extension ──────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("contract_extension")
+      .setDescription("Extend a player's contract by 1 year")
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Player's position on the roster")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player")
+          .setDescription("Player to extend (from autocomplete)")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
+  )
+
+  // ── Salary Reduction ────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("salary_reduction")
+      .setDescription("Reduce a player's salary")
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Player's position on the roster")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player")
+          .setDescription("Player to apply salary reduction to (from autocomplete)")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
+  )
+
+  // ── Bonus Reduction ─────────────────────────────────────────────────────────
+  .addSubcommand(sub =>
+    sub.setName("bonus_reduction")
+      .setDescription("Reduce a player's bonus")
+      .addStringOption(opt =>
+        opt.setName("position")
+          .setDescription("Player's position on the roster")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("player")
+          .setDescription("Player to apply bonus reduction to (from autocomplete)")
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+      .addUserOption(opt =>
+        opt.setName("user")
+          .setDescription("Team owner (defaults to yourself)")
+          .setRequired(false)
+      )
   );
 
 // ── Autocomplete ───────────────────────────────────────────────────────────────
@@ -193,7 +262,8 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       return;
     }
 
-    if (sub === "dev_upgrade" || sub === "age_reset" || sub === "attribute_upgrade") {
+    if (sub === "dev_upgrade" || sub === "age_reset" || sub === "attribute_upgrade"
+      || sub === "contract_extension" || sub === "salary_reduction" || sub === "bonus_reduction") {
       // getUser is not available in autocomplete context; always use the invoking user for roster lookup
       const targetUser = interaction.user;
 
@@ -322,6 +392,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
   if (sub === "age_reset" && !settings.ageResetsEnabled) {
     await interaction.editReply({ content: "❌ Age resets are currently disabled." });
+    return;
+  }
+  if (sub === "contract_extension" && !settings.contractExtensionsEnabled) {
+    await interaction.editReply({ content: "❌ Contract extensions are currently disabled." });
+    return;
+  }
+  if (sub === "salary_reduction" && !settings.salaryReductionsEnabled) {
+    await interaction.editReply({ content: "❌ Salary reductions are currently disabled." });
+    return;
+  }
+  if (sub === "bonus_reduction" && !settings.bonusReductionsEnabled) {
+    await interaction.editReply({ content: "❌ Bonus reductions are currently disabled." });
     return;
   }
 
@@ -537,6 +619,150 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )],
     });
   }
+
+  // ── /purchase contract_extension | salary_reduction | bonus_reduction ─────────
+  if (sub === "contract_extension" || sub === "salary_reduction" || sub === "bonus_reduction") {
+    const targetUser  = interaction.options.getUser("user") ?? interaction.user;
+    const playerInput = interaction.options.getString("player", true).trim();
+    const user        = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);
+    const season      = await getOrCreateActiveSeason(interaction.guildId!);
+    const rules       = await getSeasonRules(season);
+    const stats       = await getSeasonStats(interaction.user.id, season.id);
+
+    type ContractSubType = "contract_extension" | "salary_reduction" | "bonus_reduction";
+    const typedSub = sub as ContractSubType;
+
+    const costMap: Record<ContractSubType, number> = {
+      contract_extension: rules.contractExtensionCost,
+      salary_reduction:   rules.salaryReductionCost,
+      bonus_reduction:    rules.bonusReductionCost,
+    };
+    const seasonCapMap: Record<ContractSubType, number> = {
+      contract_extension: rules.contractExtensionCap,
+      salary_reduction:   rules.salaryReductionCap,
+      bonus_reduction:    rules.bonusReductionCap,
+    };
+    const seasonUsedMap: Record<ContractSubType, number> = {
+      contract_extension: stats.contractExtensionsPurchased ?? 0,
+      salary_reduction:   stats.salaryReductionsPurchased   ?? 0,
+      bonus_reduction:    stats.bonusReductionsPurchased     ?? 0,
+    };
+    const labelMap: Record<ContractSubType, string> = {
+      contract_extension: "Contract Extension (1YR)",
+      salary_reduction:   "Salary Reduction",
+      bonus_reduction:    "Bonus Reduction",
+    };
+    const costPer    = costMap[typedSub];
+    const seasonCap  = seasonCapMap[typedSub];
+    const seasonUsed = seasonUsedMap[typedSub];
+    const label      = labelMap[typedSub];
+
+    if (seasonUsed >= seasonCap) {
+      return interaction.editReply({
+        embeds: [errorEmbed(`${label} Limit Reached`, `You've used all ${seasonCap} ${label} slots this season.`)],
+      });
+    }
+
+    if (user.balance < costPer) return insufficientFunds(interaction, costPer, user.balance);
+
+    // ── Career cap enforcement (salary_reduction + bonus_reduction only) ────────
+    if (typedSub === "salary_reduction" || typedSub === "bonus_reduction") {
+      const careerCapKey: "salaryReductionCareerCap" | "bonusReductionCareerCap" =
+        typedSub === "salary_reduction" ? "salaryReductionCareerCap" : "bonusReductionCareerCap";
+      const careerCap = settings[careerCapKey];
+
+      if (careerCap != null) {
+        // Count across ALL seasons in this guild for this player
+        const guildSeasons = await db
+          .select({ id: seasonsTable.id })
+          .from(seasonsTable)
+          .where(eq(seasonsTable.guildId, interaction.guildId!));
+        const guildSeasonIds = guildSeasons.map(s => s.id);
+
+        let careerCount = 0;
+        if (guildSeasonIds.length > 0) {
+          const [row] = await db
+            .select({ count: sql<number>`COUNT(*)::int` })
+            .from(purchasesTable)
+            .where(and(
+              inArray(purchasesTable.seasonId, guildSeasonIds),
+              eq(purchasesTable.purchaseType, typedSub),
+              sql`lower(${purchasesTable.playerName}) = lower(${playerInput})`,
+              ne(purchasesTable.status, "refunded"),
+            ));
+          careerCount = row?.count ?? 0;
+        }
+
+        if (careerCount >= careerCap) {
+          return interaction.editReply({
+            embeds: [errorEmbed(
+              `Career Cap Reached for ${label}`,
+              `**${playerInput}** has already received the maximum of **${careerCap}** ${label}(s) in this franchise (career cap).`
+            )],
+          });
+        }
+      }
+    }
+
+    // Resolve position from roster (fallback to slash option)
+    const rosterSeasonId = await getRosterSeasonId(interaction.guildId!);
+    const rosterRows = await db
+      .select({ firstName: franchiseRostersTable.firstName, lastName: franchiseRostersTable.lastName, position: franchiseRostersTable.position })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, rosterSeasonId),
+        eq(franchiseRostersTable.discordId, targetUser.id),
+      ));
+    const match = rosterRows.find(r => `${r.firstName} ${r.lastName}`.toLowerCase() === playerInput.toLowerCase());
+    const playerPosition = match?.position ?? interaction.options.getString("position", true);
+
+    await deductBalance(interaction.user.id, costPer, interaction.guildId!);
+    await logTransaction(interaction.user.id, -costPer, "purchase", `${label} — ${playerInput} (${playerPosition})`, interaction.guildId!);
+    const statsIncrement =
+      typedSub === "contract_extension"
+        ? { contractExtensionsPurchased: sql`${seasonStatsTable.contractExtensionsPurchased} + 1` }
+        : typedSub === "salary_reduction"
+          ? { salaryReductionsPurchased: sql`${seasonStatsTable.salaryReductionsPurchased} + 1` }
+          : { bonusReductionsPurchased:  sql`${seasonStatsTable.bonusReductionsPurchased}  + 1` };
+    await db.update(seasonStatsTable)
+      .set(statsIncrement)
+      .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+
+    const [purchase] = await db.insert(purchasesTable).values({
+      discordId: interaction.user.id,
+      seasonId: season.id,
+      purchaseType: typedSub,
+      status: "pending",
+      cost: costPer,
+      playerName: playerInput,
+      playerPosition,
+      notes: targetUser.id !== interaction.user.id ? `owner:<@${targetUser.id}>` : null,
+    }).returning();
+
+    await db.insert(inventoryTable).values({
+      discordId: interaction.user.id,
+      seasonId: season.id,
+      purchaseId: purchase!.id,
+      itemType: typedSub,
+      playerName: playerInput,
+      playerPosition,
+      notes: targetUser.id !== interaction.user.id ? `owner:<@${targetUser.id}>` : null,
+    });
+
+    await sendCommissionerNotification(interaction, typedSub, purchase!.id, {
+      playerName: playerInput, playerPosition, costPer: String(costPer),
+      ownerNote: targetUser.id !== interaction.user.id ? `Owner: <@${targetUser.id}>` : undefined,
+    });
+
+    return interaction.editReply({
+      embeds: [pendingEmbed(
+        `${label} Submitted!`,
+        `**${label}** for **${playerInput}** (${playerPosition}) submitted!\n\nA commissioner will apply it in-game.\n\n` +
+        `**Cost:** ${costPer.toLocaleString()} coins deducted.\n` +
+        `**${label} used:** ${seasonUsed + 1}/${seasonCap}`
+      )],
+    });
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -554,7 +780,8 @@ async function sendCommissionerNotification(
 ) {
   try {
     const gid = interaction.guildId!;
-    const isUpgrade  = type === "dev_upgrade" || type === "age_reset" || type === "attribute";
+    const isUpgrade  = type === "dev_upgrade" || type === "age_reset" || type === "attribute"
+      || type === "contract_extension" || type === "salary_reduction" || type === "bonus_reduction";
     const isDraftBuy = type === "legend" || type.startsWith("custom_player");
 
     let channelId: string | null = null;
@@ -630,6 +857,39 @@ async function sendCommissionerNotification(
       "",
       "Click the button below once this has been applied in-game.",
     ].join("\n");
+  } else if (type === "contract_extension") {
+    title = "📝 Contract Extension Request (1YR)";
+    description = [
+      `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+      details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+      `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Cost:** ${details["costPer"]} coins`,
+      `**Purchase ID:** #${purchaseId}`,
+      "",
+      "Click the button below once this has been applied in-game.",
+    ].filter(Boolean).join("\n");
+  } else if (type === "salary_reduction") {
+    title = "💸 Salary Reduction Request";
+    description = [
+      `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+      details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+      `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Cost:** ${details["costPer"]} coins`,
+      `**Purchase ID:** #${purchaseId}`,
+      "",
+      "Click the button below once this has been applied in-game.",
+    ].filter(Boolean).join("\n");
+  } else if (type === "bonus_reduction") {
+    title = "💰 Bonus Reduction Request";
+    description = [
+      `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+      details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+      `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+      `**Cost:** ${details["costPer"]} coins`,
+      `**Purchase ID:** #${purchaseId}`,
+      "",
+      "Click the button below once this has been applied in-game.",
+    ].filter(Boolean).join("\n");
   }
 
   const embed = new EmbedBuilder()

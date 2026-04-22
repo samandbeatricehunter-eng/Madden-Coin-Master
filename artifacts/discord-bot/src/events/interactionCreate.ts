@@ -76,10 +76,12 @@ import {
   handleSsArch, handleSsArchPrev, handleSsArchNext, handleSsArchEdit, handleSsArchBackToView,
   handleSsLt, handleSsLtEdit, handleSsLtCreate, handleSsLtBackToPos, handleSsLtBackToModel, handleSsLtBackToView,
   handleSsPc, handleSsPcLegendPrices, handleSsPcUpgradePrices, handleSsPcSeasonCaps, handleSsPcAlltimeCaps,
+  handleSsPcContractPrices, handleSsPcContractCaps,
   handleSsArchPos, handleSsArchEditGroup,
   handleSsLtPos, handleSsLtLegend, handleSsLtModel, handleSsLtEditGroup,
   handleSsArchEditModal, handleSsLtEditModal,
   handleSsPcLegendPricesModal, handleSsPcUpgradePricesModal, handleSsPcSeasonCapsModal, handleSsPcAlltimeCapsModal,
+  handleSsPcContractPricesModal, handleSsPcContractCapsModal,
 } from "../lib/admin-store-handlers.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
@@ -2250,6 +2252,8 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ss_pc_upgrade_prices")  { await handleSsPcUpgradePrices(interaction);  return; }
   if (action === "ss_pc_season_caps")     { await handleSsPcSeasonCaps(interaction);      return; }
   if (action === "ss_pc_alltime_caps")    { await handleSsPcAlltimeCaps(interaction);     return; }
+  if (action === "ss_pc_contract_prices") { await handleSsPcContractPrices(interaction);  return; }
+  if (action === "ss_pc_contract_caps")   { await handleSsPcContractCaps(interaction);    return; }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────
@@ -2883,5 +2887,7 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ss_modal_pc_legend_prices")   { await handleSsPcLegendPricesModal(interaction);   return; }
   if (action === "ss_modal_pc_upgrade_prices")  { await handleSsPcUpgradePricesModal(interaction);  return; }
   if (action === "ss_modal_pc_season_caps")     { await handleSsPcSeasonCapsModal(interaction);     return; }
-  if (action === "ss_modal_pc_alltime_caps")    { await handleSsPcAlltimeCapsModal(interaction);    return; }
+  if (action === "ss_modal_pc_alltime_caps")      { await handleSsPcAlltimeCapsModal(interaction);    return; }
+  if (action === "ss_modal_pc_contract_prices")   { await handleSsPcContractPricesModal(interaction); return; }
+  if (action === "ss_modal_pc_contract_caps")     { await handleSsPcContractCapsModal(interaction);   return; }
 }

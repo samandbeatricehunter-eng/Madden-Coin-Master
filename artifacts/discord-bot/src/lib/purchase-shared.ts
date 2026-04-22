@@ -44,7 +44,8 @@ export async function sendCommissionerNotification(
     const gid = interaction.guildId!;
 
     // Route to the appropriate log channel based on purchase type
-    const isUpgrade    = type === "dev_upgrade" || type === "age_reset" || type === "attribute";
+    const isUpgrade    = type === "dev_upgrade" || type === "age_reset" || type === "attribute"
+      || type === "contract_extension" || type === "salary_reduction" || type === "bonus_reduction";
     const isDraftBuy   = type === "legend" || type.startsWith("custom_player");
 
     let channelId: string | null = null;
@@ -121,6 +122,39 @@ export async function sendCommissionerNotification(
         "",
         "Click the button below once this has been applied in-game.",
       ].join("\n");
+    } else if (type === "contract_extension") {
+      title = "📝 Contract Extension Request (1YR)";
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+        `**Cost:** ${details["costPer"]} coins`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Click the button below once this has been applied in-game.",
+      ].filter(Boolean).join("\n");
+    } else if (type === "salary_reduction") {
+      title = "💸 Salary Reduction Request";
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+        `**Cost:** ${details["costPer"]} coins`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Click the button below once this has been applied in-game.",
+      ].filter(Boolean).join("\n");
+    } else if (type === "bonus_reduction") {
+      title = "💰 Bonus Reduction Request";
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
+        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
+        `**Cost:** ${details["costPer"]} coins`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        "Click the button below once this has been applied in-game.",
+      ].filter(Boolean).join("\n");
     }
 
     const embed = new EmbedBuilder()

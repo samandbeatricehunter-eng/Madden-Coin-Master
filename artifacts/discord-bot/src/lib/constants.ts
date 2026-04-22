@@ -24,6 +24,9 @@ export const COSTS = {
   custom_player_gold: 300,
   custom_player_silver: 200,
   custom_player_bronze: 100,
+  contract_extension: 250,
+  salary_reduction: 250,
+  bonus_reduction: 250,
 } as const;
 
 export const LIMITS = {
@@ -34,6 +37,9 @@ export const LIMITS = {
   legendsAllTime: 4,
   maxLegendsInInventory: 4,
   maxLegendsPlusCustomPlayers: 4,
+  contractExtensionsPerSeason: 2,
+  salaryReductionsPerSeason: 2,
+  bonusReductionsPerSeason: 2,
 } as const;
 
 // Core attributes: Speed, Acceleration, Change of Direction, Agility, Strength,

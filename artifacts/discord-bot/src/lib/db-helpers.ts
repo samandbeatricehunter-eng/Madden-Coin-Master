@@ -435,6 +435,13 @@ export async function getSeasonRules(season: Season) {
     customGoldCost:   season.customGoldCostOverride   ?? COSTS.custom_player_gold,
     customSilverCost: season.customSilverCostOverride ?? COSTS.custom_player_silver,
     customBronzeCost: season.customBronzeCostOverride ?? COSTS.custom_player_bronze,
+    // Contract / Roster Mods
+    contractExtensionCost: season.contractExtensionCostOverride ?? COSTS.contract_extension,
+    contractExtensionCap:  season.contractExtensionCapOverride  ?? LIMITS.contractExtensionsPerSeason,
+    salaryReductionCost:   season.salaryReductionCostOverride   ?? COSTS.salary_reduction,
+    salaryReductionCap:    season.salaryReductionCapOverride    ?? LIMITS.salaryReductionsPerSeason,
+    bonusReductionCost:    season.bonusReductionCostOverride    ?? COSTS.bonus_reduction,
+    bonusReductionCap:     season.bonusReductionCapOverride     ?? LIMITS.bonusReductionsPerSeason,
   };
 }
 

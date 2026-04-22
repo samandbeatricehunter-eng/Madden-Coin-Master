@@ -362,6 +362,8 @@ async function buildPcEmbed(guildId: string): Promise<EmbedBuilder> {
   const allTimeLegend = settings.allTimeLegendCap ?? LIMITS.legendsAllTime;
   const legendsPerSeason = season.legendsPerSeasonCapOverride ?? 2;
   const customPerSeason  = season.customPlayersPerSeasonCapOverride ?? "—";
+  const salaryCareer = settings.salaryReductionCareerCap ?? "—";
+  const bonusCareer  = settings.bonusReductionCareerCap  ?? "—";
 
   return new EmbedBuilder()
     .setColor(Colors.Green)
@@ -398,7 +400,27 @@ async function buildPcEmbed(guildId: string): Promise<EmbedBuilder> {
         name: "All-Time Caps",
         value: `**Legends (All-Time):** ${allTimeLegend}`,
         inline: false,
-      }
+      },
+      {
+        name: "📋 Contract & Roster Mod Prices",
+        value: [
+          `**Contract Extension (1YR):** ${rules.contractExtensionCost} coins`,
+          `**Salary Reduction:** ${rules.salaryReductionCost} coins`,
+          `**Bonus Reduction:** ${rules.bonusReductionCost} coins`,
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "📋 Contract & Roster Mod Caps",
+        value: [
+          `**Contract Ext/Season:** ${rules.contractExtensionCap}`,
+          `**Salary Red/Season:** ${rules.salaryReductionCap}`,
+          `**Salary Red Career (per player):** ${salaryCareer}`,
+          `**Bonus Red/Season:** ${rules.bonusReductionCap}`,
+          `**Bonus Red Career (per player):** ${bonusCareer}`,
+        ].join("\n"),
+        inline: true,
+      },
     )
     .setFooter({ text: "Click a button below to edit a category" });
 }
@@ -407,10 +429,12 @@ function buildPcComponents() {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_pc_legend_prices").setLabel("⭐ Legend & Custom Prices").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ss_pc_upgrade_prices").setLabel("📈 Upgrade Prices").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ss_pc_contract_prices").setLabel("📋 Contract & Roster Prices").setStyle(ButtonStyle.Primary),
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_pc_season_caps").setLabel("📅 Per-Season Caps").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ss_pc_alltime_caps").setLabel("🏆 All-Time Caps").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ss_pc_contract_caps").setLabel("📋 Contract & Roster Caps").setStyle(ButtonStyle.Success),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_cancel").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
@@ -1071,5 +1095,140 @@ export async function handleSsPcAlltimeCapsModal(interaction: ModalSubmitInterac
 
   const embed = await buildPcEmbed(guildId);
   embed.setDescription(`✅ All-Time Caps updated.\n${embed.data.description ?? ""}`);
+  await interaction.editReply({ embeds: [embed], components: buildPcComponents() });
+}
+
+// ── Contract & Roster Mod Prices ──────────────────────────────────────────────
+
+export async function handleSsPcContractPrices(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+  const rules   = await getSeasonRules(season);
+
+  const modal = new ModalBuilder()
+    .setCustomId("ss_modal_pc_contract_prices")
+    .setTitle("📋 Contract & Roster Mod Prices")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("contractExtensionCost")
+          .setLabel("Contract Extension (1YR) Cost (coins)")
+          .setStyle(TextInputStyle.Short).setRequired(true)
+          .setValue(String(rules.contractExtensionCost))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("salaryReductionCost")
+          .setLabel("Salary Reduction Cost (coins)")
+          .setStyle(TextInputStyle.Short).setRequired(true)
+          .setValue(String(rules.salaryReductionCost))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("bonusReductionCost")
+          .setLabel("Bonus Reduction Cost (coins)")
+          .setStyle(TextInputStyle.Short).setRequired(true)
+          .setValue(String(rules.bonusReductionCost))
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleSsPcContractCaps(interaction: ButtonInteraction) {
+  const guildId  = interaction.guildId!;
+  const season   = await getOrCreateActiveSeason(guildId);
+  const rules    = await getSeasonRules(season);
+  const settings = await getServerSettings(guildId);
+
+  const modal = new ModalBuilder()
+    .setCustomId("ss_modal_pc_contract_caps")
+    .setTitle("📋 Contract & Roster Mod Caps")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("contractExtensionCap")
+          .setLabel("Contract Extensions per Season (per user)")
+          .setStyle(TextInputStyle.Short).setRequired(true)
+          .setValue(String(rules.contractExtensionCap))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("salaryReductionCap")
+          .setLabel("Salary Reductions per Season (per user)")
+          .setStyle(TextInputStyle.Short).setRequired(true)
+          .setValue(String(rules.salaryReductionCap))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("salaryReductionCareerCap")
+          .setLabel("Salary Red Career Cap/player (blank=unlimited)")
+          .setStyle(TextInputStyle.Short).setRequired(false)
+          .setValue(settings.salaryReductionCareerCap != null ? String(settings.salaryReductionCareerCap) : "")
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("bonusReductionCap")
+          .setLabel("Bonus Reductions per Season (per user)")
+          .setStyle(TextInputStyle.Short).setRequired(true)
+          .setValue(String(rules.bonusReductionCap))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("bonusReductionCareerCap")
+          .setLabel("Bonus Red Career Cap/player (blank=unlimited)")
+          .setStyle(TextInputStyle.Short).setRequired(false)
+          .setValue(settings.bonusReductionCareerCap != null ? String(settings.bonusReductionCareerCap) : "")
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleSsPcContractPricesModal(interaction: ModalSubmitInteraction) {
+  await interaction.deferUpdate();
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+
+  const contractExtensionCost = parseNum(getFieldSafe(interaction, "contractExtensionCost"));
+  const salaryReductionCost   = parseNum(getFieldSafe(interaction, "salaryReductionCost"));
+  const bonusReductionCost    = parseNum(getFieldSafe(interaction, "bonusReductionCost"));
+
+  await db.update(seasonsTable).set({
+    ...(contractExtensionCost !== null ? { contractExtensionCostOverride: contractExtensionCost } : {}),
+    ...(salaryReductionCost   !== null ? { salaryReductionCostOverride:   salaryReductionCost   } : {}),
+    ...(bonusReductionCost    !== null ? { bonusReductionCostOverride:     bonusReductionCost    } : {}),
+  }).where(eq(seasonsTable.id, season.id));
+
+  const embed = await buildPcEmbed(guildId);
+  embed.setDescription(`✅ Contract & Roster Prices updated.\n${embed.data.description ?? ""}`);
+  await interaction.editReply({ embeds: [embed], components: buildPcComponents() });
+}
+
+export async function handleSsPcContractCapsModal(interaction: ModalSubmitInteraction) {
+  await interaction.deferUpdate();
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+
+  const contractExtensionCap   = parseNum(getFieldSafe(interaction, "contractExtensionCap"));
+  const salaryReductionCap     = parseNum(getFieldSafe(interaction, "salaryReductionCap"));
+  const bonusReductionCap      = parseNum(getFieldSafe(interaction, "bonusReductionCap"));
+
+  // Career caps: blank = null (unlimited); parse separately
+  const rawSalaryCareer = getFieldSafe(interaction, "salaryReductionCareerCap")?.trim();
+  const rawBonusCareer  = getFieldSafe(interaction, "bonusReductionCareerCap")?.trim();
+  const salaryReductionCareerCap = rawSalaryCareer ? parseNum(rawSalaryCareer) : null;
+  const bonusReductionCareerCap  = rawBonusCareer  ? parseNum(rawBonusCareer)  : null;
+
+  // Season-level caps → seasons table
+  await db.update(seasonsTable).set({
+    ...(contractExtensionCap !== null ? { contractExtensionCapOverride: contractExtensionCap } : {}),
+    ...(salaryReductionCap   !== null ? { salaryReductionCapOverride:   salaryReductionCap   } : {}),
+    ...(bonusReductionCap    !== null ? { bonusReductionCapOverride:     bonusReductionCap    } : {}),
+  }).where(eq(seasonsTable.id, season.id));
+
+  // Career caps → server_settings (always write — null clears cap, number sets it)
+  // Only update if the field was touched (non-undefined raw value)
+  const settingsUpdate: Record<string, number | null> = {};
+  if (rawSalaryCareer !== undefined) settingsUpdate["salaryReductionCareerCap"] = salaryReductionCareerCap;
+  if (rawBonusCareer  !== undefined) settingsUpdate["bonusReductionCareerCap"]  = bonusReductionCareerCap;
+  if (Object.keys(settingsUpdate).length > 0) {
+    await db.update(serverSettingsTable)
+      .set({ ...settingsUpdate, updatedAt: new Date() })
+      .where(eq(serverSettingsTable.guildId, guildId));
+  }
+
+  const embed = await buildPcEmbed(guildId);
+  embed.setDescription(`✅ Contract & Roster Caps updated.\n${embed.data.description ?? ""}`);
   await interaction.editReply({ embeds: [embed], components: buildPcComponents() });
 }

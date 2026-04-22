@@ -76,6 +76,9 @@ export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: 
   { key: "attributeUpgradesEnabled",label: "Attr Upgrades",      description: "Attribute upgrade purchases" },
   { key: "devUpgradesEnabled",      label: "Dev Upgrades",       description: "Development upgrade purchases" },
   { key: "ageResetsEnabled",        label: "Age Resets",         description: "Age reset purchases" },
+  { key: "contractExtensionsEnabled", label: "Contract Ext",     description: "Contract extension (1YR) purchases" },
+  { key: "salaryReductionsEnabled",   label: "Salary Reduction", description: "Player salary reduction purchases" },
+  { key: "bonusReductionsEnabled",    label: "Bonus Reduction",  description: "Player bonus reduction purchases" },
   { key: "wagerEnabled",            label: "Wagers",             description: "Coin wager system" },
   { key: "mcaImportEnabled",        label: "MCA Import",         description: "Stat/schedule commands for all users (off = admin-only)" },
   { key: "legacyCoreAttrMode",      label: "Legacy Core Attrs",  description: "Allow multi-point & repeat core upgrades per player (off = strict 1pt/attr/player/season)" },
@@ -105,41 +108,31 @@ export function buildSettingsEmbed(s: ServerSettings): EmbedBuilder {
 }
 
 export function buildSettingsRows(s: ServerSettings): ActionRowBuilder<ButtonBuilder>[] {
-  const row1 = new ActionRowBuilder<ButtonBuilder>();
-  const row2 = new ActionRowBuilder<ButtonBuilder>();
-  const row3 = new ActionRowBuilder<ButtonBuilder>();
+  const boolFeatures = FEATURE_META.filter(f => typeof s[f.key] === "boolean");
 
-  const chunks = [
-    FEATURE_META.slice(0, 5),
-    FEATURE_META.slice(5, 10),
-  ];
+  const chunks: Array<typeof FEATURE_META> = [];
+  for (let i = 0; i < boolFeatures.length; i += 5) chunks.push(boolFeatures.slice(i, i + 5));
 
-  chunks[0]!.forEach(f => {
-    const val = s[f.key] as boolean;
-    row1.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`settings_toggle:${f.key}`)
-        .setLabel(`${val ? "ON" : "OFF"} — ${f.label}`)
-        .setStyle(val ? ButtonStyle.Success : ButtonStyle.Danger),
-    );
+  const rows = chunks.map(chunk => {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    chunk.forEach(f => {
+      const val = s[f.key] as boolean;
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`settings_toggle:${f.key}`)
+          .setLabel(`${val ? "ON" : "OFF"} — ${f.label}`)
+          .setStyle(val ? ButtonStyle.Success : ButtonStyle.Danger),
+      );
+    });
+    return row;
   });
 
-  chunks[1]!.forEach(f => {
-    const val = s[f.key] as boolean;
-    row2.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`settings_toggle:${f.key}`)
-        .setLabel(`${val ? "ON" : "OFF"} — ${f.label}`)
-        .setStyle(val ? ButtonStyle.Success : ButtonStyle.Danger),
-    );
-  });
-
-  row3.addComponents(
+  const doneRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("settings_done")
       .setLabel("Close Settings")
       .setStyle(ButtonStyle.Secondary),
   );
 
-  return [row1, row2, row3];
+  return [...rows, doneRow];
 }
