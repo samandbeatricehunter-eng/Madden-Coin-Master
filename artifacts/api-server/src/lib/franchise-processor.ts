@@ -2638,12 +2638,34 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
       await db.insert(rosterTransactionsTable).values(transactions);
     }
 
+    // Preserve portraitUrl values across delete+reinsert so cached/custom
+    // portraits set by admin commands are not wiped on routine roster imports.
+    const existingPortraits = await db
+      .select({ playerId: franchiseRostersTable.playerId, portraitUrl: franchiseRostersTable.portraitUrl })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, season.id),
+        eq(franchiseRostersTable.teamId,   mcaTeamId),
+      ));
+    const portraitMap = new Map(
+      existingPortraits
+        .filter(r => r.portraitUrl != null)
+        .map(r => [r.playerId, r.portraitUrl as string]),
+    );
+
     // Replace the team's roster: delete old rows, insert fresh ones
     await db.delete(franchiseRostersTable).where(and(
       eq(franchiseRostersTable.seasonId, season.id),
       eq(franchiseRostersTable.teamId,   mcaTeamId),
     ));
-    await db.insert(franchiseRostersTable).values(rows);
+
+    // Overlay preserved portraitUrl values back into fresh rows
+    const rowsWithPortraits = rows.map(r => ({
+      ...r,
+      portraitUrl: portraitMap.get(r.playerId) ?? null,
+    }));
+
+    await db.insert(franchiseRostersTable).values(rowsWithPortraits);
 
     return {
       ok: true,

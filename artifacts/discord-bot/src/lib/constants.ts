@@ -1,3 +1,14 @@
+// ── EA portrait CDN ───────────────────────────────────────────────────────────
+// Update this value when the league upgrades to a new Madden edition.
+// Future: will be driven by the per-guild Madden edition setting.
+export const MADDEN_CDN_YEAR = "madden26";
+
+/** EA CDN portrait URL for a given player. Falls back gracefully if playerId is invalid. */
+export function eaPortraitUrl(playerId: number | null | undefined): string | null {
+  if (!playerId || playerId <= 0) return null;
+  return `https://madden-assets-cdn.pulse.ea.com/${MADDEN_CDN_YEAR}/portraits/64/${playerId}.png`;
+}
+
 export const COSTS = {
   legend: 1000,
   core_attribute: 25,

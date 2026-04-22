@@ -403,6 +403,7 @@ export const franchiseRostersTable = pgTable("franchise_rosters", {
   xpTotal:            integer("xp_total"),               // EA experiencePoints — total accumulated XP (used to compute weekly delta)
   attributes:         json("attributes"),               // Record<string, number> — all *Rating fields from MCA export
   abilities:          json("abilities"),                 // { zone?: string, superstar?: string[] } — Superstar/X-Factor ability names
+  portraitUrl:        text("portrait_url"),              // Cached EA CDN or GCS portrait URL — set once, never overwritten on re-import
   importedAt: timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("franchise_roster_player_season_idx")

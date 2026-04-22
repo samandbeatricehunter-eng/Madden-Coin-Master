@@ -18,7 +18,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, ne } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
-import { NFL_DIVISION_MAP } from "../lib/constants.js";
+import { NFL_DIVISION_MAP, eaPortraitUrl, CORE_ATTRIBUTES } from "../lib/constants.js";
 import { DEV_EMOJI } from "../lib/dev-trait.js";
 
 // Division display order within each conference: East → North → South → West
@@ -37,12 +37,7 @@ function sortByDivision<T extends { fullName: string; nickName: string }>(teams:
   });
 }
 import { requireMcaEnabled } from "../lib/server-settings.js";
-import { CORE_ATTRIBUTES } from "../lib/constants.js";
 
-// ── EA portrait CDN ─────────────────────────────────────────────────────────
-function portraitUrl(playerId: number): string {
-  return `https://madden-assets-cdn.pulse.ea.com/madden26/portraits/64/${playerId}.png`;
-}
 
 // ── Dev trait display ────────────────────────────────────────────────────────
 function devLabel(trait: number): string {
@@ -445,7 +440,7 @@ export async function handlePlayerSelect(interaction: StringSelectMenuInteractio
     .setColor(isFreeAgent ? 0xf0c040 : Colors.Blue)
     .setTitle(`${roster.jerseyNum != null ? `#${roster.jerseyNum} ` : ""}${fullName} · ${pos} · ${roster.teamName || "Free Agent"}`)
     .setDescription(descParts.join("\n"))
-    .setThumbnail(portraitUrl(roster.playerId));
+    .setThumbnail(roster.portraitUrl ?? eaPortraitUrl(roster.playerId) ?? "");
 
   // Abilities — Superstar/X-Factor only
   if (abilities && (abilities.zone || (abilities.superstar && abilities.superstar.length > 0))) {

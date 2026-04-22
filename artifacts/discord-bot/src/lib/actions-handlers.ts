@@ -45,7 +45,7 @@ import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
-import { ATTRIBUTES, CORE_ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision } from "./constants.js";
+import { ATTRIBUTES, CORE_ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl } from "./constants.js";
 import { createSession } from "./custom-player-session.js";
 import { buildAttrPage, buildAttrDropdown, buildNavRow, aupSessions } from "../commands/attribute-up-interactions.js";
 
@@ -290,6 +290,7 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   const attrs     = (roster.attributes ?? {}) as Record<string, number>;
   const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
   const TOTAL     = 4;
+  const portrait  = roster.portraitUrl ?? eaPortraitUrl(roster.playerId);
 
   // ── Page 1: Personal Details ──────────────────────────────────────────────
   const p1 = new EmbedBuilder()
@@ -401,6 +402,8 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   }
   if (!hasAnyAttr) p4.addFields({ name: "📊 Attributes", value: "*No attribute data available.*", inline: false });
   p4.setFooter({ text: `Page 4/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
+
+  if (portrait) { p1.setThumbnail(portrait); p2.setThumbnail(portrait); p3.setThumbnail(portrait); p4.setThumbnail(portrait); }
 
   return [p1, p2, p3, p4];
 }
@@ -2960,6 +2963,7 @@ async function handlePsPlayerCard(interaction: StringSelectMenuInteraction, sess
   const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
   const attrs     = (roster.attributes ?? {}) as Record<string, number>;
 
+  const portrait  = roster.portraitUrl ?? eaPortraitUrl(roster.playerId);
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(`📊 ${roster.firstName} ${roster.lastName} — #${roster.jerseyNum ?? "?"} ${roster.position}`)
@@ -2968,6 +2972,7 @@ async function handlePsPlayerCard(interaction: StringSelectMenuInteraction, sess
       `**Dev Trait:** ${devLabel}  |  **Archetype:** ${archetype}\n` +
       `**Contract:** ${contract}`,
     );
+  if (portrait) embed.setThumbnail(portrait);
 
   // Key attributes for this position group
   const attrsKey = PS_POS_GROUPS.find(g => g.value === posGroup)?.attrsKey ?? posGroup;

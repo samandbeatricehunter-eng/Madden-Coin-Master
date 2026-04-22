@@ -8,12 +8,7 @@ import { db } from "@workspace/db";
 import { franchiseRostersTable, seasonsTable, purchasesTable } from "@workspace/db";
 import { eq, and, asc, desc, ilike, or, ne } from "drizzle-orm";
 import { requireMcaEnabled } from "../lib/server-settings.js";
-import { CORE_ATTRIBUTES } from "../lib/constants.js";
-
-// ── Portrait URL ───────────────────────────────────────────────────────────────
-function portraitUrl(playerId: number): string {
-  return `https://madden-assets-cdn.pulse.ea.com/madden26/portraits/64/${playerId}.png`;
-}
+import { CORE_ATTRIBUTES, eaPortraitUrl } from "../lib/constants.js";
 
 // ── Dev trait label ────────────────────────────────────────────────────────────
 function devLabel(trait: number): string {
@@ -408,7 +403,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       `**${player.position} ${player.firstName} ${player.lastName} — ${displayTeam} — ${player.overall} OVR**\n\n` +
       descParts.join("\n"),
     )
-    .setThumbnail(portraitUrl(player.playerId))
+    .setThumbnail(player.portraitUrl ?? eaPortraitUrl(player.playerId) ?? "")
     .setFooter({ text: `Season ${season.seasonNumber} • Player ID ${player.playerId}${player.archetypeAbbrev ? ` • EA: ${player.archetypeAbbrev}` : ""}` })
     .setTimestamp();
 
