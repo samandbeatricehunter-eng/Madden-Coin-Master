@@ -254,13 +254,13 @@ const ATTR_ABBR: Record<string, string> = {
 const ATTR_GROUPS: { label: string; abbrs: string[] }[] = [
   { label: "⚡ Physical / Athletic", abbrs: ["SPD","ACC","AGI","STR","JMP","AWR","COD","STA","INJ","TGH"] },
   { label: "🏈 Throwing",            abbrs: ["THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC"] },
-  { label: "🏃 Ball Carrying",       abbrs: ["CAR","BCV","ELU","BTK","TRK","SFA","SPM","JKM"] },
+  { label: "🏃 Ball Carrying",       abbrs: ["CAR","BCV","ELU","BTK","TRK","SFA","SPM","JKM","KR"] },
   { label: "🙌 Receiving",           abbrs: ["CTH","CIT","SPC","SRR","MRR","DRR","RLS"] },
   { label: "🛡️ Blocking",            abbrs: ["PBK","RBK","IBL","PBP","PBF","RBP","RBF","LBK"] },
   { label: "🔴 Pass Rush",           abbrs: ["PMV","FMV","BSH"] },
   { label: "💪 Run Defense",         abbrs: ["PUR","TAK","HPW"] },
   { label: "🔒 Coverage",            abbrs: ["MCV","ZCV","PRS","PRC"] },
-  { label: "🦵 Kicking / Punting",   abbrs: ["KPW","KAC","PNP","PNA","KR","LSN"] },
+  { label: "🦵 Kicking / Punting",   abbrs: ["KPW","KAC","PNP","PNA","LSN"] },
 ];
 
 interface StatDef { key: string; label: string; isFloat?: boolean }
