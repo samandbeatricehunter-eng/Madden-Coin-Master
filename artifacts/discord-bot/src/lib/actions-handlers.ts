@@ -106,8 +106,7 @@ interface ActionsSession {
   faCardPage?: number;
   faSeasonId?: number;
   faDevFilter?: number;
-  faSortPrimary?: string;
-  faAttrSort?: string;
+  faSortStack?: string[]; // ordered sort keys, priority = index 0 first (max 5)
   faNameFilter?: string;
   // all-players browse/filter flow
   apPos?: string;
@@ -115,9 +114,8 @@ interface ActionsSession {
   apCardPage?: number;
   apSeasonId?: number;
   apNameFilter?: string;
-  apDevFilter?: number;   // -1=all, 0=normal, 1=star, 2=ss, 3=xf, 99=ss+xf
-  apSortPrimary?: string; // "overall_desc","overall_asc","age_asc","age_desc","height_desc","height_asc","weight_desc","weight_asc","contract_asc","contract_desc"
-  apAttrSort?: string;    // attribute abbr, e.g. "SPD", "OVR"
+  apDevFilter?: number;      // -1=all, 0=normal, 1=star, 2=ss, 3=xf, 99=ss+xf
+  apSortStack?: string[];    // ordered sort keys, priority = index 0 first (max 5)
   expiresAt: number;
 }
 
@@ -2844,31 +2842,7 @@ const AP_ATTR_NAMES: Record<string, string> = {
   KPW: "Kick Power", KAC: "Kick Accuracy", KR: "Kick Return",
 };
 
-function buildApOrderBy(sess: ActionsSession): SQL[] {
-  const exprs: SQL[] = [];
-  if (sess.apAttrSort && ABBR_TO_ATTR_KEY[sess.apAttrSort]) {
-    const key = ABBR_TO_ATTR_KEY[sess.apAttrSort]!;
-    exprs.push(sql.raw(`(attributes->>'${key}')::numeric DESC NULLS LAST`));
-  }
-  if (sess.apSortPrimary) {
-    const parts2 = sess.apSortPrimary.split("_");
-    const dir = parts2[parts2.length - 1] === "asc" ? "ASC" : "DESC";
-    const field = parts2.slice(0, -1).join("_");
-    switch (field) {
-      case "overall":  exprs.push(sql.raw(`overall ${dir}`)); break;
-      case "age":      exprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
-      case "height":   exprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
-      case "weight":   exprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
-      case "contract": exprs.push(sql.raw(`contract_years_left ${dir} NULLS LAST`)); break;
-      // Kicking sorts (always DESC — no ASC variant exposed)
-      case "kpw": exprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
-      case "kac": exprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
-      case "kr":  exprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
-    }
-  }
-  if (!exprs.length) exprs.push(desc(franchiseRostersTable.overall));
-  return exprs;
-}
+// ── Multi-sort helpers ─────────────────────────────────────────────────────────
 
 const SORT_PRIMARY_LABELS: Record<string, string> = {
   overall_desc: "OVR ↓", overall_asc: "OVR ↑",
@@ -2879,6 +2853,68 @@ const SORT_PRIMARY_LABELS: Record<string, string> = {
   kpw_desc: "KPW ↓", kac_desc: "KAC ↓", kr_desc: "KR ↓",
 };
 
+const SORT_PRIMARY_KEY_SET = new Set(Object.keys(SORT_PRIMARY_LABELS));
+const ATTR_GROUP_A_KEY_SET = new Set(AP_ATTR_GROUP_A);
+const ATTR_GROUP_B_KEY_SET = new Set(AP_ATTR_GROUP_B);
+
+/** Return a short human-readable label for a sort key */
+function sortStackLabel(key: string): string {
+  if (SORT_PRIMARY_LABELS[key]) return SORT_PRIMARY_LABELS[key];
+  if (AP_ATTR_NAMES[key]) return `${AP_ATTR_NAMES[key]} ↓`;
+  return key;
+}
+
+/**
+ * Merge a new multi-select result from one menu into the global sort stack.
+ * Items already in the stack keep their position; newly-added items append at the end.
+ * Deselected items (from this menu only) are removed. Total capped at 5.
+ */
+function updateSortStack(
+  currentStack: string[],
+  menuKeySet: Set<string>,
+  newSelected: string[], // values Discord returned (may be empty = "deselect all from this menu")
+): string[] {
+  const preserved    = currentStack.filter(k => !menuKeySet.has(k));
+  const stillChosen  = currentStack.filter(k => menuKeySet.has(k) && newSelected.includes(k));
+  const added        = newSelected.filter(k => !currentStack.includes(k));
+  return [...preserved, ...stillChosen, ...added].slice(0, 5);
+}
+
+/** Apply a sort stack to a SQL ORDER BY expression array (shared for AP and FA). */
+function applyStackToOrderExprs(stack: string[], exprs: SQL[]): void {
+  for (const key of stack) {
+    if (ABBR_TO_ATTR_KEY[key]) {
+      exprs.push(sql.raw(`(attributes->>'${ABBR_TO_ATTR_KEY[key]}')::numeric DESC NULLS LAST`));
+    } else {
+      const parts = key.split("_");
+      const dir   = parts[parts.length - 1] === "asc" ? "ASC" : "DESC";
+      const field = parts.slice(0, -1).join("_");
+      switch (field) {
+        case "overall":  exprs.push(sql.raw(`overall ${dir}`)); break;
+        case "age":      exprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
+        case "height":   exprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
+        case "weight":   exprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
+        case "contract": exprs.push(sql.raw(`contract_years_left ${dir} NULLS LAST`)); break;
+        case "kpw":      exprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
+        case "kac":      exprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
+        case "kr":       exprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
+      }
+    }
+  }
+}
+
+function buildApOrderBy(sess: ActionsSession): SQL[] {
+  const exprs: SQL[] = [];
+  applyStackToOrderExprs(sess.apSortStack ?? [], exprs);
+  if (!exprs.length) exprs.push(desc(franchiseRostersTable.overall));
+  return exprs;
+}
+
+function buildSortStackSummary(stack: string[]): string {
+  if (!stack.length) return "";
+  return "**Sort:** " + stack.map((k, i) => `${i + 1}. ${sortStackLabel(k)}`).join(" · ");
+}
+
 function buildApFilterSummary(sess: ActionsSession): string {
   const parts: string[] = [];
   if (sess.apNameFilter) parts.push(`Name: "${sess.apNameFilter}"`);
@@ -2886,9 +2922,9 @@ function buildApFilterSummary(sess: ActionsSession): string {
     const devLabels: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "Superstar [SS]", 3: "X-Factor [XF]", 99: "SS + XF" };
     parts.push(`Dev: ${devLabels[sess.apDevFilter] ?? sess.apDevFilter}`);
   }
-  if (sess.apAttrSort) parts.push(`Sort attr: ${AP_ATTR_NAMES[sess.apAttrSort] ?? sess.apAttrSort} ↓`);
-  if (sess.apSortPrimary) parts.push(`Sort: ${SORT_PRIMARY_LABELS[sess.apSortPrimary] ?? sess.apSortPrimary}`);
-  return parts.length ? `**Active filters:** ${parts.join(" · ")}` : "";
+  const sortLine = buildSortStackSummary(sess.apSortStack ?? []);
+  if (sortLine) parts.push(sortLine);
+  return parts.length ? parts.join("\n") : "";
 }
 
 // ── Free Agents — player-card flow ───────────────────────────────────────────
@@ -2946,24 +2982,7 @@ async function showFaPlayerList(
   }
 
   const orderExprs: SQL[] = [];
-  if (sess.faAttrSort && ABBR_TO_ATTR_KEY[sess.faAttrSort]) {
-    const key = ABBR_TO_ATTR_KEY[sess.faAttrSort]!;
-    orderExprs.push(sql.raw(`(attributes->>'${key}')::numeric DESC NULLS LAST`));
-  }
-  if (sess.faSortPrimary) {
-    const parts2 = sess.faSortPrimary.split("_");
-    const dir = parts2[parts2.length - 1] === "asc" ? "ASC" : "DESC";
-    const field = parts2.slice(0, -1).join("_");
-    switch (field) {
-      case "overall":  orderExprs.push(sql.raw(`overall ${dir}`)); break;
-      case "age":      orderExprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
-      case "height":   orderExprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
-      case "weight":   orderExprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
-      case "kpw": orderExprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
-      case "kac": orderExprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
-      case "kr":  orderExprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
-    }
-  }
+  applyStackToOrderExprs(sess.faSortStack ?? [], orderExprs);
   if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
 
   const players = await db.select({
@@ -2991,16 +3010,8 @@ async function showFaPlayerList(
     return;
   }
 
-  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || sess.faSortPrimary || sess.faAttrSort);
-  const filterSummaryParts: string[] = [];
-  if (sess.faNameFilter) filterSummaryParts.push(`Name: "${sess.faNameFilter}"`);
-  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
-    const dl: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "SS", 3: "XF", 99: "SS+XF" };
-    filterSummaryParts.push(`Dev: ${dl[sess.faDevFilter] ?? sess.faDevFilter}`);
-  }
-  if (sess.faAttrSort) filterSummaryParts.push(`Sort attr: ${AP_ATTR_NAMES[sess.faAttrSort] ?? sess.faAttrSort} ↓`);
-  if (sess.faSortPrimary) filterSummaryParts.push(`Sort: ${SORT_PRIMARY_LABELS[sess.faSortPrimary] ?? sess.faSortPrimary}`);
-  const filterSummary = filterSummaryParts.length ? `**Filters:** ${filterSummaryParts.join(" · ")}` : "";
+  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || (sess.faSortStack?.length));
+  const filterSummary = buildFaFilterSummary(sess);
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId("ac_fa_player")
@@ -3124,8 +3135,7 @@ async function handleAllPlayersPosSel(interaction: StringSelectMenuInteraction, 
   if (sess.apPos !== pos) {
     sess.apNameFilter = undefined;
     sess.apDevFilter = undefined;
-    sess.apSortPrimary = undefined;
-    sess.apAttrSort = undefined;
+    sess.apSortStack = [];
   }
   sess.apPos = pos;
   sess.apSeasonId = seasonId;
@@ -3284,11 +3294,11 @@ async function handleApBackToPlayers(interaction: ButtonInteraction, sess: Actio
 // ── All Players — Filter / Sort screen ────────────────────────────────────────
 
 // Shared filter component builder — works for both AP and FA (prefix = "ac_ap" or "ac_fa")
+// sortStack: ordered list of active sort keys (up to 5), priority = index 0 first
 function buildSharedFilterComponents(
   prefix: string,
   devFilter: number | undefined,
-  sortPrimary: string | undefined,
-  attrSort: string | undefined,
+  sortStack: string[],
 ): ActionRowBuilder<StringSelectMenuBuilder>[] {
   const devMenu = new StringSelectMenuBuilder()
     .setCustomId(`${prefix}_filter_dev`)
@@ -3302,50 +3312,52 @@ function buildSharedFilterComponents(
       new StringSelectMenuOptionBuilder().setLabel("SS + XF only").setValue("99").setDefault(devFilter === 99),
     ]);
 
+  // Multi-select Sort By: up to 5 picks, priority = order added to stack
   const sortMenu = new StringSelectMenuBuilder()
     .setCustomId(`${prefix}_filter_sort`)
-    .setPlaceholder("Sort By (default: Overall ↓)")
+    .setPlaceholder("Sort By — pick up to 5 (priority = selection order)")
+    .setMinValues(0)
+    .setMaxValues(5)
     .addOptions([
-      new StringSelectMenuOptionBuilder().setLabel("Overall: High → Low").setValue("overall_desc").setDefault(sortPrimary === "overall_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Overall: Low → High").setValue("overall_asc").setDefault(sortPrimary === "overall_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Age: Youngest First").setValue("age_asc").setDefault(sortPrimary === "age_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Age: Oldest First").setValue("age_desc").setDefault(sortPrimary === "age_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Height: Tallest First").setValue("height_desc").setDefault(sortPrimary === "height_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Height: Shortest First").setValue("height_asc").setDefault(sortPrimary === "height_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Weight: Heaviest First").setValue("weight_desc").setDefault(sortPrimary === "weight_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sortPrimary === "weight_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sortPrimary === "contract_asc"),
-      new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sortPrimary === "contract_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("🦵 Kick Power ↓ (KPW)").setValue("kpw_desc").setDefault(sortPrimary === "kpw_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("🎯 Kick Accuracy ↓ (KAC)").setValue("kac_desc").setDefault(sortPrimary === "kac_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("💨 Kick Return ↓ (KR)").setValue("kr_desc").setDefault(sortPrimary === "kr_desc"),
-      new StringSelectMenuOptionBuilder().setLabel("— Clear Sort —").setValue("clear"),
+      new StringSelectMenuOptionBuilder().setLabel("Overall: High → Low").setValue("overall_desc").setDefault(sortStack.includes("overall_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("Overall: Low → High").setValue("overall_asc").setDefault(sortStack.includes("overall_asc")),
+      new StringSelectMenuOptionBuilder().setLabel("Age: Youngest First").setValue("age_asc").setDefault(sortStack.includes("age_asc")),
+      new StringSelectMenuOptionBuilder().setLabel("Age: Oldest First").setValue("age_desc").setDefault(sortStack.includes("age_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("Height: Tallest First").setValue("height_desc").setDefault(sortStack.includes("height_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("Height: Shortest First").setValue("height_asc").setDefault(sortStack.includes("height_asc")),
+      new StringSelectMenuOptionBuilder().setLabel("Weight: Heaviest First").setValue("weight_desc").setDefault(sortStack.includes("weight_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sortStack.includes("weight_asc")),
+      new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sortStack.includes("contract_asc")),
+      new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sortStack.includes("contract_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("🦵 Kick Power ↓ (KPW)").setValue("kpw_desc").setDefault(sortStack.includes("kpw_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("🎯 Kick Accuracy ↓ (KAC)").setValue("kac_desc").setDefault(sortStack.includes("kac_desc")),
+      new StringSelectMenuOptionBuilder().setLabel("💨 Kick Return ↓ (KR)").setValue("kr_desc").setDefault(sortStack.includes("kr_desc")),
     ]);
 
-  const makeAttrMenu = (cid: string, group: string[]) =>
-    new StringSelectMenuBuilder().setCustomId(cid).setPlaceholder("Sort by Attribute…")
-      .addOptions([
-        new StringSelectMenuOptionBuilder().setLabel("— No attribute sort —").setValue("none")
-          .setDefault(!attrSort || !group.includes(attrSort)),
-        ...group.map(abbr =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(`${AP_ATTR_NAMES[abbr] ?? abbr} (${abbr})`)
-            .setValue(abbr)
-            .setDefault(attrSort === abbr),
-        ),
-      ]);
+  // Multi-select attr menus — selecting nothing removes all attrs from that group from the stack
+  const makeAttrMenu = (cid: string, group: string[], label: string) =>
+    new StringSelectMenuBuilder().setCustomId(cid)
+      .setPlaceholder(`Attr Sort — ${label} (pick up to 5)`)
+      .setMinValues(0)
+      .setMaxValues(Math.min(5, group.length))
+      .addOptions(group.map(abbr =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${AP_ATTR_NAMES[abbr] ?? abbr} (${abbr})`)
+          .setValue(abbr)
+          .setDefault(sortStack.includes(abbr)),
+      ));
 
-  // Only 2 attr rows (+ dev + sort + button = 5 total, within Discord's 5-row limit)
+  // Row layout: dev filter | sort by | attr group A | attr group B | button row (added by caller)
   return [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(devMenu),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sortMenu),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr1`, AP_ATTR_GROUP_A)),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr2`, AP_ATTR_GROUP_B)),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr1`, AP_ATTR_GROUP_A, "Offense")),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr2`, AP_ATTR_GROUP_B, "Defense/Blocking")),
   ];
 }
 
 function buildApFilterComponents(sess: ActionsSession): ActionRowBuilder<StringSelectMenuBuilder>[] {
-  return buildSharedFilterComponents("ac_ap", sess.apDevFilter, sess.apSortPrimary, sess.apAttrSort);
+  return buildSharedFilterComponents("ac_ap", sess.apDevFilter, sess.apSortStack ?? []);
 }
 
 async function showApFilterScreen(
@@ -3357,12 +3369,12 @@ async function showApFilterScreen(
     .setColor(Colors.Blue)
     .setTitle(`🔍 Filter / Sort — ${sess.apPos ?? "All Players"}`)
     .setDescription(
-      "Set filters and sort options, then click **Apply & View**.\n" +
-      "Attribute sort takes priority over primary sort.\n\n" +
+      "Pick up to **5 sort keys** across the three dropdowns — priority = order they were added.\n" +
+      "Deselect all items in a dropdown to remove that group from the sort.\n\n" +
       (summary ? summary : "*No active filters.*"),
     );
 
-  const hasFilters = !!(sess.apNameFilter || (sess.apDevFilter != null && sess.apDevFilter >= 0) || sess.apSortPrimary || sess.apAttrSort);
+  const hasFilters = !!(sess.apNameFilter || (sess.apDevFilter != null && sess.apDevFilter >= 0) || (sess.apSortStack?.length));
   const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_ap_filter_name")
       .setLabel(sess.apNameFilter ? `Name: "${sess.apNameFilter}"` : "🔍 Search by Name")
@@ -3382,7 +3394,7 @@ async function handleApFilterScreen(interaction: ButtonInteraction, sess: Action
 }
 
 async function handleApFilterSort(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  sess.apSortPrimary = interaction.values[0] === "clear" ? undefined : interaction.values[0];
+  sess.apSortStack = updateSortStack(sess.apSortStack ?? [], SORT_PRIMARY_KEY_SET, interaction.values);
   await showApFilterScreen(interaction, sess);
 }
 
@@ -3391,9 +3403,9 @@ async function handleApFilterDev(interaction: StringSelectMenuInteraction, sess:
   await showApFilterScreen(interaction, sess);
 }
 
-async function handleApFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession, _group: number) {
-  const val = interaction.values[0]!;
-  sess.apAttrSort = val === "none" ? undefined : val;
+async function handleApFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession, group: number) {
+  const keySet = group === 1 ? ATTR_GROUP_A_KEY_SET : ATTR_GROUP_B_KEY_SET;
+  sess.apSortStack = updateSortStack(sess.apSortStack ?? [], keySet, interaction.values);
   await showApFilterScreen(interaction, sess);
 }
 
@@ -3508,8 +3520,7 @@ async function handleApFilterApply(interaction: ButtonInteraction, sess: Actions
 async function handleApFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
   sess.apNameFilter = undefined;
   sess.apDevFilter = undefined;
-  sess.apSortPrimary = undefined;
-  sess.apAttrSort = undefined;
+  sess.apSortStack = [];
   await showApFilterScreen(interaction, sess);
 }
 
@@ -3522,9 +3533,9 @@ function buildFaFilterSummary(sess: ActionsSession): string {
     const devLabels: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "Superstar [SS]", 3: "X-Factor [XF]", 99: "SS + XF" };
     parts.push(`Dev: ${devLabels[sess.faDevFilter] ?? sess.faDevFilter}`);
   }
-  if (sess.faAttrSort) parts.push(`Sort attr: ${AP_ATTR_NAMES[sess.faAttrSort] ?? sess.faAttrSort} ↓`);
-  if (sess.faSortPrimary) parts.push(`Sort: ${SORT_PRIMARY_LABELS[sess.faSortPrimary] ?? sess.faSortPrimary}`);
-  return parts.length ? `**Active filters:** ${parts.join(" · ")}` : "";
+  const sortLine = buildSortStackSummary(sess.faSortStack ?? []);
+  if (sortLine) parts.push(sortLine);
+  return parts.length ? parts.join("\n") : "";
 }
 
 async function showFaFilterScreen(
@@ -3536,12 +3547,12 @@ async function showFaFilterScreen(
     .setColor(Colors.Green)
     .setTitle(`🔍 Filter / Sort — FA ${sess.faPos ?? "Free Agents"}`)
     .setDescription(
-      "Set filters and sort options, then click **Apply & View**.\n" +
-      "Attribute sort takes priority over primary sort.\n\n" +
+      "Pick up to **5 sort keys** across the three dropdowns — priority = order they were added.\n" +
+      "Deselect all items in a dropdown to remove that group from the sort.\n\n" +
       (summary ? summary : "*No active filters.*"),
     );
 
-  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || sess.faSortPrimary || sess.faAttrSort);
+  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || (sess.faSortStack?.length));
   const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_fa_filter_name")
       .setLabel(sess.faNameFilter ? `Name: "${sess.faNameFilter}"` : "🔍 Search by Name")
@@ -3552,7 +3563,7 @@ async function showFaFilterScreen(
     new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
 
-  const filterRows = buildSharedFilterComponents("ac_fa", sess.faDevFilter, sess.faSortPrimary, sess.faAttrSort);
+  const filterRows = buildSharedFilterComponents("ac_fa", sess.faDevFilter, sess.faSortStack ?? []);
   await interaction.update({ embeds: [embed], components: [...filterRows as any[], btnRow as any] });
 }
 
@@ -3561,7 +3572,7 @@ async function handleFaFilterScreen(interaction: ButtonInteraction, sess: Action
 }
 
 async function handleFaFilterSort(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  sess.faSortPrimary = interaction.values[0] === "clear" ? undefined : interaction.values[0];
+  sess.faSortStack = updateSortStack(sess.faSortStack ?? [], SORT_PRIMARY_KEY_SET, interaction.values);
   await showFaFilterScreen(interaction, sess);
 }
 
@@ -3571,8 +3582,9 @@ async function handleFaFilterDev(interaction: StringSelectMenuInteraction, sess:
 }
 
 async function handleFaFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const val = interaction.values[0]!;
-  sess.faAttrSort = val === "none" ? undefined : val;
+  const cid = interaction.customId; // "ac_fa_filter_attr1" or "ac_fa_filter_attr2"
+  const keySet = cid.endsWith("1") ? ATTR_GROUP_A_KEY_SET : ATTR_GROUP_B_KEY_SET;
+  sess.faSortStack = updateSortStack(sess.faSortStack ?? [], keySet, interaction.values);
   await showFaFilterScreen(interaction, sess);
 }
 
@@ -3626,23 +3638,7 @@ async function handleFaFilterNameSubmit(interaction: ModalSubmitInteraction, ses
   }
 
   const orderExprs: SQL[] = [];
-  if (sess.faAttrSort && ABBR_TO_ATTR_KEY[sess.faAttrSort]) {
-    orderExprs.push(sql.raw(`(attributes->>'${ABBR_TO_ATTR_KEY[sess.faAttrSort]}')::numeric DESC NULLS LAST`));
-  }
-  if (sess.faSortPrimary) {
-    const parts2 = sess.faSortPrimary.split("_");
-    const dir = parts2[parts2.length - 1] === "asc" ? "ASC" : "DESC";
-    const field = parts2.slice(0, -1).join("_");
-    switch (field) {
-      case "overall":  orderExprs.push(sql.raw(`overall ${dir}`)); break;
-      case "age":      orderExprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
-      case "height":   orderExprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
-      case "weight":   orderExprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
-      case "kpw": orderExprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
-      case "kac": orderExprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
-      case "kr":  orderExprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
-    }
-  }
+  applyStackToOrderExprs(sess.faSortStack ?? [], orderExprs);
   if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
 
   const players = await db.select({
@@ -3704,8 +3700,7 @@ async function handleFaFilterApply(interaction: ButtonInteraction, sess: Actions
 async function handleFaFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
   sess.faNameFilter = undefined;
   sess.faDevFilter = undefined;
-  sess.faSortPrimary = undefined;
-  sess.faAttrSort = undefined;
+  sess.faSortStack = [];
   await showFaFilterScreen(interaction, sess);
 }
 
