@@ -15,8 +15,6 @@ export async function getServerSettings(guildId: string): Promise<ServerSettings
     .where(eq(serverSettingsTable.guildId, guildId)).limit(1);
   if (settings) return settings;
 
-  // No per-guild row yet — seed with defaults and return it.
-  // Using onConflictDoNothing to safely handle concurrent first-calls.
   await db.insert(serverSettingsTable)
     .values({ guildId })
     .onConflictDoNothing();
@@ -40,8 +38,6 @@ export async function toggleFeature(feature: FeatureKey, guildId: string): Promi
 
 /**
  * Call after `deferReply`. Returns true if the command should proceed.
- * Returns false (and edits the reply with an error) when MCA import is
- * disabled and the caller is not an admin.
  */
 export async function requireMcaEnabled(
   interaction: ChatInputCommandInteraction,
@@ -49,7 +45,6 @@ export async function requireMcaEnabled(
   const settings = await getServerSettings(interaction.guildId!);
   if (settings.mcaImportEnabled) return true;
 
-  // Admins bypass the gate
   const member = interaction.guild?.members.cache.get(interaction.user.id)
     ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
@@ -94,7 +89,7 @@ export function buildSettingsEmbed(s: ServerSettings): EmbedBuilder {
     return `${icon} **${f.label}** — ${f.description}`;
   });
 
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setColor(Colors.Blurple)
     .setTitle("⚙️ Server Feature Settings")
     .setDescription(
@@ -103,8 +98,6 @@ export function buildSettingsEmbed(s: ServerSettings): EmbedBuilder {
     )
     .setFooter({ text: "Click a button below to toggle that feature" })
     .setTimestamp();
-
-  return embed;
 }
 
 export function buildSettingsRows(s: ServerSettings): ActionRowBuilder<ButtonBuilder>[] {
@@ -127,12 +120,16 @@ export function buildSettingsRows(s: ServerSettings): ActionRowBuilder<ButtonBui
     return row;
   });
 
-  const doneRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId("settings_done")
-      .setLabel("Close Settings")
+      .setCustomId("ao_server_settings")
+      .setLabel("← Back")
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ao_hub_close")
+      .setLabel("✖ Close")
+      .setStyle(ButtonStyle.Danger),
   );
 
-  return [...rows, doneRow];
+  return [...rows, navRow];
 }

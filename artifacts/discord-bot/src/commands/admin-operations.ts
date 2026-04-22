@@ -29,15 +29,10 @@ export function buildAdminOpsEmbed(seasonNum?: number, weekStr?: string): EmbedB
       "**🐦 Rerun Media Cycle** — Re-trigger the league Twitter burst for the current week.\n" +
       "**📜 Rerun Season Historical** — Rebuild the historical records channel for this season.\n\n" +
 
-      "**📒 View/Edit Rules** — Browse and edit the league rulebook by section.\n" +
-      "**📋 View/Edit Waitlist** — View and manage the league waitlist.\n" +
-      "**🛡️ View/Edit Admins** — View and manage bot admins (max 4 per server).\n" +
-      "**👑 Commissioner Management** — Add/remove commissioners (max 4). Server owner is always primary.\n\n" +
-
       "**🏈 League Data** — EA connection, data import, and season data tools.\n" +
       "**👤 User Data** — Manage individual user economy, records, and links.\n" +
       "**🏪 Store Settings** — Archetypes, legend templates, prices, and caps.\n" +
-      "**⚙️ Server Settings** — Toggle economy features on/off for this server.\n\n" +
+      "**⚙️ Server Settings** — Toggle features, initialize server, manage rules/admins/waitlist.\n\n" +
 
       "**🔧 Troubleshoot** — Repair and maintenance tools.\n" +
       "**🐛 Report Bug** — Submit a bug report to the commissioner log."
@@ -61,30 +56,23 @@ export function buildAdminOpsRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ao_rerun_hist").setLabel("📜 Rerun Season Historical").setStyle(ButtonStyle.Secondary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ao_rules").setLabel("📒 View/Edit Rules").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("ao_waitlist").setLabel("📋 View/Edit Waitlist").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("ao_admins").setLabel("🛡️ View/Edit Admins").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("ao_commissioner").setLabel("👑 Commissioner Management").setStyle(ButtonStyle.Success),
-  );
-  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_league_data").setLabel("🏈 League Data").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_user_data").setLabel("👤 User Data").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_store_settings").setLabel("🏪 Store Settings").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_server_settings").setLabel("⚙️ Server Settings").setStyle(ButtonStyle.Success),
   );
-  const row5 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_troubleshoot").setLabel("🔧 Troubleshoot").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ao_report_bug").setLabel("🐛 Report Bug").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
   );
-  return [row1, row2, row3, row4, row5];
+  return [row1, row2, row3, row4];
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const gid  = interaction.guildId!;
   const uid  = interaction.user.id;
 
-  // Allow Discord server admins AND bot-assigned admins
   const member = await interaction.guild?.members.fetch(uid).catch(() => null);
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
   const isBotAdmin     = await isAdminUser(uid, gid);

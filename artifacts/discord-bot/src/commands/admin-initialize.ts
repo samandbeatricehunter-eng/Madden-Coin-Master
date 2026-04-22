@@ -705,3 +705,263 @@ function buildPerms(
     { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
   ];
 }
+
+// ── Shared function: full new-server initialization ───────────────────────────
+// Called from both the (deprecated) slash command execute() and the button handler.
+
+export interface NewServerInitOptions {
+  guildId:             string;
+  userId:              string;
+  userTag:             string;
+  guild:               Guild;
+  startingWeek:        string;
+  franchiseLength:     number;
+  currentSeasonNumber: number;
+  editReply:           (content: string) => Promise<unknown>;
+  fetchChannel:        (id: string) => Promise<any>;
+}
+
+/** Runs the full channel + DB initialization for a brand-new server. */
+export async function runNewServerInit(opts: NewServerInitOptions): Promise<{
+  embed:   EmbedBuilder;
+  log:     string[];
+  channelIds: Record<string, string>;
+}> {
+  const { guildId, userId, userTag, guild, startingWeek, franchiseLength, currentSeasonNumber, editReply, fetchChannel } = opts;
+  const log: string[]                           = [];
+  const channelMentions: Record<string, string> = {};
+  const channelIds: Record<string, string>      = {};
+
+  await editReply("⏳ Starting server initialization… this may take 30–60 seconds.");
+
+  // Step 1: Roles
+  const commRole     = await ensureRole(guild, "Commissioner",    0x9B59B6);
+  const approvedRole = await ensureRole(guild, "Approved Member", 0xE74C3C);
+  log.push(`Roles: **Commissioner** <@&${commRole.id}> · **Approved Member** <@&${approvedRole.id}>`);
+
+  // Step 2: Delete existing channels
+  await guild.channels.fetch();
+  const toDelete = [...guild.channels.cache.values()];
+  let deleted = 0;
+  for (const ch of toDelete) {
+    await ch.delete("REC League initialization — clearing pre-existing channels").catch(() => null);
+    deleted++;
+  }
+  log.push(`🗑️ Removed ${deleted} pre-existing channel(s)`);
+
+  // Step 3: Standalone channels
+  let registeredCount = 0;
+  for (const chDef of STANDALONE_CHANNELS) {
+    const perms   = buildPerms(guild, commRole, approvedRole, chDef, false);
+    const created = await guild.channels.create({
+      name:                 chDef.name,
+      type:                 ChannelType.GuildText,
+      topic:                chDef.topic,
+      permissionOverwrites: perms,
+    });
+    channelMentions[chDef.name] = `<#${created.id}>`;
+    channelIds[chDef.name]      = created.id;
+    const dbKey = CHANNEL_KEY_MAP[chDef.name];
+    if (dbKey) { await setGuildChannel(guildId, dbKey, created.id); registeredCount++; }
+  }
+
+  // Step 4: Categories + channels
+  for (const catDef of SERVER_BLUEPRINT) {
+    const catPerms: OverwriteResolvable[] = catDef.private
+      ? [
+          { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+          { id: approvedRole,         deny:  [PermissionFlagsBits.ViewChannel] },
+          { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+        ]
+      : [
+          { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
+          { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+          { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
+        ];
+
+    const category: CategoryChannel = await guild.channels.create({
+      name:                 catDef.name,
+      type:                 ChannelType.GuildCategory,
+      permissionOverwrites: catPerms,
+    });
+    log.push(`✅ Created category: ${catDef.name}`);
+
+    for (const chDef of catDef.channels) {
+      const isVoice = chDef.kind === "voice";
+      const perms   = buildPerms(guild, commRole, approvedRole, chDef, catDef.private ?? false);
+      if (isVoice) {
+        await guild.channels.create({ name: chDef.name, type: ChannelType.GuildVoice, parent: category.id, permissionOverwrites: perms });
+      } else {
+        const created = await guild.channels.create({ name: chDef.name, type: ChannelType.GuildText, parent: category.id, topic: chDef.topic, permissionOverwrites: perms });
+        channelMentions[chDef.name] = `<#${created.id}>`;
+        channelIds[chDef.name]      = created.id;
+        const dbKey = CHANNEL_KEY_MAP[chDef.name];
+        if (dbKey) { await setGuildChannel(guildId, dbKey, created.id); registeredCount++; }
+      }
+    }
+  }
+  log.push(`💾 Registered ${registeredCount} channel(s) to database`);
+
+  // Step 5: Season
+  const existingSeasons = await db.select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
+    .from(seasonsTable).where(eq(seasonsTable.guildId, guildId)).limit(1);
+  if (existingSeasons.length > 0) {
+    log.push(`Season ${existingSeasons[0]!.seasonNumber} already exists — no new season created.`);
+  } else {
+    await db.insert(seasonsTable).values({ guildId, seasonNumber: currentSeasonNumber, isActive: true, currentWeek: startingWeek });
+    const weekLbl = startingWeek.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    log.push(`🗓️ Season **${currentSeasonNumber}** of **${franchiseLength}** created — starting on **${weekLbl}**.`);
+  }
+
+  // Step 6: Server settings + franchise length
+  await getServerSettings(guildId);
+  await db.update(serverSettingsTable).set({ maxSeasons: franchiseLength }).where(eq(serverSettingsTable.guildId, guildId));
+
+  // Step 7: Seed team slots
+  const realTeamRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable).where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
+  const realTeams    = new Set(realTeamRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team!));
+  const teamsToSeed  = (NFL_TEAMS as readonly string[]).filter(t => !realTeams.has(t));
+  if (teamsToSeed.length > 0) {
+    await db.insert(usersTable).values(
+      teamsToSeed.map(team => ({ discordId: `unlinked_${team.toLowerCase()}`, guildId, discordUsername: "Open Slot", team, balance: 0, totalLegendPurchases: 0 })),
+    ).onConflictDoNothing();
+    log.push(`🏈 Seeded ${teamsToSeed.length} open team slot(s)`);
+  }
+
+  // Step 8: Post setup guide to #welcome
+  const welcomeId = channelIds["welcome"];
+  if (welcomeId) {
+    try {
+      const welcomeCh = await fetchChannel(welcomeId);
+      if (welcomeCh?.isTextBased()) {
+        const setupGuideEmbed = new EmbedBuilder()
+          .setColor(Colors.Orange)
+          .setTitle("⚙️ Commissioner Setup Checklist")
+          .setDescription(`<@${userId}> — Work through these steps to finish setting up the league bot.\n\u200b`)
+          .addFields(
+            { name: "1️⃣  Configure Feature Settings", value: "Open `/admin-menu` → Server Settings → Server Features to toggle economy, legends, wagers, and more." },
+            { name: "2️⃣  Update League Info Rules",   value: "Open `/admin-menu` → Server Settings → Server Setup → View/Edit Rules → League Info to add your in-game league name & password." },
+            { name: "3️⃣  Configure Payouts",           value: "Open `/admin-menu` → Payouts to set H2H coin awards and EOS payout tiers." },
+            { name: "4️⃣  Link Managers to Teams",      value: "Use **User Data** in `/admin-menu` to assign each Discord member to their NFL franchise." },
+            { name: "5️⃣  Connect EA / Import Rosters", value: "```/admin_ea_connect start``` — EA Direct  ·  ```/webhookurl``` — MCA Webhook" },
+            { name: "6️⃣  Post Opening Schedule",       value: "```/admin-postfullseasonschedule```" },
+          )
+          .setFooter({ text: `Server initialized by ${userTag}` })
+          .setTimestamp();
+        const guideMsg = await welcomeCh.send({ embeds: [setupGuideEmbed] });
+        await guideMsg.pin().catch(() => null);
+        log.push(`📌 Posted setup guide in <#${welcomeId}>`);
+      }
+    } catch (guideErr) {
+      log.push(`⚠️ Could not post setup guide: ${(guideErr as Error).message}`);
+    }
+  }
+
+  // Step 9: Set initializing user as bot admin
+  try {
+    const existing = await db.select().from(usersTable)
+      .where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId))).limit(1);
+    if (existing.length > 0) {
+      await db.update(usersTable).set({ isAdmin: true }).where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId)));
+    } else {
+      await db.insert(usersTable).values({ discordId: userId, guildId, discordUsername: userTag, isAdmin: true }).onConflictDoNothing();
+    }
+  } catch (err) {
+    console.error("[runNewServerInit] Failed to set self as admin:", err);
+  }
+
+  // Build summary embed
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle("🏈 Server Initialized — REC League Bot Setup")
+    .setDescription(
+      "Your server structure has been created. Work through the checklist below to finish setup.\n\n" +
+      SETUP_STEPS.map(s => `**Step ${s.step}** ${s.icon} ${s.label}`).join("\n"),
+    )
+    .addFields(
+      {
+        name: "📌 Key Channels",
+        value: [
+          `💬 ${channelMentions["general-discussion"]      ?? "#general-discussion"} — General`,
+          `📅 ${channelMentions["season-schedule"]         ?? "#season-schedule"} — Schedule`,
+          `🏟️ ${channelMentions["weekly-matchups"]         ?? "#weekly-matchups"} — Matchups`,
+          `🐦 ${channelMentions["league-twitter"]          ?? "#league-twitter"} — League Twitter`,
+          `📰 ${channelMentions["league-headlines"]        ?? "#league-headlines"} — Headlines`,
+          `🔒 ${channelMentions["commissioners-office"]    ?? "#commissioners-office"} — Commissioner (private)`,
+          `🎊 ${channelMentions["end-of-season-payouts"]   ?? "#end-of-season-payouts"} — EOS Payouts`,
+        ].join("\n"),
+      },
+      {
+        name: "🎭 Roles Created",
+        value: "**Commissioner** — Full access · **Approved Member** — Member channels",
+      },
+      {
+        name: "🔐 Bot Admin Access",
+        value: `You (<@${userId}>) have been set as a **bot admin** automatically.`,
+      },
+    )
+    .setFooter({ text: `Initialized by ${userTag}` })
+    .setTimestamp();
+
+  return { embed, log, channelIds };
+}
+
+/** Runs the lighter initialization for servers that already have Discord channels. */
+export async function runExistingServerInit(opts: {
+  guildId:             string;
+  userId:              string;
+  userTag:             string;
+  startingWeek:        string;
+  franchiseLength:     number;
+  currentSeasonNumber: number;
+}): Promise<{ log: string[] }> {
+  const { guildId, userId, userTag, startingWeek, franchiseLength, currentSeasonNumber } = opts;
+  const log: string[] = [];
+
+  // Ensure settings row
+  await getServerSettings(guildId);
+  await db.update(serverSettingsTable).set({ maxSeasons: franchiseLength }).where(eq(serverSettingsTable.guildId, guildId));
+  log.push(`📏 Franchise length set to **${franchiseLength}** season(s)`);
+
+  // Create season if none exists
+  const existingSeasons = await db.select({ id: seasonsTable.id, seasonNumber: seasonsTable.seasonNumber })
+    .from(seasonsTable).where(eq(seasonsTable.guildId, guildId)).limit(1);
+  if (existingSeasons.length > 0) {
+    log.push(`🗓️ Season ${existingSeasons[0]!.seasonNumber} already exists — skipped.`);
+  } else {
+    await db.insert(seasonsTable).values({ guildId, seasonNumber: currentSeasonNumber, isActive: true, currentWeek: startingWeek });
+    const weekLbl = startingWeek.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    log.push(`🗓️ Season **${currentSeasonNumber}** created — starting on **${weekLbl}**.`);
+  }
+
+  // Seed team slots
+  const realTeamRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable).where(and(isNotNull(usersTable.team), eq(usersTable.guildId, guildId)));
+  const realTeams   = new Set(realTeamRows.filter(r => !r.discordId.startsWith("unlinked_")).map(r => r.team!));
+  const teamsToSeed = (NFL_TEAMS as readonly string[]).filter(t => !realTeams.has(t));
+  if (teamsToSeed.length > 0) {
+    await db.insert(usersTable).values(
+      teamsToSeed.map(team => ({ discordId: `unlinked_${team.toLowerCase()}`, guildId, discordUsername: "Open Slot", team, balance: 0, totalLegendPurchases: 0 })),
+    ).onConflictDoNothing();
+    log.push(`🏈 Seeded ${teamsToSeed.length} open team slot(s)`);
+  } else {
+    log.push("🏈 All 32 team slots already seeded.");
+  }
+
+  // Set user as bot admin
+  try {
+    const existing = await db.select().from(usersTable)
+      .where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId))).limit(1);
+    if (existing.length > 0) {
+      await db.update(usersTable).set({ isAdmin: true }).where(and(eq(usersTable.discordId, userId), eq(usersTable.guildId, guildId)));
+    } else {
+      await db.insert(usersTable).values({ discordId: userId, guildId, discordUsername: userTag, isAdmin: true }).onConflictDoNothing();
+    }
+    log.push(`🔐 <@${userId}> set as bot admin.`);
+  } catch (err) {
+    console.error("[runExistingServerInit] Failed to set self as admin:", err);
+  }
+
+  return { log };
+}

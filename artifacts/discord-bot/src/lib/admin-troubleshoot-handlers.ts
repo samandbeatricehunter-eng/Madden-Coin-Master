@@ -1,23 +1,29 @@
 /**
  * admin-troubleshoot-handlers.ts
  *
- * Button handlers for /admin-troubleshoot.
+ * Button handlers for the Troubleshoot panel.
  * customId prefixes:
  *   ts_repair_records | ts_resync_data | ts_eos_testrun
  *   ts_repair_playoff | ts_playoff_proceed | ts_playoff_confirm | ts_playoff_cancel
  *   ts_eos_manual     | ts_eos_manual_confirm | ts_eos_manual_cancel
+ *   ao_milestone_audit
  */
 
 import {
   ButtonInteraction, EmbedBuilder, Colors,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  Client,
+  TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, seasonsTable } from "@workspace/db";
-import { eq, and, sql, isNotNull } from "drizzle-orm";
+import {
+  usersTable, seasonsTable, userRecordsTable, coinTransactionsTable,
+} from "@workspace/db";
+import { eq, and, sql, isNotNull, desc } from "drizzle-orm";
 
-import { isAdminUser, getOrCreateActiveSeason } from "./db-helpers.js";
+import {
+  isAdminUser, getOrCreateActiveSeason,
+  addBalance, logTransaction, getGuildChannel, CHANNEL_KEYS,
+} from "./db-helpers.js";
 import { repairUserRecords } from "./repair-records.js";
 import { assignRosterLegends } from "./roster-legend-assign.js";
 import { runEosTestRun } from "../commands/admin-eos-testrun.js";
@@ -29,7 +35,15 @@ import {
 } from "./playoff-seeding.js";
 import { getArticleStandings } from "./gcs-fallback.js";
 
-// ── Troubleshoot Hub Embed / Rows (moved from admin-troubleshoot.ts) ──────────
+// ── Win milestones (mirror of admin-milestone-audit.ts) ───────────────────────
+const WIN_MILESTONES = [
+  { tier: 1, wins:  5, bonus:  100, label:  "5 All-Time H2H Wins" },
+  { tier: 2, wins: 12, bonus:  250, label: "12 All-Time H2H Wins" },
+  { tier: 3, wins: 25, bonus:  500, label: "25 All-Time H2H Wins" },
+  { tier: 4, wins: 50, bonus: 1000, label: "50 All-Time H2H Wins" },
+] as const;
+
+// ── Troubleshoot Hub Embed / Rows ──────────────────────────────────────────────
 
 export function buildTroubleshootEmbed(): EmbedBuilder {
   return new EmbedBuilder()
@@ -55,24 +69,32 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "**⚡ EOS Manual Run**\n" +
       "Triggers the actual end-of-season payout process for the active season. " +
       "Posts commissioner approval embeds to the commish channel for every user. " +
-      "⚠️ Only run this once — duplicate runs will create duplicate payout requests.",
+      "⚠️ Only run this once — duplicate runs will create duplicate payout requests.\n\n" +
+      "**🎯 Milestone Audit**\n" +
+      "Retroactively checks and pays any owed win-milestone bonuses for every registered " +
+      "user on this server. Safe to run multiple times — duplicate detection is built in.",
     )
     .setFooter({ text: "All operations are scoped to this server only" })
     .setTimestamp();
 }
 
 export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_repair_records").setLabel("🔩 Repair User Records").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ts_resync_data").setLabel("🔄 Resync Rosters & Data").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ts_repair_playoff").setLabel("🏈 Repair Playoff Seeding").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ts_eos_testrun").setLabel("📊 EOS Test Run").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ts_eos_manual").setLabel("⚡ EOS Manual Run").setStyle(ButtonStyle.Danger),
   );
-  return [row];
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_milestone_audit").setLabel("🎯 Milestone Audit").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+  return [row1, row2];
 }
 
-// ── Shared admin guard ────────────────────────────────────────────────────────
+// ── Shared admin guard ─────────────────────────────────────────────────────────
 async function guardAdmin(interaction: ButtonInteraction): Promise<boolean> {
   if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
     await interaction.reply({ content: "❌ Commissioner access required.", ephemeral: true });
@@ -131,7 +153,6 @@ export async function handleTsResyncData(interaction: ButtonInteraction): Promis
 
   const guildId = interaction.guildId!;
 
-  // ── Step A: Inventory team stamps (from admin-resync-teams logic) ─────────
   const invResult = await db.execute(sql`
     UPDATE inventory i
     SET    team = u.team
@@ -147,7 +168,6 @@ export async function handleTsResyncData(interaction: ButtonInteraction): Promis
   `);
   const invCount = (invResult as { rowCount?: number }).rowCount ?? 0;
 
-  // ── Step B: Custom players team stamp ────────────────────────────────────
   const cpResult = await db.execute(sql`
     UPDATE custom_players cp
     SET    team_name = u.team
@@ -163,7 +183,6 @@ export async function handleTsResyncData(interaction: ButtonInteraction): Promis
   `);
   const cpCount = (cpResult as { rowCount?: number }).rowCount ?? 0;
 
-  // ── Step C: Force-sync permanent vault ───────────────────────────────────
   const permResult = await db.execute(sql`
     UPDATE inventory i
     SET    team = u.team
@@ -180,7 +199,6 @@ export async function handleTsResyncData(interaction: ButtonInteraction): Promis
   `);
   const permCount = (permResult as { rowCount?: number }).rowCount ?? 0;
 
-  // ── Step D: Roster legend scan for ALL users in this guild ────────────────
   const [season] = await db.select({ id: seasonsTable.id })
     .from(seasonsTable)
     .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
@@ -225,7 +243,7 @@ export async function handleTsResyncData(interaction: ButtonInteraction): Promis
     .setColor(lines.length === 1 && lines[0]!.startsWith("✅") ? Colors.Green : Colors.Gold)
     .setTitle("🔄 Resync Complete")
     .setDescription(lines.join("\n"))
-    .setFooter({ text: "Run /admin-milestone-audit after this to correct any milestone payouts that were affected." })
+    .setFooter({ text: "Run Milestone Audit after this to correct any milestone payouts that were affected." })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
@@ -253,7 +271,6 @@ export async function handleTsRepairPlayoff(interaction: ButtonInteraction): Pro
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
 
-  // Load current seeding from usersTable
   const seededUsers = await db.select({
     discordId:         usersTable.discordId,
     discordUsername:   usersTable.discordUsername,
@@ -292,29 +309,15 @@ export async function handleTsRepairPlayoff(interaction: ButtonInteraction): Pro
       "⚠️ This will **overwrite** the current seeding.",
     )
     .addFields(
-      {
-        name: "🔵 AFC Seeding",
-        value: formatCurrentSeeding(afcTeams),
-        inline: true,
-      },
-      {
-        name: "🔴 NFC Seeding",
-        value: formatCurrentSeeding(nfcTeams),
-        inline: true,
-      },
+      { name: "🔵 AFC Seeding", value: formatCurrentSeeding(afcTeams), inline: true },
+      { name: "🔴 NFC Seeding", value: formatCurrentSeeding(nfcTeams), inline: true },
     )
     .setFooter({ text: "Seeding from usersTable — these are the values used for EOS payouts" })
     .setTimestamp();
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ts_playoff_proceed")
-      .setLabel("🔄 Proceed with Reseed")
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId("ts_playoff_cancel")
-      .setLabel("← Back / Cancel")
-      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ts_playoff_proceed").setLabel("🔄 Proceed with Reseed").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ts_playoff_cancel").setLabel("← Back / Cancel").setStyle(ButtonStyle.Secondary),
   );
 
   await interaction.editReply({ embeds: [embed], components: [row] });
@@ -329,10 +332,8 @@ export async function handleTsPlayoffProceed(interaction: ButtonInteraction): Pr
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
 
-  // Load seeding rules (seeds into DB if first time)
   await getPlayoffSeedingRules();
 
-  // Get all standings (week 18 = full regular season)
   const allStandings = await getArticleStandings(season.id, 18);
 
   if (!allStandings.length) {
@@ -349,13 +350,11 @@ export async function handleTsPlayoffProceed(interaction: ButtonInteraction): Pr
     return;
   }
 
-  // Compute seeds for each conference
-  const afcTeams    = allStandings.filter(t => t.conference === "AFC");
-  const nfcTeams    = allStandings.filter(t => t.conference === "NFC");
-  const afcSeeds    = computePlayoffSeeds(afcTeams);
-  const nfcSeeds    = computePlayoffSeeds(nfcTeams);
+  const afcTeams = allStandings.filter(t => t.conference === "AFC");
+  const nfcTeams = allStandings.filter(t => t.conference === "NFC");
+  const afcSeeds = computePlayoffSeeds(afcTeams);
+  const nfcSeeds = computePlayoffSeeds(nfcTeams);
 
-  // Collect user discordIds for seed assignment (match by discordUsername)
   const guildUsers = await db.select({
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
@@ -365,7 +364,6 @@ export async function handleTsPlayoffProceed(interaction: ButtonInteraction): Pr
   const usernameToId = new Map(guildUsers.map(u => [u.discordUsername.toLowerCase(), u.discordId]));
   const teamToId     = new Map(guildUsers.filter(u => u.team).map(u => [u.team!.toLowerCase(), u.discordId]));
 
-  // Resolve how many human seeds we can map
   let mappedAfc = 0, mappedNfc = 0;
   for (const t of afcSeeds) {
     const id = (t.discordUsername ? usernameToId.get(t.discordUsername.toLowerCase()) : undefined)
@@ -397,14 +395,8 @@ export async function handleTsPlayoffProceed(interaction: ButtonInteraction): Pr
     .setTimestamp();
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ts_playoff_confirm")
-      .setLabel("✅ Confirm Changes")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId("ts_playoff_cancel")
-      .setLabel("✖ Cancel")
-      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ts_playoff_confirm").setLabel("✅ Confirm Changes").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ts_playoff_cancel").setLabel("✖ Cancel").setStyle(ButtonStyle.Secondary),
   );
 
   await interaction.editReply({ embeds: [embed], components: [row] });
@@ -444,7 +436,6 @@ export async function handleTsPlayoffConfirm(interaction: ButtonInteraction): Pr
   const usernameToId = new Map(guildUsers.map(u => [u.discordUsername.toLowerCase(), u.discordId]));
   const teamToId     = new Map(guildUsers.filter(u => u.team).map(u => [u.team!.toLowerCase(), u.discordId]));
 
-  // First clear existing seeds for this guild
   await db.update(usersTable)
     .set({ playoffSeed: null, playoffConference: null, updatedAt: new Date() })
     .where(eq(usersTable.guildId, guildId));
@@ -480,7 +471,7 @@ export async function handleTsPlayoffConfirm(interaction: ButtonInteraction): Pr
       `**${applied}** human team(s) seeded across AFC and NFC.\n\n` +
       (appliedLines.join("\n") || "_No human teams matched_"),
     )
-    .setFooter({ text: "Run /admin-rebuild-historical to refresh the historical channel" })
+    .setFooter({ text: "Use Rerun Season Historical in the hub to refresh the historical channel" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [] });
@@ -495,7 +486,7 @@ export async function handleTsPlayoffCancel(interaction: ButtonInteraction): Pro
     embeds: [new EmbedBuilder()
       .setColor(Colors.Grey)
       .setTitle("↩️ Playoff Reseed Cancelled")
-      .setDescription("No changes were made. Run `/admin-troubleshoot` again to return to the panel.")],
+      .setDescription("No changes were made. Open Troubleshoot again to return to the panel.")],
     components: [],
   });
 }
@@ -557,22 +548,21 @@ export async function handleTsEosManualConfirm(interaction: ButtonInteraction): 
 
   let result: { posted: number; skipped: number; errors: number };
   try {
-    result = await runEosAutoPost(interaction.client as Client, season.id, guildId);
+    result = await runEosAutoPost(guildId, season.id, interaction.client);
   } catch (err) {
     console.error("[ts_eos_manual_confirm]", err);
     await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(Colors.Red)
-        .setTitle("❌ EOS Manual Run Failed")
-        .setDescription(`An error occurred: \`${err}\`\n\nCheck bot logs for details.`)],
-      components: [],
+        .setTitle("❌ EOS Run Failed")
+        .setDescription(`An error occurred: \`${(err as Error).message}\``)],
     });
     return;
   }
 
   const embed = new EmbedBuilder()
-    .setColor(result.errors > 0 ? Colors.Orange : Colors.Green)
-    .setTitle("✅ EOS Manual Run Complete")
+    .setColor(Colors.Green)
+    .setTitle("✅ EOS Payouts Triggered")
     .addFields(
       { name: "Posted",  value: result.posted.toString(),  inline: true },
       { name: "Skipped", value: result.skipped.toString(), inline: true },
@@ -580,9 +570,8 @@ export async function handleTsEosManualConfirm(interaction: ButtonInteraction): 
     )
     .setDescription(
       "Commissioner approval embeds have been posted to the commish channel. " +
-      "Review and approve each user's payout there.",
+      "Review and approve each payout there.",
     )
-    .setFooter({ text: `Season ${season.seasonNumber}` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [] });
@@ -597,7 +586,156 @@ export async function handleTsEosManualCancel(interaction: ButtonInteraction): P
     embeds: [new EmbedBuilder()
       .setColor(Colors.Grey)
       .setTitle("↩️ EOS Manual Run Cancelled")
-      .setDescription("No payouts were run. Run `/admin-troubleshoot` again to return to the panel.")],
+      .setDescription("No payouts were triggered.")],
     components: [],
   });
+}
+
+// ── 6. Milestone Audit ────────────────────────────────────────────────────────
+export async function handleTsMilestoneAudit(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId!;
+
+  const guildUsers = await db.select({
+    discordId:            usersTable.discordId,
+    team:                 usersTable.team,
+    milestoneTierAwarded: usersTable.milestoneTierAwarded,
+  })
+    .from(usersTable)
+    .where(eq(usersTable.guildId, guildId));
+
+  if (guildUsers.length === 0) {
+    await interaction.editReply({ content: "❌ No registered users found for this server." });
+    return;
+  }
+
+  const winTotals = await db.select({
+    discordId: userRecordsTable.discordId,
+    totalWins: sql<string>`COALESCE(SUM(${userRecordsTable.wins}), 0)`,
+  })
+    .from(userRecordsTable)
+    .innerJoin(seasonsTable, eq(userRecordsTable.seasonId, seasonsTable.id))
+    .where(eq(seasonsTable.guildId, guildId))
+    .groupBy(userRecordsTable.discordId);
+
+  const winMap = new Map(winTotals.map(r => [r.discordId, parseInt(r.totalWins, 10)]));
+
+  const paid:    string[] = [];
+  const correct: string[] = [];
+  const skipped: string[] = [];
+
+  for (const user of guildUsers) {
+    const totalWins   = winMap.get(user.discordId) ?? 0;
+    const currentTier = user.milestoneTierAwarded ?? 0;
+
+    const correctTier = WIN_MILESTONES.filter(m => totalWins >= m.wins).reduce(
+      (max, m) => (m.tier > max ? m.tier : max), 0,
+    );
+
+    if (totalWins === 0) {
+      skipped.push(`<@${user.discordId}> — 0 wins`);
+      continue;
+    }
+
+    if (currentTier >= correctTier) {
+      correct.push(`<@${user.discordId}> — ${totalWins}W, tier ${currentTier} ✅`);
+      continue;
+    }
+
+    const recentTxns = await db.select({ description: coinTransactionsTable.description })
+      .from(coinTransactionsTable)
+      .where(and(
+        eq(coinTransactionsTable.discordId, user.discordId),
+        eq(coinTransactionsTable.guildId, guildId),
+      ))
+      .orderBy(desc(coinTransactionsTable.createdAt))
+      .limit(10);
+
+    const paidDescriptions = new Set(recentTxns.map(t => t.description ?? ""));
+
+    const owedMilestones = WIN_MILESTONES.filter(
+      m => totalWins >= m.wins && currentTier < m.tier,
+    );
+
+    let highestNewTier = currentTier;
+    const userPaidLines: string[] = [];
+
+    for (const m of owedMilestones) {
+      const expectedDesc = `Career milestone: ${m.label}`;
+
+      if (paidDescriptions.has(expectedDesc)) {
+        if (m.tier > highestNewTier) highestNewTier = m.tier;
+        continue;
+      }
+
+      await addBalance(user.discordId, m.bonus, guildId);
+      await logTransaction(user.discordId, m.bonus, "addcoins", expectedDesc, guildId);
+      userPaidLines.push(`Tier ${m.tier} — ${m.label}: **+${m.bonus.toLocaleString()} coins**`);
+
+      if (m.tier > highestNewTier) highestNewTier = m.tier;
+    }
+
+    if (highestNewTier > currentTier) {
+      await db.update(usersTable)
+        .set({ milestoneTierAwarded: highestNewTier, updatedAt: new Date() })
+        .where(and(eq(usersTable.discordId, user.discordId), eq(usersTable.guildId, guildId)));
+    }
+
+    if (userPaidLines.length > 0) {
+      const teamLabel = user.team ? ` (${user.team})` : "";
+      paid.push(`<@${user.discordId}>${teamLabel} | ${totalWins}W\n  └ ${userPaidLines.join("\n  └ ")}`);
+    } else {
+      correct.push(`<@${user.discordId}> — ${totalWins}W, tier corrected to ${highestNewTier} (txns found)`);
+    }
+  }
+
+  const paidBlock    = paid.length    > 0 ? paid.join("\n\n")   : "*None — no outstanding payouts found.*";
+  const correctBlock = correct.length > 0
+    ? correct.slice(0, 15).join("\n") + (correct.length > 15 ? `\n…and ${correct.length - 15} more` : "")
+    : "*None*";
+
+  const replyEmbed = new EmbedBuilder()
+    .setColor(paid.length > 0 ? Colors.Gold : Colors.Green)
+    .setTitle("🎯 Milestone Audit Complete")
+    .addFields(
+      { name: `💸 Payouts Issued (${paid.length})`, value: paidBlock },
+      { name: `✅ Already Correct (${correct.length})`, value: correctBlock },
+    )
+    .setFooter({ text: `${skipped.length} user(s) had 0 wins and were skipped` })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [replyEmbed] });
+
+  if (paid.length === 0) return;
+
+  try {
+    const commChannelId =
+      await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG)
+      ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER)
+      ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"]
+      ?? "";
+
+    const commChannel = commChannelId
+      ? await interaction.client.channels.fetch(commChannelId).catch(() => null)
+      : null;
+
+    if (commChannel instanceof TextChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle("🎯 Retroactive Milestone Audit — Payouts Issued")
+        .setDescription(paid.map((p, i) => `**${i + 1}.** ${p}`).join("\n\n").slice(0, 4000))
+        .addFields(
+          { name: "Audited By",  value: `<@${interaction.user.id}>`, inline: true },
+          { name: "Total Paid",  value: `${paid.length} user(s)`,     inline: true },
+        )
+        .setTimestamp();
+
+      await commChannel.send({ embeds: [logEmbed] });
+    }
+  } catch (err) {
+    console.error("[handleTsMilestoneAudit] Failed to post to commissioner channel:", err);
+  }
 }

@@ -45,7 +45,12 @@ import { globalLogoPath } from "./gcs-reader.js";
 import { buildAdminOpsEmbed, buildAdminOpsRows } from "../commands/admin-operations.js";
 import { buildPayoutHubEmbed, buildPayoutHubRows } from "./admin-payout-handlers.js";
 import { buildUserDataHubEmbed, buildUserDataHubRows } from "./admin-user-handlers.js";
-import { buildTroubleshootEmbed, buildTroubleshootRows } from "./admin-troubleshoot-handlers.js";
+import {
+  buildTroubleshootEmbed, buildTroubleshootRows,
+  handleTsMilestoneAudit,
+} from "./admin-troubleshoot-handlers.js";
+import { runNewServerInit, runExistingServerInit } from "../commands/admin-initialize.js";
+import { registerCommandsForGuild } from "./register-commands.js";
 import { buildLeagueDataMainMenu } from "./league-data-handlers.js";
 import { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "./server-settings.js";
 import { setGuildChannel } from "./db-helpers.js";
@@ -397,6 +402,58 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
   // ── Server Settings hub ───────────────────────────────────────────────────────
   if (id === "ao_server_settings") {
     await handleServerSettingsHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Server Features (feature toggle) sub-menu ────────────────────────────────
+  if (id === "ao_server_features") {
+    await handleServerFeaturesHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Server Setup sub-menu ─────────────────────────────────────────────────────
+  if (id === "ao_server_setup") {
+    await handleServerSetupHub(interaction as ButtonInteraction);
+    return true;
+  }
+
+  // ── Init Existing Server ──────────────────────────────────────────────────────
+  if (id === "ao_init_existing") {
+    await handleInitExisting(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_init_existing") {
+    await handleModalInitExisting(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
+  // ── Init NEW Server ───────────────────────────────────────────────────────────
+  if (id === "ao_init_new") {
+    await handleInitNew(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_init_new_proceed") {
+    await handleInitNewProceed(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_init_new") {
+    await handleModalInitNew(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
+  // ── Set Franchise Length ──────────────────────────────────────────────────────
+  if (id === "ao_set_franchise_len") {
+    await handleSetFranchiseLen(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_franchise_len") {
+    await handleModalFranchiseLen(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
+  // ── Milestone Audit ───────────────────────────────────────────────────────────
+  if (id === "ao_milestone_audit") {
+    await handleTsMilestoneAudit(interaction as ButtonInteraction);
     return true;
   }
 
@@ -1461,29 +1518,302 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
 // ── Server Settings Hub ────────────────────────────────────────────────────────
 
 async function handleServerSettingsHub(interaction: ButtonInteraction) {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blurple)
+    .setTitle("⚙️ Server Settings")
+    .setDescription(
+      "**🎛️ Server Features**\n" +
+      "Toggle coin economy, legends, custom players, wagers, MCA import, and other feature flags on or off.\n\n" +
+      "**🔧 Server Setup**\n" +
+      "Initialize the server, manage rules, waitlist, admins, commissioner, channel links, and franchise length.",
+    )
+    .setFooter({ text: "Select an option below" })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_server_features").setLabel("🎛️ Server Features").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_server_setup").setLabel("🔧 Server Setup").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  await (interaction as any).update({ embeds: [embed], components: [row] });
+}
+
+async function handleServerFeaturesHub(interaction: ButtonInteraction) {
   const guildId  = interaction.guildId!;
   const settings = await getServerSettings(guildId);
-  const baseRows  = buildSettingsRows(settings) as ActionRowBuilder<any>[];
-
-  const manualLinkRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ao_manual_channel_link")
-      .setLabel("🔗 Manual Channel Link")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("ao_hub_back")
-      .setLabel("← Back to Hub")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("ao_hub_close")
-      .setLabel("✖ Close")
-      .setStyle(ButtonStyle.Danger),
-  ) as ActionRowBuilder<any>;
 
   await (interaction as any).update({
     embeds: [buildSettingsEmbed(settings)],
-    components: [...baseRows, manualLinkRow],
+    components: buildSettingsRows(settings),
   });
+}
+
+async function handleServerSetupHub(interaction: ButtonInteraction) {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Orange)
+    .setTitle("🔧 Server Setup")
+    .setDescription(
+      "**⚡ Init Existing Server** — Seeds DB settings, season, and team slots for a server that already has Discord channels.\n\n" +
+      "**🏗️ Init NEW Server** — Full initialization: creates all channels, roles, categories, seeds DB, and posts setup guide. " +
+      "⚠️ **Deletes ALL existing channels.**\n\n" +
+      "**🔗 Manual Channel Link** — Map an existing Discord channel to a known bot channel key (commish log, matchups, etc.).\n\n" +
+      "**📏 Set Franchise Length** — Change the number of seasons for this franchise.\n\n" +
+      "**📜 Rules / 📋 Waitlist / 👥 Admins / 🏆 Commissioner** — Manage league governance data.",
+    )
+    .setFooter({ text: "Server Setup sub-menu" })
+    .setTimestamp();
+
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_init_existing").setLabel("⚡ Init Existing Server").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ao_init_new").setLabel("🏗️ Init NEW Server").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ao_manual_channel_link").setLabel("🔗 Manual Channel Link").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_set_franchise_len").setLabel("📏 Set Franchise Length").setStyle(ButtonStyle.Secondary),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_waitlist").setLabel("📋 Waitlist").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_admins").setLabel("👥 Admins").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_commissioner").setLabel("🏆 Commissioner").setStyle(ButtonStyle.Secondary),
+  );
+  const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_server_settings").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  await (interaction as any).update({ embeds: [embed], components: [row1, row2, row3] });
+}
+
+// ── Init Existing Server ───────────────────────────────────────────────────────
+
+async function handleInitExisting(interaction: ButtonInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_init_existing")
+    .setTitle("Init Existing Server");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("starting_week")
+        .setLabel("Starting Week (e.g. training_camp, week_1)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("training_camp")
+        .setValue("training_camp"),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("franchise_length")
+        .setLabel("Franchise Length (seasons, 1-30)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("10")
+        .setValue("10"),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("current_season")
+        .setLabel("Current Season Number")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("1")
+        .setValue("1"),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleModalInitExisting(interaction: ModalSubmitInteraction) {
+  const guildId             = interaction.guildId!;
+  const startingWeek        = interaction.fields.getTextInputValue("starting_week").trim() || "training_camp";
+  const franchiseLength     = Math.max(1, Math.min(30, parseInt(interaction.fields.getTextInputValue("franchise_length").trim(), 10) || 10));
+  const currentSeasonNumber = Math.max(1, Math.min(30, parseInt(interaction.fields.getTextInputValue("current_season").trim(), 10) || 1));
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const { log } = await runExistingServerInit({
+      guildId, userId: interaction.user.id, userTag: interaction.user.tag,
+      startingWeek, franchiseLength, currentSeasonNumber,
+    });
+
+    await registerCommandsForGuild(guildId);
+    log.push("⚡ Slash commands re-registered for this server.");
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Existing Server Initialized")
+      .setDescription(log.join("\n"))
+      .setFooter({ text: "No channels were modified — only DB data was updated" })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    console.error("[handleModalInitExisting]", err);
+    await interaction.editReply({ content: `❌ Initialization failed: ${(err as Error).message}` });
+  }
+}
+
+// ── Init NEW Server ────────────────────────────────────────────────────────────
+
+async function handleInitNew(interaction: ButtonInteraction) {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Red)
+    .setTitle("⚠️ Init NEW Server — Destructive Warning")
+    .setDescription(
+      "**This will PERMANENTLY DELETE all existing Discord channels** and rebuild the server from scratch.\n\n" +
+      "This includes ALL categories, text channels, and voice channels. This action **cannot be undone**.\n\n" +
+      "Only proceed on a brand-new server or if you are completely rebuilding the league server structure.\n\n" +
+      "Click **Proceed** to enter setup options, or **Cancel** to go back.",
+    )
+    .setFooter({ text: "ALL channels will be deleted — this is irreversible" })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_init_new_proceed").setLabel("⚠️ Proceed — I understand channels will be deleted").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ao_server_setup").setLabel("← Cancel").setStyle(ButtonStyle.Secondary),
+  );
+
+  await (interaction as any).update({ embeds: [embed], components: [row] });
+}
+
+async function handleInitNewProceed(interaction: ButtonInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_init_new")
+    .setTitle("Initialize New Server");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("starting_week")
+        .setLabel("Starting Week (e.g. training_camp, week_1)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("training_camp")
+        .setValue("training_camp"),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("franchise_length")
+        .setLabel("Franchise Length (seasons, 1-30)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("10")
+        .setValue("10"),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("current_season")
+        .setLabel("Current Season Number")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("1")
+        .setValue("1"),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleModalInitNew(interaction: ModalSubmitInteraction) {
+  const guildId             = interaction.guildId!;
+  const guild               = interaction.guild;
+  const startingWeek        = interaction.fields.getTextInputValue("starting_week").trim() || "training_camp";
+  const franchiseLength     = Math.max(1, Math.min(30, parseInt(interaction.fields.getTextInputValue("franchise_length").trim(), 10) || 10));
+  const currentSeasonNumber = Math.max(1, Math.min(30, parseInt(interaction.fields.getTextInputValue("current_season").trim(), 10) || 1));
+
+  if (!guild) {
+    await interaction.reply({ content: "❌ Must be run inside a Discord server.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const { embed, log } = await runNewServerInit({
+      guildId,
+      userId:              interaction.user.id,
+      userTag:             interaction.user.tag,
+      guild,
+      startingWeek,
+      franchiseLength,
+      currentSeasonNumber,
+      editReply:    (content) => interaction.editReply({ content }),
+      fetchChannel: (id)      => interaction.client.channels.fetch(id),
+    });
+
+    await registerCommandsForGuild(guildId);
+    log.push("⚡ Slash commands registered for this server.");
+
+    const logEmbed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("📋 Initialization Log")
+      .setDescription(log.join("\n").slice(0, 4000))
+      .setTimestamp();
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+    );
+
+    await interaction.editReply({ embeds: [embed, logEmbed], components: [row] });
+  } catch (err) {
+    console.error("[handleModalInitNew]", err);
+    await interaction.editReply({ content: `❌ Initialization failed: ${(err as Error).message}` });
+  }
+}
+
+// ── Set Franchise Length ───────────────────────────────────────────────────────
+
+async function handleSetFranchiseLen(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const settings = await getServerSettings(guildId);
+
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_franchise_len")
+    .setTitle("Set Franchise Length");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("franchise_length")
+        .setLabel("Franchise Length (number of seasons, 1-30)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("10")
+        .setValue(String(settings.maxSeasons ?? 10)),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleModalFranchiseLen(interaction: ModalSubmitInteraction) {
+  const guildId = interaction.guildId!;
+  const raw     = interaction.fields.getTextInputValue("franchise_length").trim();
+  const limit   = parseInt(raw, 10);
+
+  if (isNaN(limit) || limit < 1 || limit > 30) {
+    await interaction.reply({ content: "❌ Please enter a whole number between 1 and 30.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  await db.update(serverSettingsTable)
+    .set({ maxSeasons: limit, updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, guildId));
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle("📏 Franchise Length Updated")
+    .setDescription(`Franchise length set to **${limit}** season(s).`)
+    .setFooter({ text: "Use Server Setup to view all setup options" })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
 }
 
 // ── Manual Channel Link ────────────────────────────────────────────────────────
