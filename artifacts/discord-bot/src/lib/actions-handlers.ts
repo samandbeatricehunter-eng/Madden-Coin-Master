@@ -105,8 +105,9 @@ interface ActionsSession {
   faCardPlayerId?: number;
   faCardPage?: number;
   faSeasonId?: number;
-  faDevFilter?: number;
-  faSortStack?: string[]; // ordered sort keys, priority = index 0 first (max 5)
+  faDevFilters?: number[];   // multi-select: 0=normal,1=star,2=ss,3=xf (empty=all)
+  faSortStack?: string[];    // ordered sort keys, priority = index 0 first (max 5)
+  faSortPage?: number;       // current sort-button page (0=special, 1-5=attrs)
   faNameFilter?: string;
   // all-players browse/filter flow
   apPos?: string;
@@ -114,8 +115,9 @@ interface ActionsSession {
   apCardPage?: number;
   apSeasonId?: number;
   apNameFilter?: string;
-  apDevFilter?: number;      // -1=all, 0=normal, 1=star, 2=ss, 3=xf, 99=ss+xf
+  apDevFilters?: number[];   // multi-select: 0=normal,1=star,2=ss,3=xf (empty=all)
   apSortStack?: string[];    // ordered sort keys, priority = index 0 first (max 5)
+  apSortPage?: number;       // current sort-button page (0=special, 1-5=attrs)
   expiresAt: number;
 }
 
@@ -199,7 +201,7 @@ const ATTR_PAGE_SKIP = new Set([
   "throwAcc", "throwAccuracy",
   "handedness", "throwingHand", "playerHandedness",
   "college", "collegeName", "playerCollege",
-  // conf/confidence shown on page 1 bio section
+  "conf", "confidence", // shown on page 1 bio section
 ]);
 
 const ATTR_ABBR: Record<string, string> = {
@@ -234,16 +236,22 @@ const ATTR_ABBR: Record<string, string> = {
   conf: "CNF", confidence: "CNF",
 };
 
-const ATTR_GROUPS: { label: string; keys: string[] }[] = [
-  { label: "⚡ Physical / Athletic", keys: ["speedRating","accelerationRating","accel","agilityRating","strengthRating","jumpingRating","jump","awareRating","staminaRating","injuryRating","toughnessRating","tough"] },
-  { label: "🏈 Throwing",            keys: ["throwPowerRating","throwAccuracyShortRating","throwAccShort","throwAccuracyMidRating","throwAccMid","throwAccuracyDeepRating","throwAccDeep","throwOnRunRating","throwUnderPressureRating","breakSackRating","playActionRating"] },
-  { label: "🏃 Ball Carrying",       keys: ["caryingRating","carryingRating","carry","bCVisionRating","ballCarrierVisionRating","bCV","elusivenessRating","breakTackleRating","stiffArmRating","spinMoveRating","jukeMoveRating","truckingRating","truck","changeOfDirectionRating"] },
-  { label: "🙌 Receiving",           keys: ["catchRating","catchInTrafficRating","cIT","spectacularCatchRating","specCatch","shortRouteRunRating","routeRunShort","medRouteRunRating","routeRunMed","deepRouteRunRating","routeRunDeep","releaseRating"] },
-  { label: "🛡️ Blocking",            keys: ["passBlockRating","runBlockRating","impactBlockRating","passBlockPowerRating","passBlockFinesseRating","runBlockPowerRating","runBlockFinesseRating","leadBlockRating"] },
-  { label: "🔴 Pass Rush",           keys: ["powerMovesRating","finessMovesRating","finesseMoves","blockShedRating"] },
-  { label: "💪 Run Defense",         keys: ["pursuitRating","tackleRating","hitPowerRating"] },
-  { label: "🔒 Coverage",            keys: ["manCoverRating","zoneCoverRating","pressRating","playRecRating"] },
-  { label: "🦵 Kicking / Punting",   keys: ["kickPowerRating","kickAccuracyRating","kickAcc","puntPowerRating","puntAccuracyRating","kickReturnRating","kickRet","longSnap"] },
+/**
+ * Groups are defined by ABBREVIATION (not raw DB key).
+ * We first convert every raw DB key → abbreviation using ATTR_ABBR,
+ * then bucket by group using these abbr lists. This makes the display
+ * robust regardless of whether the DB stores "speedRating" or "speed".
+ */
+const ATTR_GROUPS: { label: string; abbrs: string[] }[] = [
+  { label: "⚡ Physical / Athletic", abbrs: ["SPD","ACC","AGI","STR","JMP","AWR","COD","STA","INJ","TGH"] },
+  { label: "🏈 Throwing",            abbrs: ["THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC"] },
+  { label: "🏃 Ball Carrying",       abbrs: ["CAR","BCV","ELU","BTK","TRK","SFA","SPM","JKM"] },
+  { label: "🙌 Receiving",           abbrs: ["CTH","CIT","SPC","SRR","MRR","DRR","RLS"] },
+  { label: "🛡️ Blocking",            abbrs: ["PBK","RBK","IBL","PBP","PBF","RBP","RBF","LBK"] },
+  { label: "🔴 Pass Rush",           abbrs: ["PMV","FMV","BSH"] },
+  { label: "💪 Run Defense",         abbrs: ["PUR","TAK","HPW"] },
+  { label: "🔒 Coverage",            abbrs: ["MCV","ZCV","PRS","PRC"] },
+  { label: "🦵 Kicking / Punting",   abbrs: ["KPW","KAC","PNP","PNA","KR","LSN"] },
 ];
 
 interface StatDef { key: string; label: string; isFloat?: boolean }
@@ -417,19 +425,29 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
     .setTitle(title)
     .setDescription(teamLine);
 
-  const numAttrs = attrs as Record<string, number>;
+  // ── Step 1: Build abbr→value map from raw attributes ─────────────────────
+  // Convert every raw DB key to its abbreviation first, dedup by abbr.
+  // This works regardless of whether the DB stores "speedRating", "speed", etc.
+  const abbrValMap = new Map<string, number>();
+  for (const [rawKey, rawVal] of Object.entries(attrs)) {
+    if (ATTR_PAGE_SKIP.has(rawKey)) continue;
+    if (typeof rawVal !== "number") continue;
+    const abbr = ATTR_ABBR[rawKey];
+    if (abbr && !abbrValMap.has(abbr)) {
+      abbrValMap.set(abbr, rawVal);
+    }
+  }
+
+  // ── Step 2: Render by group using the abbr map ────────────────────────────
   let hasAnyAttr = false;
-  const usedAbbrs = new Set<string>();
-  const knownKeys = new Set(ATTR_GROUPS.flatMap(g => g.keys));
+  const renderedAbbrs = new Set<string>();
 
   for (const group of ATTR_GROUPS) {
     const pairs: string[] = [];
-    for (const key of group.keys) {
-      const val = numAttrs[key];
+    for (const abbr of group.abbrs) {
+      const val = abbrValMap.get(abbr);
       if (val == null) continue;
-      const abbr = ATTR_ABBR[key] ?? key;
-      if (usedAbbrs.has(abbr)) continue;
-      usedAbbrs.add(abbr);
+      renderedAbbrs.add(abbr);
       pairs.push(`${abbr} **${val}**`);
     }
     if (pairs.length) {
@@ -437,12 +455,21 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
       p3.addFields({ name: group.label, value: pairs.join("  "), inline: false });
     }
   }
-  const unknown = Object.entries(numAttrs)
-    .filter(([k, v]) => !knownKeys.has(k) && !ATTR_PAGE_SKIP.has(k) && typeof v === "number")
-    .map(([k, v]) => `${k.replace(/Rating$/, "")} **${v}**`);
-  if (unknown.length) {
+
+  // ── Step 3: Anything with an abbr not in any group goes to "Other" ────────
+  const otherPairs: string[] = [];
+  for (const [abbr, val] of abbrValMap) {
+    if (!renderedAbbrs.has(abbr)) otherPairs.push(`${abbr} **${val}**`);
+  }
+  // Also show raw keys that had NO abbreviation entry (truly unknown attrs)
+  for (const [rawKey, rawVal] of Object.entries(attrs)) {
+    if (ATTR_PAGE_SKIP.has(rawKey)) continue;
+    if (typeof rawVal !== "number") continue;
+    if (!ATTR_ABBR[rawKey]) otherPairs.push(`${rawKey.replace(/Rating$/, "")} **${rawVal}**`);
+  }
+  if (otherPairs.length) {
     hasAnyAttr = true;
-    p3.addFields({ name: "📦 Other", value: unknown.slice(0, 20).join("  "), inline: false });
+    p3.addFields({ name: "📦 Other", value: otherPairs.slice(0, 20).join("  "), inline: false });
   }
   if (!hasAnyAttr) p3.addFields({ name: "Attributes", value: "*No attribute data available.*", inline: false });
   p3.setFooter({ text: `Page 3/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
@@ -683,24 +710,30 @@ export async function handleActionsInteraction(
   if (id.startsWith("ac_ap_cardpage:"))  { await handleApCardPage(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_ap_back_to_players")    { await handleApBackToPlayers(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_ap_filter")             { await handleApFilterScreen(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_ap_filter_sort")        { await handleApFilterSort(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_ap_filter_dev")         { await handleApFilterDev(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_ap_filter_attr1")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 1); return true; }
-  if (id === "ac_ap_filter_attr2")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 2); return true; }
   if (id === "ac_ap_filter_apply")       { await handleApFilterApply(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_ap_filter_clear")       { await handleApFilterClear(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_ap_filter_name")        { await handleApFilterNameModal(interaction as ButtonInteraction); return true; }
   if (id === "ac_modal_ap_name")         { await handleApFilterNameSubmit(interaction as ModalSubmitInteraction, sess); return true; }
+  if (id === "ac_ap_sprev")              { await handleApSortPage(interaction as ButtonInteraction, sess, "prev"); return true; }
+  if (id === "ac_ap_snext")              { await handleApSortPage(interaction as ButtonInteraction, sess, "next"); return true; }
+  if (id === "ac_ap_sort_clear")         { await handleApSortClear(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_dev_clear")          { await handleApDevClear(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_spage_lbl")          { return true; } // disabled display button
+  if (id.startsWith("ac_ap_stog|"))      { await handleApSortToggle(interaction as ButtonInteraction, sess, id.slice("ac_ap_stog|".length)); return true; }
+  if (id.startsWith("ac_ap_dtog|"))      { await handleApDevToggle(interaction as ButtonInteraction, sess, Number(id.slice("ac_ap_dtog|".length))); return true; }
   // FA Filter
   if (id === "ac_fa_filter")             { await handleFaFilterScreen(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_fa_filter_dev")         { await handleFaFilterDev(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_fa_filter_sort")        { await handleFaFilterSort(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_fa_filter_attr1")       { await handleFaFilterAttr(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_fa_filter_attr2")       { await handleFaFilterAttr(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_fa_filter_apply")       { await handleFaFilterApply(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_fa_filter_clear")       { await handleFaFilterClear(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_fa_filter_name")        { await handleFaFilterNameModal(interaction as ButtonInteraction); return true; }
   if (id === "ac_modal_fa_name")         { await handleFaFilterNameSubmit(interaction as ModalSubmitInteraction, sess); return true; }
+  if (id === "ac_fa_sprev")              { await handleFaSortPage(interaction as ButtonInteraction, sess, "prev"); return true; }
+  if (id === "ac_fa_snext")              { await handleFaSortPage(interaction as ButtonInteraction, sess, "next"); return true; }
+  if (id === "ac_fa_sort_clear")         { await handleFaSortClear(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_dev_clear")          { await handleFaDevClear(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_spage_lbl")          { return true; } // disabled display button
+  if (id.startsWith("ac_fa_stog|"))      { await handleFaSortToggle(interaction as ButtonInteraction, sess, id.slice("ac_fa_stog|".length)); return true; }
+  if (id.startsWith("ac_fa_dtog|"))      { await handleFaDevToggle(interaction as ButtonInteraction, sess, Number(id.slice("ac_fa_dtog|".length))); return true; }
   if (id === "ac_teamstats")             { await handleTeamStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_teamstats_sel")         { await handleTeamStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
 
@@ -2806,22 +2839,6 @@ const ABBR_TO_ATTR_KEY: Record<string, string> = {
   KPW: "kickPowerRating", KAC: "kickAccuracyRating", KR: "kickReturnRating",
 };
 
-// Group A — Offensive (24): athletic/throwing/ball-carrying/receiving
-const AP_ATTR_GROUP_A = [
-  "SPD","ACC","AGI","STR","JMP","AWR","COD",
-  "THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC",
-  "CAR","BCV","ELU","BTK","TRK",
-  "CTH","SRR","MRR","DRR",
-];
-// Group B — Defensive / Blocking / Skill (24): blocking, pass rush, run D, coverage, individual skills
-const AP_ATTR_GROUP_B = [
-  "PBK","RBK","IBL","PBP","PBF","RBP","RBF","LBK",
-  "PMV","FMV","BSH",
-  "PUR","TAK","HPW",
-  "MCV","ZCV","PRS","PRC",
-  "SFA","SPM","JKM","RLS","SPC","CIT",
-];
-
 const AP_ATTR_NAMES: Record<string, string> = {
   // Offensive
   SPD: "Speed", ACC: "Acceleration", AGI: "Agility", STR: "Strength", JMP: "Jumping",
@@ -2854,10 +2871,6 @@ const SORT_PRIMARY_LABELS: Record<string, string> = {
   kpw_desc: "KPW ↓", kac_desc: "KAC ↓", kr_desc: "KR ↓",
 };
 
-const SORT_PRIMARY_KEY_SET = new Set(Object.keys(SORT_PRIMARY_LABELS));
-const ATTR_GROUP_A_KEY_SET = new Set(AP_ATTR_GROUP_A);
-const ATTR_GROUP_B_KEY_SET = new Set(AP_ATTR_GROUP_B);
-
 /** Return a short human-readable label for a sort key */
 function sortStackLabel(key: string): string {
   if (SORT_PRIMARY_LABELS[key]) return SORT_PRIMARY_LABELS[key];
@@ -2866,26 +2879,112 @@ function sortStackLabel(key: string): string {
 }
 
 /**
- * Merge a new multi-select result from one menu into the global sort stack.
- * Items already in the stack keep their position; newly-added items append at the end.
- * Deselected items (from this menu only) are removed. Total capped at 5.
- */
-function updateSortStack(
-  currentStack: string[],
-  menuKeySet: Set<string>,
-  newSelected: string[], // values Discord returned (may be empty = "deselect all from this menu")
-): string[] {
-  const preserved    = currentStack.filter(k => !menuKeySet.has(k));
-  const stillChosen  = currentStack.filter(k => menuKeySet.has(k) && newSelected.includes(k));
-  const added        = newSelected.filter(k => !currentStack.includes(k));
-  return [...preserved, ...stillChosen, ...added].slice(0, 5);
-}
-
-/**
  * Exponential weights by priority position.
  * 1st pick → 1.0, 2nd → 0.5, 3rd → 0.25, 4th → 0.125, 5th → 0.0625
  */
 const SORT_WEIGHTS = [1.0, 0.5, 0.25, 0.125, 0.0625];
+const SORT_WEIGHT_LABELS = ["100%", "50%", "25%", "12.5%", "6.25%"];
+
+// ── Sort page data ─────────────────────────────────────────────────────────────
+
+/** Page 0: Special/primary sorts (OVR, Age, physical stats, kicking) */
+const SORT_PAGE_0_KEYS = [
+  "overall_desc", "overall_asc", "age_asc", "age_desc", "height_desc",
+  "weight_desc", "contract_desc", "kpw_desc", "kac_desc", "kr_desc",
+];
+
+/** Pages 1-5: All 48 attributes in category order, 10 per page */
+const SORT_ATTR_PAGES: string[][] = [
+  ["SPD","ACC","AGI","STR","JMP","AWR","COD","THP","SAC","MAC"],   // Athletic + Throwing
+  ["DAC","TOR","TUP","BSK","PAC","CAR","BCV","ELU","BTK","TRK"],   // Throwing + Ball Carry
+  ["SFA","SPM","JKM","CTH","SRR","MRR","DRR","SPC","CIT","RLS"],   // Ball Carry + Receiving
+  ["PBK","RBK","IBL","PBP","PBF","RBP","RBF","LBK","PMV","FMV"],   // Blocking + Pass Rush
+  ["BSH","PUR","TAK","HPW","MCV","ZCV","PRS","PRC"],                // Defense + Coverage
+];
+
+const SORT_ALL_PAGES: string[][] = [SORT_PAGE_0_KEYS, ...SORT_ATTR_PAGES];
+
+const SORT_PAGE_LABELS = [
+  "Pg 1/6 — Special",
+  "Pg 2/6 — Athletic / Throwing",
+  "Pg 3/6 — Throwing / Ball Carry",
+  "Pg 4/6 — Ball Carry / Receiving",
+  "Pg 5/6 — Blocking / Rush",
+  "Pg 6/6 — Defense / Coverage",
+];
+
+/** Short label for a sort button (used as button label text). */
+function sortBtnLabel(key: string, sortStack: string[]): string {
+  const base = SORT_PRIMARY_LABELS[key] ?? key; // attr keys are their own abbr (SPD, ACC…)
+  const idx  = sortStack.indexOf(key);
+  if (idx < 0) return base;
+  return `${base} (${SORT_WEIGHT_LABELS[idx] ?? "~6%"})`.slice(0, 80);
+}
+
+/** Rows 1 & 2 — sort toggle buttons for the current page (up to 10 keys, 5 per row). */
+function buildSortPageRows(prefix: string, page: number, sortStack: string[]): ActionRowBuilder<ButtonBuilder>[] {
+  const pageKeys = SORT_ALL_PAGES[page] ?? [];
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let r = 0; r < 2; r++) {
+    const keys = pageKeys.slice(r * 5, (r + 1) * 5);
+    if (!keys.length) break;
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        ...keys.map(key =>
+          new ButtonBuilder()
+            .setCustomId(`${prefix}_stog|${key}`)
+            .setLabel(sortBtnLabel(key, sortStack))
+            .setStyle(sortStack.includes(key) ? ButtonStyle.Success : ButtonStyle.Secondary),
+        ),
+      ),
+    );
+  }
+  return rows;
+}
+
+/** Row 3 — sort page navigation + clear sort. */
+function buildSortNavRow(prefix: string, page: number, sortStack: string[]): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`${prefix}_sprev`).setLabel("◀ Prev")
+      .setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+    new ButtonBuilder().setCustomId(`${prefix}_spage_lbl`)
+      .setLabel(SORT_PAGE_LABELS[page] ?? `Pg ${page + 1}/${SORT_ALL_PAGES.length}`)
+      .setStyle(ButtonStyle.Primary).setDisabled(true),
+    new ButtonBuilder().setCustomId(`${prefix}_snext`).setLabel("▶ Next")
+      .setStyle(ButtonStyle.Secondary).setDisabled(page >= SORT_ALL_PAGES.length - 1),
+    new ButtonBuilder().setCustomId(`${prefix}_sort_clear`).setLabel("🗑 Clear Sort")
+      .setStyle(ButtonStyle.Danger).setDisabled(sortStack.length === 0),
+  );
+}
+
+/** Row 4 — dev trait filter toggle buttons. */
+function buildDevFilterRow(prefix: string, devFilters: number[]): ActionRowBuilder<ButtonBuilder> {
+  const has = (v: number) => devFilters.includes(v);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|0`).setLabel("Normal")
+      .setStyle(has(0) ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|1`).setLabel("Show ★")
+      .setStyle(has(1) ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|2`).setLabel("Show 🌟")
+      .setStyle(has(2) ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|3`).setLabel("Show ⚡")
+      .setStyle(has(3) ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`${prefix}_dev_clear`).setLabel("Clear Dev")
+      .setStyle(ButtonStyle.Danger).setDisabled(devFilters.length === 0),
+  );
+}
+
+/** Toggle one sort key in the stack (max 5). */
+function toggleSortKey(stack: string[], key: string): string[] {
+  if (stack.includes(key)) return stack.filter(k => k !== key);
+  if (stack.length >= 5) return stack; // already at max
+  return [...stack, key];
+}
+
+/** Toggle one dev-trait value in the filter array. */
+function toggleDevFilter(filters: number[], val: number): number[] {
+  return filters.includes(val) ? filters.filter(v => v !== val) : [...filters, val];
+}
 
 /**
  * Build a single composite SQL score expression from the sort stack.
@@ -2976,9 +3075,10 @@ function buildSortStackSummary(stack: string[]): string {
 function buildApFilterSummary(sess: ActionsSession): string {
   const parts: string[] = [];
   if (sess.apNameFilter) parts.push(`Name: "${sess.apNameFilter}"`);
-  if (sess.apDevFilter != null && sess.apDevFilter >= 0) {
-    const devLabels: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "Superstar [SS]", 3: "X-Factor [XF]", 99: "SS + XF" };
-    parts.push(`Dev: ${devLabels[sess.apDevFilter] ?? sess.apDevFilter}`);
+  const devFilters = sess.apDevFilters ?? [];
+  if (devFilters.length > 0) {
+    const devLabels: Record<number, string> = { 0: "Normal", 1: "★ Star", 2: "🌟 SS", 3: "⚡ XF" };
+    parts.push(`Dev: ${devFilters.map(v => devLabels[v] ?? v).join(", ")}`);
   }
   const sortLine = buildSortStackSummary(sess.apSortStack ?? []);
   if (sortLine) parts.push(sortLine);
@@ -3027,13 +3127,8 @@ async function showFaPlayerList(
     eq(franchiseRostersTable.teamId, FA_TEAM_ID_BROWSE),
     sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
   ];
-  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
-    if (sess.faDevFilter === 99) {
-      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
-    } else {
-      conditions.push(eq(franchiseRostersTable.devTrait, sess.faDevFilter));
-    }
-  }
+  const faDevFiltersX = sess.faDevFilters ?? [];
+  if (faDevFiltersX.length > 0) conditions.push(inArray(franchiseRostersTable.devTrait, faDevFiltersX));
   if (sess.faNameFilter) {
     const namePat = `%${sess.faNameFilter}%`;
     conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
@@ -3067,7 +3162,7 @@ async function showFaPlayerList(
     return;
   }
 
-  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || (sess.faSortStack?.length));
+  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilters?.length) || (sess.faSortStack?.length));
   const filterSummary = buildFaFilterSummary(sess);
 
   const menu = new StringSelectMenuBuilder()
@@ -3191,8 +3286,9 @@ async function handleAllPlayersPosSel(interaction: StringSelectMenuInteraction, 
   const seasonId = await getRosterSeasonId(gid);
   if (sess.apPos !== pos) {
     sess.apNameFilter = undefined;
-    sess.apDevFilter = undefined;
-    sess.apSortStack = [];
+    sess.apDevFilters = [];
+    sess.apSortStack  = [];
+    sess.apSortPage   = 0;
   }
   sess.apPos = pos;
   sess.apSeasonId = seasonId;
@@ -3215,13 +3311,8 @@ async function showApPlayerList(
     const namePat = `%${sess.apNameFilter}%`;
     conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
   }
-  if (sess.apDevFilter != null && sess.apDevFilter >= 0) {
-    if (sess.apDevFilter === 99) {
-      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
-    } else {
-      conditions.push(eq(franchiseRostersTable.devTrait, sess.apDevFilter));
-    }
-  }
+  const apDevFiltersQ = sess.apDevFilters ?? [];
+  if (apDevFiltersQ.length > 0) conditions.push(inArray(franchiseRostersTable.devTrait, apDevFiltersQ));
 
   const orderExprs = buildApOrderBy(sess);
   const players = await db.select({
@@ -3352,117 +3443,76 @@ async function handleApBackToPlayers(interaction: ButtonInteraction, sess: Actio
 
 // Shared filter component builder — works for both AP and FA (prefix = "ac_ap" or "ac_fa")
 // sortStack: ordered list of active sort keys (up to 5), priority = index 0 first
-function buildSharedFilterComponents(
-  prefix: string,
-  devFilter: number | undefined,
-  sortStack: string[],
-): ActionRowBuilder<StringSelectMenuBuilder>[] {
-  const devMenu = new StringSelectMenuBuilder()
-    .setCustomId(`${prefix}_filter_dev`)
-    .setPlaceholder("Filter: Dev Trait (any)")
-    .addOptions([
-      new StringSelectMenuOptionBuilder().setLabel("Any Dev Trait").setValue("-1").setDefault(!devFilter || devFilter < 0),
-      new StringSelectMenuOptionBuilder().setLabel("Normal only").setValue("0").setDefault(devFilter === 0),
-      new StringSelectMenuOptionBuilder().setLabel("Star [★] only").setValue("1").setDefault(devFilter === 1),
-      new StringSelectMenuOptionBuilder().setLabel("Superstar [SS] only").setValue("2").setDefault(devFilter === 2),
-      new StringSelectMenuOptionBuilder().setLabel("X-Factor [XF] only").setValue("3").setDefault(devFilter === 3),
-      new StringSelectMenuOptionBuilder().setLabel("SS + XF only").setValue("99").setDefault(devFilter === 99),
-    ]);
-
-  // Multi-select Sort By: up to 5 picks, priority = order added to stack
-  const sortMenu = new StringSelectMenuBuilder()
-    .setCustomId(`${prefix}_filter_sort`)
-    .setPlaceholder("Sort By — pick up to 5 (priority = selection order)")
-    .setMinValues(0)
-    .setMaxValues(5)
-    .addOptions([
-      new StringSelectMenuOptionBuilder().setLabel("Overall: High → Low").setValue("overall_desc").setDefault(sortStack.includes("overall_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("Overall: Low → High").setValue("overall_asc").setDefault(sortStack.includes("overall_asc")),
-      new StringSelectMenuOptionBuilder().setLabel("Age: Youngest First").setValue("age_asc").setDefault(sortStack.includes("age_asc")),
-      new StringSelectMenuOptionBuilder().setLabel("Age: Oldest First").setValue("age_desc").setDefault(sortStack.includes("age_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("Height: Tallest First").setValue("height_desc").setDefault(sortStack.includes("height_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("Height: Shortest First").setValue("height_asc").setDefault(sortStack.includes("height_asc")),
-      new StringSelectMenuOptionBuilder().setLabel("Weight: Heaviest First").setValue("weight_desc").setDefault(sortStack.includes("weight_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sortStack.includes("weight_asc")),
-      new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sortStack.includes("contract_asc")),
-      new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sortStack.includes("contract_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("🦵 Kick Power ↓ (KPW)").setValue("kpw_desc").setDefault(sortStack.includes("kpw_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("🎯 Kick Accuracy ↓ (KAC)").setValue("kac_desc").setDefault(sortStack.includes("kac_desc")),
-      new StringSelectMenuOptionBuilder().setLabel("💨 Kick Return ↓ (KR)").setValue("kr_desc").setDefault(sortStack.includes("kr_desc")),
-    ]);
-
-  // Multi-select attr menus — selecting nothing removes all attrs from that group from the stack
-  const makeAttrMenu = (cid: string, group: string[], label: string) =>
-    new StringSelectMenuBuilder().setCustomId(cid)
-      .setPlaceholder(`Attr Sort — ${label} (pick up to 5)`)
-      .setMinValues(0)
-      .setMaxValues(Math.min(5, group.length))
-      .addOptions(group.map(abbr =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${AP_ATTR_NAMES[abbr] ?? abbr} (${abbr})`)
-          .setValue(abbr)
-          .setDefault(sortStack.includes(abbr)),
-      ));
-
-  // Row layout: dev filter | sort by | attr group A | attr group B | button row (added by caller)
-  return [
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(devMenu),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sortMenu),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr1`, AP_ATTR_GROUP_A, "Offense")),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu(`${prefix}_filter_attr2`, AP_ATTR_GROUP_B, "Defense/Blocking")),
-  ];
-}
-
-function buildApFilterComponents(sess: ActionsSession): ActionRowBuilder<StringSelectMenuBuilder>[] {
-  return buildSharedFilterComponents("ac_ap", sess.apDevFilter, sess.apSortStack ?? []);
-}
-
-async function showApFilterScreen(
-  interaction: ButtonInteraction | StringSelectMenuInteraction,
-  sess: ActionsSession,
-) {
-  const summary = buildApFilterSummary(sess);
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Blue)
-    .setTitle(`🔍 Filter / Sort — ${sess.apPos ?? "All Players"}`)
-    .setDescription(
-      "Pick up to **5 sort keys** across the three dropdowns — priority = order they were added.\n" +
-      "Deselect all items in a dropdown to remove that group from the sort.\n\n" +
-      (summary ? summary : "*No active filters.*"),
-    );
-
-  const hasFilters = !!(sess.apNameFilter || (sess.apDevFilter != null && sess.apDevFilter >= 0) || (sess.apSortStack?.length));
-  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+/** Row 5 — action buttons for AP filter screen. */
+function buildApFilterActionRow(sess: ActionsSession): ActionRowBuilder<ButtonBuilder> {
+  const hasFilters = !!(sess.apNameFilter || (sess.apDevFilters?.length) || (sess.apSortStack?.length));
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_ap_filter_name")
-      .setLabel(sess.apNameFilter ? `Name: "${sess.apNameFilter}"` : "🔍 Search by Name")
+      .setLabel(sess.apNameFilter ? `🔍 "${sess.apNameFilter.slice(0, 20)}"` : "🔍 Name Search")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_ap_filter_apply").setLabel("✅ Apply & View").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ac_ap_filter_clear").setLabel("🗑 Clear All").setStyle(ButtonStyle.Danger).setDisabled(!hasFilters),
     new ButtonBuilder().setCustomId("ac_ap_back_to_players").setLabel("← Back").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
+}
 
-  const rows = [...buildApFilterComponents(sess) as any[], btnRow as any];
-  await interaction.update({ embeds: [embed], components: rows });
+async function showApFilterScreen(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const page      = sess.apSortPage ?? 0;
+  const sortStack = sess.apSortStack ?? [];
+  const devFilters = sess.apDevFilters ?? [];
+  const summary   = buildApFilterSummary(sess);
+  const stackFull = sortStack.length >= 5;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(`🔍 Filter / Sort — ${sess.apPos ?? "All Players"}`)
+    .setDescription(
+      `Toggle buttons to build your sort priority (green = active). Up to **5 sort keys** max.\n` +
+      (stackFull ? "⚠️ Sort full — deactivate a key before adding another.\n" : "") +
+      `\n${summary || "*No active filters.*"}`,
+    );
+
+  const rows = [
+    ...buildSortPageRows("ac_ap", page, sortStack),
+    buildSortNavRow("ac_ap", page, sortStack),
+    buildDevFilterRow("ac_ap", devFilters),
+    buildApFilterActionRow(sess),
+  ];
+  await interaction.update({ embeds: [embed], components: rows as any[] });
 }
 
 async function handleApFilterScreen(interaction: ButtonInteraction, sess: ActionsSession) {
   await showApFilterScreen(interaction, sess);
 }
 
-async function handleApFilterSort(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  sess.apSortStack = updateSortStack(sess.apSortStack ?? [], SORT_PRIMARY_KEY_SET, interaction.values);
+async function handleApSortToggle(interaction: ButtonInteraction, sess: ActionsSession, key: string) {
+  sess.apSortStack = toggleSortKey(sess.apSortStack ?? [], key);
   await showApFilterScreen(interaction, sess);
 }
 
-async function handleApFilterDev(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  sess.apDevFilter = Number(interaction.values[0]);
+async function handleApDevToggle(interaction: ButtonInteraction, sess: ActionsSession, val: number) {
+  sess.apDevFilters = toggleDevFilter(sess.apDevFilters ?? [], val);
   await showApFilterScreen(interaction, sess);
 }
 
-async function handleApFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession, group: number) {
-  const keySet = group === 1 ? ATTR_GROUP_A_KEY_SET : ATTR_GROUP_B_KEY_SET;
-  sess.apSortStack = updateSortStack(sess.apSortStack ?? [], keySet, interaction.values);
+async function handleApDevClear(interaction: ButtonInteraction, sess: ActionsSession) {
+  sess.apDevFilters = [];
+  await showApFilterScreen(interaction, sess);
+}
+
+async function handleApSortClear(interaction: ButtonInteraction, sess: ActionsSession) {
+  sess.apSortStack = [];
+  await showApFilterScreen(interaction, sess);
+}
+
+async function handleApSortPage(interaction: ButtonInteraction, sess: ActionsSession, dir: "prev" | "next") {
+  const current = sess.apSortPage ?? 0;
+  const total = SORT_ALL_PAGES.length;
+  sess.apSortPage = dir === "next" ? Math.min(current + 1, total - 1) : Math.max(current - 1, 0);
   await showApFilterScreen(interaction, sess);
 }
 
@@ -3507,13 +3557,8 @@ async function handleApFilterNameSubmit(interaction: ModalSubmitInteraction, ses
     const namePat = `%${sess.apNameFilter}%`;
     conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
   }
-  if (sess.apDevFilter != null && sess.apDevFilter >= 0) {
-    if (sess.apDevFilter === 99) {
-      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
-    } else {
-      conditions.push(eq(franchiseRostersTable.devTrait, sess.apDevFilter));
-    }
-  }
+  const apDevF = sess.apDevFilters ?? [];
+  if (apDevF.length > 0) conditions.push(inArray(franchiseRostersTable.devTrait, apDevF));
   const orderExprs = buildApOrderBy(sess);
   const players = await db.select({
     playerId:  franchiseRostersTable.playerId,
@@ -3576,8 +3621,9 @@ async function handleApFilterApply(interaction: ButtonInteraction, sess: Actions
 
 async function handleApFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
   sess.apNameFilter = undefined;
-  sess.apDevFilter = undefined;
-  sess.apSortStack = [];
+  sess.apDevFilters = [];
+  sess.apSortStack  = [];
+  sess.apSortPage   = 0;
   await showApFilterScreen(interaction, sess);
 }
 
@@ -3586,62 +3632,86 @@ async function handleApFilterClear(interaction: ButtonInteraction, sess: Actions
 function buildFaFilterSummary(sess: ActionsSession): string {
   const parts: string[] = [];
   if (sess.faNameFilter) parts.push(`Name: "${sess.faNameFilter}"`);
-  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
-    const devLabels: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "Superstar [SS]", 3: "X-Factor [XF]", 99: "SS + XF" };
-    parts.push(`Dev: ${devLabels[sess.faDevFilter] ?? sess.faDevFilter}`);
+  const devFilters = sess.faDevFilters ?? [];
+  if (devFilters.length > 0) {
+    const devLabels: Record<number, string> = { 0: "Normal", 1: "★ Star", 2: "🌟 SS", 3: "⚡ XF" };
+    parts.push(`Dev: ${devFilters.map(v => devLabels[v] ?? v).join(", ")}`);
   }
   const sortLine = buildSortStackSummary(sess.faSortStack ?? []);
   if (sortLine) parts.push(sortLine);
   return parts.length ? parts.join("\n") : "";
 }
 
-async function showFaFilterScreen(
-  interaction: ButtonInteraction | StringSelectMenuInteraction,
-  sess: ActionsSession,
-) {
-  const summary = buildFaFilterSummary(sess);
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle(`🔍 Filter / Sort — FA ${sess.faPos ?? "Free Agents"}`)
-    .setDescription(
-      "Pick up to **5 sort keys** across the three dropdowns — priority = order they were added.\n" +
-      "Deselect all items in a dropdown to remove that group from the sort.\n\n" +
-      (summary ? summary : "*No active filters.*"),
-    );
-
-  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilter != null && sess.faDevFilter >= 0) || (sess.faSortStack?.length));
-  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+/** Row 5 — action buttons for FA filter screen. */
+function buildFaFilterActionRow(sess: ActionsSession): ActionRowBuilder<ButtonBuilder> {
+  const hasFilters = !!(sess.faNameFilter || (sess.faDevFilters?.length) || (sess.faSortStack?.length));
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_fa_filter_name")
-      .setLabel(sess.faNameFilter ? `Name: "${sess.faNameFilter}"` : "🔍 Search by Name")
+      .setLabel(sess.faNameFilter ? `🔍 "${sess.faNameFilter.slice(0, 20)}"` : "🔍 Name Search")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_fa_filter_apply").setLabel("✅ Apply & View").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ac_fa_filter_clear").setLabel("🗑 Clear All").setStyle(ButtonStyle.Danger).setDisabled(!hasFilters),
     new ButtonBuilder().setCustomId("ac_fa_back_to_players").setLabel("← Back").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
+}
 
-  const filterRows = buildSharedFilterComponents("ac_fa", sess.faDevFilter, sess.faSortStack ?? []);
-  await interaction.update({ embeds: [embed], components: [...filterRows as any[], btnRow as any] });
+async function showFaFilterScreen(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const page       = sess.faSortPage ?? 0;
+  const sortStack  = sess.faSortStack ?? [];
+  const devFilters = sess.faDevFilters ?? [];
+  const summary    = buildFaFilterSummary(sess);
+  const stackFull  = sortStack.length >= 5;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle(`🔍 Filter / Sort — FA ${sess.faPos ?? "Free Agents"}`)
+    .setDescription(
+      `Toggle buttons to build your sort priority (green = active). Up to **5 sort keys** max.\n` +
+      (stackFull ? "⚠️ Sort full — deactivate a key before adding another.\n" : "") +
+      `\n${summary || "*No active filters.*"}`,
+    );
+
+  const rows = [
+    ...buildSortPageRows("ac_fa", page, sortStack),
+    buildSortNavRow("ac_fa", page, sortStack),
+    buildDevFilterRow("ac_fa", devFilters),
+    buildFaFilterActionRow(sess),
+  ];
+  await interaction.update({ embeds: [embed], components: rows as any[] });
 }
 
 async function handleFaFilterScreen(interaction: ButtonInteraction, sess: ActionsSession) {
   await showFaFilterScreen(interaction, sess);
 }
 
-async function handleFaFilterSort(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  sess.faSortStack = updateSortStack(sess.faSortStack ?? [], SORT_PRIMARY_KEY_SET, interaction.values);
+async function handleFaSortToggle(interaction: ButtonInteraction, sess: ActionsSession, key: string) {
+  sess.faSortStack = toggleSortKey(sess.faSortStack ?? [], key);
   await showFaFilterScreen(interaction, sess);
 }
 
-async function handleFaFilterDev(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  sess.faDevFilter = Number(interaction.values[0]);
+async function handleFaDevToggle(interaction: ButtonInteraction, sess: ActionsSession, val: number) {
+  sess.faDevFilters = toggleDevFilter(sess.faDevFilters ?? [], val);
   await showFaFilterScreen(interaction, sess);
 }
 
-async function handleFaFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const cid = interaction.customId; // "ac_fa_filter_attr1" or "ac_fa_filter_attr2"
-  const keySet = cid.endsWith("1") ? ATTR_GROUP_A_KEY_SET : ATTR_GROUP_B_KEY_SET;
-  sess.faSortStack = updateSortStack(sess.faSortStack ?? [], keySet, interaction.values);
+async function handleFaDevClear(interaction: ButtonInteraction, sess: ActionsSession) {
+  sess.faDevFilters = [];
+  await showFaFilterScreen(interaction, sess);
+}
+
+async function handleFaSortClear(interaction: ButtonInteraction, sess: ActionsSession) {
+  sess.faSortStack = [];
+  await showFaFilterScreen(interaction, sess);
+}
+
+async function handleFaSortPage(interaction: ButtonInteraction, sess: ActionsSession, dir: "prev" | "next") {
+  const current = sess.faSortPage ?? 0;
+  const total = SORT_ALL_PAGES.length;
+  sess.faSortPage = dir === "next" ? Math.min(current + 1, total - 1) : Math.max(current - 1, 0);
   await showFaFilterScreen(interaction, sess);
 }
 
@@ -3682,13 +3752,8 @@ async function handleFaFilterNameSubmit(interaction: ModalSubmitInteraction, ses
     eq(franchiseRostersTable.teamId, FA_TEAM_ID_BROWSE),
     sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
   ];
-  if (sess.faDevFilter != null && sess.faDevFilter >= 0) {
-    if (sess.faDevFilter === 99) {
-      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
-    } else {
-      conditions.push(eq(franchiseRostersTable.devTrait, sess.faDevFilter));
-    }
-  }
+  const faDevFiltersX = sess.faDevFilters ?? [];
+  if (faDevFiltersX.length > 0) conditions.push(inArray(franchiseRostersTable.devTrait, faDevFiltersX));
   if (sess.faNameFilter) {
     const namePat = `%${sess.faNameFilter}%`;
     conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
@@ -3754,9 +3819,10 @@ async function handleFaFilterApply(interaction: ButtonInteraction, sess: Actions
 }
 
 async function handleFaFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
-  sess.faNameFilter = undefined;
-  sess.faDevFilter = undefined;
-  sess.faSortStack = [];
+  sess.faNameFilter  = undefined;
+  sess.faDevFilters  = [];
+  sess.faSortStack   = [];
+  sess.faSortPage    = 0;
   await showFaFilterScreen(interaction, sess);
 }
 
