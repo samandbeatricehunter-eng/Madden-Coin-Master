@@ -5529,6 +5529,18 @@ async function handleReqOpenTeamSubmit(interaction: ButtonInteraction, sess: Act
           .setDescription(`<@${uid}> has requested an open team.`)
           .addFields({ name: "🏈 Team Requested", value: team, inline: true })
           .setTimestamp()],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`treq_link|${uid}|${team}`)
+              .setLabel("🔗 Link User")
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`treq_deny|${uid}|${team}`)
+              .setLabel("❌ Deny Request")
+              .setStyle(ButtonStyle.Danger),
+          ),
+        ],
       }).catch(console.error);
     }
   }

@@ -69,6 +69,7 @@ import {
   handleUdEditEconomy, handleUdEditRecords, handleUdEditAllTime,
   handleUdEditEconomyModal, handleUdEditRecordsModal, handleUdEditAllTimeModal,
   handleUdDelete, handleUdDeleteUserSelect, handleUdDeleteToggle, handleUdDeleteConfirm,
+  handleTreqLinkButton, handleTreqDenyButton, handleTreqDenyReasonModal,
 } from "../lib/admin-user-handlers.js";
 import {
   handleSsClose, handleSsCancel,
@@ -223,6 +224,10 @@ export async function execute(interaction: Interaction) {
 async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
+
+  // ── Team request commissioner buttons (treq_link|uid|team, treq_deny|uid|team) ─
+  if (interaction.customId.startsWith("treq_link|")) { await handleTreqLinkButton(interaction); return; }
+  if (interaction.customId.startsWith("treq_deny|")) { await handleTreqDenyButton(interaction); return; }
 
   // ── Admin troubleshoot panel buttons ─────────────────────────────────────────
   if (action === "ts_repair_records")    { await handleTsRepairRecords(interaction);    return; }
@@ -2862,6 +2867,9 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction);  return; }
   if (action === "ap_modal_setpay_channel") { await handleSetPayChannelModal(interaction);  return; }
   if (action === "ap_modal_referral")       { await handleReferralModal(interaction);        return; }
+
+  // ── Team request denial modal (treq_deny_reason|uid|msgId|team) ────────────
+  if (interaction.customId.startsWith("treq_deny_reason|")) { await handleTreqDenyReasonModal(interaction); return; }
 
   // ── Admin User Data Hub modals ─────────────────────────────────────────────
   if (action === "ud_modal_link")          { await handleUdLinkModal(interaction);          return; }

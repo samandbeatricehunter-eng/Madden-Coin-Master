@@ -19,6 +19,7 @@ import {
   EmbedBuilder, Colors, ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits,
+  TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -91,6 +92,8 @@ interface UdSession {
   linkTeam?:         string;
   linkMemberId?:     string;
   linkMemberName?:   string;
+  linkCommChannelId?: string;
+  linkCommMsgId?:    string;
   targetTeam?:       string;
   targetDiscordId?:  string;
   targetUsername?:   string;
@@ -701,6 +704,8 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
     }
   }
 
+  const commChannelId = sess.linkCommChannelId;
+  const commMsgId     = sess.linkCommMsgId;
   clearSession(guildId, interaction.user.id);
 
   const embed = new EmbedBuilder()
@@ -721,6 +726,29 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
   embed.setTimestamp().setFooter({ text: `Linked by ${interaction.user.username}` });
 
   await interaction.editReply({ embeds: [embed] });
+
+  // ── Update commissioner request message if this link came from a team request ─
+  if (commChannelId && commMsgId) {
+    (async () => {
+      try {
+        const commChannel = await interaction.client.channels.fetch(commChannelId).catch(() => null);
+        if (commChannel?.isTextBased()) {
+          const commMsg = await (commChannel as TextChannel).messages.fetch(commMsgId).catch(() => null);
+          if (commMsg) {
+            await commMsg.edit({
+              embeds: [new EmbedBuilder()
+                .setColor(Colors.Green)
+                .setTitle("✅ Team Request — Approved & Linked")
+                .setDescription(`<@${discordId}> has been linked to the **${teamName}**.`)
+                .setFooter({ text: `Actioned by ${interaction.user.username}` })
+                .setTimestamp()],
+              components: [],
+            });
+          }
+        }
+      } catch { /* ignore */ }
+    })();
+  }
 
   // ── DM the newly linked user with League Info rule #1 (league name & password) ──
   (async () => {
@@ -1588,5 +1616,142 @@ export async function handleUdDeleteConfirm(interaction: ButtonInteraction): Pro
     content:    "",
     embeds:     [embed],
     components: [cancelRow("← Back to Hub")],
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TEAM REQUEST — COMMISSIONER ACTION BUTTONS
+// Triggered from the notification posted to the commissioner channel when an
+// unlinked user submits an open-team request via /menu.
+// Prefix: treq_
+// ══════════════════════════════════════════════════════════════════════════════
+
+export async function handleTreqLinkButton(interaction: ButtonInteraction): Promise<void> {
+  const gid     = interaction.guildId!;
+  const isAdmin = await isAdminUser(interaction.user.id, gid)
+    || (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false);
+  if (!isAdmin) {
+    await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return;
+  }
+
+  const [, uid, ...teamParts] = interaction.customId.split("|");
+  const team = teamParts.join("|");
+
+  const targetMember = await interaction.guild?.members.fetch(uid!).catch(() => null);
+  const memberName   = targetMember?.nickname ?? targetMember?.user.username ?? uid!;
+
+  setSession(gid, interaction.user.id, {
+    flow:               "link",
+    linkTeam:           team,
+    linkMemberId:       uid!,
+    linkMemberName:     memberName,
+    linkCommChannelId:  interaction.channelId,
+    linkCommMsgId:      interaction.message.id,
+  });
+
+  await interaction.message.edit({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Yellow)
+      .setTitle("🔔 Open Team Request — Being Processed")
+      .setDescription(`<@${uid}> has requested an open team.`)
+      .addFields(
+        { name: "🏈 Team Requested", value: team, inline: true },
+        { name: "⏳ Status", value: `Being linked by <@${interaction.user.id}>...`, inline: true },
+      )
+      .setTimestamp()],
+    components: [],
+  });
+
+  const modal = new ModalBuilder()
+    .setCustomId("ud_modal_link")
+    .setTitle(`Link @${memberName} → ${team}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("new_user")
+          .setLabel("Award new member bonus? (yes / no)")
+          .setStyle(TextInputStyle.Short)
+          .setValue("yes")
+          .setRequired(true)
+          .setMaxLength(3),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("referrer_id")
+          .setLabel("Referrer Discord ID (leave blank if none)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setPlaceholder("e.g. 123456789012345678"),
+      ),
+    );
+
+  await interaction.showModal(modal);
+}
+
+export async function handleTreqDenyButton(interaction: ButtonInteraction): Promise<void> {
+  const gid     = interaction.guildId!;
+  const isAdmin = await isAdminUser(interaction.user.id, gid)
+    || (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false);
+  if (!isAdmin) {
+    await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return;
+  }
+
+  const [, uid, ...teamParts] = interaction.customId.split("|");
+  const team  = teamParts.join("|");
+  const msgId = interaction.message.id;
+
+  const modal = new ModalBuilder()
+    .setCustomId(`treq_deny_reason|${uid}|${msgId}|${team}`)
+    .setTitle("Deny Team Request")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("reason")
+          .setLabel("Reason for denial (sent to user via DM)")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500),
+      ),
+    );
+
+  await interaction.showModal(modal);
+}
+
+export async function handleTreqDenyReasonModal(interaction: ModalSubmitInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const [, uid, msgId, ...teamParts] = interaction.customId.split("|");
+  const team   = teamParts.join("|");
+  const reason = interaction.fields.getTextInputValue("reason").trim();
+
+  let dmSent = false;
+  try {
+    const targetUser = await interaction.client.users.fetch(uid!).catch(() => null);
+    if (targetUser) {
+      await targetUser.send({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Team Request Denied")
+          .setDescription(`Your request for the **${team}** has been reviewed and denied.`)
+          .addFields({ name: "📋 Reason", value: reason })
+          .setFooter({ text: "Contact a commissioner if you have questions." })
+          .setTimestamp()],
+      });
+      dmSent = true;
+    }
+  } catch { /* user may have DMs disabled */ }
+
+  try {
+    if (interaction.channelId) {
+      const channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
+      if (channel?.isTextBased()) {
+        const msg = await (channel as TextChannel).messages.fetch(msgId!).catch(() => null);
+        await msg?.delete().catch(() => null);
+      }
+    }
+  } catch { /* ignore */ }
+
+  await interaction.editReply({
+    content: `✅ Request for **${team}** denied. ${dmSent ? `<@${uid}> was notified via DM.` : "Could not send DM — user may have DMs disabled."}`,
   });
 }
