@@ -138,7 +138,15 @@ export async function execute(interaction: Interaction) {
   // ── Role guard ─────────────────────────────────────────────────────────────
   // All interactions from guild members must have at least one assigned role
   // beyond @everyone (which every user has by default).
-  if (interaction.inGuild() && interaction.member) {
+  // Exception: /menu and all ac_ interactions are exempt because the menu
+  // itself handles the linked/unlinked branching — the unlinked hub is
+  // specifically designed for users who have no role yet.
+  const isMenuCommand    = interaction.isChatInputCommand() && interaction.commandName === "menu";
+  const isActionsInteraction = (interaction.isButton() || interaction.isStringSelectMenu())
+    && typeof (interaction as any).customId === "string"
+    && (interaction as any).customId.startsWith("ac_");
+
+  if (interaction.inGuild() && interaction.member && !isMenuCommand && !isActionsInteraction) {
     const roles = (interaction.member as any).roles;
     // GuildMemberRoleManager exposes .cache (Collection); raw API payloads give a string[]
     const roleCount: number = roles?.cache?.size ?? (Array.isArray(roles) ? roles.length : 0);
