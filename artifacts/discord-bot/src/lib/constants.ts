@@ -3,7 +3,13 @@
 // Future: will be driven by the per-guild Madden edition setting.
 export const MADDEN_CDN_YEAR = "madden26";
 
-/** EA CDN portrait URL for a given player. Falls back gracefully if playerId is invalid. */
+/**
+ * Returns the EA CDN URL for a player's portrait.
+ * This URL is embedded directly in Discord embed thumbnails.
+ * Discord's CDN proxy fetches the image from EA's servers when rendering,
+ * which works because Discord's servers are not blocked by EA's CDN.
+ * (Direct fetching from Replit's cloud IPs is blocked by EA — only embed use works.)
+ */
 export function eaPortraitUrl(playerId: number | null | undefined): string | null {
   if (!playerId || playerId <= 0) return null;
   return `https://madden-assets-cdn.pulse.ea.com/${MADDEN_CDN_YEAR}/portraits/64/${playerId}.png`;
