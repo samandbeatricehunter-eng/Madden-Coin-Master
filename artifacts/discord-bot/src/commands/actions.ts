@@ -26,7 +26,7 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
   sections.push(`**Economy & Social**\n${row1Items.join(" · ")}`);
 
   if (mcaVisible) {
-    sections.push("**Rosters**\n📋 My Roster · 👥 Any Roster · 🆓 Free Agents · 📊 Player Stats · 🏟️ Team Stats");
+    sections.push("**Rosters**\n📋 My Roster · 👥 Rosters · 🆓 Free Agents · 📊 Player Stats\n*(Player Cards & Team Stats accessible inside each roster view)*");
     sections.push("**League Info**\n📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch · 👤 Any User Stats");
   }
 
@@ -64,10 +64,9 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   if (mcaVisible) {
     sec2.push(
       new ButtonBuilder().setCustomId("ac_myroster").setLabel("📋 My Roster").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Any Roster").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_freeagents").setLabel("🆓 Free Agents").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_playerstats").setLabel("📊 Player Stats").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_teamstats").setLabel("🏟️ Team Stats").setStyle(ButtonStyle.Secondary),
     );
   }
 
@@ -119,7 +118,7 @@ export function buildUnlinkedHubEmbed(): EmbedBuilder {
       "**Team Requests**\n" +
       "🔴 View Open Teams · 🟢 View User Teams · 📬 Request Open Team · 📋 Add to Waitlist · ❌ Remove from Waitlist\n\n" +
       "**Browse**\n" +
-      "👥 Any Roster · 📊 Player Stats & Ratings · 🏟️ Team Stats\n\n" +
+      "👥 Rosters · 📊 Player Stats & Ratings\n\n" +
       "**League Info**\n" +
       "📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch · 📜 Rules",
     )
@@ -135,9 +134,8 @@ export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ac_req_rmwaitlist").setLabel("❌ Remove from Waitlist").setStyle(ButtonStyle.Danger),
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 View Any Roster").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_playerstats").setLabel("📊 Player Stats & Ratings").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_teamstats").setLabel("🏟️ Team Stats").setStyle(ButtonStyle.Secondary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),

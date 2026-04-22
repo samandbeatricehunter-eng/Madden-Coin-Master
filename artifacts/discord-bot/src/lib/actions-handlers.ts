@@ -71,9 +71,17 @@ interface ActionsSession {
   wagerAwayTeam?: string;
   wagerHomeDiscordId?: string;
   wagerAwayDiscordId?: string;
-  // roster flow
+  // roster flow (legacy — purchase flow still uses these)
   selectedTeamId?: number;
   selectedTeamName?: string;
+  // roster card / player-card flow
+  rosterViewTeamId?: number;
+  rosterViewTeamName?: string;
+  rosterViewSource?: "my" | "any";
+  rosterViewSeasonId?: number;
+  rosterViewPosition?: string;
+  rosterCardPlayerId?: number;
+  rosterCardPage?: number;
   // purchase flow
   purchaseType?: string;
   rosterPosition?: string;
@@ -149,6 +157,264 @@ const DEFENSE_GROUPS: { label: string; positions: string[] }[] = [
 const SPECIAL_TEAMS_POSITIONS = ["K", "P", "KR", "PR", "LS"];
 const OFFENSE_SET = new Set(OFFENSE_GROUPS.flatMap(g => g.positions));
 const DEFENSE_SET = new Set(DEFENSE_GROUPS.flatMap(g => g.positions));
+
+// ── Roster card / player-card constants ────────────────────────────────────────
+
+const ROSTER_CARD_POSITIONS = [
+  "QB","HB","FB","WR","TE","LT","LG","C","RG","RT",
+  "LEDGE","REDGE","DT","WILL","MIKE","SAM","CB","FS","SS","K","P","LS",
+];
+
+const ATTR_ABBR: Record<string, string> = {
+  speedRating: "SPD", accelerationRating: "ACC", agilityRating: "AGI",
+  strengthRating: "STR", jumpingRating: "JMP", awareRating: "AWR",
+  staminaRating: "STA", injuryRating: "INJ", toughnessRating: "TGH",
+  throwPowerRating: "THP", throwAccuracyShortRating: "SAC", throwAccuracyMidRating: "MAC",
+  throwAccuracyDeepRating: "DAC", throwOnRunRating: "TOR", throwUnderPressureRating: "TUP",
+  breakSackRating: "BSK", playActionRating: "PAC",
+  caryingRating: "CAR", carryingRating: "CAR", bCVisionRating: "BCV", ballCarrierVisionRating: "BCV",
+  elusivenessRating: "ELU", breakTackleRating: "BTK", stiffArmRating: "SFA",
+  spinMoveRating: "SPM", jukeMoveRating: "JKM", truckingRating: "TRK", changeOfDirectionRating: "COD",
+  catchRating: "CTH", catchInTrafficRating: "CIT", spectacularCatchRating: "SPC",
+  shortRouteRunRating: "SRR", medRouteRunRating: "MRR", deepRouteRunRating: "DRR", releaseRating: "RLS",
+  passBlockRating: "PBK", runBlockRating: "RBK", impactBlockRating: "IBL",
+  passBlockPowerRating: "PBP", passBlockFinesseRating: "PBF",
+  runBlockPowerRating: "RBP", runBlockFinesseRating: "RBF", leadBlockRating: "LBK",
+  powerMovesRating: "PMV", finessMovesRating: "FMV", blockShedRating: "BSH",
+  pursuitRating: "PUR", tackleRating: "TAK", hitPowerRating: "HPW",
+  manCoverRating: "MCV", zoneCoverRating: "ZCV", pressRating: "PRS", playRecRating: "PRC",
+  kickPowerRating: "KPW", kickAccuracyRating: "KAC",
+  puntPowerRating: "PNP", puntAccuracyRating: "PNA", kickReturnRating: "KRR",
+};
+
+const ATTR_GROUPS: { label: string; keys: string[] }[] = [
+  { label: "⚡ Physical / Athletic", keys: ["speedRating","accelerationRating","agilityRating","strengthRating","jumpingRating","awareRating","staminaRating","injuryRating","toughnessRating"] },
+  { label: "🏈 Throwing",            keys: ["throwPowerRating","throwAccuracyShortRating","throwAccuracyMidRating","throwAccuracyDeepRating","throwOnRunRating","throwUnderPressureRating","breakSackRating","playActionRating"] },
+  { label: "🏃 Ball Carrying",       keys: ["caryingRating","carryingRating","bCVisionRating","ballCarrierVisionRating","elusivenessRating","breakTackleRating","stiffArmRating","spinMoveRating","jukeMoveRating","truckingRating","changeOfDirectionRating"] },
+  { label: "🙌 Receiving",           keys: ["catchRating","catchInTrafficRating","spectacularCatchRating","shortRouteRunRating","medRouteRunRating","deepRouteRunRating","releaseRating"] },
+  { label: "🛡️ Blocking",            keys: ["passBlockRating","runBlockRating","impactBlockRating","passBlockPowerRating","passBlockFinesseRating","runBlockPowerRating","runBlockFinesseRating","leadBlockRating"] },
+  { label: "🔴 Pass Rush",           keys: ["powerMovesRating","finessMovesRating","blockShedRating"] },
+  { label: "💪 Run Defense",         keys: ["pursuitRating","tackleRating","hitPowerRating"] },
+  { label: "🔒 Coverage",            keys: ["manCoverRating","zoneCoverRating","pressRating","playRecRating"] },
+  { label: "🦵 Kicking / Punting",   keys: ["kickPowerRating","kickAccuracyRating","puntPowerRating","puntAccuracyRating","kickReturnRating"] },
+];
+
+interface StatDef { key: string; label: string; isFloat?: boolean }
+const STAT_SECTIONS: { title: string; stats: StatDef[] }[] = [
+  { title: "🏈 Passing",   stats: [
+    { key: "passYds", label: "Pass Yards" }, { key: "passTDs", label: "TDs" },
+    { key: "passInts", label: "INTs" }, { key: "passComp", label: "Comp" },
+    { key: "passAtt", label: "Att" }, { key: "timesSacked", label: "Sacked" },
+  ]},
+  { title: "🏃 Rushing",   stats: [
+    { key: "rushYds", label: "Rush Yards" }, { key: "rushTDs", label: "TDs" },
+    { key: "rushAtt", label: "Att" }, { key: "fumbles", label: "Fumbles" },
+  ]},
+  { title: "🙌 Receiving", stats: [
+    { key: "recRec", label: "Receptions" }, { key: "recYds", label: "Rec Yards" }, { key: "recTDs", label: "TDs" },
+  ]},
+  { title: "🛡️ Defense",   stats: [
+    { key: "totalTackles", label: "Tackles" }, { key: "tackleSolo", label: "Solo" },
+    { key: "tackleAssist", label: "Assist" }, { key: "sacks", label: "Sacks", isFloat: true },
+    { key: "defInts", label: "INTs" }, { key: "forcedFumbles", label: "FF" },
+    { key: "defFumblesRec", label: "Fum Rec" }, { key: "tacklesForLoss", label: "TFLs", isFloat: true },
+    { key: "defTDs", label: "Def TDs" },
+  ]},
+  { title: "🦵 Kicking",   stats: [
+    { key: "fgMade", label: "FG Made" }, { key: "fgAtt", label: "FG Att" },
+    { key: "fgLong", label: "FG Long" }, { key: "xpMade", label: "XP Made" }, { key: "xpAtt", label: "XP Att" },
+  ]},
+  { title: "💨 Punting",   stats: [
+    { key: "puntAtt", label: "Punts" }, { key: "puntYds", label: "Yds" },
+    { key: "puntLong", label: "Long" }, { key: "puntIn20", label: "In-20" }, { key: "puntTouchbacks", label: "TBs" },
+  ]},
+  { title: "↩️ Returns",   stats: [
+    { key: "krYds", label: "KR Yds" }, { key: "krTDs", label: "KR TDs" }, { key: "krAtt", label: "KR Att" },
+    { key: "prYds", label: "PR Yds" }, { key: "prTDs", label: "PR TDs" }, { key: "prAtt", label: "PR Att" },
+  ]},
+];
+
+// ── Roster card — shared UI helpers ───────────────────────────────────────────
+
+function buildRosterNavRows(source: "my" | "any"): ActionRowBuilder<ButtonBuilder>[] {
+  const backId = source === "my" ? "ac_hub" : "ac_anyroster";
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_rc_cards").setLabel("🃏 View Player Cards").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ac_rc_teamstats").setLabel("📊 View Team Stats").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(backId).setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+    ),
+  ];
+}
+
+function buildCardPageRow(page: number, total: number): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`ac_rc_cardpage:${page - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
+    new ButtonBuilder().setCustomId("ac_rc_cardpage_num").setLabel(`Page ${page} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+    new ButtonBuilder().setCustomId(`ac_rc_cardpage:${page + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= total),
+  );
+}
+function buildCardBackRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_rc_back_to_players").setLabel("← Back to Players").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+  );
+}
+
+// ── Roster card — page builder ─────────────────────────────────────────────────
+
+type RosterRow  = typeof franchiseRostersTable.$inferSelect;
+type StatsRow   = typeof playerSeasonStatsTable.$inferSelect;
+
+function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, seasonNum: number): EmbedBuilder[] {
+  const fullName  = `${roster.firstName} ${roster.lastName}`;
+  const jersey    = roster.jerseyNum != null ? `#${roster.jerseyNum}` : "";
+  const title     = `🃏 ${fullName} — ${jersey} ${roster.position}`;
+  const teamLine  = `**Team:** ${roster.teamName}`;
+  const devLabel  = DEV_TRAIT_LABELS[roster.devTrait] ?? `Dev ${roster.devTrait}`;
+  const archetype = roster.archetypeAbbrev ? roster.archetypeAbbrev.replace(/_/g, " ") : "—";
+  const attrs     = (roster.attributes ?? {}) as Record<string, number>;
+  const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
+  const TOTAL     = 4;
+
+  // ── Page 1: Personal Details ──────────────────────────────────────────────
+  const p1 = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(title)
+    .setDescription(teamLine)
+    .addFields(
+      { name: "📊 Overall",    value: String(roster.overall), inline: true },
+      { name: "🎂 Age",        value: roster.age != null ? String(roster.age) : "—", inline: true },
+      { name: "🔢 Jersey",     value: jersey || "—", inline: true },
+      { name: "🏅 Dev Trait",  value: devLabel, inline: true },
+      { name: "🎯 Archetype",  value: archetype, inline: true },
+      { name: "✨ XP Total",   value: roster.xpTotal != null ? roster.xpTotal.toLocaleString() : "—", inline: true },
+    );
+  if (abilities) {
+    const lines: string[] = [];
+    if (abilities.superstar?.length) lines.push(...abilities.superstar.map(a => `⭐ ${a}`));
+    if (abilities.zone) lines.push(`⚡ ${abilities.zone} (Zone)`);
+    if (lines.length) p1.addFields({ name: "💥 Abilities", value: lines.join("\n"), inline: false });
+  }
+  p1.setFooter({ text: `Page 1/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
+
+  // ── Page 2: Contract Details ──────────────────────────────────────────────
+  const contractStr = roster.contractYearsLeft == null   ? "Unknown"
+    : roster.contractYearsLeft <= 0 ? "Free Agent"
+    : roster.contractYearsLeft === 1 ? "📋 Contract Year (Final Season)"
+    : `${roster.contractYearsLeft} years remaining`;
+
+  const p2 = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle(title)
+    .setDescription(teamLine)
+    .addFields(
+      { name: "📝 Contract Status", value: contractStr, inline: false },
+      { name: "🔢 Jersey Number",   value: jersey || "—", inline: true },
+      { name: "🎯 Archetype",       value: archetype, inline: true },
+      { name: "✨ XP Total",        value: roster.xpTotal != null ? roster.xpTotal.toLocaleString() : "—", inline: true },
+    );
+  if (abilities) {
+    const abilLines: string[] = [];
+    if (abilities.superstar?.length) abilLines.push(...abilities.superstar.map(a => `⭐ ${a}`));
+    if (abilities.zone) abilLines.push(`⚡ ${abilities.zone} (Zone)`);
+    if (abilLines.length) p2.addFields({ name: "💥 Active Abilities", value: abilLines.join("\n"), inline: false });
+  }
+  p2.setFooter({ text: `Page 2/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
+
+  // ── Page 3: Season Stats ──────────────────────────────────────────────────
+  const p3 = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle(title)
+    .setDescription(teamLine);
+
+  if (stats) {
+    let anyStats = false;
+    for (const section of STAT_SECTIONS) {
+      const lines = section.stats
+        .filter(s => { const v = (stats as any)[s.key]; return v != null && v !== 0; })
+        .map(s => {
+          const v = (stats as any)[s.key] as number;
+          return `**${s.label}:** ${s.isFloat ? v.toFixed(1) : v.toLocaleString()}`;
+        });
+      if (lines.length) {
+        anyStats = true;
+        p3.addFields({ name: section.title, value: lines.join("  ·  "), inline: false });
+      }
+    }
+    if (stats.passAtt > 0) {
+      const pct = ((stats.passComp / stats.passAtt) * 100).toFixed(1);
+      p3.addFields({ name: "📐 Completion %", value: `${pct}%`, inline: true });
+    }
+    if (!anyStats) p3.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
+  } else {
+    p3.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
+  }
+  p3.setFooter({ text: `Page 3/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
+
+  // ── Page 4: In-Game Attributes ────────────────────────────────────────────
+  const p4 = new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setTitle(title)
+    .setDescription(teamLine);
+
+  let hasAnyAttr = false;
+  const usedAbbrs = new Set<string>();
+  const knownKeys = new Set(ATTR_GROUPS.flatMap(g => g.keys));
+
+  for (const group of ATTR_GROUPS) {
+    const pairs: string[] = [];
+    for (const key of group.keys) {
+      const val = attrs[key];
+      if (val == null) continue;
+      const abbr = ATTR_ABBR[key] ?? key;
+      if (usedAbbrs.has(abbr)) continue;
+      usedAbbrs.add(abbr);
+      pairs.push(`${abbr} **${val}**`);
+    }
+    if (pairs.length) {
+      hasAnyAttr = true;
+      p4.addFields({ name: group.label, value: pairs.join("  "), inline: false });
+    }
+  }
+  // Catch any unknown attribute keys
+  const unknown = Object.entries(attrs)
+    .filter(([k]) => !knownKeys.has(k))
+    .map(([k, v]) => `${k.replace(/Rating$/, "")} **${v}**`);
+  if (unknown.length) {
+    hasAnyAttr = true;
+    p4.addFields({ name: "📦 Other", value: unknown.slice(0, 20).join("  "), inline: false });
+  }
+  if (!hasAnyAttr) p4.addFields({ name: "📊 Attributes", value: "*No attribute data available.*", inline: false });
+  p4.setFooter({ text: `Page 4/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
+
+  return [p1, p2, p3, p4];
+}
+
+// ── Roster card — shared team-stats embed builder ──────────────────────────────
+
+function buildTeamStatsEmbed(
+  teamName: string,
+  seasonNum: number,
+  statsRow: typeof teamSeasonStatsTable.$inferSelect,
+): EmbedBuilder {
+  const ppg    = statsRow.offPtsPerGame > 0 ? statsRow.offPtsPerGame.toFixed(1) : "N/A";
+  const offPct = statsRow.offRedZonePct > 0 ? `${statsRow.offRedZonePct.toFixed(1)}%` : "N/A";
+  const defPct = statsRow.defRedZonePct > 0 ? `${statsRow.defRedZonePct.toFixed(1)}%` : "N/A";
+  return new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(`🏟️ ${teamName} — Season ${seasonNum} Stats`)
+    .setDescription(`**Record: ${statsRow.wins}W-${statsRow.losses}L**`)
+    .addFields(
+      { name: "📤 Offense", value: `Pass: ${statsRow.offPassYds.toLocaleString()} yds\nRush: ${statsRow.offRushYds.toLocaleString()} yds\nTotal: ${statsRow.offYds.toLocaleString()} yds\nPts/Game: ${ppg}\nRed Zone%: ${offPct}`, inline: true },
+      { name: "📥 Defense", value: `Pass Yds Allowed: ${statsRow.defPassYds.toLocaleString()}\nRush Yds Allowed: ${statsRow.defRushYds.toLocaleString()}\nSacks: ${statsRow.teamSacks}\nINTs: ${statsRow.teamInts}\nRZ% Allowed: ${defPct}`, inline: true },
+      { name: "🔄 Turnovers", value: `Turnover Diff: **${statsRow.turnoverDiff >= 0 ? "+" : ""}${statsRow.turnoverDiff}**\nFumbles Rec: ${statsRow.defFumblesRec}`, inline: true },
+    )
+    .setTimestamp();
+}
 
 function formatPlayerLine(p: {
   firstName: string; lastName: string;
@@ -332,9 +598,17 @@ export async function handleActionsInteraction(
 
   // ── Row 2: Rosters ───────────────────────────────────────────────────────────
 
-  if (id === "ac_myroster")     { await handleMyRoster(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_anyroster")    { await handleAnyRosterTeamPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_myroster")       { await handleMyRoster(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_anyroster")      { await handleAnyRosterTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyroster_sel")  { await handleAnyRosterShow(interaction as StringSelectMenuInteraction, sess); return true; }
+  // Roster card — player cards + team stats from within roster view
+  if (id === "ac_rc_cards")          { await handleRcPosPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rc_possel")         { await handleRcPosSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_rc_playersel")      { await handleRcPlayerSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_rc_cardpage:")) { await handleRcCardPage(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rc_back_to_players")  { await handleRcBackToPlayers(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rc_teamstats")        { await handleRcTeamStats(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_rc_back_to_roster")   { await handleRcBackToRoster(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_freeagents")   { await handleFreeAgentsPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_fa_pos")       { await handleFreeAgentsShow(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_playerstats")           { await handlePlayerStatsStart(interaction as ButtonInteraction, sess); return true; }
@@ -1961,7 +2235,7 @@ async function handleMyRoster(interaction: ButtonInteraction, sess: ActionsSessi
   }
 
   // Find teamId from franchiseMcaTeams — match on nickName first, then fullName as fallback
-  const teamRow = (await db.select({ id: franchiseMcaTeamsTable.id, mcaTeamId: franchiseMcaTeamsTable.teamId, fullName: franchiseMcaTeamsTable.fullName, nickName: franchiseMcaTeamsTable.nickName })
+  const teamRow = (await db.select({ mcaTeamId: franchiseMcaTeamsTable.teamId, fullName: franchiseMcaTeamsTable.fullName })
     .from(franchiseMcaTeamsTable)
     .where(and(
       eq(franchiseMcaTeamsTable.seasonId, seasonId),
@@ -1981,10 +2255,15 @@ async function handleMyRoster(interaction: ButtonInteraction, sess: ActionsSessi
   }
 
   const displayName = teamRow.fullName ?? user.team;
+  // Store in session so player-card and team-stats flows can use it
+  sess.rosterViewTeamId   = teamRow.mcaTeamId;
+  sess.rosterViewTeamName = displayName;
+  sess.rosterViewSource   = "my";
+  sess.rosterViewSeasonId = seasonId;
+
   const embed = new EmbedBuilder();
-  // Pass MCA teamId (not serial PK) — franchiseRostersTable.teamId stores MCA ids
   await buildRosterEmbed(gid, seasonId, teamRow.mcaTeamId, displayName, embed);
-  await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+  await interaction.update({ embeds: [embed], components: buildRosterNavRows("my") });
 }
 
 async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
@@ -2048,7 +2327,7 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Blue)
-      .setTitle("👥 View Any Roster")
+      .setTitle("👥 Rosters")
       .setDescription("Select a team from the **AFC** or **NFC** dropdown below to view their full roster.")
       .setFooter({ text: `${teams.length} teams loaded — 👤 Human · 🤖 CPU` })],
     components,
@@ -2067,14 +2346,234 @@ async function handleAnyRosterShow(interaction: StringSelectMenuInteraction, ses
     .limit(1))[0];
   const teamName = teamRow?.fullName ?? "Unknown Team";
 
+  // Store in session for player-card and team-stats flows
+  sess.rosterViewTeamId   = mcaTeamId;
+  sess.rosterViewTeamName = teamName;
+  sess.rosterViewSource   = "any";
+  sess.rosterViewSeasonId = seasonId;
+
   const embed = new EmbedBuilder();
   await buildRosterEmbed(gid, seasonId, mcaTeamId, teamName, embed);
+  await interaction.update({ embeds: [embed], components: buildRosterNavRows("any") });
+}
 
-  const rosterNav = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_anyroster").setLabel("← Back to Teams").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_hub").setLabel("🏠 Hub").setStyle(ButtonStyle.Secondary),
+// ── Roster Card — View Player Cards flow ──────────────────────────────────────
+
+async function handleRcPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewTeamId || !sess.rosterViewTeamName || !sess.rosterViewSeasonId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please open the roster again.")], components: [backToHubRow()] });
+    return;
+  }
+  const gid = interaction.guildId!;
+
+  // Fetch which positions are actually on this roster
+  const posRows = await db.selectDistinct({ position: franchiseRostersTable.position })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, sess.rosterViewSeasonId),
+      eq(franchiseRostersTable.teamId, sess.rosterViewTeamId),
+    ));
+  const onRoster = new Set(posRows.map(r => r.position?.toUpperCase() ?? ""));
+
+  const positions = ROSTER_CARD_POSITIONS.filter(p => onRoster.has(p));
+  if (!positions.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No players found on this roster. Make sure MCA data has been imported.")], components: [buildRosterNavRows(sess.rosterViewSource ?? "my")[1]] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_rc_possel")
+    .setPlaceholder("Select a position…")
+    .addOptions(positions.map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`🃏 ${sess.rosterViewTeamName} — Player Cards`).setDescription("Select a position to browse players.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_rc_back_to_roster").setLabel("← Back to Roster").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleRcPosSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewTeamId || !sess.rosterViewTeamName || !sess.rosterViewSeasonId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired.")], components: [backToHubRow()] });
+    return;
+  }
+  const position = interaction.values[0]!;
+  sess.rosterViewPosition = position;
+
+  await showPlayerDropdown(interaction, sess, position);
+}
+
+async function showPlayerDropdown(
+  interaction: StringSelectMenuInteraction | ButtonInteraction,
+  sess: ActionsSession,
+  position: string,
+) {
+  const players = await db.select({
+    playerId: franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+  })
+    .from(franchiseRostersTable)
+    .where(and(
+      eq(franchiseRostersTable.seasonId, sess.rosterViewSeasonId!),
+      eq(franchiseRostersTable.teamId, sess.rosterViewTeamId!),
+      sql`upper(${franchiseRostersTable.position}) = upper(${position})`,
+    ))
+    .orderBy(desc(franchiseRostersTable.overall));
+
+  if (!players.length) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setDescription(`No **${position}** players found on this team's roster.`)],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_rc_cards").setLabel("← Back to Positions").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      )],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_rc_playersel")
+    .setPlaceholder(`Select a ${position}…`)
+    .addOptions(players.slice(0, 25).map(p =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadge(p.devTrait ?? 0)}`)
+        .setValue(String(p.playerId)),
+    ));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`🃏 ${sess.rosterViewTeamName} — ${position}`).setDescription("Select a player to view their full player card.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_rc_cards").setLabel("← Back to Positions").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleRcPlayerSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewTeamId || !sess.rosterViewSeasonId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired.")], components: [backToHubRow()] });
+    return;
+  }
+  const playerId = Number(interaction.values[0]);
+  sess.rosterCardPlayerId = playerId;
+  sess.rosterCardPage     = 1;
+  await showPlayerCardPage(interaction, sess);
+}
+
+async function showPlayerCardPage(
+  interaction: StringSelectMenuInteraction | ButtonInteraction,
+  sess: ActionsSession,
+) {
+  const page = sess.rosterCardPage ?? 1;
+  const [rosterRow, statsRow, seasonRow] = await Promise.all([
+    db.select().from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, sess.rosterViewSeasonId!),
+        eq(franchiseRostersTable.teamId, sess.rosterViewTeamId!),
+        eq(franchiseRostersTable.playerId, sess.rosterCardPlayerId!),
+      )).limit(1).then(r => r[0]),
+    db.select().from(playerSeasonStatsTable)
+      .where(and(
+        eq(playerSeasonStatsTable.seasonId, sess.rosterViewSeasonId!),
+        eq(playerSeasonStatsTable.playerId, sess.rosterCardPlayerId!),
+      )).limit(1).then(r => r[0]),
+    db.select({ seasonNumber: seasonsTable.seasonNumber })
+      .from(seasonsTable)
+      .where(eq(seasonsTable.id, sess.rosterViewSeasonId!))
+      .limit(1).then(r => r[0]),
+  ]);
+
+  if (!rosterRow) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const seasonNum = seasonRow?.seasonNumber ?? 1;
+  const pages     = buildPlayerCardPages(rosterRow, statsRow, seasonNum);
+  const embed     = pages[page - 1] ?? pages[0]!;
+
+  await interaction.update({
+    embeds: [embed],
+    components: [
+      buildCardPageRow(page, pages.length),
+      buildCardBackRow(),
+    ],
+  });
+}
+
+async function handleRcCardPage(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewTeamId || !sess.rosterCardPlayerId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired.")], components: [backToHubRow()] });
+    return;
+  }
+  const page = Number(interaction.customId.split(":")[1]);
+  if (!Number.isFinite(page) || page < 1 || page > 4) return;
+  sess.rosterCardPage = page;
+  await showPlayerCardPage(interaction, sess);
+}
+
+async function handleRcBackToPlayers(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewPosition) {
+    await handleRcPosPick(interaction, sess);
+    return;
+  }
+  await showPlayerDropdown(interaction, sess, sess.rosterViewPosition);
+}
+
+async function handleRcTeamStats(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewTeamId || !sess.rosterViewTeamName || !sess.rosterViewSeasonId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please open the roster again.")], components: [backToHubRow()] });
+    return;
+  }
+  const [teamStats, seasonRow] = await Promise.all([
+    db.select().from(teamSeasonStatsTable)
+      .where(and(
+        eq(teamSeasonStatsTable.seasonId, sess.rosterViewSeasonId),
+        eq(teamSeasonStatsTable.teamId, sess.rosterViewTeamId),
+      )).limit(1).then(r => r[0]),
+    db.select({ seasonNumber: seasonsTable.seasonNumber })
+      .from(seasonsTable)
+      .where(eq(seasonsTable.id, sess.rosterViewSeasonId))
+      .limit(1).then(r => r[0]),
+  ]);
+
+  const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_rc_back_to_roster").setLabel("← Back to Roster").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
   );
-  await interaction.update({ embeds: [embed], components: [rosterNav] });
+
+  if (!teamStats) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle(`🏟️ ${sess.rosterViewTeamName} — Team Stats`).setDescription("No team stats found yet this season. Import MCA data to populate.")],
+      components: [backRow],
+    });
+    return;
+  }
+
+  const embed = buildTeamStatsEmbed(sess.rosterViewTeamName, seasonRow?.seasonNumber ?? 1, teamStats);
+  await interaction.update({ embeds: [embed], components: [backRow] });
+}
+
+async function handleRcBackToRoster(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.rosterViewTeamId || !sess.rosterViewTeamName || !sess.rosterViewSeasonId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired.")], components: [backToHubRow()] });
+    return;
+  }
+  const embed = new EmbedBuilder();
+  await buildRosterEmbed(interaction.guildId!, sess.rosterViewSeasonId, sess.rosterViewTeamId, sess.rosterViewTeamName, embed);
+  await interaction.update({ embeds: [embed], components: buildRosterNavRows(sess.rosterViewSource ?? "my") });
 }
 
 // ── Free Agents ───────────────────────────────────────────────────────────────
