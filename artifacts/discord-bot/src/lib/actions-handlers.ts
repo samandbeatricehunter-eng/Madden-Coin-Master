@@ -2881,39 +2881,96 @@ function updateSortStack(
   return [...preserved, ...stillChosen, ...added].slice(0, 5);
 }
 
-/** Apply a sort stack to a SQL ORDER BY expression array (shared for AP and FA). */
-function applyStackToOrderExprs(stack: string[], exprs: SQL[]): void {
-  for (const key of stack) {
+/**
+ * Exponential weights by priority position.
+ * 1st pick → 1.0, 2nd → 0.5, 3rd → 0.25, 4th → 0.125, 5th → 0.0625
+ */
+const SORT_WEIGHTS = [1.0, 0.5, 0.25, 0.125, 0.0625];
+
+/**
+ * Build a single composite SQL score expression from the sort stack.
+ * Each term is a normalized (0-1) value multiplied by its exponential weight.
+ * The resulting expression is sorted DESC so the "best fit" player ranks first.
+ *
+ * This produces Madden-style scouting: a player strong across ALL priorities
+ * beats a player maxed on only the first pick but weak on others.
+ */
+function buildWeightedScoreExpr(stack: string[]): SQL | null {
+  if (!stack.length) return null;
+
+  const terms: string[] = [];
+
+  for (let i = 0; i < stack.length; i++) {
+    const key = stack[i]!;
+    const w   = SORT_WEIGHTS[i] ?? 0.0625;
+
     if (ABBR_TO_ATTR_KEY[key]) {
-      exprs.push(sql.raw(`(attributes->>'${ABBR_TO_ATTR_KEY[key]}')::numeric DESC NULLS LAST`));
+      // 0-99 Madden attribute — normalize by 99
+      const attrKey = ABBR_TO_ATTR_KEY[key];
+      terms.push(`COALESCE((attributes->>'${attrKey}')::numeric, 0) / 99.0 * ${w}`);
     } else {
       const parts = key.split("_");
-      const dir   = parts[parts.length - 1] === "asc" ? "ASC" : "DESC";
+      const dir   = parts[parts.length - 1]; // "asc" or "desc"
       const field = parts.slice(0, -1).join("_");
       switch (field) {
-        case "overall":  exprs.push(sql.raw(`overall ${dir}`)); break;
-        case "age":      exprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
-        case "height":   exprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
-        case "weight":   exprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
-        case "contract": exprs.push(sql.raw(`contract_years_left ${dir} NULLS LAST`)); break;
-        case "kpw":      exprs.push(sql.raw(`(attributes->>'kickPowerRating')::numeric DESC NULLS LAST`)); break;
-        case "kac":      exprs.push(sql.raw(`(attributes->>'kickAccuracyRating')::numeric DESC NULLS LAST`)); break;
-        case "kr":       exprs.push(sql.raw(`(attributes->>'kickReturnRating')::numeric DESC NULLS LAST`)); break;
+        case "overall":
+          // 0-99 range
+          terms.push(dir === "desc"
+            ? `COALESCE(overall, 0) / 99.0 * ${w}`
+            : `(99.0 - COALESCE(overall, 99)) / 99.0 * ${w}`);
+          break;
+        case "age":
+          // Typical Madden age range 21-45; asc = younger is better
+          terms.push(dir === "asc"
+            ? `(45.0 - COALESCE(age, 45)) / 24.0 * ${w}`
+            : `(COALESCE(age, 21) - 21.0) / 24.0 * ${w}`);
+          break;
+        case "height":
+          // Height stored as inches (~66-80)
+          terms.push(dir === "desc"
+            ? `(COALESCE((attributes->>'height')::numeric, 66) - 66.0) / 14.0 * ${w}`
+            : `(80.0 - COALESCE((attributes->>'height')::numeric, 80)) / 14.0 * ${w}`);
+          break;
+        case "weight":
+          // Weight stored as lbs (~150-380)
+          terms.push(dir === "desc"
+            ? `(COALESCE((attributes->>'weight')::numeric, 150) - 150.0) / 230.0 * ${w}`
+            : `(380.0 - COALESCE((attributes->>'weight')::numeric, 380)) / 230.0 * ${w}`);
+          break;
+        case "contract":
+          // Contract years remaining (~0-7); asc = shorter deal is better
+          terms.push(dir === "asc"
+            ? `(7.0 - COALESCE(contract_years_left, 7)) / 7.0 * ${w}`
+            : `COALESCE(contract_years_left, 0) / 7.0 * ${w}`);
+          break;
+        case "kpw":
+          terms.push(`COALESCE((attributes->>'kickPowerRating')::numeric, 0) / 99.0 * ${w}`);
+          break;
+        case "kac":
+          terms.push(`COALESCE((attributes->>'kickAccuracyRating')::numeric, 0) / 99.0 * ${w}`);
+          break;
+        case "kr":
+          terms.push(`COALESCE((attributes->>'kickReturnRating')::numeric, 0) / 99.0 * ${w}`);
+          break;
       }
     }
   }
+
+  if (!terms.length) return null;
+  return sql.raw(`(${terms.join(" + ")}) DESC NULLS LAST`);
 }
 
 function buildApOrderBy(sess: ActionsSession): SQL[] {
-  const exprs: SQL[] = [];
-  applyStackToOrderExprs(sess.apSortStack ?? [], exprs);
-  if (!exprs.length) exprs.push(desc(franchiseRostersTable.overall));
-  return exprs;
+  const expr = buildWeightedScoreExpr(sess.apSortStack ?? []);
+  return [expr ?? desc(franchiseRostersTable.overall)];
 }
 
 function buildSortStackSummary(stack: string[]): string {
   if (!stack.length) return "";
-  return "**Sort:** " + stack.map((k, i) => `${i + 1}. ${sortStackLabel(k)}`).join(" · ");
+  const WEIGHT_LABELS = ["100%", "50%", "25%", "12.5%", "6.25%"];
+  return "**Sort (weighted):** " + stack.map((k, i) =>
+    `${sortStackLabel(k)} [${WEIGHT_LABELS[i] ?? "~6%"}]`,
+  ).join(" · ");
 }
 
 function buildApFilterSummary(sess: ActionsSession): string {
@@ -2982,9 +3039,8 @@ async function showFaPlayerList(
     conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
   }
 
-  const orderExprs: SQL[] = [];
-  applyStackToOrderExprs(sess.faSortStack ?? [], orderExprs);
-  if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
+  const faWeightedExpr = buildWeightedScoreExpr(sess.faSortStack ?? []);
+  const orderExprs: SQL[] = [faWeightedExpr ?? desc(franchiseRostersTable.overall)];
 
   const players = await db.select({
     playerId:  franchiseRostersTable.playerId,
@@ -3638,9 +3694,8 @@ async function handleFaFilterNameSubmit(interaction: ModalSubmitInteraction, ses
     conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
   }
 
-  const orderExprs: SQL[] = [];
-  applyStackToOrderExprs(sess.faSortStack ?? [], orderExprs);
-  if (!orderExprs.length) orderExprs.push(desc(franchiseRostersTable.overall));
+  const faWeightedExpr = buildWeightedScoreExpr(sess.faSortStack ?? []);
+  const orderExprs: SQL[] = [faWeightedExpr ?? desc(franchiseRostersTable.overall)];
 
   const players = await db.select({
     playerId:  franchiseRostersTable.playerId,
