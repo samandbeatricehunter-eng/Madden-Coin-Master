@@ -151,12 +151,12 @@ export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_anyuserstats").setLabel("👤 User Stats").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_seasonpr").setLabel("🥇 Season PR").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_alltimepr").setLabel("🏆 All-Time PR").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_globalpr").setLabel("🌐 Global PR").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   return [row1, row2, row3];
 }
