@@ -635,7 +635,9 @@ export async function handleActionsInteraction(
   if (id === "ac_buy_legend_confirm")       { await handleBuyLegendExecute(interaction as ButtonInteraction, sess); return true; }
 
   // Coins sub
-  if (id === "ac_send_coins_modal")         { await handleSendCoinsModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_send_coins_modal")             { await handleSendCoinsModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_transfer")                     { await handleBankTransfer(interaction as ButtonInteraction, sess); return true; }
+  if (id.startsWith("ac_transfer_dir:"))        { await handleBankTransferDir(interaction as ButtonInteraction); return true; }
 
   // Wager sub
   if (id === "ac_wager_game")                  { await handleWagerGameSelect(interaction as StringSelectMenuInteraction, sess); return true; }
@@ -731,7 +733,8 @@ export async function handleActionsInteraction(
 
   // Modal submits
   if (id === "ac_modal_tweet")      { await handleTweetSubmit(interaction as ModalSubmitInteraction, sess); return true; }
-  if (id === "ac_modal_sendcoins")  { await handleSendCoinsSubmit(interaction as ModalSubmitInteraction, sess); return true; }
+  if (id === "ac_modal_sendcoins")              { await handleSendCoinsSubmit(interaction as ModalSubmitInteraction, sess); return true; }
+  if (id.startsWith("ac_modal_transfer:"))      { await handleBankTransferSubmit(interaction as ModalSubmitInteraction); return true; }
   if (id === "ac_modal_wageramount") { await handleWagerAmountSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_autopilot")  { await handleAutoPilotSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_violation")  { await handleViolationSubmit(interaction as ModalSubmitInteraction, sess); return true; }
@@ -1967,10 +1970,117 @@ async function handleCoins(interaction: ButtonInteraction, sess: ActionsSession)
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_send_coins_modal").setLabel("📤 Send Coins").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_transfer").setLabel("💸 Transfer").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
 
   await interaction.update({ embeds: [embed], components: [row] });
+}
+
+async function handleBankTransfer(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid  = interaction.guildId!;
+  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const savingsRow = (await db.select({ balance: userSavingsTable.balance }).from(userSavingsTable)
+    .where(eq(userSavingsTable.discordId, interaction.user.id)).limit(1))[0];
+  const savings = savingsRow?.balance ?? 0;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("💸 Transfer — Choose Direction")
+    .setDescription("Move coins between your wallet and savings account.")
+    .addFields(
+      { name: "💰 Wallet",  value: `**${user.balance.toLocaleString()}** coins`, inline: true },
+      { name: "🏦 Savings", value: `**${savings.toLocaleString()}** coins`, inline: true },
+    );
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_transfer_dir:IN").setLabel("➡ Wallet → Savings").setStyle(ButtonStyle.Primary).setDisabled(user.balance <= 0),
+    new ButtonBuilder().setCustomId("ac_transfer_dir:OUT").setLabel("⬅ Savings → Wallet").setStyle(ButtonStyle.Success).setDisabled(savings <= 0),
+    new ButtonBuilder().setCustomId("ac_coins").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  await interaction.update({ embeds: [embed], components: [row] });
+}
+
+async function handleBankTransferDir(interaction: ButtonInteraction) {
+  const dir   = interaction.customId.split(":")[1] as "IN" | "OUT";
+  const label = dir === "IN" ? "Wallet → Savings" : "Savings → Wallet";
+  const modal = new ModalBuilder()
+    .setCustomId(`ac_modal_transfer:${dir}`)
+    .setTitle(`Transfer: ${label}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("amount")
+          .setLabel("Amount to transfer (coins)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. 500")
+          .setRequired(true)
+          .setMaxLength(20),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+async function handleBankTransferSubmit(interaction: ModalSubmitInteraction) {
+  const dir       = interaction.customId.split(":")[1] as "IN" | "OUT";
+  const amountStr = interaction.fields.getTextInputValue("amount").trim();
+  const amount    = parseInt(amountStr, 10);
+  const gid       = interaction.guildId!;
+
+  if (isNaN(amount) || amount < 1) {
+    await interaction.reply({ content: "❌ Please enter a valid positive amount.", ephemeral: true });
+    return;
+  }
+
+  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const savingsRow = (await db.select({ balance: userSavingsTable.balance }).from(userSavingsTable)
+    .where(eq(userSavingsTable.discordId, interaction.user.id)).limit(1))[0];
+  const savings = savingsRow?.balance ?? 0;
+
+  if (dir === "IN") {
+    if (user.balance < amount) {
+      await interaction.reply({ content: `❌ Insufficient wallet balance. You have **${user.balance.toLocaleString()}** coins.`, ephemeral: true });
+      return;
+    }
+    await db.transaction(async (tx) => {
+      await tx.update(usersTable)
+        .set({ balance: user.balance - amount })
+        .where(and(eq(usersTable.discordId, interaction.user.id), eq(usersTable.guildId, gid)));
+      if (savingsRow) {
+        await tx.update(userSavingsTable)
+          .set({ balance: savings + amount })
+          .where(eq(userSavingsTable.discordId, interaction.user.id));
+      } else {
+        await tx.insert(userSavingsTable).values({ discordId: interaction.user.id, balance: amount });
+      }
+    });
+    await interaction.reply({
+      content: `✅ Transferred **${amount.toLocaleString()}** coins to savings.\n💰 Wallet: **${(user.balance - amount).toLocaleString()}** | 🏦 Savings: **${(savings + amount).toLocaleString()}**`,
+      ephemeral: true,
+    });
+  } else {
+    if (savings < amount) {
+      await interaction.reply({ content: `❌ Insufficient savings balance. You have **${savings.toLocaleString()}** coins in savings.`, ephemeral: true });
+      return;
+    }
+    await db.transaction(async (tx) => {
+      await tx.update(usersTable)
+        .set({ balance: user.balance + amount })
+        .where(and(eq(usersTable.discordId, interaction.user.id), eq(usersTable.guildId, gid)));
+      if (savingsRow) {
+        await tx.update(userSavingsTable)
+          .set({ balance: savings - amount })
+          .where(eq(userSavingsTable.discordId, interaction.user.id));
+      }
+    });
+    await interaction.reply({
+      content: `✅ Transferred **${amount.toLocaleString()}** coins to wallet.\n💰 Wallet: **${(user.balance + amount).toLocaleString()}** | 🏦 Savings: **${(savings - amount).toLocaleString()}**`,
+      ephemeral: true,
+    });
+  }
 }
 
 async function handleSendCoinsModal(interaction: ButtonInteraction) {
@@ -2390,6 +2500,8 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
   const browseRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_allplayers").setLabel("🌐 All Players").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_freeagents").setLabel("🆓 Free Agents").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_activeteams").setLabel("🟢 Active Teams").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_openteams").setLabel("🔴 Open Teams").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
   );
 
@@ -3783,16 +3895,28 @@ async function handleSeasonPR(interaction: ButtonInteraction, sess: ActionsSessi
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const season = await getOrCreateActiveSeason(gid);
-  const { records } = await getSeasonRecords(season.id);
+  const season  = await getOrCreateActiveSeason(gid);
+  // Query directly — do NOT overlay allTimeSuperbowlWins (cross-guild contamination risk).
+  // seasonId is unique per guild so this is already guild-scoped.
+  const dbRows = await db.select().from(userRecordsTable)
+    .where(eq(userRecordsTable.seasonId, season.id));
 
-  if (!records.length) {
+  if (!dbRows.length) {
     await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 Season ${season.seasonNumber} Power Rankings`).setDescription("No game records yet.")], components: [backToHubRow()] });
     return;
   }
 
-  const ranked = records.map(r => ({
-    ...r,
+  const ranked = dbRows.map(r => ({
+    discordId:         r.discordId,
+    discordUsername:   r.discordUsername,
+    team:              r.team ?? null,
+    wins:              r.wins,
+    losses:            r.losses,
+    pointDifferential: r.pointDifferential,
+    playoffWins:       r.playoffWins,
+    playoffLosses:     r.playoffLosses,
+    superbowlWins:     r.superbowlWins,
+    superbowlLosses:   r.superbowlLosses,
     gp: r.wins + r.losses,
     pr: calcPRScore(r.wins, r.losses, r.pointDifferential),
     label: r.team ?? r.discordUsername,
@@ -3823,18 +3947,71 @@ async function handleAllTimePR(interaction: ButtonInteraction, sess: ActionsSess
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const { records } = await getAllTimeRecords();
+  // Get season IDs belonging to this guild only — avoids cross-guild record contamination.
+  const guildSeasonRows = await db.select({ id: seasonsTable.id }).from(seasonsTable)
+    .where(eq(seasonsTable.guildId, gid));
+  const guildSeasonIds = guildSeasonRows.map(s => s.id);
 
-  // Load current guild roster: discordId → team (null if not on a team)
+  const dbRows = guildSeasonIds.length
+    ? await db.select().from(userRecordsTable).where(inArray(userRecordsTable.seasonId, guildSeasonIds))
+    : [];
+
+  // Load current guild roster for team labels and allTimeSuperbowlWins (guild-scoped)
   const guildUsers = await db.select({
-    discordId: usersTable.discordId,
-    team:      usersTable.team,
+    discordId:            usersTable.discordId,
+    discordUsername:      usersTable.discordUsername,
+    team:                 usersTable.team,
+    allTimeSuperbowlWins: usersTable.allTimeSuperbowlWins,
+    allTimeSuperbowlLosses: usersTable.allTimeSuperbowlLosses,
   }).from(usersTable).where(eq(usersTable.guildId, gid));
 
-  const guildIds    = new Set(guildUsers.map(u => u.discordId));
-  const guildTeamMap = new Map(guildUsers.map(u => [u.discordId, u.team ?? null]));
+  const guildTeamMap = new Map(guildUsers.map(u => [u.discordId, u]));
 
-  const filtered = records.filter(r => guildIds.has(r.discordId));
+  // Aggregate across seasons (within this guild)
+  const agg = new Map<string, {
+    discordId: string; discordUsername: string; team: string | null;
+    wins: number; losses: number; pointDifferential: number;
+    playoffWins: number; playoffLosses: number; superbowlWins: number; superbowlLosses: number;
+  }>();
+  for (const r of dbRows) {
+    const ex = agg.get(r.discordId);
+    if (ex) {
+      ex.wins               += r.wins;
+      ex.losses             += r.losses;
+      ex.pointDifferential  += r.pointDifferential;
+      ex.playoffWins        += r.playoffWins;
+      ex.playoffLosses      += r.playoffLosses;
+      ex.superbowlWins      += r.superbowlWins;
+      ex.superbowlLosses    += r.superbowlLosses;
+      if (r.team) ex.team    = r.team;
+      ex.discordUsername     = r.discordUsername;
+    } else {
+      agg.set(r.discordId, {
+        discordId:         r.discordId,
+        discordUsername:   r.discordUsername,
+        team:              r.team ?? null,
+        wins:              r.wins,
+        losses:            r.losses,
+        pointDifferential: r.pointDifferential,
+        playoffWins:       r.playoffWins,
+        playoffLosses:     r.playoffLosses,
+        superbowlWins:     r.superbowlWins,
+        superbowlLosses:   r.superbowlLosses,
+      });
+    }
+  }
+
+  // Overlay allTimeSuperbowlWins/Losses from usersTable (guild-scoped — no cross-guild bleed)
+  for (const [id, rec] of agg) {
+    const u = guildTeamMap.get(id);
+    if (u) {
+      rec.superbowlWins   = Math.max(rec.superbowlWins,   u.allTimeSuperbowlWins   ?? 0);
+      rec.superbowlLosses = Math.max(rec.superbowlLosses, u.allTimeSuperbowlLosses ?? 0);
+    }
+  }
+
+  // Filter to only users who are in this guild
+  const filtered = [...agg.values()].filter(r => guildTeamMap.has(r.discordId));
 
   if (!filtered.length) {
     await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("🏆 All-Time Power Rankings").setDescription("No all-time records yet.")], components: [backToHubRow()] });
@@ -3842,7 +4019,8 @@ async function handleAllTimePR(interaction: ButtonInteraction, sess: ActionsSess
   }
 
   const ranked = filtered.map(r => {
-    const currentTeam = guildTeamMap.get(r.discordId);
+    const u = guildTeamMap.get(r.discordId);
+    const currentTeam = u?.team ?? null;
     let teamSuffix: string;
     if (currentTeam && currentTeam.trim() !== "") {
       teamSuffix = ` (${currentTeam})`;
@@ -3919,6 +4097,28 @@ async function handleGlobalPR(interaction: ButtonInteraction, sess: ActionsSessi
   const globalRankMap = new Map<string, { rank: number; wins: number; losses: number; pd: number; pr: number }>();
   globalRanked.forEach((r, i) => globalRankMap.set(r.discordId, { rank: i + 1, wins: r.wins, losses: r.losses, pd: r.pd, pr: r.pr }));
 
+  // Step 3b: aggregate global playoff / SB data from userRecordsTable across all seasons & guilds
+  const allSeasonRecords = await db.select({
+    discordId:      userRecordsTable.discordId,
+    playoffWins:    userRecordsTable.playoffWins,
+    playoffLosses:  userRecordsTable.playoffLosses,
+    superbowlWins:  userRecordsTable.superbowlWins,
+    superbowlLosses: userRecordsTable.superbowlLosses,
+  }).from(userRecordsTable);
+
+  const globalPostseasonMap = new Map<string, { pw: number; pl: number; sw: number; sl: number }>();
+  for (const r of allSeasonRecords) {
+    const ex = globalPostseasonMap.get(r.discordId);
+    if (ex) {
+      ex.pw += r.playoffWins;
+      ex.pl += r.playoffLosses;
+      ex.sw += r.superbowlWins;
+      ex.sl += r.superbowlLosses;
+    } else {
+      globalPostseasonMap.set(r.discordId, { pw: r.playoffWins, pl: r.playoffLosses, sw: r.superbowlWins, sl: r.superbowlLosses });
+    }
+  }
+
   // Step 4: fetch savings balances for guild users
   const guildIds = guildUsers.map(u => u.discordId);
   const savingsRows = guildIds.length
@@ -3931,28 +4131,37 @@ async function handleGlobalPR(interaction: ButtonInteraction, sess: ActionsSessi
   // Step 5: build display rows for guild users (sorted by global rank)
   const displayRows = guildUsers
     .map(u => {
-      const g = globalRankMap.get(u.discordId);
+      const g  = globalRankMap.get(u.discordId);
+      const ps = globalPostseasonMap.get(u.discordId);
       return {
-        discordId: u.discordId,
-        username:  u.discordUsername ?? u.discordId,
-        team:      u.team ?? "",
-        globalRank: g?.rank ?? 99999,
-        wins:       g?.wins ?? 0,
-        losses:     g?.losses ?? 0,
-        pd:         g?.pd ?? 0,
-        pr:         g?.pr ?? 0,
-        totalCoins: (u.walletBalance ?? 0) + (savingsMap.get(u.discordId) ?? 0),
+        discordId:     u.discordId,
+        username:      u.discordUsername ?? u.discordId,
+        team:          u.team ?? "",
+        globalRank:    g?.rank ?? 99999,
+        wins:          g?.wins ?? 0,
+        losses:        g?.losses ?? 0,
+        pd:            g?.pd ?? 0,
+        pr:            g?.pr ?? 0,
+        totalCoins:    (u.walletBalance ?? 0) + (savingsMap.get(u.discordId) ?? 0),
+        playoffWins:   ps?.pw ?? 0,
+        playoffLosses: ps?.pl ?? 0,
+        superbowlWins: ps?.sw ?? 0,
+        superbowlLosses: ps?.sl ?? 0,
       };
     })
     .sort((a, b) => a.globalRank - b.globalRank);
 
   const medals = ["🥇", "🥈", "🥉"];
   const lines = displayRows.map(r => {
-    const gp      = r.wins + r.losses;
-    const winPct  = gp > 0 ? ((r.wins / gp) * 100).toFixed(1) : "0.0";
+    const gp        = r.wins + r.losses;
+    const winPct    = gp > 0 ? ((r.wins / gp) * 100).toFixed(1) : "0.0";
     const rankBadge = medals[r.globalRank - 1] ?? `**#${r.globalRank}**`;
-    const label   = r.team ? `${r.username} (${r.team})` : r.username;
-    return `${rankBadge} ${label} — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pd)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)} | 🪙 ${r.totalCoins.toLocaleString()}`;
+    const label     = r.team ? `${r.username} (${r.team})` : r.username;
+    const postseason = [
+      r.playoffWins + r.playoffLosses > 0 ? `PO: ${r.playoffWins}W-${r.playoffLosses}L` : "",
+      r.superbowlWins + r.superbowlLosses > 0 ? `🏆SB: ${r.superbowlWins}W-${r.superbowlLosses}L` : "",
+    ].filter(Boolean).join(" | ");
+    return `${rankBadge} ${label} — ${r.wins}W-${r.losses}L | ${fmtDiff(r.pd)} pts | ${winPct}% | PR: ${r.pr.toFixed(1)} | 🪙 ${r.totalCoins.toLocaleString()}${postseason ? ` *(${postseason})*` : ""}`;
   });
 
   const embed = new EmbedBuilder()

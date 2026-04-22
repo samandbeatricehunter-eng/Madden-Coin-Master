@@ -52,12 +52,12 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   const wagerVisible = settings.coinEconomy && settings.wagerEnabled;
 
   const sec1: ButtonBuilder[] = [];
-  if (ecoVisible)   sec1.push(new ButtonBuilder().setCustomId("ac_purchase").setLabel("💳 Make a Purchase").setStyle(ButtonStyle.Primary));
-  if (wagerVisible) sec1.push(new ButtonBuilder().setCustomId("ac_wager").setLabel("⚔️ Place a Wager").setStyle(ButtonStyle.Danger));
-  if (ecoVisible)   sec1.push(new ButtonBuilder().setCustomId("ac_coins").setLabel("🪙 View / Send Coins").setStyle(ButtonStyle.Success));
+  if (ecoVisible)   sec1.push(new ButtonBuilder().setCustomId("ac_purchase").setLabel("💳 Purchase").setStyle(ButtonStyle.Secondary));
+  if (wagerVisible) sec1.push(new ButtonBuilder().setCustomId("ac_wager").setLabel("⚔️ Wager").setStyle(ButtonStyle.Secondary));
+  if (ecoVisible)   sec1.push(new ButtonBuilder().setCustomId("ac_coins").setLabel("🪙 Bank").setStyle(ButtonStyle.Secondary));
   sec1.push(
-    new ButtonBuilder().setCustomId("ac_interview").setLabel("🎙️ Request Interview").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_tweet").setLabel("🐦 Post a Tweet").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_interview").setLabel("🎙️ Interview").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_tweet").setLabel("🐦 Tweet").setStyle(ButtonStyle.Secondary),
   );
 
   const sec2: ButtonBuilder[] = [];
@@ -89,8 +89,6 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   }
 
   const sec5: ButtonBuilder[] = [
-    new ButtonBuilder().setCustomId("ac_activeteams").setLabel("🟢 Active Teams").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_openteams").setLabel("🔴 Open Teams").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_autopilot").setLabel("✈️ Auto-Pilot").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_violation").setLabel("🚨 Report Violation").setStyle(ButtonStyle.Danger),
