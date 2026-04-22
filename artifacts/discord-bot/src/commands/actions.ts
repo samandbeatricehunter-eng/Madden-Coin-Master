@@ -1,11 +1,10 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, Colors,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits,
 } from "discord.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import type { ServerSettings } from "../lib/server-settings.js";
-import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
-import { appendUserStatsFields } from "../lib/user-stats-embed.js";
+import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("menu")
@@ -92,6 +91,7 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
 
   // ── Row 5: Tools & Navigation ───────────────────────────────────────────────
   const sec5: ButtonBuilder[] = [
+    new ButtonBuilder().setCustomId("ac_myprofile").setLabel("👤 My Profile").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_autopilot").setLabel("✈️ Auto-Pilot").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_violation").setLabel("🚨 Report Violation").setStyle(ButtonStyle.Danger),
@@ -190,18 +190,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const rules = await getSeasonRules(season);
-
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Blue)
-    .setTitle(`🏈 /menu — ${user.team ?? interaction.user.username}`)
-    .setDescription("Select any action below. All menus are private (visible only to you).")
-    .setFooter({ text: "/menu — selections expire after 15 minutes" });
-
-  await appendUserStatsFields(embed, uid, gid, user, season, settings, rules, interaction.user.displayAvatarURL());
-
   await interaction.editReply({
-    embeds:     [embed],
+    embeds:     [buildActionsHubEmbed(settings, isAdmin)],
     components: buildActionsHubRows(settings, isAdmin),
   });
 }

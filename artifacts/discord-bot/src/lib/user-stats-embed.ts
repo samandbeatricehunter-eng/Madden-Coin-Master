@@ -1,9 +1,12 @@
 /**
- * Shared helper — fetches user stats and appends them as fields on an existing
- * EmbedBuilder. Used by both the /actions hub initial reply and the ac_hub
- * back-to-hub handler so both always show the player's live data.
+ * Shared helper — fetches user stats and builds three paginated EmbedBuilders.
+ * Page 1: Identity (avatar, balance, EA IDs)
+ * Page 2: Records (this season, guild all-time, global)
+ * Page 3: Purchases & History (season caps, legends, custom players, last 10 txns)
+ *
+ * Also exports buildProfileNavRow() for the pagination button row.
  */
-import { EmbedBuilder } from "discord.js";
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { db } from "@workspace/db";
 import {
   usersTable, userSavingsTable, userRecordsTable, globalUserRecordsTable,
@@ -22,12 +25,8 @@ function fmtDiff(pd: number): string {
   return pd >= 0 ? `+${pd.toLocaleString()}` : `${pd.toLocaleString()}`;
 }
 
-/**
- * Fetches all secondary stats rows and appends them as embed fields.
- * Mutates and returns the passed embed for chaining.
- */
-export async function appendUserStatsFields(
-  embed: EmbedBuilder,
+/** Three paginated EmbedBuilders for a user's profile. */
+export async function buildUserProfilePages(
   uid: string,
   gid: string,
   user: User,
@@ -35,7 +34,8 @@ export async function appendUserStatsFields(
   settings: ServerSettings,
   rules: SeasonRules,
   avatarUrl: string,
-): Promise<EmbedBuilder> {
+  displayName: string,
+): Promise<EmbedBuilder[]> {
   const [savingsRow, recordRow, seasonStatsRow, globalRecord, eaIds, lastTxns] = await Promise.all([
     db.select({ balance: userSavingsTable.balance })
       .from(userSavingsTable).where(eq(userSavingsTable.discordId, uid)).limit(1).then(r => r[0]),
@@ -56,24 +56,22 @@ export async function appendUserStatsFields(
       .orderBy(desc(coinTransactionsTable.createdAt)).limit(10),
   ]);
 
-  // All season records for this user across all seasons (for global + guild all-time aggregation)
+  // All season records across all seasons (for global + guild all-time aggregation)
   const allUserSeasonRecords = await db.select({
-    seasonId:       userRecordsTable.seasonId,
-    wins:           userRecordsTable.wins,
-    losses:         userRecordsTable.losses,
+    seasonId:          userRecordsTable.seasonId,
+    wins:              userRecordsTable.wins,
+    losses:            userRecordsTable.losses,
     pointDifferential: userRecordsTable.pointDifferential,
-    playoffWins:    userRecordsTable.playoffWins,
-    playoffLosses:  userRecordsTable.playoffLosses,
-    superbowlWins:  userRecordsTable.superbowlWins,
-    superbowlLosses: userRecordsTable.superbowlLosses,
+    playoffWins:       userRecordsTable.playoffWins,
+    playoffLosses:     userRecordsTable.playoffLosses,
+    superbowlWins:     userRecordsTable.superbowlWins,
+    superbowlLosses:   userRecordsTable.superbowlLosses,
   }).from(userRecordsTable).where(eq(userRecordsTable.discordId, uid));
 
-  // Guild season IDs (for guild all-time scope)
   const guildSeasonIds = (await db.select({ id: seasonsTable.id }).from(seasonsTable)
     .where(eq(seasonsTable.guildId, gid))).map(s => s.id);
   const guildSeasonIdSet = new Set(guildSeasonIds);
 
-  // Aggregate: global PO/SB (all seasons, all guilds) and guild all-time
   let globalPW = 0, globalPL = 0, globalSW = 0, globalSL = 0;
   let guildW = 0, guildL = 0, guildPD = 0, guildPW = 0, guildPL = 0, guildSW = 0, guildSL = 0;
   for (const r of allUserSeasonRecords) {
@@ -92,7 +90,6 @@ export async function appendUserStatsFields(
     }
   }
 
-  // Legends scoped to this guild via seasonId → seasonsTable.guildId join
   const legendRows = await db.select({
     legendName:     inventoryTable.legendName,
     legendCategory: inventoryTable.legendCategory,
@@ -105,7 +102,6 @@ export async function appendUserStatsFields(
       eq(inventoryTable.discordId, uid),
     ));
 
-  // Custom players scoped to this guild via seasonId → seasonsTable.guildId join
   const customPlayerRows = await db.select({
     firstName: customPlayersTable.firstName, lastName: customPlayersTable.lastName,
     position:  customPlayersTable.position,  packageTier: customPlayersTable.packageTier,
@@ -117,66 +113,97 @@ export async function appendUserStatsFields(
       ne(customPlayersTable.status, "refunded"),
     ));
 
+  // ── Computed values ──────────────────────────────────────────────────────────
   const savings = savingsRow?.balance ?? 0;
   const total   = user.balance + savings;
-  const ssW     = recordRow?.wins              ?? 0;
-  const ssL     = recordRow?.losses            ?? 0;
-  const ssPOW   = recordRow?.playoffWins       ?? 0;
-  const ssPOL   = recordRow?.playoffLosses     ?? 0;
-  const ssSBW   = recordRow?.superbowlWins     ?? 0;
-  const ssSBL   = recordRow?.superbowlLosses   ?? 0;
-  const ssPD    = recordRow?.pointDifferential ?? 0;
 
-  const glbW    = globalRecord?.wins               ?? 0;
-  const glbL    = globalRecord?.losses             ?? 0;
-  const glbPD   = globalRecord?.pointDifferential  ?? 0;
+  const ssW   = recordRow?.wins              ?? 0;
+  const ssL   = recordRow?.losses            ?? 0;
+  const ssPD  = recordRow?.pointDifferential ?? 0;
+  const ssPOW = recordRow?.playoffWins       ?? 0;
+  const ssPOL = recordRow?.playoffLosses     ?? 0;
+  const ssSBW = recordRow?.superbowlWins     ?? 0;
+  const ssSBL = recordRow?.superbowlLosses   ?? 0;
 
-  // Build season record value
-  const seasonParts: string[] = [`${ssW}W-${ssL}L`];
-  if (ssPD !== 0) seasonParts.push(`PD: ${fmtDiff(ssPD)}`);
-  if (ssPOW + ssPOL > 0) seasonParts.push(`PO: ${ssPOW}W-${ssPOL}L`);
-  if (ssSBW + ssSBL > 0) seasonParts.push(`🏆SB: ${ssSBW}W-${ssSBL}L`);
+  const glbW  = globalRecord?.wins              ?? 0;
+  const glbL  = globalRecord?.losses            ?? 0;
+  const glbPD = globalRecord?.pointDifferential ?? 0;
 
-  // Build global record value
-  const glbParts: string[] = [`${glbW}W-${glbL}L`];
-  if (glbPD !== 0) glbParts.push(`PD: ${fmtDiff(glbPD)}`);
-  if (globalPW + globalPL > 0) glbParts.push(`PO: ${globalPW}W-${globalPL}L`);
-  if (globalSW + globalSL > 0) glbParts.push(`🏆SB: ${globalSW}W-${globalSL}L`);
+  // Season record — reg-season only on line 1, PO/SB if applicable
+  const ssLines: string[] = [`${ssW}W-${ssL}L  PD: ${fmtDiff(ssPD)}`];
+  if (ssPOW + ssPOL > 0) ssLines.push(`PO: ${ssPOW}W-${ssPOL}L`);
+  if (ssSBW + ssSBL > 0) ssLines.push(`🏆 SB: ${ssSBW}W-${ssSBL}L`);
 
-  // Build guild all-time record value
-  const guildParts: string[] = [`${guildW}W-${guildL}L`];
-  if (guildPD !== 0) guildParts.push(`PD: ${fmtDiff(guildPD)}`);
-  if (guildPW + guildPL > 0) guildParts.push(`PO: ${guildPW}W-${guildPL}L`);
-  if (guildSW + guildSL > 0) guildParts.push(`🏆SB: ${guildSW}W-${guildSL}L`);
+  // Guild all-time
+  const guildLines: string[] = [`${guildW}W-${guildL}L  PD: ${fmtDiff(guildPD)}`];
+  if (guildPW + guildPL > 0) guildLines.push(`PO: ${guildPW}W-${guildPL}L`);
+  if (guildSW + guildSL > 0) guildLines.push(`🏆 SB: ${guildSW}W-${guildSL}L`);
 
-  embed
+  // Global cross-guild (reg-season from globalUserRecordsTable, PO/SB from all userRecords)
+  const glbLines: string[] = [`${glbW}W-${glbL}L  PD: ${fmtDiff(glbPD)}`];
+  if (globalPW + globalPL > 0) glbLines.push(`PO: ${globalPW}W-${globalPL}L`);
+  if (globalSW + globalSL > 0) glbLines.push(`🏆 SB: ${globalSW}W-${globalSL}L`);
+
+  const baseColor = 0x5865F2;
+  const teamName  = user.team ?? "No Team";
+  const footer    = `Season ${season.seasonNumber} · ${displayName}`;
+
+  // ── Page 1: Identity ────────────────────────────────────────────────────────
+  const p1 = new EmbedBuilder()
+    .setColor(baseColor)
+    .setTitle(`👤 ${displayName}`)
     .setThumbnail(avatarUrl)
     .addFields(
-      { name: "💰 Balance",        value: `Wallet: **${user.balance.toLocaleString()}**\nSavings: **${savings.toLocaleString()}**\nTotal: **${total.toLocaleString()}**`, inline: true },
-      { name: "📊 Season Record",  value: seasonParts.join(" | "), inline: true },
-      { name: "🌐 Global Record",  value: glbParts.join(" | "), inline: true },
-      { name: "🏆 Guild All-Time", value: guildParts.join(" | "), inline: false },
-    );
+      { name: "🏈 NFL Team",   value: teamName,    inline: true },
+      { name: "🛡️ Admin",      value: user.isAdmin ? "Yes" : "No", inline: true },
+      { name: "\u200B",         value: "\u200B",    inline: true },
+      { name: "💰 Wallet",     value: `**${user.balance.toLocaleString()}** coins`,  inline: true },
+      { name: "🏦 Savings",    value: `**${savings.toLocaleString()}** coins`,       inline: true },
+      { name: "💎 Total",      value: `**${total.toLocaleString()}** coins`,         inline: true },
+    )
+    .setFooter({ text: `${footer} · Page 1/3` })
+    .setTimestamp();
 
   if (eaIds.length) {
-    embed.addFields({ name: "🎮 EA IDs", value: eaIds.map(e => `${e.console.toUpperCase()}: **${e.eaId}**`).join("\n"), inline: false });
+    p1.addFields({ name: "🎮 EA IDs", value: eaIds.map(e => `${e.console.toUpperCase()}: **${e.eaId}**`).join("\n"), inline: false });
   }
+
+  // ── Page 2: Records ─────────────────────────────────────────────────────────
+  const p2 = new EmbedBuilder()
+    .setColor(baseColor)
+    .setTitle(`📊 ${displayName} — Records`)
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: `📅 Season ${season.seasonNumber} Record`, value: ssLines.join("\n"),    inline: false },
+      { name: "🏆 Guild All-Time",                       value: guildLines.join("\n"), inline: false },
+      { name: "🌐 Global (All Leagues)",                 value: glbLines.join("\n"),   inline: false },
+    )
+    .setFooter({ text: `${footer} · Page 2/3` })
+    .setTimestamp();
+
+  // ── Page 3: Purchases & History ─────────────────────────────────────────────
+  const p3 = new EmbedBuilder()
+    .setColor(baseColor)
+    .setTitle(`🛒 ${displayName} — Purchases & History`)
+    .setThumbnail(avatarUrl)
+    .setFooter({ text: `${footer} · Page 3/3` })
+    .setTimestamp();
 
   if (seasonStatsRow) {
     const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
-    const ecoOn   = settings.coinEconomy;
-    const attrOn  = ecoOn && settings.attributeUpgradesEnabled;
-    const devOn   = ecoOn && settings.devUpgradesEnabled;
-    const ageOn   = ecoOn && settings.ageResetsEnabled;
+    const ecoOn  = settings.coinEconomy;
+    const attrOn = ecoOn && settings.attributeUpgradesEnabled;
+    const devOn  = ecoOn && settings.devUpgradesEnabled;
+    const ageOn  = ecoOn && settings.ageResetsEnabled;
 
-    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0} (${rules.coreAttrCap})`       : `${coreAttrPurchased ?? 0} (n/a)`;
-    const nonCoreFmt = attrOn ? `${nonCoreAttrPurchased ?? 0} (${rules.nonCoreAttrCap})` : `${nonCoreAttrPurchased ?? 0} (n/a)`;
-    const devFmt     = devOn  ? `${devUpsPurchased ?? 0} (${rules.devUpsCap})`            : `${devUpsPurchased ?? 0} (n/a)`;
-    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0} (${rules.ageResetsCap})`      : `${ageResetsPurchased ?? 0} (n/a)`;
+    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0}/${rules.coreAttrCap}`       : `${coreAttrPurchased ?? 0} (n/a)`;
+    const nonCoreFmt = attrOn ? `${nonCoreAttrPurchased ?? 0}/${rules.nonCoreAttrCap}` : `${nonCoreAttrPurchased ?? 0} (n/a)`;
+    const devFmt     = devOn  ? `${devUpsPurchased ?? 0}/${rules.devUpsCap}`            : `${devUpsPurchased ?? 0} (n/a)`;
+    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0}/${rules.ageResetsCap}`      : `${ageResetsPurchased ?? 0} (n/a)`;
 
-    embed.addFields({
-      name:   "🛒 This Season's Purchases",
-      value:  `Core: ${coreFmt} | Non-Core: ${nonCoreFmt} | Dev Ups: ${devFmt} | Age Resets: ${ageFmt}`,
+    p3.addFields({
+      name:   `🛒 Season ${season.seasonNumber} Purchases`,
+      value:  `Core Attrs: **${coreFmt}** | Non-Core: **${nonCoreFmt}** | Dev Ups: **${devFmt}** | Age Resets: **${ageFmt}**`,
       inline: false,
     });
   }
@@ -187,11 +214,11 @@ export async function appendUserStatsFields(
     const parts: string[] = [];
     if (currentLegends.length) parts.push(`Season: ${currentLegends.map(l => l.legendName).join(", ")}`);
     if (vaultLegends.length)   parts.push(`Vault: ${vaultLegends.map(l => l.legendName).join(", ")}`);
-    embed.addFields({ name: "🏅 Legends", value: parts.join("\n"), inline: false });
+    p3.addFields({ name: "🏅 Legends", value: parts.join("\n"), inline: false });
   }
 
   if (customPlayerRows.length) {
-    embed.addFields({
+    p3.addFields({
       name:   "⚡ Custom Players",
       value:  customPlayerRows.map(p => `${p.firstName} ${p.lastName} (${p.position}) — ${p.packageTier}`).join("\n"),
       inline: false,
@@ -204,9 +231,46 @@ export async function appendUserStatsFields(
       const ts   = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:d>`;
       return `${ts} **${sign}${t.amount.toLocaleString()}** — ${t.description}`;
     });
-    embed.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
+    p3.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
   }
 
-  embed.setTimestamp();
-  return embed;
+  // If page 3 has no fields yet, add a placeholder
+  if (!seasonStatsRow && !legendRows.length && !customPlayerRows.length && !lastTxns.length) {
+    p3.setDescription("*No purchase history or transactions found for this server.*");
+  }
+
+  return [p1, p2, p3];
+}
+
+/** Navigation button row for the 3-page user profile. */
+export function buildProfileNavRow(page: 1 | 2 | 3): ActionRowBuilder<ButtonBuilder> {
+  const prevId = page === 3 ? "ac_profile_p2" : "ac_profile_p1";
+  const nextId = page === 1 ? "ac_profile_p2" : "ac_profile_p3";
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(prevId)
+      .setLabel("◀ Prev")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page === 1),
+    new ButtonBuilder()
+      .setCustomId("ac_profile_page_label")
+      .setLabel(`Page ${page}/3`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(nextId)
+      .setLabel("Next ▶")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page === 3),
+  );
+}
+
+/** Single-button row to return from profile pages back to the main /menu hub. */
+export function buildProfileBackRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ac_hub")
+      .setLabel("🔙 Back to Menu")
+      .setStyle(ButtonStyle.Primary),
+  );
 }

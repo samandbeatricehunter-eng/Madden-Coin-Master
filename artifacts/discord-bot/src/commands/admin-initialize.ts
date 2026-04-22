@@ -256,10 +256,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   try {
     // ── Step 1: Roles ──────────────────────────────────────────────────────────
     const commRole     = await ensureRole(guild, "Commissioner",    0x9B59B6); // Purple
-    const coCommRole   = await ensureRole(guild, "Co-Commissioner", 0xFFD700); // Gold/Yellow
     const approvedRole = await ensureRole(guild, "Approved Member", 0xE74C3C); // Red
     log.push(
-      `Roles: **Commissioner** <@&${commRole.id}> · **Co-Commissioner** <@&${coCommRole.id}> · **Approved Member** <@&${approvedRole.id}>`,
+      `Roles: **Commissioner** <@&${commRole.id}> · **Approved Member** <@&${approvedRole.id}>`,
     );
 
     // ── Step 2: Delete all pre-existing channels ────────────────────────────────
@@ -276,7 +275,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     // ── Step 3: Standalone channels ────────────────────────────────────────────
     let registeredCount = 0;
     for (const chDef of STANDALONE_CHANNELS) {
-      const perms = buildPerms(guild, commRole, coCommRole, approvedRole, chDef, false);
+      const perms = buildPerms(guild, commRole, approvedRole, chDef, false);
       const created = await guild.channels.create({
         name:                 chDef.name,
         type:                 ChannelType.GuildText,
@@ -295,13 +294,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         ? [
             { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
             { id: approvedRole,         deny:  [PermissionFlagsBits.ViewChannel] },
-            { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
             { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
           ]
         : [
             { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
             { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-            { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
             { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
           ];
 
@@ -314,7 +311,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
       for (const chDef of catDef.channels) {
         const isVoice = chDef.kind === "voice";
-        const perms   = buildPerms(guild, commRole, coCommRole, approvedRole, chDef, catDef.private ?? false);
+        const perms   = buildPerms(guild, commRole, approvedRole, chDef, catDef.private ?? false);
 
         if (isVoice) {
           await guild.channels.create({
@@ -545,8 +542,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     {
       name: "🎭 Roles Created",
       value: [
-        "**Commissioner** — Full access, manages all channels",
-        "**Co-Commissioner** — Same access as Commissioner (no ManageMessages)",
+        "**Commissioner** — Full access, manages all channels (use /admin-menu → Commissioner Management to add/remove)",
         "**Approved Member** — Access to all non-private member channels",
         "\n*Assign **Approved Member** to each new member so they can see the server.*",
       ].join("\n"),
@@ -651,29 +647,26 @@ async function ensureRole(guild: Guild, name: string, color: number): Promise<Ro
 function buildPerms(
   guild:        Guild,
   commRole:     Role,
-  coCommRole:   Role,
   approvedRole: Role,
   chDef:        ChannelDef,
   catPrivate:   boolean,
 ): OverwriteResolvable[] {
   const isPrivate = (chDef.private === true) || (catPrivate && !chDef.memberReadOnly);
 
-  // memberReadOnly channels — Approved Members can view/read but NOT write (overrides category privacy)
+  // memberReadOnly channels — Approved Members can view/read but NOT write
   if (chDef.memberReadOnly) {
     return [
       { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
       { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
-      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
       { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
     ];
   }
 
-  // Commissioner-write channels — members/co-comm can read, only Commissioner can send
+  // Commissioner-write channels — members can read, only Commissioner can send
   if (chDef.commissionerWrite) {
     return [
       { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
       { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
-      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
       { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ReadMessageHistory] },
     ];
   }
@@ -683,7 +676,6 @@ function buildPerms(
     return [
       { id: guild.roles.everyone, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
       { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
-      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
       { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
     ];
   }
@@ -693,7 +685,6 @@ function buildPerms(
     return [
       { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
       { id: approvedRole,         deny:  [PermissionFlagsBits.ViewChannel] },
-      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
       { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
     ];
   }
@@ -703,7 +694,6 @@ function buildPerms(
     return [
       { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
       { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
-      { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
       { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
     ];
   }
@@ -712,7 +702,6 @@ function buildPerms(
   return [
     { id: guild.roles.everyone, deny:  [PermissionFlagsBits.ViewChannel] },
     { id: approvedRole,         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-    { id: coCommRole,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
     { id: commRole,             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
   ];
 }

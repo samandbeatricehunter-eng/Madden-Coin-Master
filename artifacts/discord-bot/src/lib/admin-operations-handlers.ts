@@ -167,8 +167,10 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
 
   // ── Back to hub main screen ─────────────────────────────────────────────────
   if (id === "ao_hub_back") {
+    const season  = await getOrCreateActiveSeason(guildId).catch(() => null);
+    const wkStr   = season ? weekLabel(season.currentWeek) : undefined;
     await (interaction as ButtonInteraction).update({
-      embeds: [buildAdminOpsEmbed()],
+      embeds: [buildAdminOpsEmbed(season?.seasonNumber ?? undefined, wkStr)],
       components: buildAdminOpsRows(),
     });
     return true;

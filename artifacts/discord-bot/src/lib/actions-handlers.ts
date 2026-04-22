@@ -40,8 +40,8 @@ import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
   type InterviewType,
 } from "../commands/interviewrequest.js";
-import { buildActionsHubRows, buildUnlinkedHubEmbed, buildUnlinkedHubRows } from "../commands/actions.js";
-import { appendUserStatsFields } from "./user-stats-embed.js";
+import { buildActionsHubEmbed, buildActionsHubRows, buildUnlinkedHubEmbed, buildUnlinkedHubRows } from "../commands/actions.js";
+import { buildUserProfilePages, buildProfileNavRow, buildProfileBackRow } from "./user-stats-embed.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
@@ -614,11 +614,10 @@ export async function handleActionsInteraction(
   if (id === "ac_hub") {
     const btn = interaction as ButtonInteraction;
     await btn.deferUpdate();
-    const [settings, member, user, season] = await Promise.all([
+    const [settings, member, user] = await Promise.all([
       getServerSettings(gid),
       btn.guild?.members.cache.get(uid) ?? btn.guild?.members.fetch(uid).catch(() => null),
       getOrCreateUser(uid, btn.user.username, gid),
-      getOrCreateActiveSeason(gid),
     ]);
     const isDiscordAdmin = (member as import("discord.js").GuildMember | null | undefined)?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
     const isDbAdmin      = await isAdminUser(uid, gid);
@@ -629,16 +628,32 @@ export async function handleActionsInteraction(
       return true;
     }
 
-    const rules          = await getSeasonRules(season);
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle(`🏈 League Actions Hub — ${user.team ?? btn.user.username}`)
-      .setDescription("Select any action below. All menus are private (visible only to you).")
-      .setFooter({ text: "League Actions Hub — selections expire after 15 minutes" });
-    await appendUserStatsFields(embed, uid, gid, user, season, settings, rules, btn.user.displayAvatarURL());
     await btn.editReply({
-      embeds:     [embed],
+      embeds:     [buildActionsHubEmbed(settings, isAdmin)],
       components: buildActionsHubRows(settings, isAdmin),
+    });
+    return true;
+  }
+
+  // ── My Profile (page 1) ──────────────────────────────────────────────────────
+  if (id === "ac_myprofile" || id === "ac_profile_p1" || id === "ac_profile_p2" || id === "ac_profile_p3") {
+    const btn = interaction as ButtonInteraction;
+    await btn.deferUpdate();
+    const page: 1 | 2 | 3 = id === "ac_profile_p2" ? 2 : id === "ac_profile_p3" ? 3 : 1;
+    const [settings, user, season] = await Promise.all([
+      getServerSettings(gid),
+      getOrCreateUser(uid, btn.user.username, gid),
+      getOrCreateActiveSeason(gid),
+    ]);
+    const rules = await getSeasonRules(season);
+    const pages = await buildUserProfilePages(
+      uid, gid, user, season, settings, rules,
+      btn.user.displayAvatarURL(),
+      (btn.member as import("discord.js").GuildMember | null)?.nickname ?? btn.user.displayName ?? btn.user.username,
+    );
+    await btn.editReply({
+      embeds:     [pages[page - 1]],
+      components: [buildProfileNavRow(page), buildProfileBackRow()],
     });
     return true;
   }

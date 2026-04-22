@@ -2,18 +2,22 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits,
 } from "discord.js";
-import { isAdminUser } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { weekLabel } from "../lib/week-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("admin-menu")
   .setDescription("Admin hub — manage week, season, payouts, rules, and all league settings")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-export function buildAdminOpsEmbed(): EmbedBuilder {
+export function buildAdminOpsEmbed(seasonNum?: number, weekStr?: string): EmbedBuilder {
+  const header = (seasonNum != null && weekStr)
+    ? `**Season ${seasonNum} · ${weekStr}**\n\n`
+    : "";
   return new EmbedBuilder()
     .setColor(0x2b2d31)
     .setTitle("⚙️ Admin Operations Hub")
-    .setDescription(
+    .setDescription(header +
       "**📅 Set Week** — Change the current week without triggering auto-actions.\n" +
       "**⏩ Advance Week** — Advance to next week with full auto-actions (matchups, GOTW, articles, playoffs).\n" +
       "**🔢 Set Season** — Jump the active season to a specific number.\n" +
@@ -90,8 +94,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  const season = await getOrCreateActiveSeason(gid).catch(() => null);
+  const wkStr  = season ? weekLabel(season.currentWeek) : undefined;
   await interaction.reply({
-    embeds: [buildAdminOpsEmbed()],
+    embeds: [buildAdminOpsEmbed(season?.seasonNumber ?? undefined, wkStr)],
     components: buildAdminOpsRows(),
     ephemeral: true,
   });

@@ -92,6 +92,44 @@ async function autoDiscoverChannelsByName(client: Client): Promise<void> {
   }
 }
 
+// ── Sync Commissioner Discord role → DB isAdmin ───────────────────────────────
+// Runs every startup. For each guild, any member with the "Commissioner" Discord
+// role is guaranteed isAdmin=true in the DB, and their nickname is normalized to
+// strip the legacy "(Co-Commissioner)" tag and ensure "(Commissioner)" suffix.
+// This is the idempotent recovery path for guilds where the role-migration ran
+// but DB/nickname updates were missed (e.g., due to member-cache misses).
+async function syncCommissionerRoleWithDb(client: Client): Promise<void> {
+  for (const [guildId, guild] of client.guilds.cache) {
+    try {
+      await guild.members.fetch().catch(() => null);
+      await guild.roles.fetch().catch(() => null);
+
+      const commRole = guild.roles.cache.find(r => r.name === "Commissioner");
+      if (!commRole) continue;
+
+      for (const [memberId, member] of commRole.members) {
+        await db.update(usersTable)
+          .set({ isAdmin: true, updatedAt: new Date() })
+          .where(and(eq(usersTable.discordId, memberId), eq(usersTable.guildId, guildId)))
+          .catch(() => null);
+
+        const rawNick = member.displayName;
+        const stripped = rawNick
+          .replace(/\s*\(Co-Commissioner\)\s*/gi, "")
+          .replace(/\s*\(Commissioner\)\s*/gi, "")
+          .trim();
+        const cleanNick = `${stripped} (Commissioner)`.slice(0, 32);
+        if (rawNick !== cleanNick) {
+          await member.setNickname(cleanNick, "Sync: Commissioner role — nickname normalization").catch(() => null);
+          console.log(`[comm-sync] ${guild.name}: ${rawNick} → ${cleanNick}`);
+        }
+      }
+    } catch (err) {
+      console.error(`[comm-sync] Failed for guild ${guildId}:`, err);
+    }
+  }
+}
+
 // ── Co-Commissioner → Commissioner migration ───────────────────────────────────
 // Runs once per startup. Finds all "Co-Commissioner" role holders in every
 // guild, converts up to 3 of them to "Commissioner" (owner is always #1 = 4 max
@@ -144,12 +182,15 @@ async function migrateCoCommissioners(client: Client): Promise<void> {
           .where(and(eq(usersTable.discordId, member.id), eq(usersTable.guildId, guildId)))
           .catch(() => null);
 
-        if (!member.displayName.toLowerCase().includes("(commissioner)")) {
-          const newNick = `${member.displayName} (Commissioner)`.slice(0, 32);
-          await member.setNickname(newNick, "Migration: Co-Commissioner → Commissioner").catch(console.error);
-        }
+        // Strip any existing (Co-Commissioner) / (Commissioner) tag before appending clean suffix
+        const stripped = member.displayName
+          .replace(/\s*\(Co-Commissioner\)\s*/gi, "")
+          .replace(/\s*\(Commissioner\)\s*/gi, "")
+          .trim();
+        const newNick = `${stripped} (Commissioner)`.slice(0, 32);
+        await member.setNickname(newNick, "Migration: Co-Commissioner → Commissioner").catch(console.error);
 
-        console.log(`[co-comm-migration] ${guild.name}: Migrated ${member.displayName} → Commissioner`);
+        console.log(`[co-comm-migration] ${guild.name}: Migrated ${member.displayName} → Commissioner (nick: ${newNick})`);
       }
 
       await coCommRole.delete("Migration: Co-Commissioner role eliminated").catch(err =>
@@ -171,6 +212,7 @@ export async function execute(client: Client) {
   await seedKnownGuildChannels();
   await autoDiscoverChannelsByName(client);
   await migrateCoCommissioners(client);
+  await syncCommissionerRoleWithDb(client);
 
   const guilds = client.guilds.cache;
   if (guilds.size === 0) return;
