@@ -4,8 +4,9 @@ import {
 } from "discord.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import type { ServerSettings } from "../lib/server-settings.js";
-import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
 import { weekLabel } from "../lib/week-helpers.js";
+import { buildUserProfilePages } from "../lib/user-stats-embed.js";
 
 export const data = new SlashCommandBuilder()
   .setName("menu")
@@ -97,7 +98,6 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
 
   // ── Row 5: Tools & Navigation ───────────────────────────────────────────────
   const sec5: ButtonBuilder[] = [
-    new ButtonBuilder().setCustomId("ac_myprofile").setLabel("👤 My Profile").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_autopilot").setLabel("✈️ Auto-Pilot").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_violation").setLabel("🚨 Report Violation").setStyle(ButtonStyle.Danger),
@@ -202,8 +202,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // ── Linked user — build profile pages and show them alongside the hub embed ──
+  const rules = await getSeasonRules(season);
+  const profilePages = await buildUserProfilePages(
+    uid, gid, user, season, settings, rules,
+    interaction.user.displayAvatarURL(),
+    (member as import("discord.js").GuildMember | null)?.nickname ?? interaction.user.displayName ?? interaction.user.username,
+  );
+
   await interaction.editReply({
-    embeds:     [buildActionsHubEmbed(settings, isAdmin, seasonNum, wkStr)],
+    embeds:     [buildActionsHubEmbed(settings, isAdmin, seasonNum, wkStr), ...profilePages],
     components: buildActionsHubRows(settings, isAdmin),
   });
 }
