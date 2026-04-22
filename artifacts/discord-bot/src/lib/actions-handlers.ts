@@ -2867,6 +2867,28 @@ const ABBR_TO_ATTR_KEY: Record<string, string> = {
   KPW: "kickPowerRating", KAC: "kickAccuracyRating", KR: "kickReturnRating",
 };
 
+/**
+ * EA exports sometimes use "short-Rating" hybrid key names instead of the
+ * full canonical names.  When the primary key returns NULL from the JSON,
+ * fall back to the alternate form so composite scores aren't silently zeroed.
+ */
+const ABBR_ATTR_FALLBACKS: Record<string, string> = {
+  ACC: "accelRating",
+  JMP: "jumpRating",
+  TGH: "toughRating",
+  BCV: "bCVRating",
+  CAR: "carryRating",
+  CIT: "cITRating",
+  SRR: "routeRunShortRating",
+  MRR: "routeRunMedRating",
+  DRR: "routeRunDeepRating",
+  SPC: "specCatchRating",
+  FMV: "finesseMovesRating",  // primary ABBR_TO_ATTR_KEY has the EA typo "finessMovesRating"
+  TRK: "truckRating",
+  KAC: "kickAccRating",
+  KR:  "kickRetRating",
+};
+
 const AP_ATTR_NAMES: Record<string, string> = {
   // Offensive
   SPD: "Speed", ACC: "Acceleration", AGI: "Agility", STR: "Strength", JMP: "Jumping",
@@ -2892,7 +2914,7 @@ const AP_ATTR_NAMES: Record<string, string> = {
 
 const SORT_PRIMARY_LABELS: Record<string, string> = {
   overall_desc: "OVR ↓", overall_asc: "OVR ↑",
-  age_asc: "Age ↑", age_desc: "Age ↓",
+  age_asc: "Younger", age_desc: "Older",
   height_desc: "Height ↓", height_asc: "Height ↑",
   weight_desc: "Weight ↓", weight_asc: "Weight ↑",
   contract_asc: "Contract ↑", contract_desc: "Contract ↓",
@@ -3032,9 +3054,14 @@ function buildWeightedScoreExpr(stack: string[]): SQL | null {
     const w   = SORT_WEIGHTS[i] ?? 0.0625;
 
     if (ABBR_TO_ATTR_KEY[key]) {
-      // 0-99 Madden attribute — normalize by 99
-      const attrKey = ABBR_TO_ATTR_KEY[key];
-      terms.push(`COALESCE((attributes->>'${attrKey}')::numeric, 0) / 99.0 * ${w}`);
+      // 0-99 Madden attribute — normalize by 99.
+      // Try both canonical and hybrid EA key names so the score isn't silently zeroed.
+      const attrKey  = ABBR_TO_ATTR_KEY[key];
+      const fallback = ABBR_ATTR_FALLBACKS[key];
+      const coalesce = fallback
+        ? `COALESCE((attributes->>'${attrKey}')::numeric, (attributes->>'${fallback}')::numeric, 0)`
+        : `COALESCE((attributes->>'${attrKey}')::numeric, 0)`;
+      terms.push(`${coalesce} / 99.0 * ${w}`);
     } else {
       const parts = key.split("_");
       const dir   = parts[parts.length - 1]; // "asc" or "desc"
