@@ -30,7 +30,7 @@ import {
   getOrSeedRules, getAllSections, isAdminUser,
 } from "./db-helpers.js";
 import {
-  getPayoutValue, getAllPayoutConfig, getMilestoneTiers, getAllPayoutKeys,
+  getPayoutValue, getAllPayoutConfig, getMilestoneTiers, getAllPayoutKeys, PAYOUT_KEYS,
 } from "./payout-config.js";
 import { getServerSettings, requireMcaEnabled } from "./server-settings.js";
 import { getArticleStandings, getSeasonRecords, getAllTimeRecords } from "./gcs-fallback.js";
@@ -719,6 +719,7 @@ export async function handleActionsInteraction(
   if (id === "ac_seasonpr")     { await handleSeasonPR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_alltimepr")    { await handleAllTimePR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_globalpr")     { await handleGlobalPR(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_weeklypayouts")    { await handleWeeklyPayouts(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_eospayouts")   { await handleEosPayouts(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_milestonepayouts") { await handleMilestonePayouts(interaction as ButtonInteraction, sess); return true; }
 
@@ -4457,6 +4458,82 @@ async function handleGlobalPR(interaction: ButtonInteraction, sess: ActionsSessi
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
+}
+
+async function handleWeeklyPayouts(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  await interaction.deferUpdate();
+
+  const [
+    h2hWin, h2hLoss, cpuWin,
+    hlPay, hlPostPay, hlLimit,
+    streamPay,
+    tweetPay, tweetLimit,
+    interviewPay,
+    gotwReg, gotwPo, potwBonus,
+  ] = await Promise.all([
+    getPayoutValue(PAYOUT_KEYS.H2H_WIN,                gid),
+    getPayoutValue(PAYOUT_KEYS.H2H_LOSS,               gid),
+    getPayoutValue(PAYOUT_KEYS.CPU_WIN,                gid),
+    getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_PAYOUT,       gid),
+    getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT, gid),
+    getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT,        gid),
+    getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT,          gid),
+    getPayoutValue(PAYOUT_KEYS.TWEET_PAYOUT,           gid),
+    getPayoutValue(PAYOUT_KEYS.TWEET_WEEKLY_LIMIT,     gid),
+    getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT,       gid),
+    getPayoutValue(PAYOUT_KEYS.GOTW_REGULAR_BONUS,     gid),
+    getPayoutValue(PAYOUT_KEYS.GOTW_PLAYOFF_BONUS,     gid),
+    getPayoutValue(PAYOUT_KEYS.POTW_BONUS,             gid),
+  ]);
+
+  const hlCapNote   = hlLimit > 0 ? ` *(max ${hlLimit}/week)*` : "";
+  const tweetCapNote = tweetLimit > 0 ? ` *(max ${tweetLimit}/week)*` : " *(no weekly limit)*";
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("📅 Weekly Payout Schedule")
+    .setDescription("Coins earned each week through games, activity, and league engagement.")
+    .addFields(
+      {
+        name: "🏈 Game Results",
+        value: [
+          `H2H Win: **${h2hWin.toLocaleString()}** coins`,
+          `H2H Loss: **${h2hLoss.toLocaleString()}** coins`,
+          `CPU / Force Win: **${cpuWin.toLocaleString()}** coins`,
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "📺 Activity Payouts",
+        value: [
+          `Highlight (Regular Season): **${hlPay.toLocaleString()}** coins per video${hlCapNote}`,
+          `Highlight (Postseason): **${hlPostPay.toLocaleString()}** coins per video${hlCapNote}`,
+          `Twitch Stream: **${streamPay.toLocaleString()}** coins per side (streamer + opponent)`,
+          `Tweet: **${tweetPay.toLocaleString()}** coins per post${tweetCapNote}`,
+          `Interview: **${interviewPay.toLocaleString()}** coins per approved submission`,
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "🏆 Weekly Bonuses",
+        value: [
+          `GOTW Correct Guess (Regular Season): **${gotwReg.toLocaleString()}** coins`,
+          `GOTW Correct Guess (Playoffs): **${gotwPo.toLocaleString()}** coins`,
+          `Player of the Week Winner: **${potwBonus.toLocaleString()}** coins`,
+        ].join("\n"),
+        inline: false,
+      },
+    )
+    .setFooter({ text: "Payout amounts set by your commissioner · /admin-payout" })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+  );
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSession) {

@@ -47,10 +47,11 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
 }
 
 export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean): ActionRowBuilder<ButtonBuilder>[] {
-  const mcaVisible  = settings.mcaImportEnabled || isAdmin;
-  const ecoVisible  = settings.coinEconomy;
+  const mcaVisible   = settings.mcaImportEnabled || isAdmin;
+  const ecoVisible   = settings.coinEconomy;
   const wagerVisible = settings.coinEconomy && settings.wagerEnabled;
 
+  // ── Row 1: Economy & Social ─────────────────────────────────────────────────
   const sec1: ButtonBuilder[] = [];
   if (ecoVisible)   sec1.push(new ButtonBuilder().setCustomId("ac_purchase").setLabel("💳 Purchase").setStyle(ButtonStyle.Secondary));
   if (wagerVisible) sec1.push(new ButtonBuilder().setCustomId("ac_wager").setLabel("⚔️ Wager").setStyle(ButtonStyle.Secondary));
@@ -60,38 +61,40 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
     new ButtonBuilder().setCustomId("ac_tweet").setLabel("🐦 Tweet").setStyle(ButtonStyle.Secondary),
   );
 
+  // ── Row 2: Roster & League Info ─────────────────────────────────────────────
   const sec2: ButtonBuilder[] = [];
   if (mcaVisible) {
     sec2.push(
       new ButtonBuilder().setCustomId("ac_myroster").setLabel("📋 My Roster").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
-    );
-  }
-
-  const sec3: ButtonBuilder[] = [];
-  if (mcaVisible) {
-    sec3.push(
       new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyuserstats").setLabel("👤 Any User Stats").setStyle(ButtonStyle.Secondary),
     );
   }
 
-  const sec4: ButtonBuilder[] = [
+  // ── Row 3: Power Rankings ───────────────────────────────────────────────────
+  const sec3: ButtonBuilder[] = [
     new ButtonBuilder().setCustomId("ac_seasonpr").setLabel("🥇 Season PR").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_alltimepr").setLabel("🏆 All-Time PR").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_globalpr").setLabel("🌐 Global PR").setStyle(ButtonStyle.Secondary),
   ];
+
+  // ── Row 4: Payouts (economy only) ───────────────────────────────────────────
+  const sec4: ButtonBuilder[] = [];
   if (ecoVisible) {
     sec4.push(
+      new ButtonBuilder().setCustomId("ac_weeklypayouts").setLabel("📅 Weekly Payouts").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_eospayouts").setLabel("💰 EOS Payouts").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_milestonepayouts").setLabel("🎯 Milestones").setStyle(ButtonStyle.Secondary),
     );
   }
 
+  // ── Row 5: Tools & Navigation ───────────────────────────────────────────────
   const sec5: ButtonBuilder[] = [
     new ButtonBuilder().setCustomId("ac_autopilot").setLabel("✈️ Auto-Pilot").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_violation").setLabel("🚨 Report Violation").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
   ];
 
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
