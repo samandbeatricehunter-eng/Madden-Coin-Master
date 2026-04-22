@@ -614,7 +614,7 @@ export async function handleActionsInteraction(
 
   if (id === "ac_myroster")       { await handleMyRoster(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyroster")      { await handleAnyRosterTeamPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_anyroster_sel")  { await handleAnyRosterShow(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_anyroster_sel_afc" || id === "ac_anyroster_sel_nfc" || id === "ac_anyroster_sel") { await handleAnyRosterShow(interaction as StringSelectMenuInteraction, sess); return true; }
   // Roster card — player cards + team stats from within roster view
   if (id === "ac_rc_cards")          { await handleRcPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rc_possel")         { await handleRcPosSel(interaction as StringSelectMenuInteraction, sess); return true; }
@@ -2320,9 +2320,10 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
   });
 
   // Use MCA teamId (not serial PK) as select value — buildRosterEmbed needs MCA teamId
+  // Each dropdown must have a unique customId — Discord rejects duplicate component IDs on the same message.
   const makeMenu = (conference: string, list: typeof teams) =>
     new StringSelectMenuBuilder()
-      .setCustomId("ac_anyroster_sel")
+      .setCustomId(`ac_anyroster_sel_${conference.toLowerCase()}`)
       .setPlaceholder(`${conference} — pick a team…`)
       .addOptions(
         list.slice(0, 25).map(t =>
