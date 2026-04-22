@@ -33,7 +33,7 @@ import {
 } from "./payout-config.js";
 import { getServerSettings, requireMcaEnabled } from "./server-settings.js";
 import { getArticleStandings, getSeasonRecords, getAllTimeRecords } from "./gcs-fallback.js";
-import { devBadge, DEV_LEGEND } from "./dev-trait.js";
+import { devBadge, DEV_LEGEND, DEV_EMOJI } from "./dev-trait.js";
 import { weekLabel } from "./week-helpers.js";
 import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
@@ -176,7 +176,17 @@ function sortByCanonical(positions: string[]): string[] {
   });
 }
 
+// ── Keys that are displayed elsewhere (page 1) and should NOT appear on the attributes page ──
+const ATTR_PAGE_SKIP = new Set([
+  "conf", "confidence",
+  "height", "heightInches", "weight",
+  "throwAcc", "throwAccuracy",
+  "handedness", "throwingHand", "playerHandedness",
+  "college", "collegeName", "playerCollege",
+]);
+
 const ATTR_ABBR: Record<string, string> = {
+  // ── Full Rating-suffixed keys ────────────────────────────────────────────────
   speedRating: "SPD", accelerationRating: "ACC", agilityRating: "AGI",
   strengthRating: "STR", jumpingRating: "JMP", awareRating: "AWR",
   staminaRating: "STA", injuryRating: "INJ", toughnessRating: "TGH",
@@ -196,18 +206,25 @@ const ATTR_ABBR: Record<string, string> = {
   manCoverRating: "MCV", zoneCoverRating: "ZCV", pressRating: "PRS", playRecRating: "PRC",
   kickPowerRating: "KPW", kickAccuracyRating: "KAC",
   puntPowerRating: "PNP", puntAccuracyRating: "PNA", kickReturnRating: "KRR",
+  // ── Abbreviated aliases (alternate MCA payload format) ───────────────────────
+  accel: "ACC", jump: "JMP", tough: "TGH",
+  bCV: "BCV", carry: "CAR",
+  cIT: "CIT", routeRunDeep: "DRR", routeRunMed: "MRR", routeRunShort: "SRR", specCatch: "SPC",
+  finesseMoves: "FMV",
+  kickAcc: "KAC", kickRet: "KRR", longSnap: "LSN",
+  throwAccDeep: "DAC", throwAccMid: "MAC", throwAccShort: "SAC",
 };
 
 const ATTR_GROUPS: { label: string; keys: string[] }[] = [
-  { label: "⚡ Physical / Athletic", keys: ["speedRating","accelerationRating","agilityRating","strengthRating","jumpingRating","awareRating","staminaRating","injuryRating","toughnessRating"] },
-  { label: "🏈 Throwing",            keys: ["throwPowerRating","throwAccuracyShortRating","throwAccuracyMidRating","throwAccuracyDeepRating","throwOnRunRating","throwUnderPressureRating","breakSackRating","playActionRating"] },
-  { label: "🏃 Ball Carrying",       keys: ["caryingRating","carryingRating","bCVisionRating","ballCarrierVisionRating","elusivenessRating","breakTackleRating","stiffArmRating","spinMoveRating","jukeMoveRating","truckingRating","changeOfDirectionRating"] },
-  { label: "🙌 Receiving",           keys: ["catchRating","catchInTrafficRating","spectacularCatchRating","shortRouteRunRating","medRouteRunRating","deepRouteRunRating","releaseRating"] },
+  { label: "⚡ Physical / Athletic", keys: ["speedRating","accelerationRating","accel","agilityRating","strengthRating","jumpingRating","jump","awareRating","staminaRating","injuryRating","toughnessRating","tough"] },
+  { label: "🏈 Throwing",            keys: ["throwPowerRating","throwAccuracyShortRating","throwAccShort","throwAccuracyMidRating","throwAccMid","throwAccuracyDeepRating","throwAccDeep","throwOnRunRating","throwUnderPressureRating","breakSackRating","playActionRating"] },
+  { label: "🏃 Ball Carrying",       keys: ["caryingRating","carryingRating","carry","bCVisionRating","ballCarrierVisionRating","bCV","elusivenessRating","breakTackleRating","stiffArmRating","spinMoveRating","jukeMoveRating","truckingRating","changeOfDirectionRating"] },
+  { label: "🙌 Receiving",           keys: ["catchRating","catchInTrafficRating","cIT","spectacularCatchRating","specCatch","shortRouteRunRating","routeRunShort","medRouteRunRating","routeRunMed","deepRouteRunRating","routeRunDeep","releaseRating"] },
   { label: "🛡️ Blocking",            keys: ["passBlockRating","runBlockRating","impactBlockRating","passBlockPowerRating","passBlockFinesseRating","runBlockPowerRating","runBlockFinesseRating","leadBlockRating"] },
-  { label: "🔴 Pass Rush",           keys: ["powerMovesRating","finessMovesRating","blockShedRating"] },
+  { label: "🔴 Pass Rush",           keys: ["powerMovesRating","finessMovesRating","finesseMoves","blockShedRating"] },
   { label: "💪 Run Defense",         keys: ["pursuitRating","tackleRating","hitPowerRating"] },
   { label: "🔒 Coverage",            keys: ["manCoverRating","zoneCoverRating","pressRating","playRecRating"] },
-  { label: "🦵 Kicking / Punting",   keys: ["kickPowerRating","kickAccuracyRating","puntPowerRating","puntAccuracyRating","kickReturnRating"] },
+  { label: "🦵 Kicking / Punting",   keys: ["kickPowerRating","kickAccuracyRating","kickAcc","puntPowerRating","puntAccuracyRating","kickReturnRating","kickRet","longSnap"] },
 ];
 
 interface StatDef { key: string; label: string; isFloat?: boolean }
@@ -287,53 +304,69 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   const teamLine  = `**Team:** ${roster.teamName}`;
   const devLabel  = DEV_TRAIT_LABELS[roster.devTrait] ?? `Dev ${roster.devTrait}`;
   const archetype = roster.archetypeAbbrev ? roster.archetypeAbbrev.replace(/_/g, " ") : "—";
-  const attrs     = (roster.attributes ?? {}) as Record<string, number>;
+  const attrs     = (roster.attributes ?? {}) as Record<string, number | string>;
   const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
   const TOTAL     = 4;
   const portrait  = roster.portraitUrl ?? eaPortraitUrl(roster.playerId);
 
-  // ── Page 1: Personal Details ──────────────────────────────────────────────
+  // ── Bio helpers ────────────────────────────────────────────────────────────
+  const contractStr = roster.contractYearsLeft == null ? "Unknown"
+    : roster.contractYearsLeft <= 0 ? "Free Agent"
+    : roster.contractYearsLeft === 1 ? "📋 Contract Year"
+    : `${roster.contractYearsLeft} yrs remaining`;
+
+  const rawH = attrs["height"] ?? attrs["heightInches"];
+  const heightIn = rawH != null ? Number(rawH) : NaN;
+  const heightStr = !isNaN(heightIn) && heightIn > 0 ? `${Math.floor(heightIn / 12)}'${heightIn % 12}"` : null;
+  const rawW = attrs["weight"];
+  const weightStr = rawW != null && Number(rawW) > 0 ? `${Number(rawW)} lbs` : null;
+  const physLine = heightStr && weightStr ? `${heightStr} / ${weightStr}` : heightStr ?? weightStr ?? null;
+
+  const rawHand = attrs["handedness"] ?? attrs["throwingHand"] ?? attrs["playerHandedness"];
+  const handStr = rawHand != null ? String(rawHand) : null;
+
+  const rawConf = attrs["conf"] ?? attrs["confidence"];
+  const confStr = rawConf != null ? String(rawConf) : null;
+
+  const rawCollege = attrs["college"] ?? attrs["collegeName"] ?? attrs["playerCollege"];
+  const collegeStr = rawCollege != null && String(rawCollege).trim() !== "" ? String(rawCollege) : null;
+
+  // ── Page 1: Identity & Bio ─────────────────────────────────────────────────
   const p1 = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(title)
     .setDescription(teamLine)
     .addFields(
-      { name: "📊 Overall",    value: String(roster.overall), inline: true },
-      { name: "🎂 Age",        value: roster.age != null ? String(roster.age) : "—", inline: true },
-      { name: "🔢 Jersey",     value: jersey || "—", inline: true },
-      { name: "🏅 Dev Trait",  value: devLabel, inline: true },
-      { name: "🎯 Archetype",  value: archetype, inline: true },
-      { name: "✨ XP Total",   value: roster.xpTotal != null ? roster.xpTotal.toLocaleString() : "—", inline: true },
+      { name: "📊 Overall",   value: String(roster.overall),                           inline: true },
+      { name: "🎂 Age",       value: roster.age != null ? String(roster.age) : "—",    inline: true },
+      { name: "🔢 Jersey",    value: jersey || "—",                                     inline: true },
+      { name: "🏅 Dev Trait", value: devLabel,                                          inline: true },
+      { name: "📝 Contract",  value: contractStr,                                       inline: true },
+      { name: "🎯 Archetype", value: archetype,                                         inline: true },
     );
-  if (abilities) {
-    const lines: string[] = [];
-    if (abilities.superstar?.length) lines.push(...abilities.superstar.map(a => `⭐ ${a}`));
-    if (abilities.zone) lines.push(`⚡ ${abilities.zone} (Zone)`);
-    if (lines.length) p1.addFields({ name: "💥 Abilities", value: lines.join("\n"), inline: false });
-  }
+  if (physLine)    p1.addFields({ name: "📏 Height / Weight", value: physLine,    inline: true });
+  if (confStr)     p1.addFields({ name: "😤 Confidence",      value: confStr,     inline: true });
+  if (handStr)     p1.addFields({ name: "✋ Hand",             value: handStr,     inline: true });
+  if (collegeStr)  p1.addFields({ name: "🎓 College",         value: collegeStr,  inline: true });
   p1.setFooter({ text: `Page 1/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
-  // ── Page 2: Contract Details ──────────────────────────────────────────────
-  const contractStr = roster.contractYearsLeft == null   ? "Unknown"
-    : roster.contractYearsLeft <= 0 ? "Free Agent"
-    : roster.contractYearsLeft === 1 ? "📋 Contract Year (Final Season)"
-    : `${roster.contractYearsLeft} years remaining`;
-
+  // ── Page 2: Abilities ─────────────────────────────────────────────────────
   const p2 = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle(title)
-    .setDescription(teamLine)
-    .addFields(
-      { name: "📝 Contract Status", value: contractStr, inline: false },
-      { name: "🔢 Jersey Number",   value: jersey || "—", inline: true },
-      { name: "🎯 Archetype",       value: archetype, inline: true },
-      { name: "✨ XP Total",        value: roster.xpTotal != null ? roster.xpTotal.toLocaleString() : "—", inline: true },
-    );
-  if (abilities) {
-    const abilLines: string[] = [];
-    if (abilities.superstar?.length) abilLines.push(...abilities.superstar.map(a => `⭐ ${a}`));
-    if (abilities.zone) abilLines.push(`⚡ ${abilities.zone} (Zone)`);
-    if (abilLines.length) p2.addFields({ name: "💥 Active Abilities", value: abilLines.join("\n"), inline: false });
+    .setDescription(teamLine);
+
+  const hasAbils = abilities && (abilities.zone || abilities.superstar?.length);
+  if (hasAbils) {
+    if (abilities.zone) {
+      p2.addFields({ name: `${DEV_EMOJI.xfactor} X-Factor Zone Ability`, value: abilities.zone, inline: false });
+    }
+    if (abilities.superstar?.length) {
+      const lines = abilities.superstar.map(a => `${DEV_EMOJI.superstar} ${a}`);
+      p2.addFields({ name: "Superstar Abilities", value: lines.join("\n"), inline: false });
+    }
+  } else {
+    p2.addFields({ name: "💥 Abilities", value: "*No active abilities.*", inline: false });
   }
   p2.setFooter({ text: `Page 2/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
@@ -373,6 +406,7 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
     .setTitle(title)
     .setDescription(teamLine);
 
+  const numAttrs = attrs as Record<string, number>;
   let hasAnyAttr = false;
   const usedAbbrs = new Set<string>();
   const knownKeys = new Set(ATTR_GROUPS.flatMap(g => g.keys));
@@ -380,7 +414,7 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   for (const group of ATTR_GROUPS) {
     const pairs: string[] = [];
     for (const key of group.keys) {
-      const val = attrs[key];
+      const val = numAttrs[key];
       if (val == null) continue;
       const abbr = ATTR_ABBR[key] ?? key;
       if (usedAbbrs.has(abbr)) continue;
@@ -392,9 +426,9 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
       p4.addFields({ name: group.label, value: pairs.join("  "), inline: false });
     }
   }
-  // Catch any unknown attribute keys
-  const unknown = Object.entries(attrs)
-    .filter(([k]) => !knownKeys.has(k))
+  // Catch any remaining attribute keys not covered above (skip bio/page-1 fields)
+  const unknown = Object.entries(numAttrs)
+    .filter(([k, v]) => !knownKeys.has(k) && !ATTR_PAGE_SKIP.has(k) && typeof v === "number")
     .map(([k, v]) => `${k.replace(/Rating$/, "")} **${v}**`);
   if (unknown.length) {
     hasAnyAttr = true;
@@ -492,6 +526,8 @@ async function buildRosterEmbed(guildId: string, seasonId: number, teamId: numbe
   };
 
   embed.setTitle(`🏈 ${teamLabel} Roster`).setColor(Colors.Blue).setTimestamp();
+  // Custom emojis only render in description/fields — not in footers
+  embed.setDescription(DEV_LEGEND);
   embed.addFields({ name: "📤 Offense", value: "━━━━━━━━━━━", inline: false });
   for (const g of OFFENSE_GROUPS) addGroup(g, offense);
   embed.addFields({ name: "📥 Defense", value: "━━━━━━━━━━━", inline: false });
@@ -500,7 +536,6 @@ async function buildRosterEmbed(guildId: string, seasonId: number, teamId: numbe
     const lines = special.map(p => formatPlayerLine(p as any));
     for (const chunk of fieldChunks("🏟️ Special Teams", lines)) embed.addFields(chunk);
   }
-  embed.setFooter({ text: DEV_LEGEND });
   return embed;
 }
 
@@ -2646,8 +2681,7 @@ async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, se
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle(`🆓 Free Agents — ${position}`)
-    .setDescription(lines.join("\n"))
-    .setFooter({ text: `Showing top ${faRows.length} by OVR • ${DEV_LEGEND}` })
+    .setDescription(`${DEV_LEGEND}\n\n${lines.join("\n")}`)
     .setTimestamp();
 
   await interaction.update({ embeds: [embed], components: [backToHubRow()] });
@@ -2838,7 +2872,13 @@ async function handlePsPlayerPick(interaction: StringSelectMenuInteraction, sess
   });
 }
 
-const DEV_TRAIT_LABELS: Record<number, string> = { 0: "Normal", 1: "Impact", 2: "Star", 3: "Superstar", 4: "⚡ X-Factor" };
+const DEV_TRAIT_LABELS: Record<number, string> = {
+  0: "Normal",
+  1: `${DEV_EMOJI.star} Star`,
+  2: `${DEV_EMOJI.superstar} Superstar`,
+  3: `${DEV_EMOJI.xfactor} X-Factor`,
+  4: `${DEV_EMOJI.xfactor} X-Factor`,
+};
 
 const PS_KEY_ATTRS: Record<string, { key: string; label: string }[]> = {
   QB: [

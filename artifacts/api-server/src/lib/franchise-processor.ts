@@ -2202,6 +2202,7 @@ const ROSTER_POS_NUM: Record<number, string> = {
 const ROSTER_BIO_FIELDS = new Set([
   "height", "heightInches", "weight",
   "handedness", "throwingHand", "playerHandedness",
+  "college", "collegeName", "playerCollege",
 ]);
 
 // Try all known MCA payload shapes and return a flat array of player objects
