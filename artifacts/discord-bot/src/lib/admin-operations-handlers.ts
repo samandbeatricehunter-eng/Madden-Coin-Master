@@ -18,6 +18,7 @@ import {
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
   defaultTeamLogosTable, waitlistTable,
   serverSettingsTable, franchiseRostersTable, inventoryTable, legendsTable, customPlayersTable,
+  guildChannelsTable,
 } from "@workspace/db";
 import { eq, and, sql, ne, desc } from "drizzle-orm";
 import {
@@ -383,8 +384,8 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     await handleManualChannelSelect(interaction as StringSelectMenuInteraction);
     return true;
   }
-  if (id.startsWith("ao_modal_manual_ch")) {
-    await handleManualChannelModal(interaction as ModalSubmitInteraction);
+  if (id.startsWith("ao_ch_assign:")) {
+    await handleChannelAssign(interaction as StringSelectMenuInteraction);
     return true;
   }
 
@@ -1169,26 +1170,48 @@ const MANUAL_LINKABLE: { label: string; value: string; description: string }[] =
 ];
 
 async function handleManualChannelLinkPicker(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+
+  // Load all currently saved channel links for this guild in one query
+  const savedLinks = await db.select()
+    .from(guildChannelsTable)
+    .where(eq(guildChannelsTable.guildId, guildId));
+  const linkMap = new Map(savedLinks.map(r => [r.channelKey, r.channelId]));
+
+  // Resolve channel names from the guild channel cache
+  await interaction.guild?.channels.fetch().catch(() => null);
+  const chCache = interaction.guild?.channels.cache;
+  const chName  = (id: string | undefined) => {
+    if (!id) return null;
+    const ch = chCache?.get(id);
+    return ch ? `#${ch.name}` : `#${id}`;
+  };
+
   const select = new StringSelectMenuBuilder()
     .setCustomId("ao_manual_ch_select")
     .setPlaceholder("Select a channel function to link…")
     .addOptions(
-      MANUAL_LINKABLE.map(item =>
-        new StringSelectMenuOptionBuilder()
+      MANUAL_LINKABLE.map(item => {
+        const linkedName = chName(linkMap.get(item.value));
+        const desc = linkedName
+          ? `Currently: ${linkedName}`.slice(0, 50)
+          : item.description.slice(0, 50);
+        return new StringSelectMenuOptionBuilder()
           .setLabel(item.label)
           .setValue(item.value)
-          .setDescription(item.description),
-      ),
+          .setDescription(desc);
+      }),
     );
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 
+  const linkedCount = MANUAL_LINKABLE.filter(i => linkMap.has(i.value)).length;
   const embed = new EmbedBuilder()
     .setTitle("🔗 Manual Channel Link")
     .setDescription(
-      "Choose which bot function to link to a Discord channel.\n\n" +
-      "After selecting, you'll be prompted to paste the channel ID (right-click a channel → **Copy Channel ID** with Developer Mode on).\n\n" +
-      "Leave the ID blank to **clear** the link (messages will fall back to the commissioner channel).",
+      `**${linkedCount}/${MANUAL_LINKABLE.length}** channel functions are currently linked.\n\n` +
+      "Select a function below to assign it to a channel — you'll see the server's channels listed in a dropdown. " +
+      "Choose **🗑️ Clear link** to remove an existing link (the bot will fall back to the commissioner channel).",
     )
     .setColor(0x5865f2);
 
@@ -1199,59 +1222,89 @@ async function handleManualChannelLinkPicker(interaction: ButtonInteraction) {
 }
 
 async function handleManualChannelSelect(interaction: StringSelectMenuInteraction) {
-  const key       = interaction.values[0];
-  const keyLabel  = MANUAL_LINKABLE.find(k => k.value === key)?.label ?? key;
-
-  const modal = new ModalBuilder()
-    .setCustomId(`ao_modal_manual_ch:${key}`)
-    .setTitle(`Link: ${keyLabel}`)
-    .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("channel_id")
-          .setLabel("Channel ID (blank = clear / use fallback)")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 1234567890123456789")
-          .setRequired(false)
-          .setMaxLength(25),
-      ),
-    );
-
-  await interaction.showModal(modal);
-}
-
-async function handleManualChannelModal(interaction: ModalSubmitInteraction) {
-  const guildId  = interaction.guildId!;
-  const [, key]  = interaction.customId.split(":");
-  if (!key) {
-    await interaction.reply({ content: "❌ Invalid state — please try again.", flags: MessageFlags.Ephemeral });
-    return;
-  }
-
-  const rawId = interaction.fields.getTextInputValue("channel_id").trim();
+  const key      = interaction.values[0]!;
   const keyLabel = MANUAL_LINKABLE.find(k => k.value === key)?.label ?? key;
 
-  if (!rawId) {
+  // Fetch guild text channels
+  await interaction.guild?.channels.fetch().catch(() => null);
+  const textChannels = (interaction.guild?.channels.cache
+    .filter(ch => ch.type === ChannelType.GuildText || ch.type === ChannelType.GuildAnnouncement)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(ch => ({ id: ch.id, name: ch.name })) ?? []) as { id: string; name: string }[];
+
+  const CLEAR_OPTION = new StringSelectMenuOptionBuilder()
+    .setLabel("🗑️ Clear link (use fallback)")
+    .setValue("CLEAR")
+    .setDescription("Remove this channel link; bot falls back to commissioner channel");
+
+  const rows: ActionRowBuilder<any>[] = [];
+
+  // First dropdown: first 24 text channels + clear option (max 25)
+  const firstBatch = textChannels.slice(0, 24);
+  const firstMenu  = new StringSelectMenuBuilder()
+    .setCustomId(`ao_ch_assign:${key}`)
+    .setPlaceholder(`Assign channel for: ${keyLabel}`)
+    .addOptions([
+      CLEAR_OPTION,
+      ...firstBatch.map(ch =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`#${ch.name}`.slice(0, 100))
+          .setValue(ch.id),
+      ),
+    ]);
+  rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(firstMenu) as ActionRowBuilder<any>);
+
+  // Second dropdown: channels 25–49 if they exist (max 25 per menu)
+  const secondBatch = textChannels.slice(24, 49);
+  if (secondBatch.length > 0) {
+    const secondMenu = new StringSelectMenuBuilder()
+      .setCustomId(`ao_ch_assign:${key}`)
+      .setPlaceholder("…more channels")
+      .addOptions(
+        secondBatch.map(ch =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`#${ch.name}`.slice(0, 100))
+            .setValue(ch.id),
+        ),
+      );
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(secondMenu) as ActionRowBuilder<any>);
+  }
+
+  // Back button row
+  rows.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ao_manual_channel_link").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Hub").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+    ) as ActionRowBuilder<any>,
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle(`🔗 ${keyLabel}`)
+    .setDescription(`Select a channel from the dropdown${secondBatch.length > 0 ? "s" : ""} below to link it, or choose **🗑️ Clear link** to remove the current assignment.`)
+    .setColor(0x5865f2);
+
+  await (interaction as any).update({ embeds: [embed], components: rows });
+}
+
+async function handleChannelAssign(interaction: StringSelectMenuInteraction) {
+  const guildId  = interaction.guildId!;
+  const key      = interaction.customId.split(":").slice(1).join(":"); // everything after first ":"
+  const value    = interaction.values[0]!;
+  const keyLabel = MANUAL_LINKABLE.find(k => k.value === key)?.label ?? key;
+
+  if (value === "CLEAR") {
     await setGuildChannel(guildId, key, null);
     await interaction.reply({
-      content: `✅ **${keyLabel}** channel link cleared — messages will fall back to the commissioner channel.`,
+      content: `✅ **${keyLabel}** link cleared — messages will fall back to the commissioner channel.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Validate it looks like a snowflake
-  if (!/^\d{17,20}$/.test(rawId)) {
-    await interaction.reply({
-      content: "❌ That doesn't look like a valid channel ID (must be 17–20 digits). Right-click a channel and choose **Copy Channel ID**.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  await setGuildChannel(guildId, key, rawId);
+  await setGuildChannel(guildId, key, value);
   await interaction.reply({
-    content: `✅ **${keyLabel}** linked to <#${rawId}>.`,
+    content: `✅ **${keyLabel}** linked to <#${value}>.`,
     flags: MessageFlags.Ephemeral,
   });
 }
