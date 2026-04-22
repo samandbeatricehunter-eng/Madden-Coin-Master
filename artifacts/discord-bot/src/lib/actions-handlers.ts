@@ -2989,13 +2989,13 @@ function buildSortNavRow(prefix: string, page: number, sortStack: string[]): Act
 function buildDevFilterRow(prefix: string, devFilters: number[]): ActionRowBuilder<ButtonBuilder> {
   const has = (v: number) => devFilters.includes(v);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`${prefix}_dtog|0`).setLabel("Normal")
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|0`).setLabel("Show Normal")
       .setStyle(has(0) ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`${prefix}_dtog|1`).setLabel("Show ★")
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|1`).setLabel("Show Star")
       .setStyle(has(1) ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`${prefix}_dtog|2`).setLabel("Show 🌟")
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|2`).setLabel("Show SS")
       .setStyle(has(2) ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`${prefix}_dtog|3`).setLabel("Show ⚡")
+    new ButtonBuilder().setCustomId(`${prefix}_dtog|3`).setLabel("Show XF")
       .setStyle(has(3) ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`${prefix}_dev_clear`).setLabel("Clear Dev")
       .setStyle(ButtonStyle.Danger).setDisabled(devFilters.length === 0),
