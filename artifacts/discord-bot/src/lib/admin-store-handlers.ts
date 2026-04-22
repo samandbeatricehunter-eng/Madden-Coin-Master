@@ -17,9 +17,10 @@ import {
   seasonsTable, serverSettingsTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { isAdminUser, getOrCreateActiveSeason, getSeasonRules } from "./db-helpers.js";
+import { isAdminUser, getOrCreateActiveSeason, getSeasonRules, getCoreAttributes } from "./db-helpers.js";
 import { getServerSettings } from "./server-settings.js";
 import { ALL_POSITIONS } from "./custom-player-helpers.js";
+import { ATTRIBUTES } from "./constants.js";
 
 // ── Types & Session ────────────────────────────────────────────────────────────
 
@@ -69,6 +70,69 @@ function setSession(guildId: string, userId: string, data: Omit<SsSession, "expi
 function clearSession(guildId: string, userId: string) {
   sessions.delete(sessionKey(guildId, userId));
 }
+
+// ── Core Attributes toggle — abbr map ─────────────────────────────────────────
+
+const CORE_ATTR_ABBR: Record<string, string> = {
+  "Speed":               "SPD",
+  "Acceleration":        "ACC",
+  "Agility":             "AGI",
+  "Strength":            "STR",
+  "Awareness":           "AWR",
+  "Carrying":            "CAR",
+  "BC Vision":           "BCV",
+  "Break Tackle":        "BTK",
+  "Trucking":            "TRK",
+  "Stiff Arm":           "SFA",
+  "Change of Direction": "COD",
+  "Spin Move":           "SPM",
+  "Juke Move":           "JKM",
+  "Catching":            "CTH",
+  "Catch in Traffic":    "CIT",
+  "Spectacular Catch":   "SPC",
+  "Short Route Running": "SRR",
+  "Medium Route Running":"MRR",
+  "Deep Route Running":  "DRR",
+  "Release":             "RLS",
+  "Jumping":             "JMP",
+  "Throwing Power":      "THP",
+  "Short Accuracy":      "SAC",
+  "Medium Accuracy":     "MAC",
+  "Deep Accuracy":       "DAC",
+  "Throw on the Run":    "TOR",
+  "Throw Under Pressure":"TUP",
+  "Break Sack":          "BSK",
+  "Play Action":         "PAC",
+  "Pass Blocking":       "PBK",
+  "Pass Block Power":    "PBP",
+  "Pass Block Finesse":  "PBF",
+  "Run Blocking":        "RBK",
+  "Run Block Power":     "RBP",
+  "Run Block Finesse":   "RBF",
+  "Lead Block":          "LBK",
+  "Impact Blocking":     "IBL",
+  "Play Recognition":    "PRC",
+  "Tackling":            "TAK",
+  "Hit Power":           "HPW",
+  "Block Shedding":      "BSH",
+  "Finesse Moves":       "FMV",
+  "Power Moves":         "PMV",
+  "Pursuit":             "PUR",
+  "Man Coverage":        "MCV",
+  "Zone Coverage":       "ZCV",
+  "Press":               "PRS",
+  "Kick/Punt Return":    "KPR",
+  "Kicking Power":       "KPW",
+  "Kicking Accuracy":    "KAC",
+  "Stamina":             "STA",
+  "Toughness":           "TGH",
+  "Injury":              "INJ",
+  "Long Snap":           "LSN",
+};
+const CORE_ABBR_TO_FULL: Record<string, string> = Object.fromEntries(
+  Object.entries(CORE_ATTR_ABBR).map(([full, abbr]) => [abbr, full]),
+);
+const CA_PER_PAGE = 20;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -130,6 +194,7 @@ function buildHubComponents() {
     new ButtonBuilder().setCustomId("ss_arch").setLabel("📋 Archetypes").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ss_lt").setLabel("⭐ Legend Templates").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ss_pc").setLabel("💰 Prices & Caps").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ss_core_attrs").setLabel("🎨 Core Attributes").setStyle(ButtonStyle.Success),
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
@@ -390,15 +455,17 @@ async function buildPcEmbed(guildId: string): Promise<EmbedBuilder> {
           `**Legends/Season:** ${legendsPerSeason}`,
           `**Custom Players/Season:** ${customPerSeason}`,
           `**Core Attrs/Season:** ${rules.coreAttrCap}`,
-          `**Non-Core Attrs/Season:** ${rules.nonCoreAttrCap}`,
           `**Dev Ups/Season:** ${rules.devUpsCap}`,
           `**Age Resets/Season:** ${rules.ageResetsCap}`,
         ].join("\n"),
         inline: true,
       },
       {
-        name: "All-Time Caps",
-        value: `**Legends (All-Time):** ${allTimeLegend}`,
+        name: "All-Time & Global Caps",
+        value: [
+          `**Legends (All-Time):** ${allTimeLegend}`,
+          `**Non-Core Attrs/Season:** ${rules.nonCoreAttrCap}`,
+        ].join("\n"),
         inline: false,
       },
       {
@@ -438,6 +505,7 @@ function buildPcComponents() {
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_cancel").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ss_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
   );
   return [row1, row2, row3];
 }
@@ -477,6 +545,7 @@ export async function handleSsArch(interaction: ButtonInteraction) {
   );
   const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_cancel").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ss_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
   );
   await interaction.editReply({ embeds: [embed], components: [posSelect, backRow] });
 }
@@ -958,12 +1027,12 @@ export async function handleSsPcSeasonCaps(interaction: ButtonInteraction) {
           .setRequired(true).setValue(String(rules.coreAttrCap))
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId("nonCoreAttrCap").setLabel("Non-Core Attributes per Season Cap").setStyle(TextInputStyle.Short)
-          .setRequired(true).setValue(String(rules.nonCoreAttrCap))
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId("devUpsCap").setLabel("Dev Ups per Season Cap").setStyle(TextInputStyle.Short)
           .setRequired(true).setValue(String(rules.devUpsCap))
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("ageResetsCap").setLabel("Age Resets per Season Cap").setStyle(TextInputStyle.Short)
+          .setRequired(true).setValue(String(rules.ageResetsCap))
       ),
     );
   await interaction.showModal(modal);
@@ -986,9 +1055,9 @@ export async function handleSsPcAlltimeCaps(interaction: ButtonInteraction) {
           .setValue(String(settings.allTimeLegendCap ?? LIMITS.legendsAllTime))
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId("ageResetsCap").setLabel("Age Resets per Season Cap")
+        new TextInputBuilder().setCustomId("nonCoreAttrCap").setLabel("Non-Core Attributes per Season Cap")
           .setStyle(TextInputStyle.Short).setRequired(true)
-          .setValue(String(rules.ageResetsCap))
+          .setValue(String(rules.nonCoreAttrCap))
       ),
     );
   await interaction.showModal(modal);
@@ -1058,15 +1127,15 @@ export async function handleSsPcSeasonCapsModal(interaction: ModalSubmitInteract
   const legendsPerSeason = parseNum(getFieldSafe(interaction, "legendsPerSeason"));
   const customPerSeason  = parseNum(getFieldSafe(interaction, "customPlayersPerSeason"));
   const coreAttrCap      = parseNum(getFieldSafe(interaction, "coreAttrCap"));
-  const nonCoreAttrCap   = parseNum(getFieldSafe(interaction, "nonCoreAttrCap"));
   const devUpsCap        = parseNum(getFieldSafe(interaction, "devUpsCap"));
+  const ageResetsCap     = parseNum(getFieldSafe(interaction, "ageResetsCap"));
 
   await db.update(seasonsTable).set({
     ...(legendsPerSeason !== null ? { legendsPerSeasonCapOverride:       legendsPerSeason } : {}),
     ...(customPerSeason !== null  ? { customPlayersPerSeasonCapOverride: customPerSeason  } : {}),
     ...(coreAttrCap !== null      ? { coreAttrCapOverride:               coreAttrCap      } : {}),
-    ...(nonCoreAttrCap !== null   ? { nonCoreAttrCapOverride:            nonCoreAttrCap   } : {}),
     ...(devUpsCap !== null        ? { devUpsCapOverride:                 devUpsCap        } : {}),
+    ...(ageResetsCap !== null     ? { ageResetsCapOverride:              ageResetsCap     } : {}),
   }).where(eq(seasonsTable.id, season.id));
 
   const embed = await buildPcEmbed(guildId);
@@ -1080,16 +1149,16 @@ export async function handleSsPcAlltimeCapsModal(interaction: ModalSubmitInterac
   const season = await getOrCreateActiveSeason(guildId);
 
   const allTimeLegendCap = parseNum(getFieldSafe(interaction, "allTimeLegendCap"));
-  const ageResetsCap     = parseNum(getFieldSafe(interaction, "ageResetsCap"));
+  const nonCoreAttrCap   = parseNum(getFieldSafe(interaction, "nonCoreAttrCap"));
 
   if (allTimeLegendCap !== null) {
     await db.update(serverSettingsTable)
       .set({ allTimeLegendCap, updatedAt: new Date() })
       .where(eq(serverSettingsTable.guildId, guildId));
   }
-  if (ageResetsCap !== null) {
+  if (nonCoreAttrCap !== null) {
     await db.update(seasonsTable)
-      .set({ ageResetsCapOverride: ageResetsCap })
+      .set({ nonCoreAttrCapOverride: nonCoreAttrCap })
       .where(eq(seasonsTable.id, season.id));
   }
 
@@ -1133,9 +1202,11 @@ export async function handleSsPcContractPrices(interaction: ButtonInteraction) {
 
 export async function handleSsPcContractCaps(interaction: ButtonInteraction) {
   const guildId  = interaction.guildId!;
-  const season   = await getOrCreateActiveSeason(guildId);
-  const rules    = await getSeasonRules(season);
-  const settings = await getServerSettings(guildId);
+  const [season, settings] = await Promise.all([
+    getOrCreateActiveSeason(guildId),
+    getServerSettings(guildId),
+  ]);
+  const rules = await getSeasonRules(season);
 
   const modal = new ModalBuilder()
     .setCustomId("ss_modal_pc_contract_caps")
@@ -1231,4 +1302,103 @@ export async function handleSsPcContractCapsModal(interaction: ModalSubmitIntera
   const embed = await buildPcEmbed(guildId);
   embed.setDescription(`✅ Contract & Roster Caps updated.\n${embed.data.description ?? ""}`);
   await interaction.editReply({ embeds: [embed], components: buildPcComponents() });
+}
+
+// ── Handler: Core Attributes Toggle ───────────────────────────────────────────
+
+function buildCoreAttrsPage(coreSet: Set<string>, page: number) {
+  const totalPages = Math.ceil(ATTRIBUTES.length / CA_PER_PAGE);
+  const pageAttrs  = Array.from(ATTRIBUTES).slice(page * CA_PER_PAGE, (page + 1) * CA_PER_PAGE);
+
+  const attrRows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < pageAttrs.length; i += 5) {
+    const chunk = pageAttrs.slice(i, i + 5);
+    attrRows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        ...chunk.map(full => {
+          const abbr    = CORE_ATTR_ABBR[full] ?? full.slice(0, 4).toUpperCase();
+          const isCore  = coreSet.has(full);
+          return new ButtonBuilder()
+            .setCustomId(`ss_ca_toggle:${abbr}:${page}`)
+            .setLabel(abbr)
+            .setStyle(isCore ? ButtonStyle.Success : ButtonStyle.Secondary);
+        }),
+      ),
+    );
+  }
+
+  const navButtons: ButtonBuilder[] = [];
+  if (page > 0) navButtons.push(
+    new ButtonBuilder().setCustomId(`ss_ca_page:${page - 1}`).setLabel("← Prev").setStyle(ButtonStyle.Primary),
+  );
+  navButtons.push(
+    new ButtonBuilder().setCustomId("ss_ca_noop").setLabel(`Page ${page + 1}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+  );
+  if (page < totalPages - 1) navButtons.push(
+    new ButtonBuilder().setCustomId(`ss_ca_page:${page + 1}`).setLabel("Next →").setStyle(ButtonStyle.Primary),
+  );
+  navButtons.push(
+    new ButtonBuilder().setCustomId("ss_ca_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+  );
+  attrRows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...navButtons));
+
+  const coreList = Array.from(ATTRIBUTES).filter(a => coreSet.has(a));
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle("🎨 Core Attributes")
+    .setDescription(
+      "Click an attribute button to toggle it as **core** (🟢) or **non-core** (⬜).\n\n" +
+      `**Current core set (${coreList.length}):**\n` +
+      (coreList.length
+        ? coreList.map(a => `• ${a}`).join("\n")
+        : "_None set — all attributes treated as non-core._"),
+    )
+    .setFooter({ text: "Changes saved immediately on each click" });
+
+  return { embed, components: attrRows };
+}
+
+export async function handleSsCoreAttrs(interaction: ButtonInteraction) {
+  await interaction.deferUpdate();
+  if (!await checkAdmin(interaction.guildId!, interaction.user.id, interaction)) {
+    await interaction.followUp({ content: "❌ Admin only.", ephemeral: true }); return;
+  }
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+  const coreSet = getCoreAttributes(season);
+  const { embed, components } = buildCoreAttrsPage(coreSet, 0);
+  await interaction.editReply({ embeds: [embed], components });
+}
+
+export async function handleSsCaToggle(interaction: ButtonInteraction, abbr: string, page: number) {
+  await interaction.deferUpdate();
+  if (!await checkAdmin(interaction.guildId!, interaction.user.id, interaction)) {
+    await interaction.followUp({ content: "❌ Admin only.", ephemeral: true }); return;
+  }
+  const guildId  = interaction.guildId!;
+  const season   = await getOrCreateActiveSeason(guildId);
+  const coreSet  = getCoreAttributes(season);
+  const fullName = CORE_ABBR_TO_FULL[abbr];
+  if (!fullName) {
+    await interaction.followUp({ content: `❌ Unknown attribute: ${abbr}`, ephemeral: true }); return;
+  }
+  if (coreSet.has(fullName)) {
+    coreSet.delete(fullName);
+  } else {
+    coreSet.add(fullName);
+  }
+  await db.update(seasonsTable)
+    .set({ coreAttributesOverride: JSON.stringify(Array.from(coreSet)) })
+    .where(eq(seasonsTable.id, season.id));
+  const { embed, components } = buildCoreAttrsPage(coreSet, page);
+  await interaction.editReply({ embeds: [embed], components });
+}
+
+export async function handleSsCaPage(interaction: ButtonInteraction, page: number) {
+  await interaction.deferUpdate();
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+  const coreSet = getCoreAttributes(season);
+  const { embed, components } = buildCoreAttrsPage(coreSet, page);
+  await interaction.editReply({ embeds: [embed], components });
 }

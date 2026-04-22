@@ -77,6 +77,7 @@ import {
   handleSsLt, handleSsLtEdit, handleSsLtCreate, handleSsLtBackToPos, handleSsLtBackToModel, handleSsLtBackToView,
   handleSsPc, handleSsPcLegendPrices, handleSsPcUpgradePrices, handleSsPcSeasonCaps, handleSsPcAlltimeCaps,
   handleSsPcContractPrices, handleSsPcContractCaps,
+  handleSsCoreAttrs, handleSsCaToggle, handleSsCaPage,
   handleSsArchPos, handleSsArchEditGroup,
   handleSsLtPos, handleSsLtLegend, handleSsLtModel, handleSsLtEditGroup,
   handleSsArchEditModal, handleSsLtEditModal,
@@ -2254,6 +2255,11 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ss_pc_alltime_caps")    { await handleSsPcAlltimeCaps(interaction);     return; }
   if (action === "ss_pc_contract_prices") { await handleSsPcContractPrices(interaction);  return; }
   if (action === "ss_pc_contract_caps")   { await handleSsPcContractCaps(interaction);    return; }
+  if (action === "ss_core_attrs")         { await handleSsCoreAttrs(interaction);          return; }
+  if (action === "ss_ca_toggle")          { await handleSsCaToggle(interaction, parts[1]!, parseInt(parts[2] ?? "0", 10)); return; }
+  if (action === "ss_ca_page")            { await handleSsCaPage(interaction, parseInt(parts[1] ?? "0", 10)); return; }
+  if (action === "ss_ca_back")            { await handleSsPc(interaction); return; }
+  if (action === "ss_ca_noop")            { await interaction.deferUpdate(); return; }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────

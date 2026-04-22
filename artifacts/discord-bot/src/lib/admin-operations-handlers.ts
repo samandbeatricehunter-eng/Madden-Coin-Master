@@ -1495,7 +1495,8 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
       "Use the buttons below to manage your league's store settings.\n\n" +
       "📋 **Archetypes** — Browse and edit custom player archetype attributes\n" +
       "⭐ **Legend Templates** — Set base attribute templates for each legend model\n" +
-      "💰 **Prices & Caps** — Set prices and purchase limits for all store items"
+      "💰 **Prices & Caps** — Set prices and purchase limits for all store items\n" +
+      "🎨 **Core Attributes** — Toggle which attributes are core (⭐) vs non-core"
     )
     .setFooter({ text: "Changes take effect immediately" });
 
@@ -1506,6 +1507,7 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
         new ButtonBuilder().setCustomId("ss_arch").setLabel("📋 Archetypes").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("ss_lt").setLabel("⭐ Legend Templates").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("ss_pc").setLabel("💰 Prices & Caps").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("ss_core_attrs").setLabel("🎨 Core Attributes").setStyle(ButtonStyle.Success),
       ) as ActionRowBuilder<any>,
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),

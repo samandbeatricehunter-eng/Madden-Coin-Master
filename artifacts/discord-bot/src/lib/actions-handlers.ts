@@ -694,6 +694,12 @@ export async function handleActionsInteraction(
   if (id === "ac_buy_du_confirm")           { await handleBuyDevUpExecute(interaction as ButtonInteraction, sess); return true; }
   if (id.startsWith("ac_buy_legendsel:"))   { await handleBuyLegendConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_legend_confirm")       { await handleBuyLegendExecute(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_buy_contract_ext")  { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "contract_extension"); return true; }
+  if (id === "ac_buy_salary_red")    { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "salary_reduction"); return true; }
+  if (id === "ac_buy_bonus_red")     { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "bonus_reduction"); return true; }
+  if (id.startsWith("ac_buy_cmpos:"))  { await handleBuyContractModPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_buy_cmpick:")) { await handleBuyContractModConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_buy_cm_confirm")      { await handleBuyContractModExecute(interaction as ButtonInteraction, sess); return true; }
 
   // Coins sub
   if (id === "ac_send_coins_modal")             { await handleSendCoinsModal(interaction as ButtonInteraction); return true; }
@@ -836,18 +842,24 @@ async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsS
   const gid = interaction.guildId!;
   const settings = await getServerSettings(gid);
 
-  const attrOn   = settings.coinEconomy && settings.attributeUpgradesEnabled;
-  const ageOn    = settings.coinEconomy && settings.ageResetsEnabled;
-  const devOn    = settings.coinEconomy && settings.devUpgradesEnabled;
-  const customOn = settings.coinEconomy && settings.customSuperstarsEnabled;
-  const legOn    = settings.coinEconomy && settings.legendsEnabled;
+  const attrOn      = settings.coinEconomy && settings.attributeUpgradesEnabled;
+  const ageOn       = settings.coinEconomy && settings.ageResetsEnabled;
+  const devOn       = settings.coinEconomy && settings.devUpgradesEnabled;
+  const customOn    = settings.coinEconomy && settings.customSuperstarsEnabled;
+  const legOn       = settings.coinEconomy && settings.legendsEnabled;
+  const contractOn  = settings.coinEconomy && (settings.contractExtensionsEnabled ?? false);
+  const salaryOn    = settings.coinEconomy && (settings.salaryReductionsEnabled ?? false);
+  const bonusOn     = settings.coinEconomy && (settings.bonusReductionsEnabled ?? false);
 
   const allButtons: ButtonBuilder[] = [];
-  if (attrOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_attr").setLabel("⭐ Attribute Upgrade").setStyle(ButtonStyle.Primary));
-  if (ageOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_agereset").setLabel("🔄 Age Reset").setStyle(ButtonStyle.Primary));
-  if (devOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_devup").setLabel("📈 Dev Trait Upgrade").setStyle(ButtonStyle.Primary));
-  if (customOn) allButtons.push(new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Success));
-  if (legOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("🏆 Buy a Legend").setStyle(ButtonStyle.Success));
+  if (attrOn)     allButtons.push(new ButtonBuilder().setCustomId("ac_buy_attr").setLabel("⭐ Attribute Upgrade").setStyle(ButtonStyle.Primary));
+  if (ageOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_agereset").setLabel("🔄 Age Reset").setStyle(ButtonStyle.Primary));
+  if (devOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_devup").setLabel("📈 Dev Trait Upgrade").setStyle(ButtonStyle.Primary));
+  if (customOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Success));
+  if (legOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("🏆 Buy a Legend").setStyle(ButtonStyle.Success));
+  if (contractOn) allButtons.push(new ButtonBuilder().setCustomId("ac_buy_contract_ext").setLabel("📋 Contract Extension").setStyle(ButtonStyle.Secondary));
+  if (salaryOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_salary_red").setLabel("💵 Salary Reduction").setStyle(ButtonStyle.Secondary));
+  if (bonusOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_bonus_red").setLabel("🎁 Bonus Reduction").setStyle(ButtonStyle.Secondary));
 
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
   for (let i = 0; i < allButtons.length; i += 5) {
@@ -1163,6 +1175,305 @@ async function handleBuyAgeResetExecute(interaction: ButtonInteraction, sess: Ac
       .setColor(Colors.Yellow)
       .setTitle("⏳ Age Reset Submitted")
       .setDescription(`Your age reset for **${sess.selectedPlayerName}** has been submitted for commissioner approval.\nCost: **${cost.toLocaleString()} coins** deducted.`)],
+    components: [backToHubRow()],
+  });
+}
+
+// ── Contract / Salary / Bonus Mod Purchases ───────────────────────────────────
+
+type ContractModType = "contract_extension" | "salary_reduction" | "bonus_reduction";
+
+const CM_LABEL: Record<ContractModType, string> = {
+  contract_extension: "Contract Extension",
+  salary_reduction:   "Salary Reduction",
+  bonus_reduction:    "Bonus Reduction",
+};
+const CM_EMOJI: Record<ContractModType, string> = {
+  contract_extension: "📋",
+  salary_reduction:   "💵",
+  bonus_reduction:    "🎁",
+};
+
+async function handleBuyContractModPosPick(
+  interaction: ButtonInteraction,
+  sess: ActionsSession,
+  type: ContractModType,
+) {
+  const gid      = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+  sess.purchaseType = type;
+
+  const rows = await getRosterRows(interaction as any, seasonId, { position: franchiseRostersTable.position });
+  const positions = sortByCanonical([...new Set(rows.map((r: any) => r.position as string).filter(Boolean))]);
+
+  if (!positions.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_buy_cmpos:")
+    .setPlaceholder("Select your player's position…")
+    .addOptions(positions.slice(0, 25).map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue)
+      .setTitle(`${CM_EMOJI[type]} ${CM_LABEL[type]} — Step 1`)
+      .setDescription("Pick the **position** of the player.")],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+async function handleBuyContractModPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const position = interaction.values[0]!;
+  const gid      = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+  const type     = (sess.purchaseType ?? "contract_extension") as ContractModType;
+
+  const rows = await getRosterRows(interaction as any, seasonId, {
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    position:  franchiseRostersTable.position,
+    contractYearsLeft: franchiseRostersTable.contractYearsLeft,
+  });
+  const filtered = (rows as any[]).filter(r => r.position?.toUpperCase() === position.toUpperCase());
+
+  if (!filtered.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No players at position **${position}**.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_buy_cmpick:")
+    .setPlaceholder("Select a player…")
+    .addOptions(
+      filtered.slice(0, 25).map(r => {
+        const contractInfo = (r.contractYearsLeft != null) ? ` | Yrs: ${r.contractYearsLeft}` : "";
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(`${r.firstName} ${r.lastName} — OVR ${r.overall}${contractInfo}`)
+          .setValue(String(r.playerId));
+      }),
+    );
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue)
+      .setTitle(`${CM_EMOJI[type]} ${CM_LABEL[type]} — Step 2`)
+      .setDescription(`**Position: ${position}**\nNow pick the player.`)],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+async function handleBuyContractModConfirm(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const playerId = Number(interaction.values[0]);
+  const gid      = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+  const type     = (sess.purchaseType ?? "contract_extension") as ContractModType;
+
+  const rows = await db.select({
+    firstName:         franchiseRostersTable.firstName,
+    lastName:          franchiseRostersTable.lastName,
+    position:          franchiseRostersTable.position,
+    overall:           franchiseRostersTable.overall,
+    contractYearsLeft: franchiseRostersTable.contractYearsLeft,
+    playerId:          franchiseRostersTable.playerId,
+  }).from(franchiseRostersTable)
+    .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.playerId, playerId)))
+    .limit(1);
+
+  if (!rows.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const player = rows[0]!;
+  sess.selectedPlayerId   = playerId;
+  sess.selectedPlayerName = `${player.firstName} ${player.lastName}`.trim();
+  sess.selectedPlayerPos  = player.position ?? "";
+
+  const season = await getOrCreateActiveSeason(gid);
+  const [rules, user, seasonStats] = await Promise.all([
+    getSeasonRules(season),
+    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
+    getSeasonStats(interaction.user.id, season.id),
+  ]);
+
+  const costMap: Record<ContractModType, number> = {
+    contract_extension: rules.contractExtensionCost,
+    salary_reduction:   rules.salaryReductionCost,
+    bonus_reduction:    rules.bonusReductionCost,
+  };
+  const capMap: Record<ContractModType, number> = {
+    contract_extension: rules.contractExtensionCap,
+    salary_reduction:   rules.salaryReductionCap,
+    bonus_reduction:    rules.bonusReductionCap,
+  };
+  const usedMap: Record<ContractModType, number> = {
+    contract_extension: seasonStats?.contractExtensionsPurchased ?? 0,
+    salary_reduction:   seasonStats?.salaryReductionsPurchased   ?? 0,
+    bonus_reduction:    seasonStats?.bonusReductionsPurchased     ?? 0,
+  };
+
+  const cost    = costMap[type];
+  const cap     = capMap[type];
+  const used    = usedMap[type];
+  const contractInfo = (player.contractYearsLeft != null) ? `\nContract Years Left: **${player.contractYearsLeft}**` : "";
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(`${CM_EMOJI[type]} Confirm ${CM_LABEL[type]}`)
+    .setDescription(
+      `**${sess.selectedPlayerName}** (${sess.selectedPlayerPos})${contractInfo}\n\n` +
+      `**Cost:** ${cost.toLocaleString()} coins\n` +
+      `**Your Balance:** ${user.balance.toLocaleString()} coins\n` +
+      `**Used this season:** ${used}/${cap}`,
+    );
+
+  if (user.balance < cost) {
+    embed.setColor(Colors.Red).setDescription(
+      `❌ **Insufficient coins.** You need **${cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.\n\n` +
+      `**${sess.selectedPlayerName}** (${sess.selectedPlayerPos})`,
+    );
+    await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+    return;
+  }
+  if (used >= cap) {
+    embed.setColor(Colors.Red).setDescription(
+      `❌ **Season cap reached.** You've used all ${cap} ${CM_LABEL[type]} slots this season.\n\n` +
+      `**${sess.selectedPlayerName}** (${sess.selectedPlayerPos})`,
+    );
+    await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+    return;
+  }
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_buy_cm_confirm").setLabel(`✅ Confirm ${CM_LABEL[type]}`).setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Cancel").setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.update({ embeds: [embed], components: [row] });
+}
+
+async function handleBuyContractModExecute(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid  = interaction.guildId!;
+  const type = (sess.purchaseType ?? "contract_extension") as ContractModType;
+
+  if (!sess.selectedPlayerId || !sess.selectedPlayerName) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start over.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const season = await getOrCreateActiveSeason(gid);
+  const [rules, user, seasonStats] = await Promise.all([
+    getSeasonRules(season),
+    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
+    getSeasonStats(interaction.user.id, season.id),
+  ]);
+
+  const costMap: Record<ContractModType, number> = {
+    contract_extension: rules.contractExtensionCost,
+    salary_reduction:   rules.salaryReductionCost,
+    bonus_reduction:    rules.bonusReductionCost,
+  };
+  const capMap: Record<ContractModType, number> = {
+    contract_extension: rules.contractExtensionCap,
+    salary_reduction:   rules.salaryReductionCap,
+    bonus_reduction:    rules.bonusReductionCap,
+  };
+  const usedMap: Record<ContractModType, number> = {
+    contract_extension: seasonStats?.contractExtensionsPurchased ?? 0,
+    salary_reduction:   seasonStats?.salaryReductionsPurchased   ?? 0,
+    bonus_reduction:    seasonStats?.bonusReductionsPurchased     ?? 0,
+  };
+
+  const cost = costMap[type];
+  const cap  = capMap[type];
+  const used = usedMap[type];
+
+  if (used >= cap) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Season cap reached. You've used all ${cap} ${CM_LABEL[type]} slots this season.`)], components: [backToHubRow()] });
+    return;
+  }
+  if (user.balance < cost) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  // Career cap enforcement (salary_reduction + bonus_reduction only)
+  if (type === "salary_reduction" || type === "bonus_reduction") {
+    const settings = await getServerSettings(gid);
+    const careerCapKey = type === "salary_reduction" ? "salaryReductionCareerCap" : "bonusReductionCareerCap";
+    const careerCap = (settings as Record<string, unknown>)[careerCapKey] as number | null | undefined;
+    if (careerCap != null) {
+      const guildSeasons = await db.select({ id: seasonsTable.id }).from(seasonsTable).where(eq(seasonsTable.guildId, gid));
+      const guildSeasonIds = guildSeasons.map(s => s.id);
+      if (guildSeasonIds.length > 0) {
+        const [row] = await db
+          .select({ count: sql<number>`COUNT(*)::int` })
+          .from(purchasesTable)
+          .where(and(
+            inArray(purchasesTable.seasonId, guildSeasonIds),
+            eq(purchasesTable.purchaseType, type),
+            sql`lower(${purchasesTable.playerName}) = lower(${sess.selectedPlayerName})`,
+            ne(purchasesTable.status, "refunded"),
+          ));
+        if ((row?.count ?? 0) >= careerCap) {
+          await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.selectedPlayerName}** has reached the career cap of **${careerCap}** ${CM_LABEL[type]}(s) in this franchise.`)], components: [backToHubRow()] });
+          return;
+        }
+      }
+    }
+  }
+
+  await deductBalance(interaction.user.id, cost, gid);
+  await logTransaction(interaction.user.id, -cost, "purchase", `${CM_LABEL[type]} — ${sess.selectedPlayerName} (${sess.selectedPlayerPos ?? ""})`, gid);
+
+  const statsIncrement =
+    type === "contract_extension"
+      ? { contractExtensionsPurchased: sql`${seasonStatsTable.contractExtensionsPurchased} + 1` }
+      : type === "salary_reduction"
+        ? { salaryReductionsPurchased: sql`${seasonStatsTable.salaryReductionsPurchased} + 1` }
+        : { bonusReductionsPurchased:  sql`${seasonStatsTable.bonusReductionsPurchased}  + 1` };
+
+  await db.update(seasonStatsTable)
+    .set(statsIncrement)
+    .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+
+  const [inserted] = await db.insert(purchasesTable).values({
+    discordId:      interaction.user.id,
+    seasonId:       season.id,
+    purchaseType:   type,
+    status:         "pending",
+    cost,
+    playerName:     sess.selectedPlayerName,
+    playerPosition: sess.selectedPlayerPos ?? "",
+  }).returning({ id: purchasesTable.id });
+
+  await db.insert(inventoryTable).values({
+    discordId:      interaction.user.id,
+    seasonId:       season.id,
+    purchaseId:     inserted!.id,
+    itemType:       type,
+    playerName:     sess.selectedPlayerName,
+    playerPosition: sess.selectedPlayerPos ?? "",
+  });
+
+  await sendCommissionerNotification(interaction as any, type, inserted!.id, {
+    playerName:     sess.selectedPlayerName,
+    playerPosition: sess.selectedPlayerPos ?? "",
+    costPer:        cost,
+  });
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Yellow)
+      .setTitle(`⏳ ${CM_LABEL[type]} Submitted`)
+      .setDescription(
+        `**${CM_LABEL[type]}** for **${sess.selectedPlayerName}** (${sess.selectedPlayerPos ?? ""}) submitted!\n\n` +
+        `A commissioner will apply it in-game.\n` +
+        `**Cost:** ${cost.toLocaleString()} coins deducted.\n` +
+        `**Used this season:** ${used + 1}/${cap}`,
+      )],
     components: [backToHubRow()],
   });
 }
