@@ -198,10 +198,10 @@ function sortByCanonical(positions: string[]): string[] {
 // ── Keys that are displayed elsewhere (page 1/bio) and should NOT appear on the attributes page ──
 const ATTR_PAGE_SKIP = new Set([
   "height", "heightInches", "weight",
-  "throwAcc", "throwAccuracy",
+  "throwAcc", "throwAccuracy", "throwAccRating", "throwAccuracyRating",
   "handedness", "throwingHand", "playerHandedness",
   "college", "collegeName", "playerCollege",
-  "conf", "confidence", // shown on page 1 bio section
+  "conf", "confidence", "confRating", "confidenceRating", // shown on page 1 bio section
 ]);
 
 const ATTR_ABBR: Record<string, string> = {
@@ -225,7 +225,7 @@ const ATTR_ABBR: Record<string, string> = {
   manCoverRating: "MCV", zoneCoverRating: "ZCV", pressRating: "PRS", playRecRating: "PRC",
   kickPowerRating: "KPW", kickAccuracyRating: "KAC",
   puntPowerRating: "PNP", puntAccuracyRating: "PNA", kickReturnRating: "KR",
-  // ── Abbreviated aliases (alternate MCA payload format) ───────────────────────
+  // ── Abbreviated aliases (short form, no "Rating" suffix) ────────────────────
   accel: "ACC", jump: "JMP", tough: "TGH",
   bCV: "BCV", carry: "CAR",
   cIT: "CIT", routeRunDeep: "DRR", routeRunMed: "MRR", routeRunShort: "SRR", specCatch: "SPC",
@@ -234,6 +234,15 @@ const ATTR_ABBR: Record<string, string> = {
   throwAccDeep: "DAC", throwAccMid: "MAC", throwAccShort: "SAC",
   truck: "TRK",
   conf: "CNF", confidence: "CNF",
+  // ── Short-Rating hybrid variants (EA exports "accelRating" vs "accelerationRating") ──
+  accelRating: "ACC", jumpRating: "JMP", toughRating: "TGH",
+  bCVRating: "BCV", carryRating: "CAR",
+  cITRating: "CIT", routeRunDeepRating: "DRR", routeRunMedRating: "MRR",
+  routeRunShortRating: "SRR", specCatchRating: "SPC",
+  finesseMovesRating: "FMV",  // also fixes the "finessMovesRating" typo variant already above
+  kickAccRating: "KAC", kickRetRating: "KR", longSnapRating: "LSN",
+  throwAccDeepRating: "DAC", throwAccMidRating: "MAC", throwAccShortRating: "SAC",
+  truckRating: "TRK",
 };
 
 /**
