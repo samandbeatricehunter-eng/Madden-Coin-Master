@@ -27,7 +27,8 @@ export function buildAdminOpsEmbed(): EmbedBuilder {
 
       "**📒 View/Edit Rules** — Browse and edit the league rulebook by section.\n" +
       "**📋 View/Edit Waitlist** — View and manage the league waitlist.\n" +
-      "**🛡️ View/Edit Admins** — View and manage bot admins (max 4 per server).\n\n" +
+      "**🛡️ View/Edit Admins** — View and manage bot admins (max 4 per server).\n" +
+      "**👑 Commissioner Management** — Add/remove commissioners (max 4). Server owner is always primary.\n\n" +
 
       "**🏈 League Data** — EA connection, data import, and season data tools.\n" +
       "**👤 User Data** — Manage individual user economy, records, and links.\n" +
@@ -59,6 +60,7 @@ export function buildAdminOpsRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ao_rules").setLabel("📒 View/Edit Rules").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_waitlist").setLabel("📋 View/Edit Waitlist").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_admins").setLabel("🛡️ View/Edit Admins").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ao_commissioner").setLabel("👑 Commissioner Management").setStyle(ButtonStyle.Success),
   );
   const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_league_data").setLabel("🏈 League Data").setStyle(ButtonStyle.Success),

@@ -27,6 +27,7 @@ import {
   getOrSeedRules, setRules, getAllSections,
 } from "./db-helpers.js";
 import { WEEK_SEQUENCE, weekLabel } from "./week-helpers.js";
+import { lookupNflDivision } from "./constants.js";
 import { generateFranchiseArticle, generateWeekPreview } from "./franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "./wildcard-automation.js";
 import { runEosAutoPost } from "./eos-auto-post.js";
@@ -348,6 +349,28 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
   }
   if (id === "ao_admins_delete_sel") {
     await handleAdminsDeleteSel(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+
+  // ── Commissioner hub ──────────────────────────────────────────────────────────
+  if (id === "ao_commissioner") {
+    await handleCommissionerHub(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_commish_add") {
+    await handleCommissionerAdd(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_commish_add_afc" || id === "ao_commish_add_nfc" || id === "ao_commish_add_other") {
+    await handleCommissionerAddSel(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+  if (id === "ao_commish_remove") {
+    await handleCommissionerRemove(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_commish_remove_sel") {
+    await handleCommissionerRemoveSel(interaction as StringSelectMenuInteraction);
     return true;
   }
 
@@ -1064,6 +1087,324 @@ async function handleAdminsDeleteSel(interaction: StringSelectMenuInteraction) {
 
   await interaction.reply({
     content: `✅ Bot-admin status revoked for <@${targetId}> (${result.discordUsername}).`,
+    ephemeral: true,
+  });
+}
+
+// ── Commissioner Management Hub ────────────────────────────────────────────────
+
+const COMMISSIONER_CAP = 4;
+
+async function handleCommissionerHub(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const guild   = interaction.guild!;
+  const ownerId = guild.ownerId;
+
+  const nonOwnerCommissioners = await db
+    .select({ discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId), ne(usersTable.discordId, ownerId)))
+    .orderBy(usersTable.discordUsername);
+
+  const [ownerEntry] = await db
+    .select({ team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, ownerId), eq(usersTable.guildId, guildId)))
+    .limit(1);
+
+  const total = 1 + nonOwnerCommissioners.length;
+  const lines: string[] = [];
+  const ownerTeam = ownerEntry?.team ? ` — **${ownerEntry.team}**` : "";
+  lines.push(`**1.** <@${ownerId}> 👑${ownerTeam}`);
+  nonOwnerCommissioners.forEach((c, i) => {
+    const teamInfo = c.team ? ` — **${c.team}**` : "";
+    lines.push(`**${i + 2}.** <@${c.discordId}>${teamInfo}`);
+  });
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x9B59B6)
+        .setTitle("👑 Commissioner Management")
+        .setDescription(lines.join("\n"))
+        .setFooter({ text: `${total}/${COMMISSIONER_CAP} slots used · 👑 = Server Owner (permanent primary)` }),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_commish_add").setLabel("➕ Add").setStyle(ButtonStyle.Success)
+          .setDisabled(total >= COMMISSIONER_CAP),
+        new ButtonBuilder().setCustomId("ao_commish_remove").setLabel("🗑️ Remove").setStyle(ButtonStyle.Danger)
+          .setDisabled(nonOwnerCommissioners.length === 0),
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handleCommissionerAdd(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const guild   = interaction.guild!;
+  const ownerId = guild.ownerId;
+
+  const nonOwnerCount = (await db
+    .select({ discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId), ne(usersTable.discordId, ownerId))))
+    .length;
+
+  if (1 + nonOwnerCount >= COMMISSIONER_CAP) {
+    await interaction.reply({ content: `❌ Commissioner cap (${COMMISSIONER_CAP}) reached. Remove one first.`, ephemeral: true });
+    return;
+  }
+
+  const adminIds = new Set(
+    (await db.select({ discordId: usersTable.discordId })
+      .from(usersTable)
+      .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId))))
+      .map(u => u.discordId),
+  );
+  adminIds.add(ownerId);
+
+  const allLinked = await db
+    .select({ discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, false)))
+    .orderBy(usersTable.discordUsername);
+
+  const eligible = allLinked.filter(u => u.team && !adminIds.has(u.discordId));
+
+  if (eligible.length === 0) {
+    await interaction.reply({ content: "❌ No eligible linked users to promote.", ephemeral: true });
+    return;
+  }
+
+  const afcUsers: typeof eligible = [];
+  const nfcUsers: typeof eligible = [];
+  const otherUsers: typeof eligible = [];
+
+  for (const u of eligible) {
+    const conf = lookupNflDivision(u.team!)?.conference;
+    if (conf === "AFC")       afcUsers.push(u);
+    else if (conf === "NFC")  nfcUsers.push(u);
+    else                      otherUsers.push(u);
+  }
+
+  const makeMenu = (customId: string, placeholder: string, users: typeof eligible) =>
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(customId)
+        .setPlaceholder(placeholder)
+        .setMinValues(1)
+        .setMaxValues(1)
+        .addOptions(
+          users.slice(0, 25).map(u =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(`${u.discordUsername}${u.team ? ` (${u.team})` : ""}`)
+              .setValue(u.discordId)
+              .setDescription(u.team ?? "No team"),
+          ),
+        ),
+    ) as ActionRowBuilder<any>;
+
+  const remaining = COMMISSIONER_CAP - 1 - nonOwnerCount;
+  const components: ActionRowBuilder<any>[] = [];
+  if (afcUsers.length)   components.push(makeMenu("ao_commish_add_afc",   "AFC — select a user…",   afcUsers));
+  if (nfcUsers.length)   components.push(makeMenu("ao_commish_add_nfc",   "NFC — select a user…",   nfcUsers));
+  if (otherUsers.length) components.push(makeMenu("ao_commish_add_other", "Other — select a user…", otherUsers));
+  components.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ao_commissioner").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    ) as ActionRowBuilder<any>,
+  );
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("➕ Add Commissioner")
+        .setDescription(
+          `Select a linked user to promote to Commissioner. **${remaining} slot${remaining !== 1 ? "s" : ""} remaining.**\n\n` +
+          "Pick from the AFC, NFC, or Other dropdown below. Only one selection at a time.",
+        ),
+    ],
+    components,
+  });
+}
+
+async function handleCommissionerAddSel(interaction: StringSelectMenuInteraction) {
+  const guildId  = interaction.guildId!;
+  const guild    = interaction.guild!;
+  const ownerId  = guild.ownerId;
+  const targetId = interaction.values[0]!;
+
+  const nonOwnerCount = (await db
+    .select({ discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId), ne(usersTable.discordId, ownerId))))
+    .length;
+
+  if (1 + nonOwnerCount >= COMMISSIONER_CAP) {
+    await interaction.reply({ content: `❌ Commissioner cap (${COMMISSIONER_CAP}) reached.`, ephemeral: true });
+    return;
+  }
+
+  const [user] = await db
+    .select({ discordUsername: usersTable.discordUsername, team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, guildId)))
+    .limit(1);
+
+  if (!user) {
+    await interaction.reply({ content: "❌ User not found in the database.", ephemeral: true });
+    return;
+  }
+
+  await db.update(usersTable)
+    .set({ isAdmin: true, updatedAt: new Date() })
+    .where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, guildId)));
+
+  const member = await guild.members.fetch(targetId).catch(() => null);
+  const notices: string[] = [];
+
+  if (member) {
+    await guild.roles.fetch().catch(() => null);
+    const commRole = guild.roles.cache.find(r => r.name === "Commissioner");
+    if (commRole) {
+      await member.roles.add(commRole, "Promoted to Commissioner via admin hub").catch(err => {
+        console.error("[commissioner-add] Failed to add Commissioner role:", err);
+        notices.push("⚠️ Could not assign Commissioner role — check bot permissions.");
+      });
+    } else {
+      notices.push("⚠️ 'Commissioner' role not found — run `/admin-initialize` to create it.");
+    }
+
+    const baseNick = user.team ?? member.user.username;
+    const newNick  = `${baseNick} (Commissioner)`.slice(0, 32);
+    await member.setNickname(newNick, "Promoted to Commissioner").catch(err => {
+      console.error("[commissioner-add] Failed to set nickname:", err);
+      notices.push("⚠️ Could not update nickname — check bot rank vs member rank.");
+    });
+  } else {
+    notices.push("⚠️ Could not fetch guild member — role and nickname not applied.");
+  }
+
+  const extra = notices.length > 0 ? `\n\n${notices.join("\n")}` : "";
+  await interaction.reply({
+    content: `✅ <@${targetId}> has been promoted to Commissioner.${extra}`,
+    ephemeral: true,
+  });
+}
+
+async function handleCommissionerRemove(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const guild   = interaction.guild!;
+  const ownerId = guild.ownerId;
+
+  const commissioners = await db
+    .select({ discordId: usersTable.discordId, discordUsername: usersTable.discordUsername, team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.isAdmin, true), eq(usersTable.guildId, guildId), ne(usersTable.discordId, ownerId)))
+    .orderBy(usersTable.discordUsername);
+
+  if (commissioners.length === 0) {
+    await interaction.reply({ content: "❌ No removable commissioners. The server owner (👑) is always the primary commissioner and cannot be removed here.", ephemeral: true });
+    return;
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("ao_commish_remove_sel")
+    .setPlaceholder("Select a commissioner to remove…")
+    .addOptions(
+      commissioners.map(c =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${c.discordUsername}${c.team ? ` (${c.team})` : ""}`)
+          .setValue(c.discordId)
+          .setDescription(c.team ?? "No team linked"),
+      ),
+    );
+
+  await (interaction as any).update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Orange)
+        .setTitle("🗑️ Remove Commissioner")
+        .setDescription(
+          "Select a commissioner to demote. They will receive the **Approved Member** role and lose commissioner access.\n\n" +
+          "The server owner 👑 is always the primary commissioner and cannot be removed.",
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select) as ActionRowBuilder<any>,
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_commissioner").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+async function handleCommissionerRemoveSel(interaction: StringSelectMenuInteraction) {
+  const guildId  = interaction.guildId!;
+  const guild    = interaction.guild!;
+  const ownerId  = guild.ownerId;
+  const targetId = interaction.values[0]!;
+
+  if (targetId === ownerId) {
+    await interaction.reply({ content: "❌ The server owner cannot be removed as commissioner.", ephemeral: true });
+    return;
+  }
+
+  const [user] = await db
+    .select({ discordUsername: usersTable.discordUsername, team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, guildId)))
+    .limit(1);
+
+  if (!user) {
+    await interaction.reply({ content: "❌ User not found.", ephemeral: true });
+    return;
+  }
+
+  await db.update(usersTable)
+    .set({ isAdmin: false, updatedAt: new Date() })
+    .where(and(eq(usersTable.discordId, targetId), eq(usersTable.guildId, guildId)));
+
+  const member = await guild.members.fetch(targetId).catch(() => null);
+  const notices: string[] = [];
+
+  if (member) {
+    await guild.roles.fetch().catch(() => null);
+
+    const commRole = guild.roles.cache.find(r => r.name === "Commissioner");
+    if (commRole && member.roles.cache.has(commRole.id)) {
+      await member.roles.remove(commRole, "Demoted from Commissioner via admin hub").catch(err => {
+        console.error("[commissioner-remove] Failed to remove Commissioner role:", err);
+        notices.push("⚠️ Could not remove Commissioner role — check bot permissions.");
+      });
+    }
+
+    const approvedRole = guild.roles.cache.find(r => r.name === "Approved Member");
+    if (approvedRole && !member.roles.cache.has(approvedRole.id)) {
+      await member.roles.add(approvedRole, "Demoted from Commissioner").catch(err => {
+        console.error("[commissioner-remove] Failed to add Approved Member role:", err);
+        notices.push("⚠️ Could not assign Approved Member role — check bot permissions.");
+      });
+    }
+
+    const stripped = member.displayName.replace(/\s*\(Commissioner\)\s*$/i, "").trim();
+    if (stripped !== member.displayName) {
+      await member.setNickname(stripped, "Commissioner removed").catch(err => {
+        console.error("[commissioner-remove] Failed to strip nickname:", err);
+        notices.push("⚠️ Could not update nickname — check bot rank vs member rank.");
+      });
+    }
+  } else {
+    notices.push("⚠️ Could not fetch guild member — role and nickname not updated.");
+  }
+
+  const extra = notices.length > 0 ? `\n\n${notices.join("\n")}` : "";
+  await interaction.reply({
+    content: `✅ <@${targetId}> has been removed as Commissioner and reassigned to Approved Member.${extra}`,
     ephemeral: true,
   });
 }

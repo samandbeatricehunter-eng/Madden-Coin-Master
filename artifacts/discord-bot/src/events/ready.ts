@@ -1,6 +1,8 @@
 import { Client } from "discord.js";
 import { sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
+import { usersTable } from "@workspace/db";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { setGuildChannel, getGuildChannel, KNOWN_GUILD_CHANNELS, CHANNEL_KEYS } from "../lib/db-helpers.js";
 
@@ -90,6 +92,77 @@ async function autoDiscoverChannelsByName(client: Client): Promise<void> {
   }
 }
 
+// ── Co-Commissioner → Commissioner migration ───────────────────────────────────
+// Runs once per startup. Finds all "Co-Commissioner" role holders in every
+// guild, converts up to 3 of them to "Commissioner" (owner is always #1 = 4 max
+// total), then deletes the "Co-Commissioner" role from the guild entirely.
+// Safe to re-run — guilds without a Co-Commissioner role are skipped.
+const COMMISSIONER_CAP = 4;
+
+async function migrateCoCommissioners(client: Client): Promise<void> {
+  for (const [guildId, guild] of client.guilds.cache) {
+    try {
+      await guild.members.fetch().catch(() => null);
+      await guild.roles.fetch().catch(() => null);
+
+      const coCommRole = guild.roles.cache.find(r => r.name === "Co-Commissioner");
+      if (!coCommRole) continue;
+
+      const commRole = guild.roles.cache.find(r => r.name === "Commissioner");
+      if (!commRole) {
+        console.log(`[co-comm-migration] ${guild.name}: No Commissioner role — skipping (run /admin-initialize first).`);
+        continue;
+      }
+
+      const ownerId = guild.ownerId;
+
+      // Ensure owner has Commissioner role + isAdmin=true
+      const owner = await guild.members.fetch(ownerId).catch(() => null);
+      if (owner) {
+        if (!owner.roles.cache.has(commRole.id)) {
+          await owner.roles.add(commRole, "Migration: owner is primary commissioner").catch(console.error);
+        }
+        await db.update(usersTable)
+          .set({ isAdmin: true, updatedAt: new Date() })
+          .where(and(eq(usersTable.discordId, ownerId), eq(usersTable.guildId, guildId)))
+          .catch(() => null);
+      }
+
+      // Sort non-owner co-comm members alphabetically by display name
+      const coCommMembers = [...coCommRole.members.values()]
+        .filter(m => m.id !== ownerId)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+      const toMigrate = coCommMembers.slice(0, COMMISSIONER_CAP - 1);
+
+      for (const member of toMigrate) {
+        await member.roles.remove(coCommRole, "Migration: Co-Commissioner → Commissioner").catch(console.error);
+        await member.roles.add(commRole, "Migration: Co-Commissioner → Commissioner").catch(console.error);
+
+        await db.update(usersTable)
+          .set({ isAdmin: true, updatedAt: new Date() })
+          .where(and(eq(usersTable.discordId, member.id), eq(usersTable.guildId, guildId)))
+          .catch(() => null);
+
+        if (!member.displayName.toLowerCase().includes("(commissioner)")) {
+          const newNick = `${member.displayName} (Commissioner)`.slice(0, 32);
+          await member.setNickname(newNick, "Migration: Co-Commissioner → Commissioner").catch(console.error);
+        }
+
+        console.log(`[co-comm-migration] ${guild.name}: Migrated ${member.displayName} → Commissioner`);
+      }
+
+      await coCommRole.delete("Migration: Co-Commissioner role eliminated").catch(err =>
+        console.error(`[co-comm-migration] ${guild.name}: Could not delete Co-Commissioner role:`, err),
+      );
+
+      console.log(`[co-comm-migration] ${guild.name}: Done. ${toMigrate.length} user(s) migrated. Co-Commissioner role deleted.`);
+    } catch (err) {
+      console.error(`[co-comm-migration] Failed for guild ${guildId}:`, err);
+    }
+  }
+}
+
 export async function execute(client: Client) {
   console.log(`✅ Bot logged in as ${client.user?.tag}`);
 
@@ -97,6 +170,7 @@ export async function execute(client: Client) {
   await backfillPermanentVaultTeams();
   await seedKnownGuildChannels();
   await autoDiscoverChannelsByName(client);
+  await migrateCoCommissioners(client);
 
   const guilds = client.guilds.cache;
   if (guilds.size === 0) return;
