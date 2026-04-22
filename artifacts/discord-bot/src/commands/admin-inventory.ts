@@ -23,13 +23,13 @@ const DEV_LABEL: Record<number, string> = {
 };
 
 const POSITION_ORDER = [
-  "QB", "HB", "FB",
-  "WR", "TE",
-  "LT", "LG", "C", "RG", "RT",
-  "LE", "RE", "DT",
-  "LOLB", "MLB", "ROLB",
-  "CB", "FS", "SS",
-  "K", "P",
+  "QB","HB","FB",
+  "WR","TE",
+  "LT","LG","C","RG","RT",
+  "LEDGE","LE","REDGE","RE","DT","NT",
+  "WILL","ROLB","MIKE","MLB","SAM","LOLB","ILB","OLB",
+  "CB","FS","SS",
+  "K","P","LS",
 ];
 
 function sortPositions(positions: string[]): string[] {

@@ -165,6 +165,17 @@ const ROSTER_CARD_POSITIONS = [
   "LEDGE","REDGE","DT","WILL","MIKE","SAM","CB","FS","SS","K","P","LS",
 ];
 
+// Canonical sort order for all position dropdowns
+const CANONICAL_POS_ORDER = ["QB","HB","FB","WR","TE","LT","LG","C","RG","RT","LEDGE","REDGE","DT","WILL","MIKE","SAM","CB","FS","SS","K","P","LS"];
+const CANONICAL_POS_IDX   = new Map(CANONICAL_POS_ORDER.map((p, i) => [p, i]));
+function sortByCanonical(positions: string[]): string[] {
+  return [...positions].sort((a, b) => {
+    const ai = CANONICAL_POS_IDX.get(a) ?? 999;
+    const bi = CANONICAL_POS_IDX.get(b) ?? 999;
+    return ai !== bi ? ai - bi : a.localeCompare(b);
+  });
+}
+
 const ATTR_ABBR: Record<string, string> = {
   speedRating: "SPD", accelerationRating: "ACC", agilityRating: "AGI",
   strengthRating: "STR", jumpingRating: "JMP", awareRating: "AWR",
@@ -728,7 +739,7 @@ async function handleBuyAttrPosPick(interaction: ButtonInteraction, sess: Action
   sess.purchaseType = "attribute"; sess.rosterPosition = undefined;
 
   const rows = await getRosterRows(interaction as any, seasonId, { position: franchiseRostersTable.position });
-  const positions = [...new Set(rows.map((r: any) => r.position as string).filter(Boolean))].sort();
+  const positions = sortByCanonical([...new Set(rows.map((r: any) => r.position as string).filter(Boolean))]);
 
   if (!positions.length) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found. Ask a commissioner to import MCA data.")], components: [backToHubRow()] });
@@ -858,7 +869,7 @@ async function handleBuyAgeResetPosPick(interaction: ButtonInteraction, sess: Ac
   sess.purchaseType = "agereset";
 
   const rows = await getRosterRows(interaction as any, seasonId, { position: franchiseRostersTable.position });
-  const positions = [...new Set(rows.map((r: any) => r.position as string).filter(Boolean))].sort();
+  const positions = sortByCanonical([...new Set(rows.map((r: any) => r.position as string).filter(Boolean))]);
 
   if (!positions.length) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found.")], components: [backToHubRow()] });
@@ -1031,7 +1042,7 @@ async function handleBuyDevUpPosPick(interaction: ButtonInteraction, sess: Actio
     devTrait: franchiseRostersTable.devTrait,
   });
   const eligible = (rows as any[]).filter(r => r.devTrait <= 1);
-  const positions = [...new Set(eligible.map((r: any) => r.position as string).filter(Boolean))].sort();
+  const positions = sortByCanonical([...new Set(eligible.map((r: any) => r.position as string).filter(Boolean))]);
 
   if (!positions.length) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No eligible players (Normal/Star dev only).")], components: [backToHubRow()] });
@@ -2578,7 +2589,7 @@ async function handleRcBackToRoster(interaction: ButtonInteraction, sess: Action
 
 // ── Free Agents ───────────────────────────────────────────────────────────────
 
-const FREE_AGENT_POSITIONS = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "DT", "LEDGE", "REDGE", "MIKE", "WILL", "SAM", "CB", "FS", "SS", "K", "P", "LS"];
+const FREE_AGENT_POSITIONS = ["QB","HB","FB","WR","TE","LT","LG","C","RG","RT","LEDGE","REDGE","DT","WILL","MIKE","SAM","CB","FS","SS","K","P","LS"];
 
 async function handleFreeAgentsPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
   const menu = new StringSelectMenuBuilder()
@@ -2704,17 +2715,29 @@ async function handlePsTeamPick(interaction: ButtonInteraction, sess: ActionsSes
 }
 
 // Position group definitions
-const PS_POS_GROUPS: { value: string; label: string; positions: string[] }[] = [
-  { value: "QB",  label: "🏈 Quarterback (QB)",          positions: ["QB"] },
-  { value: "HB",  label: "🏃 Running Back (HB/RB/FB)",   positions: ["HB", "RB", "FB"] },
-  { value: "WR",  label: "🙌 Wide Receiver (WR)",         positions: ["WR"] },
-  { value: "TE",  label: "📦 Tight End (TE)",             positions: ["TE"] },
-  { value: "OL",  label: "🛡️ Offensive Line (OL)",        positions: ["LT", "LG", "C", "RG", "RT"] },
-  { value: "DL",  label: "🔴 Defensive Line (DL)",        positions: ["LE", "RE", "DT", "NT"] },
-  { value: "LB",  label: "🔵 Linebacker (LB)",            positions: ["LOLB", "MLB", "ROLB", "ILB", "OLB"] },
-  { value: "CB",  label: "🔒 Cornerback (CB)",            positions: ["CB"] },
-  { value: "S",   label: "🛡️ Safety (FS/SS)",             positions: ["FS", "SS"] },
-  { value: "K",   label: "🦵 Specialist (K/P)",           positions: ["K", "P", "KR", "PR"] },
+const PS_POS_GROUPS: { value: string; label: string; positions: string[]; attrsKey: string }[] = [
+  { value: "QB",    label: "QB — Quarterback",       positions: ["QB"],                  attrsKey: "QB" },
+  { value: "HB",    label: "HB — Halfback",          positions: ["HB","RB"],             attrsKey: "HB" },
+  { value: "FB",    label: "FB — Fullback",          positions: ["FB"],                  attrsKey: "HB" },
+  { value: "WR",    label: "WR — Wide Receiver",     positions: ["WR"],                  attrsKey: "WR" },
+  { value: "TE",    label: "TE — Tight End",         positions: ["TE"],                  attrsKey: "TE" },
+  { value: "LT",    label: "LT — Left Tackle",       positions: ["LT"],                  attrsKey: "OL" },
+  { value: "LG",    label: "LG — Left Guard",        positions: ["LG"],                  attrsKey: "OL" },
+  { value: "C",     label: "C — Center",             positions: ["C"],                   attrsKey: "OL" },
+  { value: "RG",    label: "RG — Right Guard",       positions: ["RG"],                  attrsKey: "OL" },
+  { value: "RT",    label: "RT — Right Tackle",      positions: ["RT"],                  attrsKey: "OL" },
+  { value: "LEDGE", label: "LEDGE — Left Edge",      positions: ["LEDGE","LE"],          attrsKey: "DL" },
+  { value: "REDGE", label: "REDGE — Right Edge",     positions: ["REDGE","RE"],          attrsKey: "DL" },
+  { value: "DT",    label: "DT — Defensive Tackle",  positions: ["DT","NT"],             attrsKey: "DL" },
+  { value: "WILL",  label: "WILL — Will LB",         positions: ["WILL","ROLB","OLB"],   attrsKey: "LB" },
+  { value: "MIKE",  label: "MIKE — Mike LB",         positions: ["MIKE","MLB","ILB"],    attrsKey: "LB" },
+  { value: "SAM",   label: "SAM — Sam LB",           positions: ["SAM","LOLB"],          attrsKey: "LB" },
+  { value: "CB",    label: "CB — Cornerback",        positions: ["CB"],                  attrsKey: "CB" },
+  { value: "FS",    label: "FS — Free Safety",       positions: ["FS"],                  attrsKey: "S" },
+  { value: "SS",    label: "SS — Strong Safety",     positions: ["SS"],                  attrsKey: "S" },
+  { value: "K",     label: "K — Kicker",             positions: ["K"],                   attrsKey: "K" },
+  { value: "P",     label: "P — Punter",             positions: ["P"],                   attrsKey: "K" },
+  { value: "LS",    label: "LS — Long Snapper",      positions: ["LS"],                  attrsKey: "K" },
 ];
 
 async function handlePsPosPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
@@ -2731,13 +2754,13 @@ async function handlePsPosPick(interaction: StringSelectMenuInteraction, sess: A
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`ac_ps_pos_sel:${teamId}`)
-    .setPlaceholder("Select a position group…")
+    .setPlaceholder("Select a position…")
     .addOptions(PS_POS_GROUPS.map(g =>
       new StringSelectMenuOptionBuilder().setLabel(g.label).setValue(g.value),
     ));
 
   await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 Player Stats — ${teamName}`).setDescription("Choose a position group to browse players.")],
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 Player Stats — ${teamName}`).setDescription("Choose a position to browse players.")],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -2947,7 +2970,8 @@ async function handlePsPlayerCard(interaction: StringSelectMenuInteraction, sess
     );
 
   // Key attributes for this position group
-  const keyAttrs = PS_KEY_ATTRS[posGroup] ?? PS_KEY_ATTRS["QB"]!;
+  const attrsKey = PS_POS_GROUPS.find(g => g.value === posGroup)?.attrsKey ?? posGroup;
+  const keyAttrs = PS_KEY_ATTRS[attrsKey] ?? PS_KEY_ATTRS["QB"]!;
   const attrLines = keyAttrs
     .map(a => {
       const val = attrs[a.key];

@@ -99,7 +99,7 @@ function isNfc(conference: string | null, fullName: string, nickName: string): b
 }
 
 // ── Position ordering ────────────────────────────────────────────────────────
-const POSITION_ORDER = ["QB","HB","FB","WR","TE","LT","LG","C","RG","RT","LE","RE","DT","LOLB","MLB","ROLB","CB","FS","SS","K","P"];
+const POSITION_ORDER = ["QB","HB","FB","WR","TE","LT","LG","C","RG","RT","LEDGE","LE","REDGE","RE","DT","NT","WILL","ROLB","MIKE","MLB","SAM","LOLB","ILB","OLB","CB","FS","SS","K","P","LS"];
 function sortPositions(positions: string[]): string[] {
   const known   = POSITION_ORDER.filter(p => positions.includes(p));
   const unknown = positions.filter(p => !POSITION_ORDER.includes(p)).sort();
