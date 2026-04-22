@@ -106,34 +106,57 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
 export function buildUnlinkedHubEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setTitle("🏈 /menu — Unlinked")
+    .setTitle("🏈 /menu — Welcome to the League")
     .setDescription(
-      "You are not currently linked to a team in this league.\n\n" +
-      "**Team Requests**\n" +
-      "🔴 View Open Teams · 🟢 View User Teams · 📬 Request Open Team · 📋 Add to Waitlist · ❌ Remove from Waitlist\n\n" +
-      "**Browse**\n" +
-      "👥 Rosters *(All Players & Free Agents inside)*\n\n" +
-      "**League Info**\n" +
-      "📈 Standings *(In The Hunt & Teams to Watch inside)* · 📜 Rules",
+      "You are not currently linked to a team. Use the buttons below to request one or browse league info.\n\n" +
+
+      "**🔴🟢 Team Requests**\n" +
+      "**Open Teams** — browse available franchises by division (AFC/NFC × East/North/South/West)\n" +
+      "**User Teams** — see every user currently linked to a team\n" +
+      "**Request Open Team** — submit a request for a specific open franchise\n" +
+      "**Add / Remove Waitlist** — join or leave the commissioner's waitlist\n\n" +
+
+      "**👥 Rosters**\n" +
+      "Browse any team's full roster with player cards (bio · attributes · career stats)\n" +
+      "Inside Rosters: **All Players** and **Free Agents** — filter by position, dev trait, and name, " +
+      "then sort by up to **5 criteria** in priority order (OVR, age, height, weight, contract, " +
+      "any offensive or defensive attribute, Kick Power/Accuracy/Return)\n\n" +
+
+      "**📈 Standings**\n" +
+      "Current season standings with **In The Hunt** and **Teams to Watch** breakdowns\n\n" +
+
+      "**👤 User Stats**\n" +
+      "View any user's season record, server all-time record, and global record — " +
+      "including W/L, point differential, playoff record, and Super Bowl results\n\n" +
+
+      "**🥇🏆🌐 Power Rankings**\n" +
+      "Season PR · All-Time PR · Global PR\n\n" +
+
+      "**📜 Rules**\n" +
+      "Full league rulebook and scoring settings",
     )
-    .setFooter({ text: "Contact a commissioner to get linked to a team." });
+    .setFooter({ text: "Contact a commissioner to get linked to a team · /menu expires after 15 min" });
 }
 
 export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_openteams").setLabel("🔴 View Open Teams").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_activeteams").setLabel("🟢 View User Teams").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_req_openteam").setLabel("📬 Request Open Team").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_req_addwaitlist").setLabel("📋 Add to Waitlist").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("ac_req_rmwaitlist").setLabel("❌ Remove from Waitlist").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_openteams").setLabel("🔴 Open Teams").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_activeteams").setLabel("🟢 User Teams").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_req_openteam").setLabel("📬 Request Team").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_req_addwaitlist").setLabel("📋 Add Waitlist").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_req_rmwaitlist").setLabel("❌ Leave Waitlist").setStyle(ButtonStyle.Danger),
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_anyuserstats").setLabel("👤 User Stats").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ac_seasonpr").setLabel("🥇 Season PR").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_alltimepr").setLabel("🏆 All-Time PR").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_globalpr").setLabel("🌐 Global PR").setStyle(ButtonStyle.Secondary),
   );
   return [row1, row2, row3];
 }
