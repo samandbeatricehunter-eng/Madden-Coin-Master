@@ -26,8 +26,8 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
   sections.push(`**Economy & Social**\n${row1Items.join(" · ")}`);
 
   if (mcaVisible) {
-    sections.push("**Rosters**\n📋 My Roster · 👥 Rosters · 🆓 Free Agents · 📊 Player Stats\n*(Player Cards & Team Stats accessible inside each roster view)*");
-    sections.push("**League Info**\n📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch · 👤 Any User Stats");
+    sections.push("**Rosters**\n📋 My Roster · 👥 Rosters\n*(All Players, Free Agents, Player Cards & Team Stats accessible inside Rosters)*");
+    sections.push("**League Info**\n📈 Standings *(In The Hunt & Teams to Watch inside Standings)*\n👤 Any User Stats");
   }
 
   const row4Items: string[] = ["🥇 Season PR", "🏆 All-Time PR", "🌐 Global PR"];
@@ -65,8 +65,6 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
     sec2.push(
       new ButtonBuilder().setCustomId("ac_myroster").setLabel("📋 My Roster").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_freeagents").setLabel("🆓 Free Agents").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_playerstats").setLabel("📊 Player Stats").setStyle(ButtonStyle.Secondary),
     );
   }
 
@@ -74,8 +72,6 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   if (mcaVisible) {
     sec3.push(
       new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_inthehunt").setLabel("🎯 In The Hunt").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ac_anyuserstats").setLabel("👤 Any User Stats").setStyle(ButtonStyle.Secondary),
     );
   }
@@ -118,9 +114,9 @@ export function buildUnlinkedHubEmbed(): EmbedBuilder {
       "**Team Requests**\n" +
       "🔴 View Open Teams · 🟢 View User Teams · 📬 Request Open Team · 📋 Add to Waitlist · ❌ Remove from Waitlist\n\n" +
       "**Browse**\n" +
-      "👥 Rosters · 📊 Player Stats & Ratings\n\n" +
+      "👥 Rosters *(All Players & Free Agents inside)*\n\n" +
       "**League Info**\n" +
-      "📈 Standings · 🎯 In The Hunt · 👀 Teams to Watch · 📜 Rules",
+      "📈 Standings *(In The Hunt & Teams to Watch inside)* · 📜 Rules",
     )
     .setFooter({ text: "Contact a commissioner to get linked to a team." });
 }
@@ -135,18 +131,13 @@ export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder>[] {
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_anyroster").setLabel("👥 Rosters").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_playerstats").setLabel("📊 Player Stats & Ratings").setStyle(ButtonStyle.Secondary),
-  );
-  const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_standings").setLabel("📈 Standings").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_inthehunt").setLabel("🎯 In The Hunt").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_rules").setLabel("📜 Rules").setStyle(ButtonStyle.Secondary),
   );
-  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
-  return [row1, row2, row3, row4];
+  return [row1, row2, row3];
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {

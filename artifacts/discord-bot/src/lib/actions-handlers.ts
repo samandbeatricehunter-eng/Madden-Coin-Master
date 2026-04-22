@@ -21,7 +21,8 @@ import {
   playerEaIdsTable, customPlayersTable,
   playerSeasonStatsTable, waitlistTable,
 } from "@workspace/db";
-import { eq, and, or, desc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
@@ -33,7 +34,7 @@ import {
 } from "./payout-config.js";
 import { getServerSettings, requireMcaEnabled } from "./server-settings.js";
 import { getArticleStandings, getSeasonRecords, getAllTimeRecords } from "./gcs-fallback.js";
-import { devBadge, devBadgeText, DEV_LEGEND, DEV_EMOJI } from "./dev-trait.js";
+import { devBadge, devBadgeText, DEV_LEGEND, DEV_EMOJI, DEV_TRAIT_LABELS } from "./dev-trait.js";
 import { weekLabel } from "./week-helpers.js";
 import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
@@ -99,6 +100,20 @@ interface ActionsSession {
   acRulesSection?: string;
   // team request / waitlist flow
   pendingTeamRequest?: string;
+  // free agent player-card flow
+  faPos?: string;
+  faCardPlayerId?: number;
+  faCardPage?: number;
+  faSeasonId?: number;
+  // all-players browse/filter flow
+  apPos?: string;
+  apCardPlayerId?: number;
+  apCardPage?: number;
+  apSeasonId?: number;
+  apNameFilter?: string;
+  apDevFilter?: number;   // -1=all, 0=normal, 1=star, 2=ss, 3=xf, 99=ss+xf
+  apSortPrimary?: string; // "overall_desc","overall_asc","age_asc","age_desc","height_desc","height_asc","weight_desc","weight_asc","contract_asc","contract_desc"
+  apAttrSort?: string;    // attribute abbr, e.g. "SPD", "OVR"
   expiresAt: number;
 }
 
@@ -646,13 +661,28 @@ export async function handleActionsInteraction(
   if (id === "ac_rc_back_to_players")  { await handleRcBackToPlayers(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rc_teamstats")        { await handleRcTeamStats(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rc_back_to_roster")   { await handleRcBackToRoster(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_freeagents")   { await handleFreeAgentsPosPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_fa_pos")       { await handleFreeAgentsShow(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_playerstats")           { await handlePlayerStatsStart(interaction as ButtonInteraction, sess); return true; }
-  if (id.startsWith("ac_ps_conf:"))      { await handlePsTeamPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_ps_team_sel")           { await handlePsPosPick(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id.startsWith("ac_ps_pos_sel:"))   { await handlePsPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id.startsWith("ac_ps_player_sel:")) { await handlePsPlayerCard(interaction as StringSelectMenuInteraction, sess); return true; }
+  // Free Agents — now launched from Rosters screen
+  if (id === "ac_freeagents")            { await handleFreeAgentsPosPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_pos")                { await handleFaPosSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_fa_player")             { await handleFaPlayerSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_fa_cardpage:"))  { await handleFaCardPage(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_fa_back_to_players")    { await handleFaBackToPlayers(interaction as ButtonInteraction, sess); return true; }
+  // All Players
+  if (id === "ac_allplayers")            { await handleAllPlayersPosPick(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_pos")                { await handleAllPlayersPosSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ap_player")             { await handleApPlayerSel(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_ap_cardpage:"))  { await handleApCardPage(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_back_to_players")    { await handleApBackToPlayers(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_filter")             { await handleApFilterScreen(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_filter_sort")        { await handleApFilterSort(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ap_filter_dev")         { await handleApFilterDev(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ap_filter_attr1")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 1); return true; }
+  if (id === "ac_ap_filter_attr2")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 2); return true; }
+  if (id === "ac_ap_filter_attr3")       { await handleApFilterAttr(interaction as StringSelectMenuInteraction, sess, 3); return true; }
+  if (id === "ac_ap_filter_apply")       { await handleApFilterApply(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_filter_clear")       { await handleApFilterClear(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_ap_filter_name")        { await handleApFilterNameModal(interaction as ButtonInteraction); return true; }
+  if (id === "ac_modal_ap_name")         { await handleApFilterNameSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_teamstats")             { await handleTeamStatsTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_teamstats_sel")         { await handleTeamStatsShow(interaction as StringSelectMenuInteraction, sess); return true; }
 
@@ -2357,16 +2387,22 @@ async function handleAnyRosterTeamPick(interaction: ButtonInteraction, sess: Act
         ),
       );
 
+  const browseRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_allplayers").setLabel("🌐 All Players").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_freeagents").setLabel("🆓 Free Agents").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+  );
+
   const components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [];
   if (afcTeams.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeMenu("AFC", afcTeams)));
   if (nfcTeams.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeMenu("NFC", nfcTeams)));
-  components.push(cancelRow() as any);
+  components.push(browseRow as any);
 
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Blue)
       .setTitle("👥 Rosters")
-      .setDescription("Select a team from the **AFC** or **NFC** dropdown below to view their full roster.")
+      .setDescription("Select a team to view their roster — or browse **All Players** / **Free Agents** below.")
       .setFooter({ text: `${teams.length} teams loaded — 👤 Human · 🤖 CPU` })],
     components,
   });
@@ -2614,463 +2650,664 @@ async function handleRcBackToRoster(interaction: ButtonInteraction, sess: Action
   await interaction.update({ embeds: [embed], components: buildRosterNavRows(sess.rosterViewSource ?? "my") });
 }
 
-// ── Free Agents ───────────────────────────────────────────────────────────────
+// ── Free Agents & All Players — shared constants ──────────────────────────────
 
-const FREE_AGENT_POSITIONS = ["QB","HB","FB","WR","TE","LT","LG","C","RG","RT","LEDGE","REDGE","DT","WILL","MIKE","SAM","CB","FS","SS","K","P","LS"];
+const BROWSE_POSITIONS = ["QB","HB","FB","WR","TE","LT","LG","C","RG","RT","LEDGE","REDGE","DT","WILL","MIKE","SAM","CB","FS","SS","K","P","LS"];
+const FA_TEAM_ID_BROWSE = 999;
+
+const ABBR_TO_ATTR_KEY: Record<string, string> = {
+  SPD: "speedRating", ACC: "accelerationRating", AGI: "agilityRating",
+  STR: "strengthRating", JMP: "jumpingRating", AWR: "awareRating",
+  STA: "staminaRating", INJ: "injuryRating", TGH: "toughnessRating",
+  THP: "throwPowerRating", SAC: "throwAccuracyShortRating", MAC: "throwAccuracyMidRating",
+  DAC: "throwAccuracyDeepRating", TOR: "throwOnRunRating", TUP: "throwUnderPressureRating",
+  BSK: "breakSackRating", PAC: "playActionRating",
+  CAR: "carryingRating", BCV: "bCVisionRating", ELU: "elusivenessRating",
+  BTK: "breakTackleRating", SFA: "stiffArmRating", SPM: "spinMoveRating",
+  JKM: "jukeMoveRating", TRK: "truckingRating", COD: "changeOfDirectionRating",
+  CTH: "catchRating", CIT: "catchInTrafficRating", SPC: "spectacularCatchRating",
+  SRR: "shortRouteRunRating", MRR: "medRouteRunRating", DRR: "deepRouteRunRating",
+  RLS: "releaseRating", PBK: "passBlockRating", RBK: "runBlockRating",
+  IBL: "impactBlockRating", PBP: "passBlockPowerRating", PBF: "passBlockFinesseRating",
+  RBP: "runBlockPowerRating", RBF: "runBlockFinesseRating", LBK: "leadBlockRating",
+  PMV: "powerMovesRating", FMV: "finessMovesRating", BSH: "blockShedRating",
+  PUR: "pursuitRating", TAK: "tackleRating", HPW: "hitPowerRating",
+  MCV: "manCoverRating", ZCV: "zoneCoverRating", PRS: "pressRating", PRC: "playRecRating",
+  KPW: "kickPowerRating", KAC: "kickAccuracyRating", PNP: "puntPowerRating",
+  PNA: "puntAccuracyRating", KRR: "kickReturnRating",
+};
+
+const AP_ATTR_GROUP_A = ["SPD","ACC","AGI","STR","JMP","AWR","STA","INJ","TGH","THP","SAC","MAC","DAC","TOR","TUP","BSK","PAC","CAR"];
+const AP_ATTR_GROUP_B = ["BCV","ELU","BTK","SFA","SPM","JKM","TRK","COD","CTH","CIT","SPC","SRR","MRR","DRR","RLS","PBK","RBK","IBL"];
+const AP_ATTR_GROUP_C = ["PBP","PBF","RBP","RBF","LBK","PMV","FMV","BSH","PUR","TAK","HPW","MCV","ZCV","PRS","PRC","KPW","KAC","PNP","PNA","KRR"];
+
+const AP_ATTR_NAMES: Record<string, string> = {
+  SPD: "Speed", ACC: "Acceleration", AGI: "Agility", STR: "Strength", JMP: "Jumping",
+  AWR: "Awareness", STA: "Stamina", INJ: "Injury", TGH: "Toughness",
+  THP: "Throw Power", SAC: "Short Acc", MAC: "Mid Acc", DAC: "Deep Acc",
+  TOR: "Throw on Run", TUP: "Throw Under Press", BSK: "Break Sack", PAC: "Play Action",
+  CAR: "Carrying", BCV: "Ball Carrier Vision", ELU: "Elusiveness",
+  BTK: "Break Tackle", SFA: "Stiff Arm", SPM: "Spin Move", JKM: "Juke Move",
+  TRK: "Trucking", COD: "Change of Direction",
+  CTH: "Catching", CIT: "Catch in Traffic", SPC: "Spec Catch",
+  SRR: "Short Route Run", MRR: "Mid Route Run", DRR: "Deep Route Run", RLS: "Release",
+  PBK: "Pass Block", RBK: "Run Block", IBL: "Impact Block",
+  PBP: "Pass Block Power", PBF: "Pass Block Finesse",
+  RBP: "Run Block Power", RBF: "Run Block Finesse", LBK: "Lead Block",
+  PMV: "Power Moves", FMV: "Finesse Moves", BSH: "Block Shed",
+  PUR: "Pursuit", TAK: "Tackle", HPW: "Hit Power",
+  MCV: "Man Coverage", ZCV: "Zone Coverage", PRS: "Press", PRC: "Play Recognition",
+  KPW: "Kick Power", KAC: "Kick Accuracy", PNP: "Punt Power",
+  PNA: "Punt Accuracy", KRR: "Kick Return",
+};
+
+function buildApOrderBy(sess: ActionsSession): SQL[] {
+  const exprs: SQL[] = [];
+  if (sess.apAttrSort && ABBR_TO_ATTR_KEY[sess.apAttrSort]) {
+    const key = ABBR_TO_ATTR_KEY[sess.apAttrSort]!;
+    exprs.push(sql.raw(`(attributes->>'${key}')::numeric DESC NULLS LAST`));
+  }
+  if (sess.apSortPrimary) {
+    const parts2 = sess.apSortPrimary.split("_");
+    const dir = parts2[parts2.length - 1] === "asc" ? "ASC" : "DESC";
+    const field = parts2.slice(0, -1).join("_");
+    switch (field) {
+      case "overall":  exprs.push(sql.raw(`overall ${dir}`)); break;
+      case "age":      exprs.push(sql.raw(`age ${dir} NULLS LAST`)); break;
+      case "height":   exprs.push(sql.raw(`(attributes->>'height')::numeric ${dir} NULLS LAST`)); break;
+      case "weight":   exprs.push(sql.raw(`(attributes->>'weight')::numeric ${dir} NULLS LAST`)); break;
+      case "contract": exprs.push(sql.raw(`contract_years_left ${dir} NULLS LAST`)); break;
+    }
+  }
+  if (!exprs.length) exprs.push(desc(franchiseRostersTable.overall));
+  return exprs;
+}
+
+function buildApFilterSummary(sess: ActionsSession): string {
+  const parts: string[] = [];
+  if (sess.apNameFilter) parts.push(`Name: "${sess.apNameFilter}"`);
+  if (sess.apDevFilter != null && sess.apDevFilter >= 0) {
+    const devLabels: Record<number, string> = { 0: "Normal", 1: "Star [★]", 2: "Superstar [SS]", 3: "X-Factor [XF]", 99: "SS + XF" };
+    parts.push(`Dev: ${devLabels[sess.apDevFilter] ?? sess.apDevFilter}`);
+  }
+  if (sess.apAttrSort) parts.push(`Sort attr: ${AP_ATTR_NAMES[sess.apAttrSort] ?? sess.apAttrSort} ↓`);
+  if (sess.apSortPrimary) {
+    const label: Record<string, string> = {
+      overall_desc: "OVR ↓", overall_asc: "OVR ↑",
+      age_asc: "Age ↑", age_desc: "Age ↓",
+      height_desc: "Height ↓", height_asc: "Height ↑",
+      weight_desc: "Weight ↓", weight_asc: "Weight ↑",
+      contract_asc: "Contract ↑", contract_desc: "Contract ↓",
+    };
+    parts.push(`Sort: ${label[sess.apSortPrimary] ?? sess.apSortPrimary}`);
+  }
+  return parts.length ? `**Active filters:** ${parts.join(" · ")}` : "";
+}
+
+// ── Free Agents — player-card flow ───────────────────────────────────────────
 
 async function handleFreeAgentsPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
   const menu = new StringSelectMenuBuilder()
     .setCustomId("ac_fa_pos")
     .setPlaceholder("Select a position…")
-    .addOptions(
-      FREE_AGENT_POSITIONS.map(p =>
-        new StringSelectMenuOptionBuilder().setLabel(p).setValue(p),
-      ),
-    );
+    .addOptions(BROWSE_POSITIONS.map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
 
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("🆓 Free Agents — Select Position").setDescription("Choose a position to view available free agents.")],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("🆓 Free Agents — Select Position")
+      .setDescription("Choose a position to view available free agents.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_anyroster").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
   });
 }
 
-async function handleFreeAgentsShow(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const position = interaction.values[0]!;
-  const gid      = interaction.guildId!;
+async function handleFaPosSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const pos = interaction.values[0]!;
+  const gid = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
+  sess.faPos = pos;
+  sess.faSeasonId = seasonId;
+  await showFaPlayerList(interaction, sess);
+}
 
-  // FA = players with teamId sentinel 999 (Madden free agent pool)
-  const FA_TEAM_ID = 999;
-  const faRows = await db.select({
+async function showFaPlayerList(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const pos = sess.faPos!;
+  const seasonId = sess.faSeasonId!;
+
+  const players = await db.select({
+    playerId:  franchiseRostersTable.playerId,
     firstName: franchiseRostersTable.firstName,
     lastName:  franchiseRostersTable.lastName,
     overall:   franchiseRostersTable.overall,
     devTrait:  franchiseRostersTable.devTrait,
     age:       franchiseRostersTable.age,
-    contractYearsLeft: franchiseRostersTable.contractYearsLeft,
   }).from(franchiseRostersTable)
     .where(and(
       eq(franchiseRostersTable.seasonId, seasonId),
-      eq(franchiseRostersTable.teamId, FA_TEAM_ID),
-      sql`upper(${franchiseRostersTable.position}) = upper(${position})`,
+      eq(franchiseRostersTable.teamId, FA_TEAM_ID_BROWSE),
+      sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
     ))
     .orderBy(desc(franchiseRostersTable.overall))
-    .limit(30);
-
-  if (!faRows.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle(`🆓 Free Agents — ${position}`).setDescription(`No free agents found at **${position}** this season.\n\nMake sure MCA data includes free agent information.`)], components: [backToHubRow()] });
-    return;
-  }
-
-  const lines = faRows.map((p, i) =>
-    `**${i + 1}.** ${p.firstName} ${p.lastName} — OVR ${p.overall}${p.age != null ? ` | Age ${p.age}` : ""}${devBadge(p.devTrait ?? 0)}`
-  );
-
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle(`🆓 Free Agents — ${position}`)
-    .setDescription(`${DEV_LEGEND}\n\n${lines.join("\n")}`)
-    .setTimestamp();
-
-  await interaction.update({ embeds: [embed], components: [backToHubRow()] });
-}
-
-// ── Player Stats — 4-step chain ────────────────────────────────────────────────
-
-async function handlePlayerStatsStart(interaction: ButtonInteraction, sess: ActionsSession) {
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_ps_conf:AFC").setLabel("🔴 AFC Teams").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("ac_ps_conf:NFC").setLabel("🔵 NFC Teams").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
-  );
-  await interaction.update({
-    embeds: [new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle("📊 Player Stats & Ratings")
-      .setDescription("Select a conference, then pick a team → position group → player to view their full player card.")],
-    components: [row],
-  });
-}
-
-async function handlePsTeamPick(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid  = interaction.guildId!;
-  const conf = interaction.customId.split(":")[1] as "AFC" | "NFC";
-  await interaction.deferUpdate();
-
-  const season = await getOrCreateActiveSeason(gid);
-  const allTeams = await db.select({
-    mcaTeamId:  franchiseMcaTeamsTable.teamId,
-    fullName:   franchiseMcaTeamsTable.fullName,
-    nickName:   franchiseMcaTeamsTable.nickName,
-    conference: franchiseMcaTeamsTable.conference,
-  })
-    .from(franchiseMcaTeamsTable)
-    .where(eq(franchiseMcaTeamsTable.seasonId, season.id))
-    .orderBy(franchiseMcaTeamsTable.fullName);
-
-  // Filter to the requested conference; fall back to NFL_DIVISION_MAP if conference is null
-  const teams = allTeams.filter(t => {
-    const c = t.conference?.toUpperCase();
-    if (c === conf) return true;
-    if (c === (conf === "AFC" ? "NFC" : "AFC")) return false;
-    return NFL_DIVISION_MAP[t.nickName ?? ""]?.conference === conf;
-  });
-
-  if (!teams.length) {
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No ${conf} teams found. Make sure rosters have been imported.`)], components: [backToHubRow()] });
-    return;
-  }
-
-  // Use MCA teamId as value — needed for roster queries downstream
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ac_ps_team_sel")
-    .setPlaceholder(`Select a ${conf} team…`)
-    .addOptions(teams.slice(0, 25).map(t =>
-      new StringSelectMenuOptionBuilder().setLabel(t.fullName).setValue(String(t.mcaTeamId)),
-    ));
-
-  await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(conf === "AFC" ? Colors.Red : Colors.Blue).setTitle(`📊 Player Stats — ${conf} Teams`)],
-    components: [
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
-      ),
-    ],
-  });
-}
-
-// Position group definitions
-const PS_POS_GROUPS: { value: string; label: string; positions: string[]; attrsKey: string }[] = [
-  { value: "QB",    label: "QB — Quarterback",       positions: ["QB"],                  attrsKey: "QB" },
-  { value: "HB",    label: "HB — Halfback",          positions: ["HB","RB"],             attrsKey: "HB" },
-  { value: "FB",    label: "FB — Fullback",          positions: ["FB"],                  attrsKey: "HB" },
-  { value: "WR",    label: "WR — Wide Receiver",     positions: ["WR"],                  attrsKey: "WR" },
-  { value: "TE",    label: "TE — Tight End",         positions: ["TE"],                  attrsKey: "TE" },
-  { value: "LT",    label: "LT — Left Tackle",       positions: ["LT"],                  attrsKey: "OL" },
-  { value: "LG",    label: "LG — Left Guard",        positions: ["LG"],                  attrsKey: "OL" },
-  { value: "C",     label: "C — Center",             positions: ["C"],                   attrsKey: "OL" },
-  { value: "RG",    label: "RG — Right Guard",       positions: ["RG"],                  attrsKey: "OL" },
-  { value: "RT",    label: "RT — Right Tackle",      positions: ["RT"],                  attrsKey: "OL" },
-  { value: "LEDGE", label: "LEDGE — Left Edge",      positions: ["LEDGE","LE"],          attrsKey: "DL" },
-  { value: "REDGE", label: "REDGE — Right Edge",     positions: ["REDGE","RE"],          attrsKey: "DL" },
-  { value: "DT",    label: "DT — Defensive Tackle",  positions: ["DT","NT"],             attrsKey: "DL" },
-  { value: "WILL",  label: "WILL — Will LB",         positions: ["WILL","ROLB","OLB"],   attrsKey: "LB" },
-  { value: "MIKE",  label: "MIKE — Mike LB",         positions: ["MIKE","MLB","ILB"],    attrsKey: "LB" },
-  { value: "SAM",   label: "SAM — Sam LB",           positions: ["SAM","LOLB"],          attrsKey: "LB" },
-  { value: "CB",    label: "CB — Cornerback",        positions: ["CB"],                  attrsKey: "CB" },
-  { value: "FS",    label: "FS — Free Safety",       positions: ["FS"],                  attrsKey: "S" },
-  { value: "SS",    label: "SS — Strong Safety",     positions: ["SS"],                  attrsKey: "S" },
-  { value: "K",     label: "K — Kicker",             positions: ["K"],                   attrsKey: "K" },
-  { value: "P",     label: "P — Punter",             positions: ["P"],                   attrsKey: "K" },
-  { value: "LS",    label: "LS — Long Snapper",      positions: ["LS"],                  attrsKey: "K" },
-];
-
-async function handlePsPosPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  // Value is MCA teamId (not serial PK)
-  const teamId = interaction.values[0]!;
-  await interaction.deferUpdate();
-
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const [teamRow] = await db.select({ fullName: franchiseMcaTeamsTable.fullName })
-    .from(franchiseMcaTeamsTable)
-    .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.teamId, Number(teamId))))
-    .limit(1);
-  const teamName = teamRow?.fullName ?? "Unknown Team";
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId(`ac_ps_pos_sel:${teamId}`)
-    .setPlaceholder("Select a position…")
-    .addOptions(PS_POS_GROUPS.map(g =>
-      new StringSelectMenuOptionBuilder().setLabel(g.label).setValue(g.value),
-    ));
-
-  await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 Player Stats — ${teamName}`).setDescription("Choose a position to browse players.")],
-    components: [
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
-      ),
-    ],
-  });
-}
-
-async function handlePsPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const parts   = interaction.customId.split(":");
-  const teamId  = Number(parts[1]);
-  const posGroup = interaction.values[0]!;
-  await interaction.deferUpdate();
-
-  const group = PS_POS_GROUPS.find(g => g.value === posGroup)!;
-  if (!group) {
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Unknown position group.")], components: [backToHubRow()] });
-    return;
-  }
-
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const players = await db.select({
-    id: franchiseRostersTable.playerId,
-    firstName: franchiseRostersTable.firstName,
-    lastName:  franchiseRostersTable.lastName,
-    position:  franchiseRostersTable.position,
-    overall:   franchiseRostersTable.overall,
-  })
-    .from(franchiseRostersTable)
-    .where(and(
-      eq(franchiseRostersTable.seasonId, season.id),
-      eq(franchiseRostersTable.teamId, teamId),
-      inArray(franchiseRostersTable.position, group.positions),
-    ))
-    .orderBy(desc(franchiseRostersTable.overall));
+    .limit(24);
 
   if (!players.length) {
-    await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Grey).setDescription(`No ${group.label} players found on this team.`)],
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey)
+        .setTitle(`🆓 Free Agents — ${pos}`)
+        .setDescription("No free agents found at this position.\n\nMake sure MCA data includes free agent roster data.")],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_freeagents").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
       )],
     });
     return;
   }
 
   const menu = new StringSelectMenuBuilder()
-    .setCustomId(`ac_ps_player_sel:${teamId}:${posGroup}`)
-    .setPlaceholder(`Select a player (${group.label})…`)
-    .addOptions(players.slice(0, 25).map(p =>
+    .setCustomId("ac_fa_player")
+    .setPlaceholder("Select a free agent to view their card…")
+    .addOptions(players.map(p =>
       new StringSelectMenuOptionBuilder()
-        .setLabel(`${p.firstName} ${p.lastName} (${p.position}) — OVR ${p.overall}`)
-        .setValue(String(p.id)),
+        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadgeText(p.devTrait ?? 0)}`)
+        .setDescription(`Age: ${p.age ?? "?"}`)
+        .setValue(String(p.playerId)),
     ));
 
-  // teamId is MCA teamId — look up by teamId column, not serial PK
-  const [teamRow] = await db.select({ fullName: franchiseMcaTeamsTable.fullName })
-    .from(franchiseMcaTeamsTable)
-    .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.teamId, teamId)))
-    .limit(1);
-
-  await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📊 ${teamRow?.fullName ?? "Team"} — ${group.label}`)],
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Green)
+      .setTitle(`🆓 Free Agents — ${pos}`)
+      .setDescription(`Top ${players.length} free agents. Select one for their player card.\n${DEV_LEGEND}`)],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_freeagents").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
       ),
     ],
   });
 }
 
-const DEV_TRAIT_LABELS: Record<number, string> = {
-  0: "Normal",
-  1: `${DEV_EMOJI.star} Star`,
-  2: `${DEV_EMOJI.superstar} Superstar`,
-  3: `${DEV_EMOJI.xfactor} X-Factor`,
-  4: `${DEV_EMOJI.xfactor} X-Factor`,
-};
-
-const PS_KEY_ATTRS: Record<string, { key: string; label: string }[]> = {
-  QB: [
-    { key: "throwPowerRating",         label: "THP" },
-    { key: "throwAccuracyShortRating", label: "SAC" },
-    { key: "throwAccuracyMidRating",   label: "MAC" },
-    { key: "throwAccuracyDeepRating",  label: "DAC" },
-    { key: "throwOnRunRating",         label: "TOR" },
-    { key: "awareRating",              label: "AWR" },
-    { key: "speedRating",              label: "SPD" },
-    { key: "breakSackRating",          label: "BSK" },
-  ],
-  HB: [
-    { key: "speedRating",          label: "SPD" },
-    { key: "accelerationRating",   label: "ACC" },
-    { key: "agilityRating",        label: "AGI" },
-    { key: "elusivenessRating",    label: "ELU" },
-    { key: "breakTackleRating",    label: "BTK" },
-    { key: "caryingRating",        label: "CAR" },
-    { key: "catchRating",          label: "CTH" },
-    { key: "bCVisionRating",       label: "BCV" },
-  ],
-  WR: [
-    { key: "speedRating",              label: "SPD" },
-    { key: "agilityRating",            label: "AGI" },
-    { key: "catchRating",              label: "CTH" },
-    { key: "catchInTrafficRating",     label: "CIT" },
-    { key: "shortRouteRunRating",      label: "SRR" },
-    { key: "medRouteRunRating",        label: "MRR" },
-    { key: "deepRouteRunRating",       label: "DRR" },
-    { key: "spectacularCatchRating",   label: "SPC" },
-  ],
-  TE: [
-    { key: "speedRating",          label: "SPD" },
-    { key: "catchRating",          label: "CTH" },
-    { key: "catchInTrafficRating", label: "CIT" },
-    { key: "shortRouteRunRating",  label: "SRR" },
-    { key: "passBlockRating",      label: "PBK" },
-    { key: "runBlockRating",       label: "RBK" },
-    { key: "strengthRating",       label: "STR" },
-    { key: "releaseRating",        label: "RLS" },
-  ],
-  OL: [
-    { key: "passBlockRating",    label: "PBK" },
-    { key: "runBlockRating",     label: "RBK" },
-    { key: "impactBlockRating",  label: "IBL" },
-    { key: "strengthRating",     label: "STR" },
-    { key: "awareRating",        label: "AWR" },
-  ],
-  DL: [
-    { key: "speedRating",        label: "SPD" },
-    { key: "strengthRating",     label: "STR" },
-    { key: "powerMovesRating",   label: "PMV" },
-    { key: "finessMovesRating",  label: "FMV" },
-    { key: "blockShedRating",    label: "BSH" },
-    { key: "awareRating",        label: "AWR" },
-  ],
-  LB: [
-    { key: "speedRating",      label: "SPD" },
-    { key: "strengthRating",   label: "STR" },
-    { key: "tackleRating",     label: "TAK" },
-    { key: "hitPowerRating",   label: "HPW" },
-    { key: "zoneCoverRating",  label: "ZCV" },
-    { key: "manCoverRating",   label: "MCV" },
-    { key: "playRecRating",    label: "PRC" },
-  ],
-  CB: [
-    { key: "speedRating",      label: "SPD" },
-    { key: "agilityRating",    label: "AGI" },
-    { key: "manCoverRating",   label: "MCV" },
-    { key: "zoneCoverRating",  label: "ZCV" },
-    { key: "pressRating",      label: "PRS" },
-    { key: "catchRating",      label: "CTH" },
-    { key: "playRecRating",    label: "PRC" },
-  ],
-  S: [
-    { key: "speedRating",      label: "SPD" },
-    { key: "agilityRating",    label: "AGI" },
-    { key: "zoneCoverRating",  label: "ZCV" },
-    { key: "manCoverRating",   label: "MCV" },
-    { key: "tackleRating",     label: "TAK" },
-    { key: "hitPowerRating",   label: "HPW" },
-    { key: "playRecRating",    label: "PRC" },
-  ],
-  K: [
-    { key: "kickPowerRating",    label: "KPW" },
-    { key: "kickAccuracyRating", label: "KAC" },
-    { key: "speedRating",        label: "SPD" },
-  ],
-};
-
-async function handlePsPlayerCard(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const parts    = interaction.customId.split(":");
-  const teamId   = Number(parts[1]);
-  const posGroup = parts[2]!;
+async function handleFaPlayerSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
   const playerId = Number(interaction.values[0]);
-  await interaction.deferUpdate();
+  sess.faCardPlayerId = playerId;
+  sess.faCardPage = 1;
+  await showFaCard(interaction, sess);
+}
 
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
+async function showFaCard(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const gid = interaction.guildId!;
+  const playerId = sess.faCardPlayerId!;
+  const page = sess.faCardPage ?? 1;
+  const seasonId = sess.faSeasonId ?? (await getRosterSeasonId(gid));
+  const season = await getOrCreateActiveSeason(gid);
 
   const [roster, stats] = await Promise.all([
     db.select().from(franchiseRostersTable)
-      .where(and(
-        eq(franchiseRostersTable.seasonId, season.id),
-        eq(franchiseRostersTable.teamId, teamId),
-        eq(franchiseRostersTable.playerId, playerId),
-      )).limit(1).then(r => r[0]),
+      .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.playerId, playerId)))
+      .limit(1).then(r => r[0]),
     db.select().from(playerSeasonStatsTable)
-      .where(and(
-        eq(playerSeasonStatsTable.seasonId, season.id),
-        eq(playerSeasonStatsTable.playerId, playerId),
-      )).limit(1).then(r => r[0]),
+      .where(and(eq(playerSeasonStatsTable.seasonId, seasonId), eq(playerSeasonStatsTable.playerId, playerId)))
+      .limit(1).then(r => r[0]),
   ]);
 
   if (!roster) {
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")], components: [backToHubRow()] });
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_fa_back_to_players").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      )],
+    });
     return;
   }
 
-  const devLabel  = DEV_TRAIT_LABELS[roster.devTrait] ?? `Dev ${roster.devTrait}`;
-  const contract  = roster.contractYearsLeft == null ? "Unknown" : roster.contractYearsLeft <= 1 ? "📋 Contract Year (Final Season)" : `${roster.contractYearsLeft} years remaining`;
-  const archetype = roster.archetypeAbbrev ? `${roster.archetypeAbbrev.replace(/_/g, " ")}` : "—";
-  const abilities = roster.abilities as { zone?: string; superstar?: string[] } | null;
-  const attrs     = (roster.attributes ?? {}) as Record<string, number>;
+  const pages = buildPlayerCardPages(roster, stats, season.seasonNumber ?? 1);
+  const safePage = Math.min(Math.max(1, page), pages.length);
+  const TOTAL = pages.length;
 
-  const portrait  = roster.portraitUrl ?? eaPortraitUrl(roster.playerId);
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Blue)
-    .setTitle(`📊 ${roster.firstName} ${roster.lastName} — #${roster.jerseyNum ?? "?"} ${roster.position}`)
-    .setDescription(
-      `**Team:** ${roster.teamName}  |  **OVR:** ${roster.overall}  |  **Age:** ${roster.age ?? "?"}\n` +
-      `**Dev Trait:** ${devLabel}  |  **Archetype:** ${archetype}\n` +
-      `**Contract:** ${contract}`,
-    );
-  if (portrait) embed.setThumbnail(portrait);
-
-  // Key attributes for this position group
-  const attrsKey = PS_POS_GROUPS.find(g => g.value === posGroup)?.attrsKey ?? posGroup;
-  const keyAttrs = PS_KEY_ATTRS[attrsKey] ?? PS_KEY_ATTRS["QB"]!;
-  const attrLines = keyAttrs
-    .map(a => {
-      const val = attrs[a.key];
-      return val != null ? `**${a.label}:** ${val}` : null;
-    })
-    .filter(Boolean) as string[];
-
-  if (attrLines.length) {
-    const mid = Math.ceil(attrLines.length / 2);
-    embed.addFields(
-      { name: "📈 Key Ratings", value: attrLines.slice(0, mid).join("\n"), inline: true },
-      { name: "\u200B",         value: attrLines.slice(mid).join("\n"),    inline: true },
-    );
-  }
-
-  // Abilities
-  if (abilities) {
-    const lines: string[] = [];
-    if (abilities.superstar) lines.push(...abilities.superstar.map(a => `⭐ ${a}`));
-    if (abilities.zone)      lines.push(`⚡ ${abilities.zone} (Zone)`);
-    if (lines.length) embed.addFields({ name: "💥 Abilities", value: lines.join("\n"), inline: false });
-  }
-
-  // Season Stats — position-appropriate
-  if (stats) {
-    const pos = roster.position;
-    const isQB  = pos === "QB";
-    const isHB  = ["HB","RB","FB"].includes(pos);
-    const isWR  = ["WR","TE"].includes(pos);
-    const isDEF = ["LE","RE","DT","NT","LOLB","MLB","ROLB","ILB","OLB","CB","FS","SS"].includes(pos);
-    const isK   = ["K","P"].includes(pos);
-
-    if (isQB && stats.passAtt > 0) {
-      const pct = stats.passAtt > 0 ? ((stats.passComp / stats.passAtt) * 100).toFixed(1) : "0.0";
-      embed.addFields({ name: "🏈 Season Passing Stats", value: `Yds: **${stats.passYds.toLocaleString()}** | TDs: **${stats.passTDs}** | INTs: **${stats.passInts}**\nComp: ${stats.passComp}/${stats.passAtt} (${pct}%) | Sacked: ${stats.timesSacked}\nRush Yds: ${stats.rushYds} | Rush TDs: ${stats.rushTDs}`, inline: false });
-    } else if (isHB && (stats.rushAtt > 0 || stats.recRec > 0)) {
-      embed.addFields({ name: "🏃 Season Rushing Stats", value: `Rush Yds: **${stats.rushYds.toLocaleString()}** | TDs: **${stats.rushTDs}** | Att: ${stats.rushAtt}\nFumbles: ${stats.fumbles}\nRec: ${stats.recRec} | Rec Yds: ${stats.recYds} | Rec TDs: ${stats.recTDs}`, inline: false });
-    } else if (isWR && stats.recRec > 0) {
-      embed.addFields({ name: "🙌 Season Receiving Stats", value: `Rec: **${stats.recRec}** | Yds: **${stats.recYds.toLocaleString()}** | TDs: **${stats.recTDs}**`, inline: false });
-    } else if (isDEF && (stats.totalTackles > 0 || stats.sacks > 0 || stats.defInts > 0)) {
-      embed.addFields({ name: "🛡️ Season Defense Stats", value: `Tackles: **${stats.totalTackles}** (${stats.tackleSolo} solo / ${stats.tackleAssist} ast)\nSacks: **${stats.sacks}** | INTs: **${stats.defInts}** | FF: ${stats.forcedFumbles}\nTFLs: ${stats.tacklesForLoss} | Def TDs: ${stats.defTDs}`, inline: false });
-    } else if (isK) {
-      if (stats.fgAtt > 0) embed.addFields({ name: "🦵 Season Kicking Stats", value: `FG: ${stats.fgMade}/${stats.fgAtt} | Long: ${stats.fgLong} yds | XP: ${stats.xpMade}/${stats.xpAtt}`, inline: false });
-      if (stats.puntAtt > 0) embed.addFields({ name: "💨 Season Punting Stats", value: `Punts: ${stats.puntAtt} | Yds: ${stats.puntYds.toLocaleString()} | Long: ${stats.puntLong} | In-20: ${stats.puntIn20}`, inline: false });
-    } else if (!isQB && !isHB && !isWR && !isDEF && !isK) {
-      // fallback — rush if any
-      if (stats.rushAtt > 0) embed.addFields({ name: "🏃 Rush", value: `${stats.rushYds} yds / ${stats.rushTDs} TDs`, inline: true });
-    }
-    if (!isK && !isQB && !isHB && !isWR && !isDEF && stats.recRec > 0) {
-      embed.addFields({ name: "🙌 Receiving", value: `${stats.recRec} rec / ${stats.recYds} yds / ${stats.recTDs} TDs`, inline: true });
-    }
-  } else {
-    embed.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
-  }
-
-  embed.setTimestamp().setFooter({ text: `Season ${season.seasonNumber} · Player ID ${playerId}` });
-
-  await interaction.editReply({
-    embeds: [embed],
-    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_playerstats").setLabel("← Back to Teams").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_hub").setLabel("🏠 Hub").setStyle(ButtonStyle.Secondary),
-    )],
+  await interaction.update({
+    embeds: [pages[safePage - 1]!],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ac_fa_cardpage:${safePage - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(safePage <= 1),
+        new ButtonBuilder().setCustomId("ac_fa_cardpage_num").setLabel(`Page ${safePage} / ${TOTAL}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId(`ac_fa_cardpage:${safePage + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(safePage >= TOTAL),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_fa_back_to_players").setLabel("← Back to Players").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
   });
 }
+
+async function handleFaCardPage(interaction: ButtonInteraction, sess: ActionsSession) {
+  const page = Number(interaction.customId.split(":")[1]);
+  if (!Number.isFinite(page) || page < 1 || page > 10) return;
+  sess.faCardPage = page;
+  await showFaCard(interaction, sess);
+}
+
+async function handleFaBackToPlayers(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.faPos || !sess.faSeasonId) { await handleFreeAgentsPosPick(interaction, sess); return; }
+  await showFaPlayerList(interaction, sess);
+}
+
+// ── All Players — Position picker, player list with filters, player cards ──────
+
+async function handleAllPlayersPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ap_pos")
+    .setPlaceholder("Select a position…")
+    .addOptions(BROWSE_POSITIONS.map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("🌐 All Players — Select Position")
+      .setDescription("Choose a position to browse all players across the league.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_anyroster").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleAllPlayersPosSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const pos = interaction.values[0]!;
+  const gid = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+  if (sess.apPos !== pos) {
+    sess.apNameFilter = undefined;
+    sess.apDevFilter = undefined;
+    sess.apSortPrimary = undefined;
+    sess.apAttrSort = undefined;
+  }
+  sess.apPos = pos;
+  sess.apSeasonId = seasonId;
+  await showApPlayerList(interaction, sess);
+}
+
+async function showApPlayerList(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const pos = sess.apPos!;
+  const seasonId = sess.apSeasonId!;
+
+  const conditions: SQL<unknown>[] = [
+    eq(franchiseRostersTable.seasonId, seasonId),
+    sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
+    sql`${franchiseRostersTable.teamId} != ${FA_TEAM_ID_BROWSE}`,
+  ];
+  if (sess.apNameFilter) {
+    const namePat = `%${sess.apNameFilter}%`;
+    conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
+  }
+  if (sess.apDevFilter != null && sess.apDevFilter >= 0) {
+    if (sess.apDevFilter === 99) {
+      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
+    } else {
+      conditions.push(eq(franchiseRostersTable.devTrait, sess.apDevFilter));
+    }
+  }
+
+  const orderExprs = buildApOrderBy(sess);
+  const players = await db.select({
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+    age:       franchiseRostersTable.age,
+    teamName:  franchiseRostersTable.teamName,
+  }).from(franchiseRostersTable)
+    .where(and(...conditions))
+    .orderBy(...orderExprs)
+    .limit(24);
+
+  const filterSummary = buildApFilterSummary(sess);
+
+  const noResultEmbed = new EmbedBuilder().setColor(Colors.Grey)
+    .setTitle(`🌐 All Players — ${pos}`)
+    .setDescription(`No players found matching your filters.\n\n${filterSummary}`);
+  const noResultBtns = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_ap_filter").setLabel("Filter / Sort").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_allplayers").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+  );
+
+  if (!players.length) {
+    await interaction.update({ embeds: [noResultEmbed], components: [noResultBtns] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ap_player")
+    .setPlaceholder("Select a player for their card…")
+    .addOptions(players.map(p =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadgeText(p.devTrait ?? 0)}`)
+        .setDescription(`${p.teamName ?? "?"} · Age ${p.age ?? "?"}`)
+        .setValue(String(p.playerId)),
+    ));
+
+  const descParts = [`Top ${players.length} ${pos}s. Select one for their player card.`];
+  if (filterSummary) descParts.push(filterSummary);
+  descParts.push(DEV_LEGEND);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`🌐 All Players — ${pos}`).setDescription(descParts.join("\n"))],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_ap_filter").setLabel("Filter / Sort").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_allplayers").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleApPlayerSel(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  sess.apCardPlayerId = Number(interaction.values[0]);
+  sess.apCardPage = 1;
+  await showApCard(interaction, sess);
+}
+
+async function showApCard(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const gid = interaction.guildId!;
+  const playerId = sess.apCardPlayerId!;
+  const page = sess.apCardPage ?? 1;
+  const seasonId = sess.apSeasonId ?? (await getRosterSeasonId(gid));
+  const season = await getOrCreateActiveSeason(gid);
+
+  const [roster, stats] = await Promise.all([
+    db.select().from(franchiseRostersTable)
+      .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.playerId, playerId)))
+      .limit(1).then(r => r[0]),
+    db.select().from(playerSeasonStatsTable)
+      .where(and(eq(playerSeasonStatsTable.seasonId, seasonId), eq(playerSeasonStatsTable.playerId, playerId)))
+      .limit(1).then(r => r[0]),
+  ]);
+
+  if (!roster) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_ap_back_to_players").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      )],
+    });
+    return;
+  }
+
+  const pages = buildPlayerCardPages(roster, stats, season.seasonNumber ?? 1);
+  const safePage = Math.min(Math.max(1, page), pages.length);
+  const TOTAL = pages.length;
+
+  await interaction.update({
+    embeds: [pages[safePage - 1]!],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ac_ap_cardpage:${safePage - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(safePage <= 1),
+        new ButtonBuilder().setCustomId("ac_ap_cardpage_num").setLabel(`Page ${safePage} / ${TOTAL}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId(`ac_ap_cardpage:${safePage + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(safePage >= TOTAL),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_ap_back_to_players").setLabel("← Back to Players").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleApCardPage(interaction: ButtonInteraction, sess: ActionsSession) {
+  const page = Number(interaction.customId.split(":")[1]);
+  if (!Number.isFinite(page) || page < 1 || page > 10) return;
+  sess.apCardPage = page;
+  await showApCard(interaction, sess);
+}
+
+async function handleApBackToPlayers(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.apPos || !sess.apSeasonId) { await handleAllPlayersPosPick(interaction, sess); return; }
+  await showApPlayerList(interaction, sess);
+}
+
+// ── All Players — Filter / Sort screen ────────────────────────────────────────
+
+function buildApFilterComponents(sess: ActionsSession): ActionRowBuilder<StringSelectMenuBuilder>[] {
+  const devMenu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ap_filter_dev")
+    .setPlaceholder("Filter: Dev Trait (any)")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("Any Dev Trait").setValue("-1").setDefault(!sess.apDevFilter || sess.apDevFilter < 0),
+      new StringSelectMenuOptionBuilder().setLabel("Normal only").setValue("0").setDefault(sess.apDevFilter === 0),
+      new StringSelectMenuOptionBuilder().setLabel("Star [★] only").setValue("1").setDefault(sess.apDevFilter === 1),
+      new StringSelectMenuOptionBuilder().setLabel("Superstar [SS] only").setValue("2").setDefault(sess.apDevFilter === 2),
+      new StringSelectMenuOptionBuilder().setLabel("X-Factor [XF] only").setValue("3").setDefault(sess.apDevFilter === 3),
+      new StringSelectMenuOptionBuilder().setLabel("SS + XF only").setValue("99").setDefault(sess.apDevFilter === 99),
+    ]);
+
+  const sortMenu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ap_filter_sort")
+    .setPlaceholder("Sort By (default: Overall ↓)")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("Overall: High → Low").setValue("overall_desc").setDefault(sess.apSortPrimary === "overall_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Overall: Low → High").setValue("overall_asc").setDefault(sess.apSortPrimary === "overall_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Age: Youngest First").setValue("age_asc").setDefault(sess.apSortPrimary === "age_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Age: Oldest First").setValue("age_desc").setDefault(sess.apSortPrimary === "age_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Height: Tallest First").setValue("height_desc").setDefault(sess.apSortPrimary === "height_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Height: Shortest First").setValue("height_asc").setDefault(sess.apSortPrimary === "height_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Weight: Heaviest First").setValue("weight_desc").setDefault(sess.apSortPrimary === "weight_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("Weight: Lightest First").setValue("weight_asc").setDefault(sess.apSortPrimary === "weight_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Contract: Least Remaining").setValue("contract_asc").setDefault(sess.apSortPrimary === "contract_asc"),
+      new StringSelectMenuOptionBuilder().setLabel("Contract: Most Remaining").setValue("contract_desc").setDefault(sess.apSortPrimary === "contract_desc"),
+      new StringSelectMenuOptionBuilder().setLabel("— Clear Sort —").setValue("clear"),
+    ]);
+
+  const makeAttrMenu = (cid: string, group: string[]) =>
+    new StringSelectMenuBuilder().setCustomId(cid).setPlaceholder("Sort by Attribute…")
+      .addOptions([
+        new StringSelectMenuOptionBuilder().setLabel("— No attribute sort —").setValue("none")
+          .setDefault(!sess.apAttrSort || !group.includes(sess.apAttrSort)),
+        ...group.map(abbr =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`${AP_ATTR_NAMES[abbr] ?? abbr} (${abbr})`)
+            .setValue(abbr)
+            .setDefault(sess.apAttrSort === abbr),
+        ),
+      ]);
+
+  return [
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(devMenu),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sortMenu),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu("ac_ap_filter_attr1", AP_ATTR_GROUP_A)),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu("ac_ap_filter_attr2", AP_ATTR_GROUP_B)),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(makeAttrMenu("ac_ap_filter_attr3", AP_ATTR_GROUP_C)),
+  ];
+}
+
+async function showApFilterScreen(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  sess: ActionsSession,
+) {
+  const summary = buildApFilterSummary(sess);
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blue)
+    .setTitle(`🔍 Filter / Sort — ${sess.apPos ?? "All Players"}`)
+    .setDescription(
+      "Set filters and sort options, then click **Apply & View**.\n" +
+      "Attribute sort takes priority over primary sort.\n\n" +
+      (summary ? summary : "*No active filters.*"),
+    );
+
+  const hasFilters = !!(sess.apNameFilter || (sess.apDevFilter != null && sess.apDevFilter >= 0) || sess.apSortPrimary || sess.apAttrSort);
+  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_ap_filter_name")
+      .setLabel(sess.apNameFilter ? `Name: "${sess.apNameFilter}"` : "🔍 Search by Name")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ac_ap_filter_apply").setLabel("✅ Apply & View").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ac_ap_filter_clear").setLabel("🗑 Clear All").setStyle(ButtonStyle.Danger).setDisabled(!hasFilters),
+    new ButtonBuilder().setCustomId("ac_ap_back_to_players").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  const rows = [...buildApFilterComponents(sess) as any[], btnRow as any];
+  await interaction.update({ embeds: [embed], components: rows });
+}
+
+async function handleApFilterScreen(interaction: ButtonInteraction, sess: ActionsSession) {
+  await showApFilterScreen(interaction, sess);
+}
+
+async function handleApFilterSort(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  sess.apSortPrimary = interaction.values[0] === "clear" ? undefined : interaction.values[0];
+  await showApFilterScreen(interaction, sess);
+}
+
+async function handleApFilterDev(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  sess.apDevFilter = Number(interaction.values[0]);
+  await showApFilterScreen(interaction, sess);
+}
+
+async function handleApFilterAttr(interaction: StringSelectMenuInteraction, sess: ActionsSession, _group: number) {
+  const val = interaction.values[0]!;
+  sess.apAttrSort = val === "none" ? undefined : val;
+  await showApFilterScreen(interaction, sess);
+}
+
+async function handleApFilterNameModal(interaction: ButtonInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId("ac_modal_ap_name")
+    .setTitle("Search by Player Last Name")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("ap_name_input")
+          .setLabel("Last name (partial match)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. Smith, Allen, Mahomes")
+          .setRequired(false)
+          .setMaxLength(50),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+async function handleApFilterNameSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
+  const raw = interaction.fields.getTextInputValue("ap_name_input").trim();
+  sess.apNameFilter = raw.length ? raw : undefined;
+  await interaction.deferUpdate();
+  if (!sess.apPos || !sess.apSeasonId) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Use /menu to start again.")],
+      components: [],
+    });
+    return;
+  }
+  // Re-query and show player list (can't call interaction.update after modal deferUpdate)
+  const pos = sess.apPos!;
+  const seasonId = sess.apSeasonId!;
+  const conditions: SQL<unknown>[] = [
+    eq(franchiseRostersTable.seasonId, seasonId),
+    sql`upper(${franchiseRostersTable.position}) = upper(${pos})`,
+    sql`${franchiseRostersTable.teamId} != ${FA_TEAM_ID_BROWSE}`,
+  ];
+  if (sess.apNameFilter) {
+    const namePat = `%${sess.apNameFilter}%`;
+    conditions.push(sql`upper(${franchiseRostersTable.lastName}) like upper(${namePat})`);
+  }
+  if (sess.apDevFilter != null && sess.apDevFilter >= 0) {
+    if (sess.apDevFilter === 99) {
+      conditions.push(sql`${franchiseRostersTable.devTrait} >= 2`);
+    } else {
+      conditions.push(eq(franchiseRostersTable.devTrait, sess.apDevFilter));
+    }
+  }
+  const orderExprs = buildApOrderBy(sess);
+  const players = await db.select({
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+    age:       franchiseRostersTable.age,
+    teamName:  franchiseRostersTable.teamName,
+  }).from(franchiseRostersTable)
+    .where(and(...conditions))
+    .orderBy(...orderExprs)
+    .limit(24);
+
+  const filterSummary = buildApFilterSummary(sess);
+  if (!players.length) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle(`🌐 All Players — ${pos}`)
+        .setDescription(`No players found matching your filters.\n\n${filterSummary}`)],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_ap_filter").setLabel("Filter / Sort").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_allplayers").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      )],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ap_player")
+    .setPlaceholder("Select a player for their card…")
+    .addOptions(players.map(p =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${p.firstName} ${p.lastName} — OVR ${p.overall}${devBadgeText(p.devTrait ?? 0)}`)
+        .setDescription(`${p.teamName ?? "?"} · Age ${p.age ?? "?"}`)
+        .setValue(String(p.playerId)),
+    ));
+
+  const descParts = [`Top ${players.length} ${pos}s. Select one for their player card.`];
+  if (filterSummary) descParts.push(filterSummary);
+  descParts.push(DEV_LEGEND);
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`🌐 All Players — ${pos}`).setDescription(descParts.join("\n"))],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_ap_filter").setLabel("Filter / Sort").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_allplayers").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleApFilterApply(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.apPos || !sess.apSeasonId) { await handleAllPlayersPosPick(interaction, sess); return; }
+  await showApPlayerList(interaction, sess);
+}
+
+async function handleApFilterClear(interaction: ButtonInteraction, sess: ActionsSession) {
+  sess.apNameFilter = undefined;
+  sess.apDevFilter = undefined;
+  sess.apSortPrimary = undefined;
+  sess.apAttrSort = undefined;
+  await showApFilterScreen(interaction, sess);
+}
+
+// ── Player Stats — removed; stats accessible via player cards in Rosters/FA/AP ─
 
 // ── Team Stats ────────────────────────────────────────────────────────────────
 
@@ -3173,15 +3410,20 @@ async function handleTeamStatsShow(interaction: StringSelectMenuInteraction, ses
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleStandingsConfPick(interaction: ButtonInteraction, sess: ActionsSession) {
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ac_standings_conf:AFC").setLabel("🔴 AFC").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ac_standings_conf:NFC").setLabel("🔵 NFC").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ac_standings_conf:ALL").setLabel("🌐 Both").setStyle(ButtonStyle.Secondary),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_inthehunt").setLabel("🎯 In The Hunt").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_teamstowatch").setLabel("👀 Teams to Watch").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
   );
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("📈 Standings — Select Conference")],
-    components: [row],
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("📈 Standings")
+      .setDescription("Choose a conference view, or check In The Hunt / Teams to Watch.")],
+    components: [row1, row2],
   });
 }
 

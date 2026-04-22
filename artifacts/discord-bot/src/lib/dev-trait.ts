@@ -1,3 +1,10 @@
+export const DEV_TRAIT_LABELS: Record<number, string> = {
+  0: "Normal",
+  1: "Star",
+  2: "Superstar",
+  3: "X-Factor",
+};
+
 export const DEV_EMOJI = {
   star:      "<:dev_star:1494392249163972699>",
   superstar: "<:dev_superstar:1494392251776897134>",
