@@ -1095,7 +1095,7 @@ async function handleAdminsDeleteSel(interaction: StringSelectMenuInteraction) {
 
 // ── Commissioner Management Hub ────────────────────────────────────────────────
 
-const COMMISSIONER_CAP = 4;
+const COMMISSIONER_CAP = 5;
 
 async function handleCommissionerHub(interaction: ButtonInteraction) {
   const guildId = interaction.guildId!;

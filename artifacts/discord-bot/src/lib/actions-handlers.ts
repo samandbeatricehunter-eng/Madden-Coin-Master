@@ -614,22 +614,25 @@ export async function handleActionsInteraction(
   if (id === "ac_hub") {
     const btn = interaction as ButtonInteraction;
     await btn.deferUpdate();
-    const [settings, member, user] = await Promise.all([
+    const [settings, member, user, season] = await Promise.all([
       getServerSettings(gid),
       btn.guild?.members.cache.get(uid) ?? btn.guild?.members.fetch(uid).catch(() => null),
       getOrCreateUser(uid, btn.user.username, gid),
+      getOrCreateActiveSeason(gid),
     ]);
     const isDiscordAdmin = (member as import("discord.js").GuildMember | null | undefined)?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
     const isDbAdmin      = await isAdminUser(uid, gid);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
+    const seasonNum      = season.seasonNumber;
+    const wkStr          = weekLabel(season.currentWeek);
 
     if (!user.team && !isAdmin) {
-      await btn.editReply({ embeds: [buildUnlinkedHubEmbed()], components: buildUnlinkedHubRows() });
+      await btn.editReply({ embeds: [buildUnlinkedHubEmbed(seasonNum, wkStr)], components: buildUnlinkedHubRows() });
       return true;
     }
 
     await btn.editReply({
-      embeds:     [buildActionsHubEmbed(settings, isAdmin)],
+      embeds:     [buildActionsHubEmbed(settings, isAdmin, seasonNum, wkStr)],
       components: buildActionsHubRows(settings, isAdmin),
     });
     return true;

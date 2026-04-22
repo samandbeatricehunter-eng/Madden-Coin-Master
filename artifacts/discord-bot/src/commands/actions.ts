@@ -5,15 +5,20 @@ import {
 import { getServerSettings } from "../lib/server-settings.js";
 import type { ServerSettings } from "../lib/server-settings.js";
 import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
+import { weekLabel } from "../lib/week-helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("menu")
   .setDescription("League menu — coins, wagers, rosters, standings, PR, and more in one place");
 
-export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean): EmbedBuilder {
+export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean, seasonNum?: number, weekStr?: string): EmbedBuilder {
   const mcaVisible  = settings.mcaImportEnabled || isAdmin;
   const ecoVisible  = settings.coinEconomy;
   const wagerVisible = settings.coinEconomy && settings.wagerEnabled;
+
+  const header = (seasonNum != null && weekStr)
+    ? `**Season ${seasonNum} · ${weekStr}**\n\n`
+    : "";
 
   const sections: string[] = [];
 
@@ -39,6 +44,7 @@ export function buildActionsHubEmbed(settings: ServerSettings, isAdmin: boolean)
     .setColor(0x1a1a2e)
     .setTitle("🏈 /menu — League Menu")
     .setDescription(
+      header +
       "Select any action below. All menus are private (visible only to you).\n\n" +
       sections.join("\n\n")
     )
@@ -107,11 +113,14 @@ export function buildActionsHubRows(settings: ServerSettings, isAdmin: boolean):
   return rows;
 }
 
-export function buildUnlinkedHubEmbed(): EmbedBuilder {
+export function buildUnlinkedHubEmbed(seasonNum?: number, weekStr?: string): EmbedBuilder {
+  const header = (seasonNum != null && weekStr)
+    ? `**Season ${seasonNum} · ${weekStr}**\n\n`
+    : "";
   return new EmbedBuilder()
     .setColor(0x2b2d31)
     .setTitle("🏈 /menu — Welcome to the League")
-    .setDescription(
+    .setDescription(header +
       "You are not currently linked to a team. Use the buttons below to request one or browse league info.\n\n" +
 
       "**🔴🟢 Team Requests**\n" +
@@ -181,17 +190,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const isDbAdmin      = await isAdminUser(uid, gid);
   const isAdmin        = isDiscordAdmin || isDbAdmin;
 
+  const seasonNum = season.seasonNumber;
+  const wkStr     = weekLabel(season.currentWeek);
+
   // ── Unlinked user — show restricted hub ──────────────────────────────────────
   if (!user.team && !isAdmin) {
     await interaction.editReply({
-      embeds:     [buildUnlinkedHubEmbed()],
+      embeds:     [buildUnlinkedHubEmbed(seasonNum, wkStr)],
       components: buildUnlinkedHubRows(),
     });
     return;
   }
 
   await interaction.editReply({
-    embeds:     [buildActionsHubEmbed(settings, isAdmin)],
+    embeds:     [buildActionsHubEmbed(settings, isAdmin, seasonNum, wkStr)],
     components: buildActionsHubRows(settings, isAdmin),
   });
 }

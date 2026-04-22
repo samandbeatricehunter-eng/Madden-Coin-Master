@@ -132,10 +132,10 @@ async function syncCommissionerRoleWithDb(client: Client): Promise<void> {
 
 // ── Co-Commissioner → Commissioner migration ───────────────────────────────────
 // Runs once per startup. Finds all "Co-Commissioner" role holders in every
-// guild, converts up to 3 of them to "Commissioner" (owner is always #1 = 4 max
+// guild, converts up to 4 of them to "Commissioner" (owner is always #1 = 5 max
 // total), then deletes the "Co-Commissioner" role from the guild entirely.
 // Safe to re-run — guilds without a Co-Commissioner role are skipped.
-const COMMISSIONER_CAP = 4;
+const COMMISSIONER_CAP = 5;
 
 async function migrateCoCommissioners(client: Client): Promise<void> {
   for (const [guildId, guild] of client.guilds.cache) {
