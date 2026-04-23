@@ -1418,9 +1418,23 @@ export async function processSchedules(body: unknown, eaLeagueId = 0): Promise<P
       const aScore = g.awayScore != null ? Number(g.awayScore) : null;
       const status = Number(g.scheduleStatus ?? g.status ?? 0);
 
-      const key      = `${weekIdx}-${hId}-${aId}`;
+      const key    = `${weekIdx}-${hId}-${aId}`;
+      const revKey = `${weekIdx}-${aId}-${hId}`;
+
+      // EA sometimes sends both (A home vs B away) AND (B home vs A away) for the same game.
+      // Treat them as the same matchup: keep whichever has higher status (played > upcoming).
+      // If the reverse is already in the map and this entry has better data, swap it out.
       const existing = schedMap.get(key);
-      if (!existing || (status >= MIN_COMPLETED_STATUS && existing.status < MIN_COMPLETED_STATUS)) {
+      const reverse  = schedMap.get(revKey);
+
+      if (reverse) {
+        if (status >= MIN_COMPLETED_STATUS && reverse.status < MIN_COMPLETED_STATUS) {
+          // Incoming has score data; the reverse entry we already stored does not — replace it.
+          schedMap.delete(revKey);
+          schedMap.set(key, { hId, aId, weekIdx, hTeamName: hName, aTeamName: aName, hScore, aScore, status });
+        }
+        // Otherwise keep the reverse entry as-is (first seen wins when status is equal).
+      } else if (!existing || (status >= MIN_COMPLETED_STATUS && existing.status < MIN_COMPLETED_STATUS)) {
         schedMap.set(key, { hId, aId, weekIdx, hTeamName: hName, aTeamName: aName, hScore, aScore, status });
       }
     }
@@ -1575,16 +1589,35 @@ export async function syncWeekScoresToSchedule(
       console.log(`[syncWeekScores] Deleted existing rows for seasonId=${season.id} weekIndex=${weekIndex} before reset-import`);
     }
 
-    const upserts: Promise<any>[] = [];
+    // Deduplicate before upserting: EA sometimes sends both (A home vs B away) AND
+    // (B home vs A away) for the same game. Normalise to a canonical pair using a
+    // min/max key and keep whichever entry has the higher status (played > upcoming).
+    type GameEntry = {
+      hId: number; aId: number;
+      hName: string; aName: string;
+      status: number; homeScore: number | null; awayScore: number | null;
+    };
+    const canonMap = new Map<string, GameEntry>();
     for (const g of games) {
       if (!g || typeof g !== "object") continue;
-
       const hId = Number(g.homeTeamId ?? -1);
       const aId = Number(g.awayTeamId ?? -1);
       if (hId < 0 || aId < 0) continue;
+      const hName  = teamMap.get(hId)?.fullName ?? `Team${hId}`;
+      const aName  = teamMap.get(aId)?.fullName ?? `Team${aId}`;
+      const status = Number(g.scheduleStatus ?? g.status ?? 0);
+      const homeScore = status >= MIN_COMPLETED_STATUS ? Number(g.homeScore ?? 0) : null;
+      const awayScore = status >= MIN_COMPLETED_STATUS ? Number(g.awayScore ?? 0) : null;
+      const canonKey = `${Math.min(hId, aId)}-${Math.max(hId, aId)}`;
+      const existing = canonMap.get(canonKey);
+      if (!existing || status > existing.status) {
+        canonMap.set(canonKey, { hId, aId, hName, aName, status, homeScore, awayScore });
+      }
+    }
 
-      const hName = teamMap.get(hId)?.fullName ?? `Team${hId}`;
-      const aName = teamMap.get(aId)?.fullName ?? `Team${aId}`;
+    const upserts: Promise<any>[] = [];
+    for (const entry of canonMap.values()) {
+      const { hId, aId, hName, aName, status, homeScore, awayScore } = entry;
 
       if (scheduleOnly) {
         const row = {
@@ -1613,10 +1646,7 @@ export async function syncWeekScoresToSchedule(
           );
         }
       } else {
-        const status    = Number(g.scheduleStatus ?? g.status ?? 0);
-        const homeScore = status >= MIN_COMPLETED_STATUS ? Number(g.homeScore ?? 0) : null;
-        const awayScore = status >= MIN_COMPLETED_STATUS ? Number(g.awayScore ?? 0) : null;
-
+        // status / homeScore / awayScore already extracted from canonMap above.
         // Upsert: creates the row if it doesn't exist yet (schedule not pre-imported),
         // or updates scores/status when the game is completed.
         upserts.push(

@@ -175,6 +175,22 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
     return;
   }
 
+  // Deduplicate by canonical pair: EA sometimes stores both (A home, B away) AND
+  // (B home, A away) as separate rows for the same real game. Collapse them here,
+  // preferring whichever row has the higher status (played over upcoming), then
+  // the higher DB id (more recently imported) as a tiebreaker.
+  {
+    const canonMap = new Map<string, typeof games[0]>();
+    for (const g of games) {
+      const key = `${Math.min(g.homeTeamId, g.awayTeamId)}-${Math.max(g.homeTeamId, g.awayTeamId)}`;
+      const ex  = canonMap.get(key);
+      if (!ex || g.status > ex.status || (g.status === ex.status && g.id > ex.id)) {
+        canonMap.set(key, g);
+      }
+    }
+    games.splice(0, games.length, ...[...canonMap.values()].sort((a, b) => a.id - b.id));
+  }
+
   // ── Build team → Discord ID from franchise_mca_teams ──────────────────────
   // Uses fullName + nickName so MCA schedule names match correctly.
   const teamToDiscord = await buildTeamToDiscord(resolvedGuildId);
