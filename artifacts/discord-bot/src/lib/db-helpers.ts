@@ -296,7 +296,29 @@ export async function getActiveSeason(guildId: string): Promise<Season | null> {
 export async function getOrCreateActiveSeason(guildId: string): Promise<Season> {
   const existing = await getActiveSeason(guildId);
   if (existing) return existing;
-  const [season] = await db.insert(seasonsTable).values({ guildId, seasonNumber: 1, isActive: true }).returning();
+
+  // No active season — check if this guild has any inactive seasons.
+  // If so, reactivate the most recent one (highest season number) rather than
+  // blindly creating Season 1 (which would fail with a unique constraint if
+  // Season 1 already exists, e.g. after a failed Set Season operation).
+  const [mostRecent] = await db.select()
+    .from(seasonsTable)
+    .where(eq(seasonsTable.guildId, guildId))
+    .orderBy(desc(seasonsTable.seasonNumber))
+    .limit(1);
+
+  if (mostRecent) {
+    const [reactivated] = await db.update(seasonsTable)
+      .set({ isActive: true })
+      .where(eq(seasonsTable.id, mostRecent.id))
+      .returning();
+    return reactivated!;
+  }
+
+  // Truly new guild — create Season 1.
+  const [season] = await db.insert(seasonsTable)
+    .values({ guildId, seasonNumber: 1, isActive: true })
+    .returning();
   return season!;
 }
 
