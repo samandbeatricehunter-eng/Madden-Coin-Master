@@ -1626,7 +1626,7 @@ export async function handleSetPayPo2Btn(interaction: ButtonInteraction): Promis
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("conf_runnerup").setLabel(`Conference Runner-Up (current: ${confRU})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("sb_win").setLabel(`Super Bowl Winner (current: ${sbWin})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("sb_runnerup").setLabel(`Super Bowl Runner-Up (current: ${sbRU})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("po_highlight").setLabel(`Playoff Highlight Payout per video (current: ${poHighlight})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("po_highlight").setLabel(`Highlight/video payout (current: ${poHighlight})`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4)),
   );
   await interaction.showModal(modal);
 }
