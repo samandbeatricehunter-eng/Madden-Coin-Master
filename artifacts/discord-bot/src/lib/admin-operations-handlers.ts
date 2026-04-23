@@ -296,6 +296,10 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     await handlePostGameChannels(interaction as ButtonInteraction);
     return true;
   }
+  if (id === "ao_modal_post_game_channels") {
+    await handlePostGameChannelsModal(interaction as ModalSubmitInteraction);
+    return true;
+  }
 
   // ── Post Custom Article ───────────────────────────────────────────────────────
   if (id === "ao_post_custom_article") {
@@ -592,28 +596,272 @@ async function handlePostMatchupsConfirm(interaction: ButtonInteraction) {
 // ── Post Game Channels ─────────────────────────────────────────────────────────
 
 async function handlePostGameChannels(interaction: ButtonInteraction) {
+  const guildId  = interaction.guildId!;
+  const season   = await getOrCreateActiveSeason(guildId);
+  const currWeek = parseInt(season.currentWeek ?? "1", 10);
+  const defaultW = isNaN(currWeek) ? "1" : String(currWeek);
+
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_post_game_channels")
+    .setTitle("Post Game Channels");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("week_num")
+        .setLabel("Week # (1-18, 19=Wild Card, 20-22=playoffs)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(2)
+        .setPlaceholder(defaultW)
+        .setValue(defaultW),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
-  const week    = weekLabel(season.currentWeek ?? "1");
+  const guild   = interaction.guild;
 
-  await interaction.update({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Blurple)
-        .setTitle("🎮 Post Game Channels")
-        .setDescription(
-          `Re-posting matchup banners and AI breakdowns to all game channels for **${week}**.\n\n` +
-          "Use the slash command `/adminrepostbanners` to run this operation.\n\n" +
-          "_(This triggers image generation and AI breakdown for every game channel — it may take 30–90 seconds.)_"
-        ),
-    ],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
-      ) as ActionRowBuilder<any>,
-    ],
-  });
+  if (!guild) {
+    await interaction.editReply({ content: "❌ Could not access guild." });
+    return;
+  }
+
+  const raw     = interaction.fields.getTextInputValue("week_num").trim();
+  const weekNum = parseInt(raw, 10);
+  if (isNaN(weekNum) || weekNum < 1 || weekNum > 22) {
+    await interaction.editReply({ content: "❌ Invalid week number. Enter 1–18 for regular season, 19–22 for playoffs." });
+    return;
+  }
+
+  const playoffIndexMap: Record<number, number> = { 19: 1018, 20: 1019, 21: 1020, 22: 1022 };
+  const weekIndex = weekNum <= 18 ? weekNum - 1 : (playoffIndexMap[weekNum] ?? -1);
+  if (weekIndex === -1) {
+    await interaction.editReply({ content: "❌ Could not resolve week index." });
+    return;
+  }
+
+  const isPlayoff = weekNum > 18;
+  const playoffLabels: Record<number, string> = { 19: "Wild Card", 20: "Divisional Round", 21: "Conference Championship", 22: "Super Bowl" };
+  const displayLabel = isPlayoff
+    ? `Season ${season.seasonNumber} — ${playoffLabels[weekNum] ?? `Playoff Wk ${weekNum}`}`
+    : `Season ${season.seasonNumber} — Week ${weekNum}`;
+
+  // ── Load schedule games for the week ─────────────────────────────────────
+  const games = await db.select()
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId,  season.id),
+      eq(franchiseScheduleTable.weekIndex, weekIndex),
+    ));
+
+  if (games.length === 0) {
+    await interaction.editReply({
+      content: `❌ No schedule data found for **${displayLabel}**. Run \`/franchiseupdate\` or import the schedule first.`,
+    });
+    return;
+  }
+
+  // ── Build team → Discord ID maps ─────────────────────────────────────────
+  const [mcaTeams, defaultLogos, allUsers] = await Promise.all([
+    db.select({
+      teamId:    franchiseMcaTeamsTable.teamId,
+      fullName:  franchiseMcaTeamsTable.fullName,
+      nickName:  franchiseMcaTeamsTable.nickName,
+      discordId: franchiseMcaTeamsTable.discordId,
+      logoUrl:   franchiseMcaTeamsTable.logoUrl,
+    }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
+    db.select({
+      teamId:   defaultTeamLogosTable.teamId,
+      fullName: defaultTeamLogosTable.fullName,
+      nickName: defaultTeamLogosTable.nickName,
+      logoUrl:  defaultTeamLogosTable.logoUrl,
+    }).from(defaultTeamLogosTable),
+    db.select({ discordId: usersTable.discordId, team: usersTable.team })
+      .from(usersTable).where(eq(usersTable.guildId, guildId)),
+  ]);
+
+  const defaultById   = new Map<number, string>();
+  const defaultByName = new Map<string, string>();
+  for (const d of defaultLogos) {
+    defaultById.set(d.teamId, d.logoUrl);
+    defaultByName.set(d.fullName.toLowerCase().trim(), d.logoUrl);
+    defaultByName.set(d.nickName.toLowerCase().trim(), d.logoUrl);
+  }
+
+  const teamToDiscord = new Map<string, string>();
+  const teamToMca     = new Map<string, typeof mcaTeams[0]>();
+  const discordIdToMca = new Map<string, typeof mcaTeams[0]>();
+  for (const t of mcaTeams) {
+    const keys = [t.fullName.toLowerCase().trim(), t.nickName.toLowerCase().trim()];
+    for (const k of keys) {
+      if (!teamToMca.has(k)) teamToMca.set(k, t);
+      if (t.discordId && !teamToDiscord.has(k)) teamToDiscord.set(k, t.discordId);
+    }
+    if (t.discordId) discordIdToMca.set(t.discordId, t);
+  }
+
+  const discordIdToProperTeam = new Map<string, string>();
+  for (const u of allUsers) {
+    if (u.team) {
+      const k = u.team.toLowerCase().trim();
+      if (!teamToDiscord.has(k)) teamToDiscord.set(k, u.discordId);
+      discordIdToProperTeam.set(u.discordId, u.team);
+    }
+  }
+
+  function resolveLogoPath(teamName: string, mca: typeof mcaTeams[0] | undefined): string | null {
+    const key = teamName.toLowerCase().trim();
+    if (mca?.logoUrl) return mca.logoUrl;
+    if (mca?.teamId != null) { const b = defaultById.get(mca.teamId); if (b) return b; }
+    const exact = defaultByName.get(key);
+    if (exact) return exact;
+    for (const d of defaultLogos) { if (key.includes(d.nickName.toLowerCase().trim())) return d.logoUrl; }
+    if (mca?.teamId != null && mca.teamId <= 31) return globalLogoPath(mca.teamId);
+    return null;
+  }
+
+  // H2H only: both teams must map to a Discord user
+  const h2hGames = games.filter(g =>
+    teamToDiscord.has(g.awayTeamName.toLowerCase().trim()) &&
+    teamToDiscord.has(g.homeTeamName.toLowerCase().trim()),
+  );
+
+  if (h2hGames.length === 0) {
+    await interaction.editReply({
+      content: `ℹ️ No H2H matchups found for **${displayLabel}** — all ${games.length} game${games.length !== 1 ? "s" : ""} are CPU matchups. No channels created.`,
+    });
+    return;
+  }
+
+  // Find or create the GAMEDAY category
+  await guild.channels.fetch();
+  const matchupCategory = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildCategory && c.name.toUpperCase().includes("GAMEDAY"),
+  );
+  if (!matchupCategory) {
+    await interaction.editReply({ content: "❌ Could not find a **GAMEDAY CENTER** category. Create one in Discord first." });
+    return;
+  }
+
+  // Load existing channel records for this week (to avoid duplicates)
+  const existingChannelRows = await db.select()
+    .from(gameChannelsTable)
+    .where(and(
+      eq(gameChannelsTable.seasonId,  season.id),
+      eq(gameChannelsTable.weekIndex, weekIndex),
+    ));
+  const existingKey = new Set(
+    existingChannelRows.map(r => `${r.awayTeamName.toLowerCase().trim()}|${r.homeTeamName.toLowerCase().trim()}`),
+  );
+
+  const results: string[] = [];
+  let created = 0;
+
+  for (const g of h2hGames) {
+    const awayDiscordId = teamToDiscord.get(g.awayTeamName.toLowerCase().trim())!;
+    const homeDiscordId = teamToDiscord.get(g.homeTeamName.toLowerCase().trim())!;
+    const awayProper    = discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName;
+    const homeProper    = discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName;
+    const gameKey       = `${awayProper.toLowerCase().trim()}|${homeProper.toLowerCase().trim()}`;
+
+    if (existingKey.has(gameKey)) {
+      results.push(`⏭️ **${awayProper} vs ${homeProper}** — channel already exists`);
+      continue;
+    }
+
+    const chanName = `${toChannelName(awayProper)}-vs-${toChannelName(homeProper)}`;
+
+    try {
+      const newChannel = await guild.channels.create({
+        name:   chanName,
+        type:   ChannelType.GuildText,
+        parent: matchupCategory.id,
+      });
+      await newChannel.lockPermissions();
+      await newChannel.send(
+        `🏈 **${awayProper} vs ${homeProper}** — ${displayLabel}\n` +
+        `<@${awayDiscordId}> <@${homeDiscordId}>\nGood luck this week!`,
+      );
+      await db.insert(gameChannelsTable).values({
+        seasonId:     season.id,
+        weekIndex,
+        channelId:    newChannel.id,
+        awayTeamName: awayProper,
+        homeTeamName: homeProper,
+      });
+      existingKey.add(gameKey);
+      created++;
+      results.push(`✅ Created <#${newChannel.id}>`);
+
+      // Fire-and-forget: banner + AI breakdown
+      const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim()) ?? discordIdToMca.get(awayDiscordId);
+      const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim()) ?? discordIdToMca.get(homeDiscordId);
+      const awayGcsPath = resolveLogoPath(awayProper, awayMca);
+      const homeGcsPath = resolveLogoPath(homeProper, homeMca);
+
+      (async () => {
+        try {
+          if (awayGcsPath && homeGcsPath) {
+            const [awayBuf, homeBuf] = await Promise.all([resolveLogoBuf(awayGcsPath), resolveLogoBuf(homeGcsPath)]);
+            if (awayBuf && homeBuf) {
+              const bannerBuf  = await buildMatchupBanner(awayBuf, homeBuf);
+              const attachment = new AttachmentBuilder(bannerBuf, { name: "matchup-banner.png" });
+              await newChannel.send({
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor(0x7c3aed)
+                    .setTitle(`${awayProper} @ ${homeProper}`)
+                    .setDescription(`<@${awayDiscordId}> **vs** <@${homeDiscordId}>`)
+                    .setImage("attachment://matchup-banner.png")
+                    .setFooter({ text: displayLabel }),
+                ],
+                files: [attachment],
+              });
+            }
+          }
+          if (awayMca?.teamId != null && homeMca?.teamId != null) {
+            const breakdownEmbed = await generateMatchupBreakdown({
+              seasonId:       season.id,
+              awayTeamName:   awayProper,
+              homeTeamName:   homeProper,
+              awayTeamId:     awayMca.teamId,
+              homeTeamId:     homeMca.teamId,
+              awayDiscordId,
+              homeDiscordId,
+              awayDiscordTag: `<@${awayDiscordId}>`,
+              homeDiscordTag: `<@${homeDiscordId}>`,
+              weekLabel:      displayLabel,
+            });
+            await newChannel.send({ embeds: [breakdownEmbed] });
+          }
+        } catch (err) {
+          console.error(`[handlePostGameChannelsModal] Banner/breakdown error for ${chanName}:`, err);
+        }
+      })();
+    } catch (err) {
+      console.error(`[handlePostGameChannelsModal] Channel creation error for ${chanName}:`, err);
+      results.push(`❌ Failed to create channel for **${awayProper} vs ${homeProper}**`);
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(created > 0 ? Colors.Green : Colors.Blurple)
+    .setTitle(`🎮 Post Game Channels — ${displayLabel}`)
+    .setDescription(results.length > 0 ? results.join("\n") : "No H2H games processed.")
+    .addFields(
+      { name: "Channels Created", value: String(created),              inline: true },
+      { name: "H2H Games",        value: String(h2hGames.length),      inline: true },
+      { name: "Total Schedule",   value: String(games.length),         inline: true },
+    )
+    .setFooter({ text: "Banners & AI breakdowns are posting in the background" })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
 }
 
 // ── Post Custom Article ────────────────────────────────────────────────────────

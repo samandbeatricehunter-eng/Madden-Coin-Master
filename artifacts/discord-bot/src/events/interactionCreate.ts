@@ -128,6 +128,11 @@ import {
   handleTsEosManual,
   handleTsEosManualConfirm,
   handleTsEosManualCancel,
+  handleTsRepairSchedules,
+  handleTsSchedReviewWeek,
+  handleTsSchedWeekModal,
+  handleTsSchedSel,
+  handleTsSchedDelete,
 } from "../lib/admin-troubleshoot-handlers.js";
 import {
   handleLeagueDataButton,
@@ -243,6 +248,9 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ts_eos_manual")        { await handleTsEosManual(interaction);        return; }
   if (action === "ts_eos_manual_confirm"){ await handleTsEosManualConfirm(interaction); return; }
   if (action === "ts_eos_manual_cancel") { await handleTsEosManualCancel(interaction);  return; }
+  if (action === "ts_repair_schedules")  { await handleTsRepairSchedules(interaction);  return; }
+  if (action === "ts_sched_review_week") { await handleTsSchedReviewWeek(interaction);  return; }
+  if (action === "ts_sched_delete")      { await handleTsSchedDelete(interaction);      return; }
 
   // ── League Data wizard — all ld_ prefixed buttons ─────────────────────────
   if (action?.startsWith("ld_")) {
@@ -2274,6 +2282,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── Admin troubleshoot — schedule select menu ─────────────────────────────────
+  if (action === "ts_sched_sel") {
+    await handleTsSchedSel(interaction);
+    return;
+  }
+
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
@@ -2638,6 +2652,9 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     const handled = await handleAdminOperationsInteraction(interaction);
     if (handled) return;
   }
+
+  // ── Admin troubleshoot — schedule review modal ────────────────────────────────
+  if (action === "ts_modal_sched_week") { await handleTsSchedWeekModal(interaction); return; }
 
   // ── Wager margin modal (commissioner enters final score) ─────────────────────
   if (action === "wager_margin") { await handleWagerMarginModal(interaction); return; }

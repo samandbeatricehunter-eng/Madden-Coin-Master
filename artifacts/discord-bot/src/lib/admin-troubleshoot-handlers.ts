@@ -7,18 +7,24 @@
  *   ts_repair_playoff | ts_playoff_proceed | ts_playoff_confirm | ts_playoff_cancel
  *   ts_eos_manual     | ts_eos_manual_confirm | ts_eos_manual_cancel
  *   ao_milestone_audit
+ *   ts_repair_schedules | ts_sched_review_week | ts_sched_sel | ts_sched_delete:<id>
+ *   ts_modal_sched_week (modal)
  */
 
 import {
-  ButtonInteraction, EmbedBuilder, Colors,
+  ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction,
+  EmbedBuilder, Colors,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ModalBuilder, TextInputBuilder, TextInputStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, userRecordsTable, coinTransactionsTable,
+  franchiseScheduleTable,
 } from "@workspace/db";
-import { eq, and, sql, isNotNull, desc } from "drizzle-orm";
+import { eq, and, sql, isNotNull, desc, asc } from "drizzle-orm";
 
 import {
   isAdminUser, getOrCreateActiveSeason,
@@ -66,6 +72,11 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "**📊 EOS Test Run**\n" +
       "Read-only dry run of the full end-of-season payout calculation. " +
       "No coins are awarded — shows exactly what each user would receive.\n\n" +
+      "**🗓️ Repair Schedules**\n" +
+      "Auto-scans the active season for weeks where a team appears in more than one " +
+      "game (duplicate entries from EA import). Shows suspect games in a select menu " +
+      "and lets you delete the invalid one. You can also manually browse any specific " +
+      "week to remove incorrect games.\n\n" +
       "**⚡ EOS Manual Run**\n" +
       "Triggers the actual end-of-season payout process for the active season. " +
       "Posts commissioner approval embeds to the commish channel for every user. " +
@@ -84,9 +95,10 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ts_resync_data").setLabel("🔄 Resync Rosters & Data").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ts_repair_playoff").setLabel("🏈 Repair Playoff Seeding").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ts_eos_testrun").setLabel("📊 EOS Test Run").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ts_eos_manual").setLabel("⚡ EOS Manual Run").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ts_repair_schedules").setLabel("🗓️ Repair Schedules").setStyle(ButtonStyle.Secondary),
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ts_eos_manual").setLabel("⚡ EOS Manual Run").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ao_milestone_audit").setLabel("🎯 Milestone Audit").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
@@ -548,7 +560,7 @@ export async function handleTsEosManualConfirm(interaction: ButtonInteraction): 
 
   let result: { posted: number; skipped: number; errors: number };
   try {
-    result = await runEosAutoPost(guildId, season.id, interaction.client);
+    result = await runEosAutoPost(interaction.client, season.id, guildId);
   } catch (err) {
     console.error("[ts_eos_manual_confirm]", err);
     await interaction.editReply({
@@ -738,4 +750,338 @@ export async function handleTsMilestoneAudit(interaction: ButtonInteraction): Pr
   } catch (err) {
     console.error("[handleTsMilestoneAudit] Failed to post to commissioner channel:", err);
   }
+}
+
+// ── Repair Schedules ───────────────────────────────────────────────────────────
+
+function wkLabel(weekIndex: number): string {
+  if (weekIndex >= 0 && weekIndex <= 17) return `Wk ${weekIndex + 1}`;
+  if (weekIndex === 1018) return "Wild Card";
+  if (weekIndex === 1019) return "Divisional";
+  if (weekIndex === 1020) return "Conference Championship";
+  if (weekIndex === 1022) return "Super Bowl";
+  return `Week ${weekIndex}`;
+}
+
+function buildSchedGameOptions(games: { id: number; weekIndex: number; homeTeamName: string; awayTeamName: string }[]) {
+  return games.slice(0, 25).map(g => {
+    const wk  = wkLabel(g.weekIndex);
+    const lbl = `${wk}: ${g.awayTeamName} @ ${g.homeTeamName}`.slice(0, 100);
+    return new StringSelectMenuOptionBuilder()
+      .setLabel(lbl)
+      .setValue(String(g.id))
+      .setDescription(`Game ID #${g.id}`);
+  });
+}
+
+function buildSchedReviewWeekModal(): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId("ts_modal_sched_week")
+    .setTitle("Review Schedule — Enter Week #");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("week_num")
+        .setLabel("Week number (1-18, 19=WC, 20=DIV, 21=CC, 22=SB)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(2)
+        .setPlaceholder("1"),
+    ),
+  );
+  return modal;
+}
+
+export async function handleTsRepairSchedules(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+
+  // Load all regular-season games (weekIndex 0–17) for the active season
+  const allGames = await db
+    .select({
+      id:           franchiseScheduleTable.id,
+      weekIndex:    franchiseScheduleTable.weekIndex,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      homeTeamId:   franchiseScheduleTable.homeTeamId,
+      awayTeamId:   franchiseScheduleTable.awayTeamId,
+    })
+    .from(franchiseScheduleTable)
+    .where(eq(franchiseScheduleTable.seasonId, season.id))
+    .orderBy(asc(franchiseScheduleTable.weekIndex), asc(franchiseScheduleTable.id));
+
+  const regularGames = allGames.filter(g => g.weekIndex >= 0 && g.weekIndex <= 17);
+
+  // Detect duplicates: any team appearing in 2+ games in the same week
+  const suspectIds = new Set<number>();
+  const weekTeamMap = new Map<string, number[]>(); // "weekIdx:teamId" → [gameId, ...]
+  for (const g of regularGames) {
+    for (const teamId of [g.homeTeamId, g.awayTeamId]) {
+      const key = `${g.weekIndex}:${teamId}`;
+      if (!weekTeamMap.has(key)) weekTeamMap.set(key, []);
+      weekTeamMap.get(key)!.push(g.id);
+    }
+  }
+  for (const [, ids] of weekTeamMap) {
+    if (ids.length > 1) ids.forEach(id => suspectIds.add(id));
+  }
+
+  const suspects = regularGames.filter(g => suspectIds.has(g.id));
+
+  const backNavRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  if (suspects.length === 0) {
+    // No duplicates — offer manual week review
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("✅ No Duplicate Games Found")
+          .setDescription(
+            `Scanned **${regularGames.length}** games across all regular-season weeks for Season ${season.seasonNumber}. ` +
+            `No team appears in more than one game in the same week.\n\n` +
+            `If you believe a specific game is incorrect, use **Review Any Week** to browse and remove it.`,
+          )
+          .setTimestamp(),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ts_sched_review_week").setLabel("🔍 Review Any Week").setStyle(ButtonStyle.Primary),
+          ...backNavRow.components,
+        ) as ActionRowBuilder<any>,
+      ],
+    });
+    return;
+  }
+
+  // Show select menu of suspect games
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ts_sched_sel")
+    .setPlaceholder("Pick the game to delete…")
+    .addOptions(buildSchedGameOptions(suspects));
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Orange)
+        .setTitle(`⚠️ ${suspectIds.size} Suspect Game${suspectIds.size !== 1 ? "s" : ""} Found`)
+        .setDescription(
+          `The following games involve a team that appears **more than once** in the same week ` +
+          `for Season ${season.seasonNumber}. Select the **invalid** game to remove it.\n\n` +
+          `_(Removing a game also rebuilds all W/L records for the active season.)_`,
+        )
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu) as ActionRowBuilder<any>,
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ts_sched_review_week").setLabel("🔍 Review Any Week Instead").setStyle(ButtonStyle.Secondary),
+        ...backNavRow.components,
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+export async function handleTsSchedReviewWeek(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+  await interaction.showModal(buildSchedReviewWeekModal());
+}
+
+export async function handleTsSchedWeekModal(interaction: ModalSubmitInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction as unknown as ButtonInteraction))) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const raw     = interaction.fields.getTextInputValue("week_num").trim();
+  const weekNum = parseInt(raw, 10);
+  if (isNaN(weekNum) || weekNum < 1 || weekNum > 22) {
+    await interaction.editReply({ content: "❌ Invalid week number. Enter 1–18 (regular season) or 19–22 (playoffs)." });
+    return;
+  }
+
+  const weekIndexMap: Record<number, number> = { 19: 1018, 20: 1019, 21: 1020, 22: 1022 };
+  const weekIndex = weekNum <= 18 ? weekNum - 1 : (weekIndexMap[weekNum] ?? -1);
+  if (weekIndex === -1) {
+    await interaction.editReply({ content: "❌ Could not resolve week index." });
+    return;
+  }
+
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+
+  const games = await db
+    .select({
+      id:           franchiseScheduleTable.id,
+      weekIndex:    franchiseScheduleTable.weekIndex,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+    })
+    .from(franchiseScheduleTable)
+    .where(and(
+      eq(franchiseScheduleTable.seasonId,  season.id),
+      eq(franchiseScheduleTable.weekIndex, weekIndex),
+    ))
+    .orderBy(asc(franchiseScheduleTable.id));
+
+  if (games.length === 0) {
+    await interaction.editReply({
+      content: `❌ No games found for **${wkLabel(weekIndex)}** in Season ${season.seasonNumber}. ` +
+               `Make sure the schedule has been imported.`,
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ts_sched_sel")
+    .setPlaceholder("Pick the game to delete…")
+    .addOptions(buildSchedGameOptions(games));
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle(`📅 ${wkLabel(weekIndex)} — Season ${season.seasonNumber} (${games.length} games)`)
+        .setDescription(
+          games.map(g => `• **${g.awayTeamName}** @ **${g.homeTeamName}** _(ID #${g.id})_`).join("\n"),
+        )
+        .setFooter({ text: "Select a game below to remove it from the schedule" })
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+export async function handleTsSchedSel(interaction: StringSelectMenuInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction as unknown as ButtonInteraction))) return;
+
+  const gameId = parseInt(interaction.values[0]!, 10);
+  if (isNaN(gameId)) {
+    await interaction.reply({ content: "❌ Invalid selection.", ephemeral: true });
+    return;
+  }
+
+  const [game] = await db
+    .select({
+      id:           franchiseScheduleTable.id,
+      weekIndex:    franchiseScheduleTable.weekIndex,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+    })
+    .from(franchiseScheduleTable)
+    .where(eq(franchiseScheduleTable.id, gameId))
+    .limit(1);
+
+  if (!game) {
+    await interaction.reply({ content: "❌ Game not found — it may have already been deleted.", ephemeral: true });
+    return;
+  }
+
+  const label = `${wkLabel(game.weekIndex)}: ${game.awayTeamName} @ ${game.homeTeamName}`;
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("🗑️ Confirm Game Deletion")
+        .setDescription(
+          `You are about to **permanently delete** this schedule entry:\n\n` +
+          `> **${label}** _(Game ID #${game.id})_\n\n` +
+          `This will also rebuild all W/L records for the active season to reflect the removal. ` +
+          `This action **cannot be undone**.`,
+        )
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ts_sched_delete:${game.id}`)
+          .setLabel("🗑️ Delete This Game")
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId("ts_repair_schedules")
+          .setLabel("← Back to Scan")
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId("ao_hub_back")
+          .setLabel("← Back to Hub")
+          .setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+export async function handleTsSchedDelete(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+
+  const gameId = parseInt(interaction.customId.split(":")[1] ?? "", 10);
+  if (isNaN(gameId)) {
+    await interaction.reply({ content: "❌ Invalid game ID.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  const [game] = await db
+    .select({
+      id:           franchiseScheduleTable.id,
+      weekIndex:    franchiseScheduleTable.weekIndex,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      seasonId:     franchiseScheduleTable.seasonId,
+    })
+    .from(franchiseScheduleTable)
+    .where(eq(franchiseScheduleTable.id, gameId))
+    .limit(1);
+
+  if (!game) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Game not found — may have already been deleted.")],
+      components: [],
+    });
+    return;
+  }
+
+  await db.delete(franchiseScheduleTable).where(eq(franchiseScheduleTable.id, gameId));
+
+  const guildId = interaction.guildId!;
+  let recordResult: Awaited<ReturnType<typeof repairUserRecords>> = null;
+  try {
+    recordResult = await repairUserRecords(guildId);
+  } catch (err) {
+    console.error("[handleTsSchedDelete] repairUserRecords failed:", err);
+  }
+
+  const label = `${wkLabel(game.weekIndex)}: ${game.awayTeamName} @ ${game.homeTeamName}`;
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Game Removed")
+        .setDescription(
+          `**${label}** _(ID #${game.id})_ has been deleted from the season schedule.\n\n` +
+          (recordResult
+            ? `W/L records rebuilt — **${recordResult.usersUpdated}** user${recordResult.usersUpdated !== 1 ? "s" : ""} updated.`
+            : `W/L rebuild skipped (no active season or error).`),
+        )
+        .setFooter({ text: `By ${interaction.user.username}` })
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ts_repair_schedules").setLabel("🔍 Scan Again").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
 }
