@@ -133,23 +133,48 @@ async function buildConferenceSelectRows(
   nfcSelected: string[] = [],
   maxValues = 25,
 ): Promise<ActionRowBuilder<StringSelectMenuBuilder>[]> {
-  const users = await db.select({
-    discordId: usersTable.discordId,
-    discordUsername: usersTable.discordUsername,
-    team: usersTable.team,
-  }).from(usersTable).where(and(
-    eq(usersTable.guildId, guildId),
-    isNotNull(usersTable.team),
+  // Fetch registered users and current MCA team assignments in parallel.
+  // MCA team data is the authoritative source for who owns which team right now —
+  // usersTable.team only reflects what was set at registration and can be stale
+  // if a user has since been re-linked to a different franchise.
+  const [users, rosterSeasonId] = await Promise.all([
+    db.select({
+      discordId:       usersTable.discordId,
+      discordUsername: usersTable.discordUsername,
+      team:            usersTable.team,
+    }).from(usersTable).where(and(
+      eq(usersTable.guildId, guildId),
+      isNotNull(usersTable.team),
+    )),
+    getRosterSeasonId(guildId),
+  ]);
+
+  const mcaRows = await db.select({
+    discordId: franchiseMcaTeamsTable.discordId,
+    fullName:  franchiseMcaTeamsTable.fullName,
+  }).from(franchiseMcaTeamsTable).where(and(
+    eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId),
+    isNotNull(franchiseMcaTeamsTable.discordId),
   ));
 
-  const afcUsers = users.filter(u => {
-    if (!u.team || u.discordId.startsWith("unlinked_")) return false;
-    return NFL_DIVISION_MAP[u.team]?.conference === "AFC";
-  });
-  const nfcUsers = users.filter(u => {
-    if (!u.team || u.discordId.startsWith("unlinked_")) return false;
-    return NFL_DIVISION_MAP[u.team]?.conference === "NFC";
-  });
+  // Build discordId → currentTeam map from MCA (most up-to-date source)
+  const mcaTeamByDiscordId = new Map<string, string>();
+  for (const m of mcaRows) {
+    if (m.discordId) mcaTeamByDiscordId.set(m.discordId, m.fullName);
+  }
+
+  // Enrich each user with their current team (MCA takes priority over usersTable.team)
+  const enriched = users
+    .filter(u => !u.discordId.startsWith("unlinked_"))
+    .map(u => ({
+      discordId:       u.discordId,
+      discordUsername: u.discordUsername,
+      team:            (mcaTeamByDiscordId.get(u.discordId) ?? u.team) as string | null,
+    }))
+    .filter(u => !!u.team);
+
+  const afcUsers = enriched.filter(u => NFL_DIVISION_MAP[u.team!]?.conference === "AFC");
+  const nfcUsers = enriched.filter(u => NFL_DIVISION_MAP[u.team!]?.conference === "NFC");
 
   const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
 
