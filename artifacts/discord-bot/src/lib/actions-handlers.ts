@@ -5091,20 +5091,31 @@ async function handleActiveTeams(interaction: ButtonInteraction, sess: ActionsSe
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const users = await db.select({
-    discordId: usersTable.discordId,
-    team:      usersTable.team,
-  }).from(usersTable)
-    .where(and(
-      eq(usersTable.guildId, gid),
-      isNotNull(usersTable.team),
-      ne(usersTable.team, ""),
-    ));
+  const [users, rosterSeasonId] = await Promise.all([
+    db.select({ discordId: usersTable.discordId, team: usersTable.team })
+      .from(usersTable)
+      .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team), ne(usersTable.team, ""))),
+    getRosterSeasonId(gid),
+  ]);
 
-  // Build a map of team → discordId, excluding open slots and unlinked placeholders
+  // MCA is authoritative — pull current team assignments keyed by discordId
+  const mcaRows = await db.select({
+    discordId: franchiseMcaTeamsTable.discordId,
+    fullName:  franchiseMcaTeamsTable.fullName,
+  }).from(franchiseMcaTeamsTable)
+    .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
+
+  const mcaByDiscordId = new Map<string, string>();
+  for (const m of mcaRows) {
+    if (m.discordId) mcaByDiscordId.set(m.discordId, m.fullName);
+  }
+
+  // Build team → discordId map: prefer MCA team name, fall back to usersTable.team
   const activeMap = new Map<string, string>();
   for (const u of users) {
-    if (!u.discordId.startsWith("unlinked_") && u.team) activeMap.set(u.team, u.discordId);
+    if (u.discordId.startsWith("unlinked_") || !u.team) continue;
+    const currentTeam = mcaByDiscordId.get(u.discordId) ?? u.team;
+    activeMap.set(currentTeam, u.discordId);
   }
 
   if (!activeMap.size) {
@@ -5140,15 +5151,32 @@ async function handleOpenTeams(interaction: ButtonInteraction, sess: ActionsSess
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
-    .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
+  const [takenRows, rosterSeasonId] = await Promise.all([
+    db.select({ team: usersTable.team, discordId: usersTable.discordId })
+      .from(usersTable)
+      .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team))),
+    getRosterSeasonId(gid),
+  ]);
 
-  const taken = new Set(
-    takenRows
-      .filter(r => r.discordId && !r.discordId.startsWith("unlinked_"))
-      .map(r => r.team as string),
-  );
+  // MCA is authoritative for current team assignments
+  const mcaRows = await db.select({
+    discordId: franchiseMcaTeamsTable.discordId,
+    fullName:  franchiseMcaTeamsTable.fullName,
+  }).from(franchiseMcaTeamsTable)
+    .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
+
+  const mcaByDiscordId = new Map<string, string>();
+  for (const m of mcaRows) {
+    if (m.discordId) mcaByDiscordId.set(m.discordId, m.fullName);
+  }
+
+  // Taken = teams currently held by real (non-unlinked) users; prefer MCA over usersTable
+  const taken = new Set<string>();
+  for (const r of takenRows) {
+    if (!r.discordId || r.discordId.startsWith("unlinked_")) continue;
+    const currentTeam = mcaByDiscordId.get(r.discordId) ?? r.team;
+    if (currentTeam) taken.add(currentTeam);
+  }
 
   const openTeams = NFL_TEAMS.filter(t => !taken.has(t));
 
@@ -5904,6 +5932,34 @@ function buildAllTeamSelectRows(
   return rows;
 }
 
+// ── Shared helper: resolve currently taken teams using MCA (authoritative) ────
+async function getTakenTeams(gid: string): Promise<Set<string>> {
+  const [takenRows, rosterSeasonId] = await Promise.all([
+    db.select({ team: usersTable.team, discordId: usersTable.discordId })
+      .from(usersTable)
+      .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team))),
+    getRosterSeasonId(gid),
+  ]);
+  const mcaRows = await db.select({
+    discordId: franchiseMcaTeamsTable.discordId,
+    fullName:  franchiseMcaTeamsTable.fullName,
+  }).from(franchiseMcaTeamsTable)
+    .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
+
+  const mcaByDiscordId = new Map<string, string>();
+  for (const m of mcaRows) {
+    if (m.discordId) mcaByDiscordId.set(m.discordId, m.fullName);
+  }
+
+  const taken = new Set<string>();
+  for (const r of takenRows) {
+    if (!r.discordId || r.discordId.startsWith("unlinked_")) continue;
+    const currentTeam = mcaByDiscordId.get(r.discordId) ?? r.team;
+    if (currentTeam) taken.add(currentTeam);
+  }
+  return taken;
+}
+
 // ── Request Open Team: step 1 — show dual dropdowns with open teams ───────────
 
 async function handleReqOpenTeam(interaction: ButtonInteraction, sess: ActionsSession) {
@@ -5912,11 +5968,7 @@ async function handleReqOpenTeam(interaction: ButtonInteraction, sess: ActionsSe
 
   sess.pendingTeamRequest = undefined;
 
-  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
-    .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
-
-  const taken    = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  const taken = await getTakenTeams(gid);
   const open     = NFL_TEAMS.filter(t => !taken.has(t));
   const afcOpen  = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
   const nfcOpen  = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
@@ -5955,11 +6007,7 @@ async function handleReqOpenTeamSel(interaction: StringSelectMenuInteraction, se
 
   sess.pendingTeamRequest = team;
 
-  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
-    .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
-
-  const taken   = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  const taken   = await getTakenTeams(gid);
   const open    = NFL_TEAMS.filter(t => !taken.has(t));
   const afcOpen = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "AFC").sort();
   const nfcOpen = open.filter(t => NFL_DIVISION_MAP[t]?.conference === "NFC").sort();
@@ -5995,11 +6043,7 @@ async function handleReqOpenTeamSubmit(interaction: ButtonInteraction, sess: Act
   }
 
   // Verify team is still open at submit time
-  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
-    .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
-
-  const taken = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  const taken = await getTakenTeams(gid);
   if (taken.has(team)) {
     await interaction.editReply({
       embeds: [new EmbedBuilder()
@@ -6137,11 +6181,7 @@ async function handleReqWaitlistNext(interaction: ButtonInteraction, sess: Actio
   }
 
   // Check if team is open or taken
-  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
-    .from(usersTable)
-    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
-
-  const taken = new Set(takenRows.filter(r => r.discordId && !r.discordId.startsWith("unlinked_")).map(r => r.team as string));
+  const taken = await getTakenTeams(gid);
 
   if (!taken.has(team)) {
     // Team is open — redirect to Request Open Team flow
