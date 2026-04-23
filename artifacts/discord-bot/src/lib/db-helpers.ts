@@ -3,7 +3,7 @@ import {
   usersTable, seasonsTable, seasonStatsTable, purchasesTable,
   inventoryTable, legendsTable, coinTransactionsTable, rulesTable, rulesSectionsTable,
   userRecordsTable, gameLogTable, customPlayersTable, franchiseRostersTable,
-  globalUserRecordsTable, guildChannelsTable,
+  globalUserRecordsTable, guildChannelsTable, franchiseScheduleTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
 import { eq, and, sql, desc, ne } from "drizzle-orm";
@@ -324,6 +324,32 @@ export async function getRosterSeasonId(guildId: string): Promise<number> {
     .innerJoin(seasonsTable, eq(franchiseRostersTable.seasonId, seasonsTable.id))
     .where(eq(seasonsTable.guildId, guildId))
     .orderBy(desc(franchiseRostersTable.seasonId))
+    .limit(1);
+  return fallback?.seasonId ?? season.id;
+}
+
+/**
+ * Returns the season ID to use for schedule queries.
+ * Uses the active season if it has schedule rows; otherwise falls back to the
+ * most recent season that does. Mirrors getRosterSeasonId but checks
+ * franchise_schedule instead of franchise_rosters.
+ */
+export async function getScheduleSeasonId(guildId: string): Promise<number> {
+  const season = await getOrCreateActiveSeason(guildId);
+
+  const [check] = await db
+    .select({ n: sql<number>`COUNT(*)::int` })
+    .from(franchiseScheduleTable)
+    .where(eq(franchiseScheduleTable.seasonId, season.id))
+    .limit(1);
+  if ((check?.n ?? 0) > 0) return season.id;
+
+  const [fallback] = await db
+    .select({ seasonId: franchiseScheduleTable.seasonId })
+    .from(franchiseScheduleTable)
+    .innerJoin(seasonsTable, eq(franchiseScheduleTable.seasonId, seasonsTable.id))
+    .where(eq(seasonsTable.guildId, guildId))
+    .orderBy(desc(franchiseScheduleTable.seasonId))
     .limit(1);
   return fallback?.seasonId ?? season.id;
 }

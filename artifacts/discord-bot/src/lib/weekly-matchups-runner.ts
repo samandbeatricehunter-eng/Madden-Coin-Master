@@ -9,7 +9,7 @@ import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "./gotw-helpers.js";
 import { cacheMatchupsForTwitter } from "./league-twitter.js";
-import { getRosterSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
+import { getRosterSeasonId, getScheduleSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 const MIN_COMPLETED_STATUS = 2;
 
 export type MatchupsReplyFn = (opts: {
@@ -157,10 +157,13 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   );
 
   // ── Fetch schedule for display week ────────────────────────────────────────
+  // Use getScheduleSeasonId so we fall back to the most recent season with
+  // schedule data when the active season hasn't had its schedule imported yet.
+  const scheduleSeasonId = await getScheduleSeasonId(resolvedGuildId);
   const games = await db.select()
     .from(franchiseScheduleTable)
     .where(and(
-      eq(franchiseScheduleTable.seasonId,  season.id),
+      eq(franchiseScheduleTable.seasonId,  scheduleSeasonId),
       eq(franchiseScheduleTable.weekIndex, displayWeekIndex),
     ))
     .orderBy(asc(franchiseScheduleTable.id));

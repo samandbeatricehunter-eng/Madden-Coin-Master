@@ -27,7 +27,7 @@ import {
 import { eq, and, sql, isNotNull, desc, asc } from "drizzle-orm";
 
 import {
-  isAdminUser, getOrCreateActiveSeason,
+  isAdminUser, getOrCreateActiveSeason, getScheduleSeasonId,
   addBalance, logTransaction, getGuildChannel, CHANNEL_KEYS,
 } from "./db-helpers.js";
 import { repairUserRecords } from "./repair-records.js";
@@ -800,7 +800,11 @@ export async function handleTsRepairSchedules(interaction: ButtonInteraction): P
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
 
-  // Load all regular-season games (weekIndex 0–17) for the active season
+  // Use schedule season fallback so we find data even if a new active season
+  // was created before the schedule was re-imported.
+  const schedSeasonId = await getScheduleSeasonId(guildId);
+
+  // Load all regular-season games (weekIndex 0–17) for the schedule season
   const allGames = await db
     .select({
       id:           franchiseScheduleTable.id,
@@ -811,7 +815,7 @@ export async function handleTsRepairSchedules(interaction: ButtonInteraction): P
       awayTeamId:   franchiseScheduleTable.awayTeamId,
     })
     .from(franchiseScheduleTable)
-    .where(eq(franchiseScheduleTable.seasonId, season.id))
+    .where(eq(franchiseScheduleTable.seasonId, schedSeasonId))
     .orderBy(asc(franchiseScheduleTable.weekIndex), asc(franchiseScheduleTable.id));
 
   const regularGames = allGames.filter(g => g.weekIndex >= 0 && g.weekIndex <= 17);
@@ -915,6 +919,7 @@ export async function handleTsSchedWeekModal(interaction: ModalSubmitInteraction
 
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
+  const schedSeasonId = await getScheduleSeasonId(guildId);
 
   const games = await db
     .select({
@@ -925,7 +930,7 @@ export async function handleTsSchedWeekModal(interaction: ModalSubmitInteraction
     })
     .from(franchiseScheduleTable)
     .where(and(
-      eq(franchiseScheduleTable.seasonId,  season.id),
+      eq(franchiseScheduleTable.seasonId,  schedSeasonId),
       eq(franchiseScheduleTable.weekIndex, weekIndex),
     ))
     .orderBy(asc(franchiseScheduleTable.id));

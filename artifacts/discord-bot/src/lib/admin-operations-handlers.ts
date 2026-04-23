@@ -25,6 +25,7 @@ import {
   getOrCreateActiveSeason, addBalance, logTransaction,
   getGuildChannel, CHANNEL_KEYS,
   getOrSeedRules, setRules, getAllSections,
+  getScheduleSeasonId,
 } from "./db-helpers.js";
 import { WEEK_SEQUENCE, weekLabel } from "./week-helpers.js";
 import { lookupNflDivision } from "./constants.js";
@@ -652,10 +653,13 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     : `Season ${season.seasonNumber} — Week ${weekNum}`;
 
   // ── Load schedule games for the week ─────────────────────────────────────
+  // Use schedule season fallback: if the active season has no schedule data yet,
+  // fall back to the most recent season that does (same pattern as getRosterSeasonId).
+  const schedSeasonId = await getScheduleSeasonId(guildId);
   const games = await db.select()
     .from(franchiseScheduleTable)
     .where(and(
-      eq(franchiseScheduleTable.seasonId,  season.id),
+      eq(franchiseScheduleTable.seasonId,  schedSeasonId),
       eq(franchiseScheduleTable.weekIndex, weekIndex),
     ));
 
@@ -674,7 +678,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       nickName:  franchiseMcaTeamsTable.nickName,
       discordId: franchiseMcaTeamsTable.discordId,
       logoUrl:   franchiseMcaTeamsTable.logoUrl,
-    }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
+    }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, schedSeasonId)),
     db.select({
       teamId:   defaultTeamLogosTable.teamId,
       fullName: defaultTeamLogosTable.fullName,
@@ -752,7 +756,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
   const existingChannelRows = await db.select()
     .from(gameChannelsTable)
     .where(and(
-      eq(gameChannelsTable.seasonId,  season.id),
+      eq(gameChannelsTable.seasonId,  schedSeasonId),
       eq(gameChannelsTable.weekIndex, weekIndex),
     ));
   const existingKey = new Set(
@@ -788,7 +792,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
         `<@${awayDiscordId}> <@${homeDiscordId}>\nGood luck this week!`,
       );
       await db.insert(gameChannelsTable).values({
-        seasonId:     season.id,
+        seasonId:     schedSeasonId,
         weekIndex,
         channelId:    newChannel.id,
         awayTeamName: awayProper,
@@ -826,7 +830,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
           }
           if (awayMca?.teamId != null && homeMca?.teamId != null) {
             const breakdownEmbed = await generateMatchupBreakdown({
-              seasonId:       season.id,
+              seasonId:       schedSeasonId,
               awayTeamName:   awayProper,
               homeTeamName:   homeProper,
               awayTeamId:     awayMca.teamId,
