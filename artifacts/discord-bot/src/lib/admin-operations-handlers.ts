@@ -3670,25 +3670,32 @@ async function handleSetSeasonNumSel(interaction: StringSelectMenuInteraction) {
 }
 
 async function handleSetSeasonNumConfirm(interaction: ButtonInteraction) {
-  const guildId   = interaction.guildId!;
-  const target    = parseInt(interaction.customId.split(":")[1]!, 10);
+  const guildId    = interaction.guildId!;
+  const target     = parseInt(interaction.customId.split(":")[1]!, 10);
   const maxSeasons = await getMaxSeasons(guildId);
 
-  const existing = await db.select().from(seasonsTable)
-    .where(eq(seasonsTable.seasonNumber, target)).limit(1);
+  // Check if this season already exists for THIS guild only.
+  const [existing] = await db.select().from(seasonsTable)
+    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.seasonNumber, target)))
+    .limit(1);
 
-  await db.update(seasonsTable).set({ isActive: false });
+  // Deactivate all seasons for THIS guild only (not all guilds).
+  await db.update(seasonsTable)
+    .set({ isActive: false })
+    .where(eq(seasonsTable.guildId, guildId));
 
   let activeSeason;
-  if (existing.length > 0) {
+  if (existing) {
+    // Activate the existing season record for this guild.
     const [updated] = await db.update(seasonsTable)
       .set({ isActive: true })
-      .where(eq(seasonsTable.seasonNumber, target))
+      .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.seasonNumber, target)))
       .returning();
     activeSeason = updated;
   } else {
+    // Season doesn't exist yet for this guild — create it.
     const [created] = await db.insert(seasonsTable)
-      .values({ seasonNumber: target, isActive: true })
+      .values({ guildId, seasonNumber: target, isActive: true })
       .returning();
     activeSeason = created;
   }
