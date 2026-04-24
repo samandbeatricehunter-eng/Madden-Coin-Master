@@ -45,8 +45,13 @@ import {
   franchiseScheduleTable,
   globalUserRecordsTable,
   usersTable,
+  franchiseRostersTable,
+  franchiseMcaTeamsTable,
+  teamSeasonStatsTable,
+  legendsTable,
+  inventoryTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, isNotNull, ne, inArray } from "drizzle-orm";
 
 import {
   EA_LOGIN_URL,
@@ -358,36 +363,81 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
   return { embeds: [embed], components: [selectRow, proceedRow] };
 }
 
-// ── Clear season data warning ──────────────────────────────────────────────────
-function buildClearWarningContent() {
+// ── Clear season data: option keys and labels ──────────────────────────────────
+const CLEAR_KEYS = ["rec", "stats", "sched", "rosters", "links", "coins", "legends"] as const;
+type ClearKey = typeof CLEAR_KEYS[number];
+
+const CLEAR_LABELS: Record<ClearKey, { short: string; desc: string; detail: string }> = {
+  rec:     { short: "Season Team Records",          desc: "W/L records, game logs, and matchup scores",               detail: "W/L records, game log entries, and schedule scores" },
+  stats:   { short: "Season Team Stats",            desc: "Player stats, week-processed tracker, stat padding flags",  detail: "Player stats, week-processed tracker, stat padding flags, and team season stats" },
+  sched:   { short: "Full Season Schedule",         desc: "All matchup rows for this season (full wipe)",             detail: "All franchise schedule rows for this season" },
+  rosters: { short: "Team Rosters",                 desc: "All imported roster data for this season",                  detail: "All franchise roster rows for this season" },
+  links:   { short: "All Team Links",               desc: "Unlinks every user from their current team",               detail: "Clears usersTable.team and MCA discordId for all guild members" },
+  coins:   { short: "Coins",                        desc: "Resets all users' coin balances to 0",                     detail: "Sets balance = 0 for every user in this guild" },
+  legends: { short: "Reset Legends to Store",       desc: "Returns all purchased legends back to the store",          detail: "Deletes legend inventory entries and marks legends as available again" },
+};
+
+// ── Clear season data: step 1 — multi-select toggle ────────────────────────────
+function buildClearSelectContent() {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Orange)
+    .setTitle("🗑️ Clear Season Data — Select Options")
+    .setDescription(
+      "Choose what to clear for the **active season**.\n" +
+      "Select one or more options from the dropdown, then close it to proceed to the confirmation screen.\n\n" +
+      "⚠️ **All selected actions are permanent and cannot be undone.**",
+    )
+    .setFooter({ text: "Global all-time records are never affected" });
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ld_clear_select")
+    .setPlaceholder("Select what to clear…")
+    .setMinValues(1)
+    .setMaxValues(7)
+    .addOptions(
+      CLEAR_KEYS.map(k =>
+        new StringSelectMenuOptionBuilder()
+          .setValue(k)
+          .setLabel(CLEAR_LABELS[k].short)
+          .setDescription(CLEAR_LABELS[k].desc),
+      ),
+    );
+
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ld_cancel_to_main").setLabel("← Cancel").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
+}
+
+// ── Clear season data: step 2 — confirmation screen ───────────────────────────
+function buildClearConfirmContent(keys: string[]) {
+  const lines = keys.map(k => `• **${CLEAR_LABELS[k as ClearKey]?.short ?? k}** — ${CLEAR_LABELS[k as ClearKey]?.detail ?? ""}`);
+
   const embed = new EmbedBuilder()
     .setColor(Colors.Red)
-    .setTitle("⚠️ Clear All Season Data — Confirm?")
+    .setTitle("⚠️ Confirm Clear — Are You Sure?")
     .setDescription(
-      "This will permanently wipe the following for the **active season**:\n\n" +
-      "• All **W/L records** and **point differential** for every team\n" +
-      "• All **game log entries** (win/loss history)\n" +
-      "• All **player stats** (all stat categories, all weeks)\n" +
-      "• All **game scores** from the schedule (matchups are kept)\n" +
-      "• The **week-processed tracker** (so all weeks can be reimported)\n\n" +
-      "**After clearing**, use **Import Data Only** to reimport each week from EA. " +
-      "No payouts will be triggered by the reimport.\n\n" +
-      "**This cannot be undone.**",
+      "**The following will be permanently wiped for the active season:**\n\n" +
+      lines.join("\n") +
+      "\n\n**This cannot be undone.**",
     )
     .setFooter({ text: "Global all-time records are NOT cleared — only this season's data" });
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ld_clear_confirm")
-      .setLabel("✅ Yes, Clear Everything")
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId("ld_cancel_to_main")
-      .setLabel("✕ Cancel")
-      .setStyle(ButtonStyle.Secondary),
-  );
-
-  return { embeds: [embed], components: [row] };
+  const encoded = keys.join("|");
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ld_clear_confirm:${encoded}`).setLabel("✅ Yes, Clear Selected Data").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("ld_clear_data").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
 }
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
@@ -458,14 +508,20 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
     return;
   }
 
-  // ── Clear: show warning ────────────────────────────────────────────────────
+  // ── Clear: show option-select screen ─────────────────────────────────────
   if (action === "ld_clear_data") {
-    await interaction.update(buildClearWarningContent() as any);
+    await interaction.update(buildClearSelectContent() as any);
     return;
   }
 
-  // ── Clear: confirm and execute ─────────────────────────────────────────────
+  // ── Clear: confirm and execute selected options ────────────────────────────
   if (action === "ld_clear_confirm") {
+    const keys = (param ?? "").split("|").filter(k => CLEAR_KEYS.includes(k as ClearKey)) as ClearKey[];
+    if (!keys.length) {
+      await interaction.reply({ content: "❌ No valid options selected.", ephemeral: true });
+      return;
+    }
+
     await interaction.deferUpdate();
 
     const [season] = await db
@@ -480,73 +536,123 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
     }
 
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription("⏳ Clearing season data…")],
+      embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription("⏳ Clearing selected season data…")],
       components: [],
     });
 
     try {
-      const [urDel, glDel, psDel, pwpDel, spvDel] = await Promise.all([
-        db.delete(userRecordsTable).where(eq(userRecordsTable.seasonId, season.id)),
-        db.delete(gameLogTable).where(eq(gameLogTable.seasonId, season.id)),
-        db.delete(playerSeasonStatsTable).where(eq(playerSeasonStatsTable.seasonId, season.id)),
-        db.delete(playerStatWeekProcessedTable).where(eq(playerStatWeekProcessedTable.seasonId, season.id)),
-        db.delete(statPaddingViolationsTable).where(eq(statPaddingViolationsTable.seasonId, season.id)),
-      ]);
+      const resultLines: string[] = [];
 
-      // Clear scores from schedule (keep matchup structure)
-      const schedResult = await db.execute(
-        sql`UPDATE franchise_schedule SET home_score = NULL, away_score = NULL WHERE season_id = ${season.id}`,
-      );
+      // ── Season Team Records ────────────────────────────────────────────────
+      if (keys.includes("rec")) {
+        const [urDel, glDel] = await Promise.all([
+          db.delete(userRecordsTable).where(eq(userRecordsTable.seasonId, season.id)),
+          db.delete(gameLogTable).where(eq(gameLogTable.seasonId, season.id)),
+        ]);
+        // NULL out schedule scores (keep matchup rows for re-import)
+        await db.execute(sql`UPDATE franchise_schedule SET home_score = NULL, away_score = NULL WHERE season_id = ${season.id}`);
+        // Rebuild global all-time records
+        await db.execute(sql`
+          INSERT INTO global_user_records (discord_id, wins, losses, ties, point_differential, updated_at)
+          SELECT discord_id, SUM(wins), SUM(losses), SUM(ties), SUM(point_differential), NOW()
+          FROM user_records
+          GROUP BY discord_id
+          ON CONFLICT (discord_id) DO UPDATE SET
+            wins               = EXCLUDED.wins,
+            losses             = EXCLUDED.losses,
+            ties               = EXCLUDED.ties,
+            point_differential = EXCLUDED.point_differential,
+            updated_at         = NOW()
+        `);
+        resultLines.push(`• **Season Team Records** — ${(urDel as any).rowCount ?? 0} records, ${(glDel as any).rowCount ?? 0} game logs deleted; schedule scores cleared`);
+      }
 
-      // Rebuild global_user_records (now that this season's user_records are gone)
-      await db.execute(sql`
-        INSERT INTO global_user_records (discord_id, wins, losses, ties, point_differential, updated_at)
-        SELECT discord_id, SUM(wins), SUM(losses), SUM(ties), SUM(point_differential), NOW()
-        FROM user_records
-        GROUP BY discord_id
-        ON CONFLICT (discord_id) DO UPDATE SET
-          wins               = EXCLUDED.wins,
-          losses             = EXCLUDED.losses,
-          ties               = EXCLUDED.ties,
-          point_differential = EXCLUDED.point_differential,
-          updated_at         = NOW()
-      `);
+      // ── Season Team Stats ──────────────────────────────────────────────────
+      if (keys.includes("stats")) {
+        const [psDel, pwpDel, spvDel, tssDel] = await Promise.all([
+          db.delete(playerSeasonStatsTable).where(eq(playerSeasonStatsTable.seasonId, season.id)),
+          db.delete(playerStatWeekProcessedTable).where(eq(playerStatWeekProcessedTable.seasonId, season.id)),
+          db.delete(statPaddingViolationsTable).where(eq(statPaddingViolationsTable.seasonId, season.id)),
+          db.delete(teamSeasonStatsTable).where(eq(teamSeasonStatsTable.seasonId, season.id)),
+        ]);
+        resultLines.push(`• **Season Team Stats** — ${(psDel as any).rowCount ?? 0} player stat rows, ${(pwpDel as any).rowCount ?? 0} week-processed, ${(spvDel as any).rowCount ?? 0} padding flags, ${(tssDel as any).rowCount ?? 0} team stat rows deleted`);
+      }
 
-      const scoreCount = (schedResult as any).rowCount ?? "?";
+      // ── Full Season Schedule ───────────────────────────────────────────────
+      if (keys.includes("sched")) {
+        const schedDel = await db.delete(franchiseScheduleTable).where(eq(franchiseScheduleTable.seasonId, season.id));
+        // Also clear week-processed so weeks can be reimported fresh
+        await db.delete(playerStatWeekProcessedTable).where(eq(playerStatWeekProcessedTable.seasonId, season.id));
+        resultLines.push(`• **Full Season Schedule** — ${(schedDel as any).rowCount ?? 0} schedule rows deleted`);
+      }
+
+      // ── Team Rosters ───────────────────────────────────────────────────────
+      if (keys.includes("rosters")) {
+        const rostDel = await db.delete(franchiseRostersTable).where(eq(franchiseRostersTable.seasonId, season.id));
+        resultLines.push(`• **Team Rosters** — ${(rostDel as any).rowCount ?? 0} roster rows deleted`);
+      }
+
+      // ── All Team Links ─────────────────────────────────────────────────────
+      if (keys.includes("links")) {
+        const [usersUpd, mcaUpd] = await Promise.all([
+          db.update(usersTable)
+            .set({ team: null })
+            .where(and(eq(usersTable.guildId, guildId), isNotNull(usersTable.team), ne(usersTable.team, ""))),
+          db.update(franchiseMcaTeamsTable)
+            .set({ discordId: null })
+            .where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
+        ]);
+        resultLines.push(`• **All Team Links** — ${(usersUpd as any).rowCount ?? 0} users unlinked, ${(mcaUpd as any).rowCount ?? 0} MCA entries cleared`);
+      }
+
+      // ── Coins ──────────────────────────────────────────────────────────────
+      if (keys.includes("coins")) {
+        const coinsUpd = await db.execute(
+          sql`UPDATE users SET balance = 0 WHERE guild_id = ${guildId} AND discord_id NOT LIKE 'unlinked_%'`,
+        );
+        resultLines.push(`• **Coins** — ${(coinsUpd as any).rowCount ?? 0} users reset to 0 coins`);
+      }
+
+      // ── Reset Legends to Store ─────────────────────────────────────────────
+      if (keys.includes("legends")) {
+        // Find legend inventory entries for this season
+        const legendInvRows = await db.select({ legendId: inventoryTable.legendId })
+          .from(inventoryTable)
+          .where(and(eq(inventoryTable.seasonId, season.id), eq(inventoryTable.itemType, "legend"), isNotNull(inventoryTable.legendId)));
+
+        const legendIds = [...new Set(legendInvRows.map(r => r.legendId!))];
+        const invDel = await db.delete(inventoryTable)
+          .where(and(eq(inventoryTable.seasonId, season.id), eq(inventoryTable.itemType, "legend")));
+
+        // Mark them available again in the store
+        if (legendIds.length > 0) {
+          await db.update(legendsTable).set({ isAvailable: true }).where(inArray(legendsTable.id, legendIds));
+        }
+        resultLines.push(`• **Reset Legends to Store** — ${(invDel as any).rowCount ?? 0} inventory entries removed, ${legendIds.length} legends returned to store`);
+      }
 
       const embed = new EmbedBuilder()
         .setColor(Colors.Orange)
         .setTitle("🗑️ Season Data Cleared")
         .setDescription(
-          `**Season ${season.seasonNumber}** data has been wiped:\n\n` +
-          `• W/L records: **${(urDel as any).rowCount ?? 0}** rows deleted\n` +
-          `• Game logs: **${(glDel as any).rowCount ?? 0}** entries deleted\n` +
-          `• Player stats: **${(psDel as any).rowCount ?? 0}** stat rows deleted\n` +
-          `• Week-processed tracker: **${(pwpDel as any).rowCount ?? 0}** rows deleted\n` +
-          `• Stat padding flags: **${(spvDel as any).rowCount ?? 0}** rows deleted\n` +
-          `• Schedule scores cleared: **${scoreCount}** games reset to no-score\n\n` +
-          "Use **Import Data Only** to reimport each week from EA.\n" +
-          "Global all-time records have been recalculated.",
+          `**Season ${season.seasonNumber}** — selected data wiped:\n\n` +
+          resultLines.join("\n"),
         )
-        .setFooter({ text: "No payouts were triggered" })
+        .setFooter({ text: "Global all-time records were not affected" })
         .setTimestamp();
 
-      const returnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId("ld_cancel_to_main")
-          .setLabel("← Back to Menu")
-          .setStyle(ButtonStyle.Secondary),
-      );
-
-      await interaction.editReply({ embeds: [embed], components: [returnRow] });
+      await interaction.editReply({
+        embeds: [embed],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("ld_cancel_to_main").setLabel("← Back to Menu").setStyle(ButtonStyle.Secondary),
+          ) as any,
+        ],
+      });
     } catch (err: any) {
       console.error("[ld_clear_confirm]", err);
       await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(Colors.Red)
-            .setDescription(`❌ Error during clear: ${err?.message ?? String(err)}`),
-        ],
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Error during clear: ${err?.message ?? String(err)}`)],
         components: [cancelRow()],
       });
     }
@@ -725,6 +831,13 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
   const guildId  = interaction.guildId!;
   const userId   = interaction.user.id;
   const value    = interaction.values[0] ?? "";
+
+  // ── Clear season data option selection ─────────────────────────────────────
+  if (action === "ld_clear_select") {
+    const selectedKeys = interaction.values.filter(k => CLEAR_KEYS.includes(k as ClearKey));
+    await interaction.update(buildClearConfirmContent(selectedKeys) as any);
+    return;
+  }
 
   // ── League selection ────────────────────────────────────────────────────────
   if (action === "ld_select_league") {
