@@ -96,6 +96,10 @@ interface ActionsSession {
   selectedLegendCost?: number;
   // training package flow
   trainingTier?: string;
+  trainingPlayerId?: number;
+  trainingPlayerName?: string;
+  trainingPlayerPos?: string;
+  trainingPlayerOvr?: number;
   // standings flow
   standingsConf?: "AFC" | "NFC" | "ALL";
   // rules view flow
@@ -696,12 +700,14 @@ export async function handleActionsInteraction(
   if (id === "ac_buy_du_confirm")           { await handleBuyDevUpExecute(interaction as ButtonInteraction, sess); return true; }
   if (id.startsWith("ac_buy_legendsel:"))   { await handleBuyLegendConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_legend_confirm")       { await handleBuyLegendExecute(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_buy_training")          { await handleBuyTrainingMenu(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_buy_training")               { await handleBuyTrainingPosPick(interaction as ButtonInteraction, sess); return true; }
+  if (id.startsWith("ac_buy_trainingpos:"))   { await handleBuyTrainingPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_buy_trainingplayer:")) { await handleBuyTrainingTierPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_training_tier:")) {
     const tier = id.split(":")[1] as TrainingTier;
     if (tier in TRAINING_TIERS) { await handleBuyTrainingTier(interaction as ButtonInteraction, sess, tier); return true; }
   }
-  if (id === "ac_buy_training_execute")  { await handleBuyTrainingExecute(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_buy_training_execute")        { await handleBuyTrainingExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_contract_ext")  { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "contract_extension"); return true; }
   if (id === "ac_buy_salary_red")    { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "salary_reduction"); return true; }
   if (id === "ac_buy_bonus_red")     { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "bonus_reduction"); return true; }
@@ -1878,39 +1884,160 @@ const TRAINING_TIERS = {
 } as const;
 type TrainingTier = keyof typeof TRAINING_TIERS;
 
-async function handleBuyTrainingMenu(interaction: ButtonInteraction, _sess: ActionsSession) {
-  const tierRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_buy_training_tier:gold")  .setLabel("🥇 Gold Package — 1,000 coins (+4 pts, max 2/season)").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ac_buy_training_tier:silver").setLabel("🥈 Silver Package — 500 coins (+2 pts, max 2/season)")  .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_buy_training_tier:bronze").setLabel("🥉 Bronze Package — 250 coins (+1 pt)").setStyle(ButtonStyle.Secondary),
-  );
+// Step 1 — Pick a position
+async function handleBuyTrainingPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+  sess.trainingTier = undefined;
+  sess.trainingPlayerId = undefined;
+  sess.trainingPlayerName = undefined;
+  sess.trainingPlayerPos = undefined;
+  sess.trainingPlayerOvr = undefined;
+
+  const rows = await getRosterRows(interaction as any, seasonId, { position: franchiseRostersTable.position });
+  const positions = sortByCanonical([...new Set((rows as any[]).map((r: any) => r.position as string).filter(Boolean))]);
+
+  if (!positions.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found. Ask a commissioner to import MCA data.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_buy_trainingpos:")
+    .setPlaceholder("Select your player's position…")
+    .addOptions(positions.slice(0, 25).map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
+
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x3a7bd5)
-      .setTitle("🎓 Training Package — Select Tier")
+      .setTitle("🎓 Training Package — Step 1 of 3")
       .setDescription(
-        "Buy a training package and receive a **randomly rolled attribute upgrade** for any player on your roster.\n\n" +
-        "**Gold** — 1,000 coins · **+4 points** to a randomly selected attribute · limit **2/season**\n" +
-        "**Silver** — 500 coins · **+2 points** to a randomly selected attribute · limit **2/season**\n" +
-        "**Bronze** — 250 coins · **+1 point** to a randomly selected attribute\n\n" +
-        "After purchase, the lottery result is sent to your commissioner for application.",
+        "Training packages give your player a **randomly rolled attribute upgrade**.\n\n" +
+        "**Gold** — 1,000 coins · **+4 pts** · max 2/season\n" +
+        "**Silver** — 500 coins · **+2 pts** · max 2/season\n" +
+        "**Bronze** — 250 coins · **+1 pt** · unlimited\n\n" +
+        "First, pick the **position** of the player you want to train.",
       )],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+// Step 2 — Pick a player from the chosen position
+async function handleBuyTrainingPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const position = interaction.values[0]!;
+  const gid = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+
+  const rows = await getRosterRows(interaction as any, seasonId, {
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+    position:  franchiseRostersTable.position,
+  });
+  const filtered = (rows as any[]).filter(r => r.position?.toUpperCase() === position.toUpperCase());
+
+  if (!filtered.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No players found at position **${position}**.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_buy_trainingplayer:")
+    .setPlaceholder("Select a player…")
+    .addOptions(
+      filtered.slice(0, 25).map(r =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${r.firstName} ${r.lastName} — OVR ${r.overall} ${DEV_LABEL[r.devTrait] ?? ""}`.trim())
+          .setValue(`${r.playerId}|${r.firstName} ${r.lastName}|${position}|${r.overall}`),
+      ),
+    );
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0x3a7bd5)
+      .setTitle("🎓 Training Package — Step 2 of 3")
+      .setDescription(`**Position: ${position}**\nNow pick the specific player you want to train.`)],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+// Step 3 — Pick a tier (show availability check before rendering)
+async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const parts = interaction.values[0]!.split("|");
+  sess.trainingPlayerId   = Number(parts[0]);
+  sess.trainingPlayerName = parts[1] ?? "";
+  sess.trainingPlayerPos  = parts[2] ?? "";
+  sess.trainingPlayerOvr  = Number(parts[3] ?? 0);
+
+  const gid    = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(gid);
+  const stats  = await getSeasonStats(interaction.user.id, season.id);
+  const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+
+  const goldUsed   = (stats as any)["trainingGoldPurchased"]   as number ?? 0;
+  const silverUsed = (stats as any)["trainingSilverPurchased"] as number ?? 0;
+
+  const goldDisabled   = goldUsed   >= TRAINING_TIERS.gold.limit;
+  const silverDisabled = silverUsed >= TRAINING_TIERS.silver.limit;
+
+  const tierRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ac_buy_training_tier:gold")
+      .setLabel(`🥇 Gold — 1,000 coins (+4 pts)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(goldDisabled || user.balance < TRAINING_TIERS.gold.cost),
+    new ButtonBuilder()
+      .setCustomId("ac_buy_training_tier:silver")
+      .setLabel(`🥈 Silver — 500 coins (+2 pts)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(silverDisabled || user.balance < TRAINING_TIERS.silver.cost),
+    new ButtonBuilder()
+      .setCustomId("ac_buy_training_tier:bronze")
+      .setLabel(`🥉 Bronze — 250 coins (+1 pt)`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(user.balance < TRAINING_TIERS.bronze.cost),
+  );
+
+  const lines = [
+    `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos}) — OVR ${sess.trainingPlayerOvr}`,
+    `**Your balance:** ${user.balance.toLocaleString()} coins`,
+    "",
+    `**Gold** — 1,000 coins · +4 pts · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
+    `**Silver** — 500 coins · +2 pts · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
+    `**Bronze** — 250 coins · +1 pt · unlimited`,
+    "",
+    "Select the tier you want to buy. The attribute upgraded will be **randomly rolled** and applied by your commissioner.",
+  ];
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0x3a7bd5)
+      .setTitle("🎓 Training Package — Step 3 of 3")
+      .setDescription(lines.join("\n"))],
     components: [tierRow, cancelRow()],
   });
 }
 
+// Step 4 — Confirm (after tier button is clicked)
 async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: ActionsSession, tier: TrainingTier) {
-  const meta  = TRAINING_TIERS[tier];
-  const gid   = interaction.guildId!;
-  const user  = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const meta = TRAINING_TIERS[tier];
+  const gid  = interaction.guildId!;
   sess.trainingTier = tier;
+
+  if (!sess.trainingPlayerName) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
 
   if (user.balance < meta.cost) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
 
-  // Check season purchase limit (gold and silver only)
   if (meta.limit < 999 && meta.seasonStatKey) {
     const season = await getOrCreateActiveSeason(gid);
     const stats  = await getSeasonStats(interaction.user.id, season.id);
@@ -1926,10 +2053,11 @@ async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: Actio
       .setColor(Colors.Yellow)
       .setTitle(`🎓 Confirm ${meta.label} Training Package`)
       .setDescription(
+        `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos})\n` +
+        `**Tier:** ${meta.label} — +${meta.points} pts to a randomly rolled attribute\n` +
         `**Cost:** ${meta.cost.toLocaleString()} coins\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n\n` +
-        `You will receive **+${meta.points} points** added to a **randomly selected attribute** for any roster player.\n` +
-        `The lottery result will be posted to your commissioner.`,
+        `The attribute rolled will be posted to your commissioner for application.`,
       )],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1940,24 +2068,24 @@ async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: Actio
   });
 }
 
+// Step 5 — Execute
 async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid  = interaction.guildId!;
-  const tier  = sess.trainingTier as TrainingTier | undefined;
-  if (!tier || !TRAINING_TIERS[tier]) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired.")], components: [backToHubRow()] });
+  const tier = sess.trainingTier as TrainingTier | undefined;
+  if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
     return;
   }
 
-  const meta    = TRAINING_TIERS[tier];
-  const season  = await getOrCreateActiveSeason(gid);
-  const user    = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const meta   = TRAINING_TIERS[tier];
+  const season = await getOrCreateActiveSeason(gid);
+  const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
 
   if (user.balance < meta.cost) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
 
-  // Re-check season limit before executing
   if (meta.limit < 999 && meta.seasonStatKey) {
     const stats = await getSeasonStats(interaction.user.id, season.id);
     const used  = (stats as any)[meta.seasonStatKey] as number ?? 0;
@@ -1968,25 +2096,24 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
   }
 
   // 🎲 Lottery roll — pick a random attribute
-  const attrList    = [...ATTRIBUTES];
-  const rolledAttr  = attrList[Math.floor(Math.random() * attrList.length)]!;
-  const resultText  = `**+${meta.points} ${rolledAttr}**`;
+  const attrList   = [...ATTRIBUTES];
+  const rolledAttr = attrList[Math.floor(Math.random() * attrList.length)]!;
 
-  // Deduct coins + record purchase
   await deductBalance(interaction.user.id, meta.cost, gid);
-  await logTransaction(interaction.user.id, -meta.cost, "purchase", `${meta.label} Training Package — rolled: ${rolledAttr}`, gid);
+  await logTransaction(interaction.user.id, -meta.cost, "purchase", `${meta.label} Training Package — ${sess.trainingPlayerName} — rolled: ${rolledAttr}`, gid);
 
   const [inserted] = await db.insert(purchasesTable).values({
-    discordId:     interaction.user.id,
-    seasonId:      season.id,
-    purchaseType:  meta.purchaseType,
-    attributeName: rolledAttr,
-    cost:          meta.cost,
-    status:        "pending",
-    notes:         `Training ${tier} — rolled: ${rolledAttr} (+${meta.points} pts)`,
+    discordId:      interaction.user.id,
+    seasonId:       season.id,
+    purchaseType:   meta.purchaseType,
+    playerName:     sess.trainingPlayerName,
+    playerPosition: sess.trainingPlayerPos ?? "",
+    attributeName:  rolledAttr,
+    cost:           meta.cost,
+    status:         "pending",
+    notes:          `Training ${tier} — ${sess.trainingPlayerName} — rolled: ${rolledAttr} (+${meta.points} pts)`,
   }).returning({ id: purchasesTable.id });
 
-  // Update season stats counter for gold/silver
   if (meta.seasonStatKey === "trainingGoldPurchased") {
     await db.update(seasonStatsTable)
       .set({ trainingGoldPurchased: sql`${seasonStatsTable.trainingGoldPurchased} + 1` })
@@ -1997,11 +2124,12 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
       .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
   }
 
-  // Send commissioner notification
   await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted!.id, {
+    playerName:    sess.trainingPlayerName,
+    playerPos:     sess.trainingPlayerPos ?? "",
     attributeName: rolledAttr,
     points:        meta.points,
-    tier:          tier,
+    tier,
   });
 
   await interaction.update({
@@ -2009,9 +2137,9 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
       .setColor(Colors.Green)
       .setTitle("🎓 Training Package Purchased!")
       .setDescription(
-        `**${meta.label} Training Package** purchased!\n\n` +
-        `🎲 **Lottery Result:** ${resultText}\n\n` +
-        `Your commissioner has been notified and will apply this upgrade to the player of your choice. Cost: **${meta.cost.toLocaleString()} coins** deducted.`,
+        `**${meta.label} Training Package** purchased for **${sess.trainingPlayerName}** (${sess.trainingPlayerPos})!\n\n` +
+        `🎲 **Lottery Result:** **+${meta.points} ${rolledAttr}**\n\n` +
+        `Your commissioner has been notified and will apply this upgrade. **${meta.cost.toLocaleString()} coins** deducted.`,
       )],
     components: [backToHubRow()],
   });

@@ -158,15 +158,17 @@ export async function sendCommissionerNotification(
     } else if (type.startsWith("training_")) {
       const tierLabel = type === "training_gold" ? "🥇 Gold" : type === "training_silver" ? "🥈 Silver" : "🥉 Bronze";
       const points    = type === "training_gold" ? 4 : type === "training_silver" ? 2 : 1;
+      const pts       = details["points"] ?? points;
       title = `🎓 Training Package — ${tierLabel}`;
       description = [
         `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
         `**Tier:** ${tierLabel}`,
-        `**🎲 Lottery Roll:** **${details["attributeName"]}** (+${details["points"] ?? points} pts)`,
+        details["playerName"] ? `**Player:** ${details["playerName"]}${details["playerPos"] ? ` (${details["playerPos"]})` : ""}` : null,
+        `**🎲 Lottery Roll:** **${details["attributeName"]}** (+${pts} pts)`,
         `**Purchase ID:** #${purchaseId}`,
         "",
-        `Apply **+${details["points"] ?? points} ${details["attributeName"]}** to any player on this member's roster.`,
-      ].join("\n");
+        `Apply **+${pts} ${details["attributeName"]}** to **${details["playerName"] ?? "their chosen player"}**.`,
+      ].filter(Boolean).join("\n");
       buttonLabel = "✅ Applied in Game";
     }
 
