@@ -5606,31 +5606,18 @@ async function handleOpenTeams(interaction: ButtonInteraction, sess: ActionsSess
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const [takenRows, rosterSeasonId] = await Promise.all([
-    db.select({ team: usersTable.team, discordId: usersTable.discordId })
-      .from(usersTable)
-      .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team))),
-    getRosterSeasonId(gid),
-  ]);
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
 
-  // MCA is authoritative for current team assignments
-  const mcaRows = await db.select({
-    discordId: franchiseMcaTeamsTable.discordId,
-    nickName:  franchiseMcaTeamsTable.nickName,
-  }).from(franchiseMcaTeamsTable)
-    .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
-
-  const mcaByDiscordId = new Map<string, string>();
-  for (const m of mcaRows) {
-    if (m.discordId && m.nickName) mcaByDiscordId.set(m.discordId, m.nickName);
-  }
-
-  // Taken = teams currently held by real (non-unlinked) users; prefer MCA nickname over usersTable
+  // Taken = teams held by real (non-unlinked) users.
+  // usersTable.team is always a canonical NFL_TEAMS name (set by admin on link).
+  // MCA nickNames like "Bolts", "Jags", "G-Men", "Niners", "Pack", "Pats" do NOT
+  // match NFL_TEAMS, so we rely on usersTable — not MCA — as the source of truth.
   const taken = new Set<string>();
   for (const r of takenRows) {
     if (!r.discordId || r.discordId.startsWith("unlinked_")) continue;
-    const currentTeam = mcaByDiscordId.get(r.discordId) ?? r.team;
-    if (currentTeam) taken.add(currentTeam);
+    if (r.team) taken.add(r.team);
   }
 
   const openTeams = NFL_TEAMS.filter(t => !taken.has(t));
@@ -6387,30 +6374,19 @@ function buildAllTeamSelectRows(
   return rows;
 }
 
-// ── Shared helper: resolve currently taken teams using MCA (authoritative) ────
+// ── Shared helper: resolve currently taken teams from usersTable ───────────────
 async function getTakenTeams(gid: string): Promise<Set<string>> {
-  const [takenRows, rosterSeasonId] = await Promise.all([
-    db.select({ team: usersTable.team, discordId: usersTable.discordId })
-      .from(usersTable)
-      .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team))),
-    getRosterSeasonId(gid),
-  ]);
-  const mcaRows = await db.select({
-    discordId: franchiseMcaTeamsTable.discordId,
-    nickName:  franchiseMcaTeamsTable.nickName,
-  }).from(franchiseMcaTeamsTable)
-    .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
+  const takenRows = await db.select({ team: usersTable.team, discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team)));
 
-  const mcaByDiscordId = new Map<string, string>();
-  for (const m of mcaRows) {
-    if (m.discordId && m.nickName) mcaByDiscordId.set(m.discordId, m.nickName);
-  }
-
+  // usersTable.team is always canonical (NFL_TEAMS name set by admin on link).
+  // MCA nickNames like "Bolts", "Jags", "G-Men", "Niners", "Pack", "Pats" do NOT
+  // match NFL_TEAMS, so we rely on usersTable — not MCA — as the source of truth.
   const taken = new Set<string>();
   for (const r of takenRows) {
     if (!r.discordId || r.discordId.startsWith("unlinked_")) continue;
-    const currentTeam = mcaByDiscordId.get(r.discordId) ?? r.team;
-    if (currentTeam) taken.add(currentTeam);
+    if (r.team) taken.add(r.team);
   }
   return taken;
 }
