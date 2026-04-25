@@ -1900,18 +1900,26 @@ const TRAINING_POWER_ATTRS = new Set([
   "Lead Block", "Impact Blocking", "Block Shedding", "Tackling",
 ]);
 
-/** Weighted random attribute roll. Goal attrs get 1.5× weight; others get 1× */
-function rollTrainingAttr(goal: "speed" | "power" | "balanced"): string {
+/** Weighted random attribute roll.
+ *  - Filters out any attribute where playerAttrs[attr] + points > 99 (already at/near cap).
+ *  - Goal attrs get 1.5× weight; others get 1×. */
+function rollTrainingAttr(
+  goal: "speed" | "power" | "balanced",
+  playerAttrs: Record<string, number>,
+  points: number,
+): string {
   const boostSet = goal === "speed" ? TRAINING_SPEED_ATTRS : goal === "power" ? TRAINING_POWER_ATTRS : null;
-  const attrs    = [...ATTRIBUTES] as string[];
-  const weights  = attrs.map(a => (boostSet && boostSet.has(a) ? 1.5 : 1.0));
+  // Only eligible: adding points won't push the value past 99
+  const eligible = (ATTRIBUTES as readonly string[]).filter(a => (playerAttrs[a] ?? 0) + points <= 99);
+  const pool     = eligible.length > 0 ? eligible : [...ATTRIBUTES] as string[]; // fallback: all attrs
+  const weights  = pool.map(a => (boostSet && boostSet.has(a) ? 1.5 : 1.0));
   const total    = weights.reduce((s, w) => s + w, 0);
   let rng        = Math.random() * total;
-  for (let i = 0; i < attrs.length; i++) {
+  for (let i = 0; i < pool.length; i++) {
     rng -= weights[i]!;
-    if (rng <= 0) return attrs[i]!;
+    if (rng <= 0) return pool[i]!;
   }
-  return attrs[attrs.length - 1]!;
+  return pool[pool.length - 1]!;
 }
 
 // Step 1 — Pick a position
@@ -2183,13 +2191,10 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     }
   }
 
-  // 🎲 Weighted lottery roll
-  const rolledAttr = rollTrainingAttr(goal);
-
-  // Look up the player's current attribute value for before/after display
-  let attrBefore: number | null = null;
+  // Fetch player attributes first so we can filter 99-capped attrs from the lottery pool
+  let playerAttrs: Record<string, number> = {};
   if (sess.trainingPlayerId) {
-    const seasonId = await getRosterSeasonId(gid);
+    const seasonId   = await getRosterSeasonId(gid);
     const rosterRows = await db.select({ attributes: franchiseRostersTable.attributes })
       .from(franchiseRostersTable)
       .where(and(
@@ -2197,10 +2202,14 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
         eq(franchiseRostersTable.playerId, sess.trainingPlayerId),
       ))
       .limit(1);
-    const attrs = rosterRows[0]?.attributes as Record<string, number> | null | undefined;
-    attrBefore = attrs?.[rolledAttr] ?? null;
+    playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
   }
-  const attrAfter = attrBefore !== null ? attrBefore + meta.points : null;
+
+  // 🎲 Weighted lottery roll — excludes attrs that would exceed 99
+  const rolledAttr = rollTrainingAttr(goal, playerAttrs, meta.points);
+
+  const attrBefore = playerAttrs[rolledAttr] !== undefined ? playerAttrs[rolledAttr]! : null;
+  const attrAfter  = attrBefore !== null ? attrBefore + meta.points : null;
   const beforeAfterText = attrBefore !== null
     ? `${rolledAttr}: **${attrBefore} → ${attrAfter}**`
     : `+${meta.points} ${rolledAttr}`;
