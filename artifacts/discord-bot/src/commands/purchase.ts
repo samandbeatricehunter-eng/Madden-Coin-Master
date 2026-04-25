@@ -12,13 +12,12 @@ import { eq, and, sql, asc, ilike, or, inArray, ne } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   deductBalance, getInventoryCount, logTransaction, getSeasonRules,
-  getCoreAttributes, getRosterSeasonId, getGuildChannel, CHANNEL_KEYS, getTeamLegendCount,
+  getRosterSeasonId, getGuildChannel, CHANNEL_KEYS, getTeamLegendCount,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { COSTS, LIMITS, ATTRIBUTES, NFL_POSITIONS, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../lib/constants.js";
+import { COSTS, LIMITS, NFL_POSITIONS, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../lib/constants.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import * as purchaseCustomPlayer from "./purchasecustomplayer.js";
-import { startAttributeUp } from "./attribute-up-interactions.js";
 
 const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
 
@@ -106,41 +105,6 @@ export const data = new SlashCommandBuilder()
       )
   )
 
-  // ── Attribute Upgrade (interactive) ─────────────────────────────────────────
-  .addSubcommand(sub =>
-    sub.setName("attribute_upgrade")
-      .setDescription("Upgrade a player attribute — pick attribute/quantity here or use the interactive UI")
-      .addStringOption(opt =>
-        opt.setName("position")
-          .setDescription("Player's position on the roster")
-          .setRequired(true)
-          .setAutocomplete(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("player")
-          .setDescription("Player to upgrade attributes for (from autocomplete)")
-          .setRequired(true)
-          .setAutocomplete(true)
-      )
-      .addStringOption(opt =>
-        opt.setName("attribute")
-          .setDescription("Attribute to upgrade (optional — omit to browse all attributes interactively)")
-          .setRequired(false)
-          .setAutocomplete(true)
-      )
-      .addIntegerOption(opt =>
-        opt.setName("quantity")
-          .setDescription("How many points to upgrade (default 1, max 10)")
-          .setRequired(false)
-          .setMinValue(1)
-          .setMaxValue(10)
-      )
-      .addUserOption(opt =>
-        opt.setName("user")
-          .setDescription("Team owner (defaults to yourself)")
-          .setRequired(false)
-      )
-  )
 
   // ── Contract Extension ──────────────────────────────────────────────────────
   .addSubcommand(sub =>
@@ -251,18 +215,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       }
     }
 
-    if (sub === "attribute_upgrade" && focused.name === "attribute") {
-      // Autocomplete attribute names from the master ATTRIBUTES list
-      const q = focused.value.toLowerCase();
-      const choices = ATTRIBUTES
-        .filter(a => a.toLowerCase().includes(q))
-        .slice(0, 25)
-        .map(a => ({ name: a, value: a }));
-      await interaction.respond(choices);
-      return;
-    }
-
-    if (sub === "dev_upgrade" || sub === "age_reset" || sub === "attribute_upgrade"
+    if (sub === "dev_upgrade" || sub === "age_reset"
       || sub === "contract_extension" || sub === "salary_reduction" || sub === "bonus_reduction") {
       // getUser is not available in autocomplete context; always use the invoking user for roster lookup
       const targetUser = interaction.user;
@@ -368,11 +321,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // ── /purchase customPlayer ──────────────────────────────────────────────────
   if (sub === "custom_player") {
     return purchaseCustomPlayer.execute(interaction);
-  }
-
-  // ── /purchase attributeUp (interactive flow) ───────────────────────────────
-  if (sub === "attribute_upgrade") {
-    return startAttributeUp(interaction);
   }
 
   await interaction.deferReply({ ephemeral: true });

@@ -12,7 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-orm";
 import {
-  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules, getCoreAttributes,
+  isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules,
   PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
@@ -726,15 +726,14 @@ Coins are awarded automatically when MCA game results are uploaded by the commis
 There is no payout for CPU losses.
 
 ── STORE ──
-/viewstore — Browse everything available in the store with current prices and your remaining limits for this season.
+Use /menu → Purchase to browse the store. Available purchases:
 /purchase legend — Spend coins to claim a legend player. See "HOW THE ANNUAL DRAFT WORKS" below.
 /purchase customplayer — Spend coins to create a custom superstar (Gold/Silver/Bronze tier). See "HOW THE ANNUAL DRAFT WORKS" below.
-/purchase attribute — Spend coins to permanently upgrade a specific rating on a player already on your roster. Core attributes cost more and have tighter limits. Applied to your MCA roster by commissioners.
-/purchase devup — Spend coins to boost a player's development trait (Normal → Star, or Star → Superstar). Max 2 per season. Applied by commissioners.
-/purchase agereset — Spend coins to roll back a player's age in MCA, extending their career. Max 2 per season. Applied by commissioners.
-/availableupgrades — See which upgrades are still available to you this season based on your remaining limits.
+Training Packages — Use the store menu to buy Bronze/Silver/Gold training packages for attribute upgrades (Week 9 only).
+/purchase devup — Spend coins to boost a player's development trait (Normal → Star, or Star → Superstar). Max 1 per season. Applied by commissioners.
+/purchase agereset — Spend coins to roll back a player's age in MCA, extending their career. Max 1 per season. Applied by commissioners.
 
-── STORE PRICING & LIMITS (commissioners may adjust — use /viewstore for live prices) ──
+── STORE PRICING & LIMITS (commissioners may adjust) ──
 {{SEASON_PRICING}}
 
 ── RECORDS & HISTORY ──
@@ -834,31 +833,17 @@ type MentionedUser = { displayName: string; stats: UserStats };
 // ── Dynamic pricing block — built from live season rules so the AI always quotes
 // whatever the commish has set this season, not the hardcoded defaults. ──────────
 type SeasonRulesShape = {
-  coreAttrCost: number;
-  coreAttrCap: number;
-  nonCoreAttrCost: number;
-  nonCoreAttrCap: number;
   devUpsCap: number;
   devUpsCost: number;
   ageResetsCap: number;
   ageResetCost: number;
-  legacyCoreAttrMode?: boolean;
-  coreAttrList?: string[] | null;
 };
 
 function buildPricingBlock(rules: SeasonRulesShape): string {
-  const coreAttrRule = rules.legacyCoreAttrMode
-    ? "multi-point purchases · repeat upgrades per player allowed"
-    : "max 1 point per purchase · once per attribute per player per season";
-  const coreAttrListLine = rules.coreAttrList?.length
-    ? `Current core attributes this season: ${rules.coreAttrList.join(", ")}`
-    : `Current core attributes this season: Speed, Acceleration, Change of Direction, Agility, Strength, Jumping, Throwing Power, Awareness, Stamina (default list — no overrides set)`;
   return [
     `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Week 9 only`,
     `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · max ${LIMITS.customPlayersPerDraft}/season`,
-    `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season · ${coreAttrRule}`,
-    coreAttrListLine,
-    `Non-Core Attribute Upgrade: ${rules.nonCoreAttrCost} coins/point · max ${rules.nonCoreAttrCap} points/season · any attribute NOT in the core list above`,
+    `Training Packages: Bronze ${COSTS.training_bronze} / Silver ${COSTS.training_silver} / Gold ${COSTS.training_gold} coins · multi-attribute boosts · purchase window: Week 9 only`,
     `Dev Upgrade: ${rules.devUpsCost} coins · max ${rules.devUpsCap}/season`,
     `Age Reset: ${rules.ageResetCost} coins · max ${rules.ageResetsCap}/season`,
   ].join("\n");
@@ -1582,18 +1567,11 @@ export async function execute(message: Message): Promise<void> {
     getServerSettings(guildId).catch(() => null),
   ]);
   const seasonRules   = activeSeason ? await getSeasonRules(activeSeason).catch(() => null) : null;
-  const coreAttrSet   = activeSeason ? getCoreAttributes(activeSeason) : null;
   const pricingBlock  = buildPricingBlock({
-    coreAttrCost:       seasonRules?.coreAttrCost    ?? COSTS.core_attribute,
-    coreAttrCap:        seasonRules?.coreAttrCap     ?? LIMITS.coreAttrPerSeason,
-    nonCoreAttrCost:    seasonRules?.nonCoreAttrCost ?? COSTS.non_core_attribute,
-    nonCoreAttrCap:     seasonRules?.nonCoreAttrCap  ?? LIMITS.nonCoreAttrPerSeason,
-    devUpsCap:          seasonRules?.devUpsCap        ?? LIMITS.devUpsPerSeason,
-    devUpsCost:         seasonRules?.devUpsCost       ?? COSTS.dev_up,
-    ageResetsCap:       seasonRules?.ageResetsCap     ?? LIMITS.ageResetsPerSeason,
-    ageResetCost:       seasonRules?.ageResetCost     ?? COSTS.age_reset,
-    legacyCoreAttrMode: guildSettings?.legacyCoreAttrMode ?? false,
-    coreAttrList:       coreAttrSet ? [...coreAttrSet] : null,
+    devUpsCap:  seasonRules?.devUpsCap    ?? LIMITS.devUpsPerSeason,
+    devUpsCost: seasonRules?.devUpsCost   ?? COSTS.dev_up,
+    ageResetsCap:  seasonRules?.ageResetsCap  ?? LIMITS.ageResetsPerSeason,
+    ageResetCost:  seasonRules?.ageResetCost  ?? COSTS.age_reset,
   });
 
   // Build the system prompt with current escalation level for this user

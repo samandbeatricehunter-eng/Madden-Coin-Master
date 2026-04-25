@@ -5,12 +5,7 @@ import {
 import { isAdminUser, getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
 import { getServerSettings, type ServerSettings } from "../lib/server-settings.js";
 
-type SeasonRulesShape = {
-  coreAttrCost: number;
-  coreAttrCap: number;
-  nonCoreAttrCost: number;
-  nonCoreAttrCap: number;
-};
+type SeasonRulesShape = { [k: string]: unknown };
 
 export const data = new SlashCommandBuilder()
   .setName("help")
@@ -35,22 +30,12 @@ export function buildMemberHelpEmbed(
   settings?: ServerSettings | null,
   rules?: SeasonRulesShape | null,
 ): EmbedBuilder {
-  const economy       = settings?.coinEconomy           ?? true;
-  const legends       = economy && (settings?.legendsEnabled            ?? true);
-  const custom        = economy && (settings?.customSuperstarsEnabled   ?? true);
-  const attrUpgrades  = economy && (settings?.attributeUpgradesEnabled  ?? true);
-  const devUpgrades   = economy && (settings?.devUpgradesEnabled        ?? true);
-  const ageResets     = economy && (settings?.ageResetsEnabled          ?? true);
-  const wagers        = economy && (settings?.wagerEnabled              ?? true);
-  const legacyMode    = settings?.legacyCoreAttrMode ?? false;
-
-  const coreAttrCost    = rules?.coreAttrCost    ?? 25;
-  const coreAttrCap     = rules?.coreAttrCap     ?? 5;
-  const nonCoreAttrCost = rules?.nonCoreAttrCost ?? 10;
-  const nonCoreAttrCap  = rules?.nonCoreAttrCap  ?? 15;
-  const coreAttrRule    = legacyMode
-    ? "multi-point purchases, repeat upgrades allowed"
-    : "1 pt per attribute per player per season";
+  const economy     = settings?.coinEconomy           ?? true;
+  const legends     = economy && (settings?.legendsEnabled            ?? true);
+  const custom      = economy && (settings?.customSuperstarsEnabled   ?? true);
+  const devUpgrades = economy && (settings?.devUpgradesEnabled        ?? true);
+  const ageResets   = economy && (settings?.ageResetsEnabled          ?? true);
+  const wagers      = economy && (settings?.wagerEnabled              ?? true);
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blue)
@@ -65,26 +50,25 @@ export function buildMemberHelpEmbed(
   }
 
   // Store — commands section (only if economy is on and at least one item type is enabled)
-  const storeCommands: string[] = ["`/viewstore` — Browse available items with current season prices"];
+  const storeCommands: string[] = ["**/menu → Purchase** — Browse the store and manage your inventory"];
   if (legends)      storeCommands.push("`/buy-legend [name]` — Buy a legend player");
-  if (attrUpgrades) storeCommands.push(`\`/buy-attribute [player] [attr] [qty]\` — Boost a player attribute *(core ⭐: ${coreAttrRule})*`);
   if (devUpgrades)  storeCommands.push("`/buy-devup [player] [type]` — Dev upgrade (Star / Superstar / X-Factor)");
   if (ageResets)    storeCommands.push("`/buy-agereset [player]` — Reset a player's age");
   if (custom)       storeCommands.push("`/buy-customplayer` — Build and buy a custom player slot");
-  storeCommands.push("**/menu → Purchase** — Browse and manage your inventory in the hub");
 
   if (economy) {
     embed.addFields({ name: "🛒 Store — Commands", value: storeCommands.join("\n") });
 
     const pricingLines: string[] = [];
-    if (legends)      pricingLines.push("• **Legends** — 1,000 coins | 4 max all-time | max 4 in inventory");
-    if (attrUpgrades) pricingLines.push(`• **Core Attributes** ⭐ — ${coreAttrCost} coins/pt | ${coreAttrRule} | ${coreAttrCap}/season total`);
-    if (attrUpgrades) pricingLines.push(`• **Non-Core Attributes** — ${nonCoreAttrCost} coins/pt | up to 10 pts per purchase | ${nonCoreAttrCap}/season total`);
-    if (devUpgrades)  pricingLines.push("• **Dev Upgrades** — 250 coins | 2/season");
-    if (ageResets)    pricingLines.push("• **Age Resets** — 250 coins | 2/season");
-    if (custom)       pricingLines.push("• **Custom Players** — Gold 300 / Silver 200 / Bronze 100 coins");
-    if (legends || custom) pricingLines.push("• Legends + Custom Players combined: max 4/season");
-    pricingLines.push("", "⚠️ *Commissioners may adjust any of these per season. Use `/viewstore` for live prices.*");
+    if (legends)      pricingLines.push("• **Legends** — 2,000 coins | 2 max per team | available Week 9");
+    if (devUpgrades)  pricingLines.push("• **Dev Upgrades** — 750 coins | 1/season");
+    if (ageResets)    pricingLines.push("• **Age Resets** — 1,000 coins | 1/season");
+    if (custom)       pricingLines.push("• **Custom Players** — Bronze/Silver/Gold tiers | 1/season | available Week 9");
+    pricingLines.push(
+      "• **Training Packages** — Bronze 250 / Silver 500 / Gold 1,000 coins | available Week 9",
+      "",
+      "⚠️ *Commissioners may adjust prices per season.*",
+    );
 
     if (pricingLines.length > 2) {
       embed.addFields({ name: "🛒 Store — Default Pricing & Limits", value: pricingLines.join("\n") });
@@ -128,7 +112,7 @@ export function buildMemberHelpEmbed(
   );
 
   embed
-    .setFooter({ text: "Use /viewstore for live prices. Purchases go to the commissioner for approval." })
+    .setFooter({ text: "Use /menu to make purchases. Purchases go to the commissioner for approval." })
     .setTimestamp();
 
   return embed;
@@ -252,16 +236,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           ].join("\n"),
         },
         {
-          name: "📅 Season — Overrides & Core Attributes",
+          name: "📅 Season — Cost & Cap Overrides",
           value: [
             "**`/season override [options]`** — Adjust costs/caps for the current season only:",
-            "`core_attr_cost` `core_attr_cap` `non_core_attr_cost` `non_core_attr_cap`",
             "`dev_ups_cost` `dev_ups_cap` `age_resets_cost` `age_resets_cap`",
             "`legend_cost` `custom_gold_cost` `custom_silver_cost` `custom_bronze_cost`",
             "`clear:True` — restore all defaults",
-            "",
-            "**`/season core-attrs [attr1]…[attr10]`** — Set which attributes count as Core this season",
-            "Use `reset:True` to restore the default core attribute list.",
           ].join("\n"),
         },
         {

@@ -68,7 +68,6 @@ export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: 
   { key: "coinEconomy",             label: "Coin Economy",       description: "Master toggle — all economy features" },
   { key: "legendsEnabled",          label: "Legends",            description: "Legends in store & slash commands" },
   { key: "customSuperstarsEnabled", label: "Custom Superstars",  description: "Custom superstar purchases" },
-  { key: "attributeUpgradesEnabled",label: "Attr Upgrades",      description: "Attribute upgrade purchases" },
   { key: "devUpgradesEnabled",      label: "Dev Upgrades",       description: "Development upgrade purchases" },
   { key: "ageResetsEnabled",        label: "Age Resets",         description: "Age reset purchases" },
   { key: "contractExtensionsEnabled", label: "Contract Ext",     description: "Contract extension (1YR) purchases" },
@@ -76,7 +75,6 @@ export const FEATURE_META: Array<{ key: FeatureKey; label: string; description: 
   { key: "bonusReductionsEnabled",    label: "Bonus Reduction",  description: "Player bonus reduction purchases" },
   { key: "wagerEnabled",            label: "Wagers",             description: "Coin wager system" },
   { key: "mcaImportEnabled",        label: "MCA Import",         description: "Stat/schedule commands for all users (off = admin-only)" },
-  { key: "legacyCoreAttrMode",      label: "Legacy Core Attrs",  description: "Allow multi-point & repeat core upgrades per player (off = strict 1pt/attr/player/season)" },
 ];
 
 export const FEATURE_LABELS: Record<FeatureKey, string> =

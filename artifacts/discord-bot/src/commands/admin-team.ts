@@ -111,7 +111,7 @@ export async function executeAddNewUser(interaction: ChatInputCommandInteraction
   await newUser.send(
     `🏈 You've been added to the **${teamName}** in the Madden League!\n` +
     `Starting balance: **${startingBalance.toLocaleString()} coins** 🪙\n` +
-    `Use \`/balance\`, \`/viewstore\`, and \`/inventory\` to get started.`
+    `Use \`/balance\` and \`/inventory\` to get started, and /menu to make purchases.`
   ).catch(() => {});
 
   return interaction.editReply({ embeds: [embed] });

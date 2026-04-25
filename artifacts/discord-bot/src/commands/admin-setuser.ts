@@ -111,12 +111,6 @@ export const data = new SlashCommandBuilder()
   )
   // ── Season upgrade usage ───────────────────────────────────────────────────
   .addIntegerOption(opt =>
-    opt.setName("core_attr_used").setDescription("Set core attribute points purchased this season (cap 16)").setRequired(false).setMinValue(0)
-  )
-  .addIntegerOption(opt =>
-    opt.setName("non_core_attr_used").setDescription("Set non-core attribute points purchased this season (cap 32)").setRequired(false).setMinValue(0)
-  )
-  .addIntegerOption(opt =>
     opt.setName("dev_ups_used").setDescription("Set dev upgrades purchased this season").setRequired(false).setMinValue(0)
   )
   .addIntegerOption(opt =>
@@ -180,8 +174,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const allTimeSbWins    = interaction.options.getInteger("all_time_sb_wins");
   const allTimeSbLosses  = interaction.options.getInteger("all_time_sb_losses");
   const milestonesAlreadyPaid = interaction.options.getBoolean("milestones_already_paid");
-  const coreAttrUsed     = interaction.options.getInteger("core_attr_used");
-  const nonCoreAttrUsed  = interaction.options.getInteger("non_core_attr_used");
   const devUpsUsed       = interaction.options.getInteger("dev_ups_used");
   const ageResetsUsed    = interaction.options.getInteger("age_resets_used");
 
@@ -199,7 +191,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     playoffWins === null && playoffLosses === null &&
     superbowlWins === null && superbowlLosses === null &&
     allTimeSbWins === null && allTimeSbLosses === null &&
-    coreAttrUsed === null && nonCoreAttrUsed === null &&
     devUpsUsed === null && ageResetsUsed === null;
 
   if (noFieldProvided) {
@@ -344,8 +335,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Update season_stats (upgrades) ─────────────────────────────────────────
   const statsUpdates: Record<string, any> = {};
-  if (coreAttrUsed !== null)    { statsUpdates.coreAttrPurchased    = coreAttrUsed;    changes.push(`⚡ **Core Attr Used** → ${coreAttrUsed}`); }
-  if (nonCoreAttrUsed !== null) { statsUpdates.nonCoreAttrPurchased = nonCoreAttrUsed; changes.push(`🎯 **Non-Core Attr Used** → ${nonCoreAttrUsed}`); }
   if (devUpsUsed !== null)      { statsUpdates.devUpsPurchased      = devUpsUsed;      changes.push(`📈 **Dev Upgrades Used** → ${devUpsUsed}`); }
   if (ageResetsUsed !== null)   { statsUpdates.ageResetsPurchased   = ageResetsUsed;   changes.push(`🔄 **Age Resets Used** → ${ageResetsUsed}`); }
 
@@ -359,8 +348,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await db.insert(seasonStatsTable).values({
         discordId,
         seasonId: season.id,
-        coreAttrPurchased:    coreAttrUsed    ?? 0,
-        nonCoreAttrPurchased: nonCoreAttrUsed ?? 0,
         devUpsPurchased:      devUpsUsed      ?? 0,
         ageResetsPurchased:   ageResetsUsed   ?? 0,
         legendsPurchasedThisSeason: 0,

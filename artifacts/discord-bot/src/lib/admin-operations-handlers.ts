@@ -1772,7 +1772,6 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("ss_arch").setLabel("📋 Archetypes").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("ss_lt").setLabel("⭐ Legend Templates").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("ss_core_attrs").setLabel("🎨 Core Attributes").setStyle(ButtonStyle.Success),
       ) as ActionRowBuilder<any>,
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),

@@ -26,7 +26,7 @@ import type { SQL } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
-  getSeasonStats, getSeasonRules, getCoreAttributes, getInventoryCount,
+  getSeasonStats, getSeasonRules, getInventoryCount,
   getOrSeedRules, getAllSections, isAdminUser, getTeamLegendCount,
 } from "./db-helpers.js";
 import {
@@ -47,9 +47,9 @@ import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
-import { ATTRIBUTES, CORE_ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl, LEGEND_CUSTOM_PURCHASE_WEEKS } from "./constants.js";
+import { ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl, LEGEND_CUSTOM_PURCHASE_WEEKS } from "./constants.js";
 import { createSession } from "./custom-player-session.js";
-import { buildAttrPage, buildAttrDropdown, buildNavRow, aupSessions } from "../commands/attribute-up-interactions.js";
+
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -687,15 +687,12 @@ export async function handleActionsInteraction(
   if (id === "ac_tweet")        { await handleTweetModal(interaction as ButtonInteraction); return true; }
 
   // Purchase sub-buttons
-  if (id === "ac_buy_attr")     { await handleBuyAttrPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_agereset") { await handleBuyAgeResetPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_devup")    { await handleBuyDevUpPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_legend")   { await handleBuyLegendPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_custom")   { await handleBuyCustomInfo(interaction as ButtonInteraction); return true; }
-  if (id.startsWith("ac_buy_attrpos:"))     { await handleBuyAttrPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_arpos:"))       { await handleBuyARPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_dupos:"))       { await handleBuyDUPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id.startsWith("ac_buy_attrplayer:"))  { await handleBuyAttrStart(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_arplayer:"))    { await handleBuyARConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_duplayer:"))    { await handleBuyDUConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_ar_confirm")           { await handleBuyAgeResetExecute(interaction as ButtonInteraction, sess); return true; }
@@ -859,7 +856,7 @@ async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsS
   const gid = interaction.guildId!;
   const settings = await getServerSettings(gid);
 
-  const attrOn      = settings.coinEconomy && settings.attributeUpgradesEnabled;
+  const trainingOn  = settings.coinEconomy;
   const ageOn       = settings.coinEconomy && settings.ageResetsEnabled;
   const devOn       = settings.coinEconomy && settings.devUpgradesEnabled;
   const customOn    = settings.coinEconomy && settings.customSuperstarsEnabled;
@@ -869,7 +866,7 @@ async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsS
   const bonusOn     = settings.coinEconomy && (settings.bonusReductionsEnabled ?? false);
 
   const allButtons: ButtonBuilder[] = [];
-  if (attrOn)     allButtons.push(new ButtonBuilder().setCustomId("ac_buy_training").setLabel("🎓 Training Package").setStyle(ButtonStyle.Primary));
+  if (trainingOn)  allButtons.push(new ButtonBuilder().setCustomId("ac_buy_training").setLabel("🎓 Training Package").setStyle(ButtonStyle.Primary));
   if (ageOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_agereset").setLabel("🔄 Age Reset").setStyle(ButtonStyle.Primary));
   if (devOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_devup").setLabel("📈 Dev Trait Upgrade").setStyle(ButtonStyle.Primary));
   if (customOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Success));
@@ -895,136 +892,6 @@ async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsS
     .setTimestamp();
 
   await interaction.update({ embeds: [embed], components: rows });
-}
-
-// ── Attribute Upgrade ──────────────────────────────────────────────────────────
-
-async function handleBuyAttrPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid = interaction.guildId!;
-  const seasonId = await getRosterSeasonId(gid);
-  sess.purchaseType = "attribute"; sess.rosterPosition = undefined;
-
-  const rows = await getRosterRows(interaction as any, seasonId, { position: franchiseRostersTable.position });
-  const positions = sortByCanonical([...new Set(rows.map((r: any) => r.position as string).filter(Boolean))]);
-
-  if (!positions.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found. Ask a commissioner to import MCA data.")], components: [backToHubRow()] });
-    return;
-  }
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ac_buy_attrpos:")
-    .setPlaceholder("Select your player's position…")
-    .addOptions(positions.slice(0, 25).map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
-
-  await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("⭐ Attribute Upgrade — Step 1").setDescription("Pick the **position** of the player you want to upgrade.")],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
-  });
-}
-
-async function handleBuyAttrPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const position = interaction.values[0]!;
-  const gid = interaction.guildId!;
-  const seasonId = await getRosterSeasonId(gid);
-
-  const rows = await getRosterRows(interaction as any, seasonId, {
-    playerId: franchiseRostersTable.playerId,
-    firstName: franchiseRostersTable.firstName,
-    lastName: franchiseRostersTable.lastName,
-    overall: franchiseRostersTable.overall,
-    devTrait: franchiseRostersTable.devTrait,
-    position: franchiseRostersTable.position,
-  });
-  const filtered = (rows as any[]).filter(r => r.position?.toUpperCase() === position.toUpperCase());
-
-  if (!filtered.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No players found at position **${position}**.`)], components: [backToHubRow()] });
-    return;
-  }
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ac_buy_attrplayer:")
-    .setPlaceholder("Select a player…")
-    .addOptions(
-      filtered.slice(0, 25).map(r =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${r.firstName} ${r.lastName} — OVR ${r.overall} ${DEV_LABEL[r.devTrait] ?? ""}`)
-          .setValue(String(r.playerId)),
-      ),
-    );
-
-  await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("⭐ Attribute Upgrade — Step 2").setDescription(`**Position: ${position}**\nNow pick the player you want to upgrade.`)],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
-  });
-}
-
-async function handleBuyAttrStart(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  // Hand off to attribute-up-interactions' session system
-  const playerId = Number(interaction.values[0]);
-  const gid      = interaction.guildId!;
-  const uid      = interaction.user.id;
-  const seasonId = await getRosterSeasonId(gid);
-
-  const rosterRows = await db.select({
-    firstName: franchiseRostersTable.firstName,
-    lastName: franchiseRostersTable.lastName,
-    position: franchiseRostersTable.position,
-    attributes: franchiseRostersTable.attributes,
-    playerId: franchiseRostersTable.playerId,
-  }).from(franchiseRostersTable)
-    .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.playerId, playerId)))
-    .limit(1);
-
-  if (!rosterRows.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found on your roster.")], components: [backToHubRow()] });
-    return;
-  }
-
-  const player = rosterRows[0]!;
-  const attrs: Record<string, number> = (player.attributes as any) ?? {};
-  const playerName = `${player.firstName} ${player.lastName}`.trim();
-
-  // Set up AUP session
-  const season = await getOrCreateActiveSeason(gid);
-  const coreSet = getCoreAttributes(season);
-  const usedRows = await db.select({ attributeName: purchasesTable.attributeName })
-    .from(purchasesTable)
-    .where(and(
-      eq(purchasesTable.seasonId, season.id),
-      eq(purchasesTable.playerName, playerName),
-      eq(purchasesTable.playerPosition, player.position ?? ""),
-      eq(purchasesTable.purchaseType, "attribute"),
-      ne(purchasesTable.status, "refunded"),
-    ));
-  const usedCoreAttrs = new Set(usedRows.map(r => r.attributeName).filter((n): n is string => n !== null && coreSet.has(n as any)));
-
-  const settings = await getServerSettings(gid);
-  const legacyMode = settings.legacyCoreAttrMode ?? false;
-
-  const sKey = `${uid}:${playerId}`;
-  aupSessions.set(sKey, {
-    invokerId: uid,
-    targetId: uid,
-    playerName,
-    playerPosition: player.position ?? "",
-    playerId,
-    attributes: attrs,
-    page: 0,
-    usedCoreAttrs,
-    legacyCoreAttrMode: legacyMode,
-  });
-
-  // Render the paginated attribute browser directly
-  const rules   = await getSeasonRules(season);
-  const session = aupSessions.get(sKey)!;
-
-  const embed    = buildAttrPage(session, rules, coreSet);
-  const dropdown = buildAttrDropdown(session, rules, sKey, coreSet);
-  const navRow   = buildNavRow(session, sKey);
-
-  await interaction.update({ embeds: [embed], components: [dropdown, navRow] });
 }
 
 // ── Age Reset ─────────────────────────────────────────────────────────────────
@@ -5213,18 +5080,15 @@ async function handleAnyUserStatsShow(interaction: StringSelectMenuInteraction, 
   }
 
   if (seasonStatsRow) {
-    const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
-    const ecoOn   = settings.coinEconomy;
-    const attrOn  = ecoOn && settings.attributeUpgradesEnabled;
-    const devOn   = ecoOn && settings.devUpgradesEnabled;
-    const ageOn   = ecoOn && settings.ageResetsEnabled;
-    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0} (${rules.coreAttrCap})`       : `${coreAttrPurchased ?? 0} (n/a)`;
-    const nonCoreFmt = attrOn ? `${nonCoreAttrPurchased ?? 0} (${rules.nonCoreAttrCap})` : `${nonCoreAttrPurchased ?? 0} (n/a)`;
-    const devFmt     = devOn  ? `${devUpsPurchased ?? 0} (${rules.devUpsCap})`           : `${devUpsPurchased ?? 0} (n/a)`;
-    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0} (${rules.ageResetsCap})`     : `${ageResetsPurchased ?? 0} (n/a)`;
+    const { devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
+    const ecoOn  = settings.coinEconomy;
+    const devOn  = ecoOn && settings.devUpgradesEnabled;
+    const ageOn  = ecoOn && settings.ageResetsEnabled;
+    const devFmt = devOn ? `${devUpsPurchased ?? 0} (${rules.devUpsCap})`       : `${devUpsPurchased ?? 0} (n/a)`;
+    const ageFmt = ageOn ? `${ageResetsPurchased ?? 0} (${rules.ageResetsCap})` : `${ageResetsPurchased ?? 0} (n/a)`;
     embed.addFields({
       name: "🛒 This Season's Purchases",
-      value: `Core: ${coreFmt} | Non-Core: ${nonCoreFmt} | Dev Ups: ${devFmt} | Age Resets: ${ageFmt}`,
+      value: `Dev Ups: ${devFmt} | Age Resets: ${ageFmt}`,
       inline: false,
     });
   }

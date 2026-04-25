@@ -190,20 +190,17 @@ export async function buildUserProfilePages(
     .setTimestamp();
 
   if (seasonStatsRow) {
-    const { coreAttrPurchased, nonCoreAttrPurchased, devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
+    const { devUpsPurchased, ageResetsPurchased } = seasonStatsRow;
     const ecoOn  = settings.coinEconomy;
-    const attrOn = ecoOn && settings.attributeUpgradesEnabled;
     const devOn  = ecoOn && settings.devUpgradesEnabled;
     const ageOn  = ecoOn && settings.ageResetsEnabled;
 
-    const coreFmt    = attrOn ? `${coreAttrPurchased ?? 0}/${rules.coreAttrCap}`       : `${coreAttrPurchased ?? 0} (n/a)`;
-    const nonCoreFmt = attrOn ? `${nonCoreAttrPurchased ?? 0}/${rules.nonCoreAttrCap}` : `${nonCoreAttrPurchased ?? 0} (n/a)`;
-    const devFmt     = devOn  ? `${devUpsPurchased ?? 0}/${rules.devUpsCap}`            : `${devUpsPurchased ?? 0} (n/a)`;
-    const ageFmt     = ageOn  ? `${ageResetsPurchased ?? 0}/${rules.ageResetsCap}`      : `${ageResetsPurchased ?? 0} (n/a)`;
+    const devFmt = devOn ? `${devUpsPurchased ?? 0}/${rules.devUpsCap}`       : `${devUpsPurchased ?? 0} (n/a)`;
+    const ageFmt = ageOn ? `${ageResetsPurchased ?? 0}/${rules.ageResetsCap}` : `${ageResetsPurchased ?? 0} (n/a)`;
 
     p3.addFields({
       name:   `🛒 Season ${season.seasonNumber} Purchases`,
-      value:  `Core Attrs: **${coreFmt}** | Non-Core: **${nonCoreFmt}** | Dev Ups: **${devFmt}** | Age Resets: **${ageFmt}**`,
+      value:  `Dev Ups: **${devFmt}** | Age Resets: **${ageFmt}**`,
       inline: false,
     });
   }

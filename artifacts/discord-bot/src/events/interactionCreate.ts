@@ -31,9 +31,6 @@ import {
   handleCcpMotionStyle, handleCcpQbDetailsModal, handleCcpAppearanceModal,
 } from "../lib/custom-player-interactions.js";
 import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/viewcustomarchetypes.js";
-import {
-  handleAupPageNav, handleAupSel, handleAupQtySel, handleAupBack, handleAupConfirm, handleAupCancel,
-} from "../commands/attribute-up-interactions.js";
 import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
 import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin-inventory.js";
 import {
@@ -75,7 +72,6 @@ import {
   handleSsClose, handleSsCancel,
   handleSsArch, handleSsArchPrev, handleSsArchNext, handleSsArchEdit, handleSsArchBackToView,
   handleSsLt, handleSsLtEdit, handleSsLtCreate, handleSsLtBackToPos, handleSsLtBackToModel, handleSsLtBackToView,
-  handleSsCoreAttrs, handleSsCaToggle, handleSsCaPage,
   handleSsArchPos, handleSsArchEditGroup,
   handleSsLtPos, handleSsLtLegend, handleSsLtModel, handleSsLtEditGroup,
   handleSsArchEditModal, handleSsLtEditModal,
@@ -314,13 +310,6 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ccp_cancel")        { await handleCcpCancel(interaction, secondPart ?? "");         return; }
   if (action === "ccp_applied")       { await handleCcpApplied(interaction, secondPart ?? "");        return; }
   if (action === "ccp_refund")        { await handleCcpRefund(interaction, secondPart ?? "");         return; }
-
-  // ── Attribute-up interactive flow ──────────────────────────────────────────
-  if (action === "aup_prev")    { await handleAupPageNav(interaction, "prev"); return; }
-  if (action === "aup_next")    { await handleAupPageNav(interaction, "next"); return; }
-  if (action === "aup_back")    { await handleAupBack(interaction);            return; }
-  if (action === "aup_confirm") { await handleAupConfirm(interaction);         return; }
-  if (action === "aup_cancel")  { await handleAupCancel(interaction);          return; }
 
   // ── Draft presence — per-user toggle ─────────────────────────────────────
   if (action === DRAFT_TOGGLE_PREFIX) {
@@ -2252,10 +2241,6 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ss_lt_back_to_pos") { await handleSsLtBackToPos(interaction);   return; }
   if (action === "ss_lt_back_to_model") { await handleSsLtBackToModel(interaction); return; }
   if (action === "ss_lt_back_to_view")  { await handleSsLtBackToView(interaction);  return; }
-  if (action === "ss_core_attrs")         { await handleSsCoreAttrs(interaction);          return; }
-  if (action === "ss_ca_toggle")          { await handleSsCaToggle(interaction, parts[1]!, parseInt(parts[2] ?? "0", 10)); return; }
-  if (action === "ss_ca_page")            { await handleSsCaPage(interaction, parseInt(parts[1] ?? "0", 10)); return; }
-  if (action === "ss_ca_noop")            { await interaction.deferUpdate(); return; }
 }
 
 // ── String select menu handler ─────────────────────────────────────────────────
@@ -2336,10 +2321,6 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── Admin: add custom player — player select ───────────────────────────────
   // customId: acp_player:<targetDiscordId>:<seasonId>:<notesEncoded>
   if (action === "acp_player") { await handleAcpPlayerSelect(interaction); return; }
-
-  // ── Attribute-up: user selected an attribute to upgrade ───────────────────
-  if (action === "aup_sel")     { await handleAupSel(interaction);    return; }
-  if (action === "aup_qty_sel") { await handleAupQtySel(interaction); return; }
 
   // ── GOTY: commissioner selected the 2 winners ─────────────────────────────────
   if (action === "goty_winners") {
