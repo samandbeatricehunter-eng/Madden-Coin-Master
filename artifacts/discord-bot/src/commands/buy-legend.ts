@@ -8,17 +8,17 @@ import {
 } from "@workspace/db";
 import { eq, asc, sql } from "drizzle-orm";
 import {
-  getOrCreateUser, getOrCreateActiveSeason, getLegendPurchaseHistory,
-  deductBalance, getInventoryCount, logTransaction, getSeasonRules,
+  getOrCreateUser, getOrCreateActiveSeason,
+  deductBalance, getInventoryCount, logTransaction, getSeasonRules, getTeamLegendCount,
 } from "../lib/db-helpers.js";
 import { errorEmbed, pendingEmbed } from "../lib/embeds.js";
-import { LIMITS } from "../lib/constants.js";
+import { LIMITS, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../lib/constants.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { insufficientFunds, sendCommissionerNotification } from "../lib/purchase-shared.js";
 
 export const data = new SlashCommandBuilder()
   .setName("buy-legend")
-  .setDescription("Buy a legend — see /view store for current price (max 4 all-time)")
+  .setDescription("Buy a legend — available Week 9 only (max 2 per team)")
   .addStringOption(opt =>
     opt.setName("legend_name")
       .setDescription("Select a legend from the store")
@@ -94,13 +94,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const rules  = await getSeasonRules(season);
   const cost   = rules.legendCost;
 
+  // Week availability window: legends can only be purchased during week 9
+  if (!LEGEND_CUSTOM_PURCHASE_WEEKS.has(season.currentWeek ?? "")) {
+    return interaction.editReply({
+      embeds: [errorEmbed("Purchase Window Closed", `Legend purchases are only available during **Week 9**. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
+    });
+  }
+
   if (user.balance < cost) return insufficientFunds(interaction, cost, user.balance);
 
-  const legendName    = interaction.options.getString("legend_name", true);
-  const legendHistory = await getLegendPurchaseHistory(interaction.user.id);
-  if (legendHistory.total >= LIMITS.legendsAllTime) {
+  const legendName = interaction.options.getString("legend_name", true);
+
+  // Team-based cap: max legendsPerTeam legends per team
+  const teamCount = await getTeamLegendCount(user.team, interaction.user.id, season.id);
+  if (teamCount.legends >= LIMITS.legendsPerTeam) {
     return interaction.editReply({
-      embeds: [errorEmbed("Purchase Limit Reached", `You have reached the maximum of **${LIMITS.legendsAllTime} legend purchases** in this franchise.`)],
+      embeds: [errorEmbed("Team Limit Reached", `Your team has reached the maximum of **${LIMITS.legendsPerTeam} legends** allowed.`)],
     });
   }
 

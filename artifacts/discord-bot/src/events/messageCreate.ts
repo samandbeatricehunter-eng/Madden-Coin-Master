@@ -854,7 +854,7 @@ function buildPricingBlock(rules: SeasonRulesShape): string {
     ? `Current core attributes this season: ${rules.coreAttrList.join(", ")}`
     : `Current core attributes this season: Speed, Acceleration, Change of Direction, Agility, Strength, Jumping, Throwing Power, Awareness, Stamina (default list — no overrides set)`;
   return [
-    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.maxLegendsInInventory} legends in inventory · max ${LIMITS.legendsAllTime} all-time`,
+    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Week 9 only`,
     `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · Legends + Custom combined max ${LIMITS.maxLegendsPlusCustomPlayers}/season`,
     `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season · ${coreAttrRule}`,
     coreAttrListLine,
@@ -1251,162 +1251,25 @@ async function handleStreamPost(message: Message): Promise<void> {
 
     const streamerTeam = userRow?.team ?? null;
 
-    // Find this week's matchup to identify the H2H opponent.
-    //
-    // Primary path: look up the streamer's teamId from franchiseMcaTeamsTable and
-    // query the schedule by integer teamId. This is immune to name mismatches between
-    // usersTable.team and franchiseScheduleTable.homeTeamName / awayTeamName (which
-    // are sourced from franchiseMcaTeamsTable.fullName, not from usersTable.team).
-    //
-    // Fallback path: the old name-based query against franchiseScheduleTable, used
-    // only when the streamer has no entry in franchiseMcaTeamsTable for this season.
-    //
-    // Playoff weeks store weekIndex as 1000 + rawWeekIdx (e.g. wildcard → 1018).
-    // A secondary fallback tries the non-offset value in case MCA stored without +1000.
-    let opponentDiscordId: string | null = null;
-    let opponentTeam: string | null = null;
-
-    const PLAYOFF_WEEK_INDEX: Record<string, { primary: number; fallback: number }> = {
-      wildcard:   { primary: 1018, fallback: 18 },
-      divisional: { primary: 1019, fallback: 19 },
-      conference: { primary: 1020, fallback: 20 },
-      superbowl:  { primary: 1022, fallback: 22 },
-    };
-
-    const playoffMeta = PLAYOFF_WEEKS_SET.has(currentWeek) ? PLAYOFF_WEEK_INDEX[currentWeek] : null;
-    const weekIndex   = playoffMeta ? playoffMeta.primary : parseInt(currentWeek, 10) - 1;
-
-    if (weekIndex >= 0) {
-      // ── Primary: teamId-based lookup ──────────────────────────────────────────
-      const [mcaEntry] = await db
-        .select({ teamId: franchiseMcaTeamsTable.teamId, fullName: franchiseMcaTeamsTable.fullName })
-        .from(franchiseMcaTeamsTable)
-        .where(and(
-          eq(franchiseMcaTeamsTable.seasonId, season.id),
-          eq(franchiseMcaTeamsTable.discordId, message.author.id),
-        ))
-        .limit(1);
-
-      if (mcaEntry) {
-        const idFilter = or(
-          eq(franchiseScheduleTable.homeTeamId, mcaEntry.teamId),
-          eq(franchiseScheduleTable.awayTeamId, mcaEntry.teamId),
-        );
-
-        type SchedRow = { homeTeamId: number; awayTeamId: number; homeTeamName: string; awayTeamName: string };
-
-        let matchup: SchedRow | undefined;
-        [matchup] = await db
-          .select({
-            homeTeamId:   franchiseScheduleTable.homeTeamId,
-            awayTeamId:   franchiseScheduleTable.awayTeamId,
-            homeTeamName: franchiseScheduleTable.homeTeamName,
-            awayTeamName: franchiseScheduleTable.awayTeamName,
-          })
-          .from(franchiseScheduleTable)
-          .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), idFilter))
-          .limit(1);
-
-        if (!matchup && playoffMeta) {
-          [matchup] = await db
-            .select({
-              homeTeamId:   franchiseScheduleTable.homeTeamId,
-              awayTeamId:   franchiseScheduleTable.awayTeamId,
-              homeTeamName: franchiseScheduleTable.homeTeamName,
-              awayTeamName: franchiseScheduleTable.awayTeamName,
-            })
-            .from(franchiseScheduleTable)
-            .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), idFilter))
-            .limit(1);
-        }
-
-        if (matchup) {
-          const isHome      = matchup.homeTeamId === mcaEntry.teamId;
-          const oppTeamId   = isHome ? matchup.awayTeamId : matchup.homeTeamId;
-          opponentTeam      = isHome ? matchup.awayTeamName : matchup.homeTeamName;
-
-          // Get opponent Discord ID from franchiseMcaTeamsTable (most reliable)
-          const [oppMca] = await db
-            .select({ discordId: franchiseMcaTeamsTable.discordId })
-            .from(franchiseMcaTeamsTable)
-            .where(and(
-              eq(franchiseMcaTeamsTable.seasonId, season.id),
-              eq(franchiseMcaTeamsTable.teamId, oppTeamId),
-            ))
-            .limit(1);
-          opponentDiscordId = oppMca?.discordId ?? null;
-
-          // Secondary fallback: look up by usersTable.team name
-          if (!opponentDiscordId && opponentTeam) {
-            const [oppRow] = await db
-              .select({ discordId: usersTable.discordId })
-              .from(usersTable)
-              .where(eq(usersTable.team, opponentTeam))
-              .limit(1);
-            opponentDiscordId = oppRow?.discordId ?? null;
-          }
-        }
-      } else if (streamerTeam) {
-        // ── Fallback: name-based lookup (when no MCA entry for this user) ────────
-        const nameFilter = or(
-          eq(franchiseScheduleTable.homeTeamName, streamerTeam),
-          eq(franchiseScheduleTable.awayTeamName, streamerTeam),
-        );
-
-        let nameMatchup: { homeTeamName: string; awayTeamName: string } | undefined;
-        [nameMatchup] = await db
-          .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
-          .from(franchiseScheduleTable)
-          .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, weekIndex), nameFilter))
-          .limit(1);
-
-        if (!nameMatchup && playoffMeta) {
-          [nameMatchup] = await db
-            .select({ homeTeamName: franchiseScheduleTable.homeTeamName, awayTeamName: franchiseScheduleTable.awayTeamName })
-            .from(franchiseScheduleTable)
-            .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, playoffMeta.fallback), nameFilter))
-            .limit(1);
-        }
-
-        if (nameMatchup) {
-          opponentTeam = nameMatchup.homeTeamName === streamerTeam
-            ? nameMatchup.awayTeamName
-            : nameMatchup.homeTeamName;
-          if (opponentTeam) {
-            const [oppRow] = await db
-              .select({ discordId: usersTable.discordId })
-              .from(usersTable)
-              .where(eq(usersTable.team, opponentTeam))
-              .limit(1);
-            opponentDiscordId = oppRow?.discordId ?? null;
-          }
-        }
-      }
-    }
-
     const twitchMatch = message.content.match(TWITCH_URL_RE);
     const twitchUrl   = twitchMatch ? twitchMatch[0] : "(link)";
 
-    const isH2H      = !!opponentDiscordId;
-    const payoutDesc = isH2H
-      ? `+${streamPayout} coins → <@${message.author.id}>\n+${streamPayout} coins → <@${opponentDiscordId}> (H2H opponent)`
-      : `+${streamPayout} coins → <@${message.author.id}> (CPU game — opponent not awarded)`;
+    // Stream payout: only the user who posts the stream gets paid (15 coins).
+    // Opponent is NOT paid regardless of whether this is H2H or a CPU game.
+    const payoutDesc = `+${streamPayout} coins → <@${message.author.id}>`;
 
     // Insert pending payout record (without commMessageId yet)
     const [inserted] = await db
       .insert(pendingChannelPayoutsTable)
       .values({
-        type:              "stream",
-        discordId:         message.author.id,
-        amount:            streamPayout,
-        opponentDiscordId: opponentDiscordId ?? undefined,
-        opponentAmount:    isH2H ? streamPayout : undefined,
-        opponentTeam:      opponentTeam ?? undefined,
-        channelId:         message.channelId,
-        messageId:         message.id,
-        guildId:           message.guildId!,
-        seasonId:          season.id,
-        week:              currentWeek,
+        type:      "stream",
+        discordId: message.author.id,
+        amount:    streamPayout,
+        channelId: message.channelId,
+        messageId: message.id,
+        guildId:   message.guildId!,
+        seasonId:  season.id,
+        week:      currentWeek,
       })
       .returning({ id: pendingChannelPayoutsTable.id });
 
@@ -1418,9 +1281,8 @@ async function handleStreamPost(message: Message): Promise<void> {
       .setTitle("🎮 Stream Payout — Approval Required")
       .setDescription(
         `<@${message.author.id}>${streamerTeam ? ` (${streamerTeam})` : ""} posted a Twitch stream this week.\n\n` +
-        `**Stream:** ${twitchUrl}\n` +
-        (opponentTeam ? `**Opponent:** ${opponentTeam}${opponentDiscordId ? ` — <@${opponentDiscordId}>` : " (no Discord account linked)"}` : `**Opponent:** CPU (no payout)`) +
-        `\n\n**Payout:**\n${payoutDesc}`
+        `**Stream:** ${twitchUrl}\n\n` +
+        `**Payout:**\n${payoutDesc}`
       )
       .setFooter({ text: `Payout #${payoutId} • Week ${currentWeek}` })
       .setTimestamp();

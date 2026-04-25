@@ -128,7 +128,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── Attribute Upgrades ────────────────────────────────────────────────────────
   if (settings.attributeUpgradesEnabled) {
-    const pricingNote = rules.coreAttrCost !== rules.nonCoreAttrCost
+    const pricingNote = (rules.coreAttrCost as number) !== (rules.nonCoreAttrCost as number)
       ? [
           `⭐ **Core attrs:** ${rules.coreAttrCost} coins/pt — cap **${rules.coreAttrCap}/season**`,
           `**Non-core:** ${rules.nonCoreAttrCost} coins/pt — cap **${rules.nonCoreAttrCap}/season**`,

@@ -13,6 +13,9 @@ export const purchaseTypeEnum = pgEnum("purchase_type", [
   "contract_extension",
   "salary_reduction",
   "bonus_reduction",
+  "training_gold",
+  "training_silver",
+  "training_bronze",
 ]);
 
 export const purchaseStatusEnum = pgEnum("purchase_status", [
@@ -121,6 +124,8 @@ export const purchasesTable = pgTable("purchases", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   approvedAt: timestamp("approved_at"),
   draftTrackerMessageId: text("draft_tracker_message_id"),
+  teamName: text("team_name"),
+  eaFranchiseId: integer("ea_franchise_id"),
 });
 
 export const inventoryTable = pgTable("inventory", {
@@ -137,11 +142,13 @@ export const inventoryTable = pgTable("inventory", {
   customPlayerTier: customPlayerTierEnum("custom_player_tier"),
   notes: text("notes"),
   // "current" = bought this season, not yet rolled over
-  // "permanent" = carried over from a past season, counts toward the 4-legend vault cap
+  // "permanent" = carried over from a past season
   legendCategory: text("legend_category").notNull().default("current"),
-  // Franchise team name (e.g. "Cowboys") — set when item is promoted to permanent so
-  // items follow the TEAM across ownership changes, not the individual Discord user.
+  // Franchise team name — set on creation and updated via roster imports when traded.
   team: text("team"),
+  // EA franchise player ID — set once applied in-game. Used to track the player
+  // across roster imports so legend/custom player counts follow the team when traded.
+  eaFranchiseId: integer("ea_franchise_id"),
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
 
@@ -157,6 +164,8 @@ export const seasonStatsTable = pgTable("season_stats", {
   contractExtensionsPurchased: integer("contract_extensions_purchased").notNull().default(0),
   salaryReductionsPurchased:   integer("salary_reductions_purchased").notNull().default(0),
   bonusReductionsPurchased:    integer("bonus_reductions_purchased").notNull().default(0),
+  trainingGoldPurchased:   integer("training_gold_purchased").notNull().default(0),
+  trainingSilverPurchased: integer("training_silver_purchased").notNull().default(0),
 });
 
 export const gameTypeEnum = pgEnum("game_type", ["regular_season", "playoff", "superbowl"]);

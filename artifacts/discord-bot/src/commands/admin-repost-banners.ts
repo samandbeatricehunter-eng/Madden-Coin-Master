@@ -9,12 +9,11 @@ import {
 import { eq, and } from "drizzle-orm";
 import { isAdminUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { buildMatchupBanner, resolveLogoBuf } from "../lib/matchup-image.js";
-import { generateMatchupBreakdown } from "../lib/matchup-ai-breakdown.js";
 import { globalLogoPath } from "../lib/gcs-reader.js";
 
 export const data = new SlashCommandBuilder()
   .setName("adminrepostbanners")
-  .setDescription("Re-post matchup banners and AI breakdowns to all game channels for the current week")
+  .setDescription("Re-post matchup banners to all game channels for the current week")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -130,7 +129,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   const weekLabel = `Season ${season.seasonNumber} — Week ${season.currentWeek}`;
   const results: string[] = [];
-  let bannerOk = 0, breakdownOk = 0, skipped = 0;
+  let bannerOk = 0, skipped = 0;
 
   for (const gc of channels) {
     const ch = interaction.client.channels.cache.get(gc.channelId)
@@ -169,8 +168,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       console.error(`[adminrepostbanners] Cleanup error for ${gc.awayTeamName} vs ${gc.homeTeamName}:`, e);
     }
 
-    let postedBanner    = false;
-    let postedBreakdown = false;
+    let postedBanner = false;
 
     // ── Banner ────────────────────────────────────────────────────────────────
     const awayGcsPath = resolveLogoPath(gc.awayTeamName, awayDiscordId || undefined);
@@ -208,42 +206,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       console.warn(`[adminrepostbanners] No logo path — away: "${gc.awayTeamName}" (${awayGcsPath}), home: "${gc.homeTeamName}" (${homeGcsPath})`);
     }
 
-    // ── AI breakdown ─────────────────────────────────────────────────────────
-    // Name lookup first; fall back to discordId when usersTable.team ≠ MCA fullName/nickName
-    const awayMca = mcaByName.get(gc.awayTeamName.toLowerCase().trim())
-      ?? (awayDiscordId ? mcaByDiscordId.get(awayDiscordId) : undefined);
-    const homeMca = mcaByName.get(gc.homeTeamName.toLowerCase().trim())
-      ?? (homeDiscordId ? mcaByDiscordId.get(homeDiscordId) : undefined);
-
-    let breakdownStatus = "❌ no breakdown (no MCA roster data)";
-    if (awayMca?.teamId != null && homeMca?.teamId != null) {
-      try {
-        const breakdownEmbed = await generateMatchupBreakdown({
-          seasonId:       season.id,
-          awayTeamName:   gc.awayTeamName,
-          homeTeamName:   gc.homeTeamName,
-          awayTeamId:     awayMca.teamId,
-          homeTeamId:     homeMca.teamId,
-          awayDiscordId:  awayDiscordId || gc.awayTeamName,
-          homeDiscordId:  homeDiscordId || gc.homeTeamName,
-          awayDiscordTag: awayDiscordId ? `<@${awayDiscordId}>` : gc.awayTeamName,
-          homeDiscordTag: homeDiscordId ? `<@${homeDiscordId}>` : gc.homeTeamName,
-          weekLabel,
-        });
-        await tc.send({ embeds: [breakdownEmbed] });
-        postedBreakdown = true;
-        breakdownOk++;
-        breakdownStatus = "🤖 breakdown";
-      } catch (e) {
-        console.error(`[adminrepostbanners] AI breakdown error for ${gc.awayTeamName} vs ${gc.homeTeamName}:`, e);
-        breakdownStatus = "❌ no breakdown (generation error)";
-      }
-    }
-
     const statusBanner = postedBanner
       ? "🖼️ banner"
       : `❌ no banner (paths: ${awayGcsPath ?? "none"} / ${homeGcsPath ?? "none"})`;
-    results.push(`<#${gc.channelId}> — ${statusBanner} · ${breakdownStatus}`);
+    results.push(`<#${gc.channelId}> — ${statusBanner}`);
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────
@@ -252,9 +218,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .setTitle(`📤 Repost Results — ${weekLabel}`)
     .setDescription(results.join("\n").slice(0, 4096))
     .addFields(
-      { name: "🖼️ Banners posted",    value: String(bannerOk),    inline: true },
-      { name: "🤖 Breakdowns posted", value: String(breakdownOk), inline: true },
-      { name: "⚠️ Skipped",           value: String(skipped),     inline: true },
+      { name: "🖼️ Banners posted", value: String(bannerOk), inline: true },
+      { name: "⚠️ Skipped",        value: String(skipped),  inline: true },
     );
 
   await interaction.editReply({ embeds: [summaryEmbed] });

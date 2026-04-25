@@ -468,29 +468,82 @@ export function getCoreAttributes(season: { coreAttributesOverride?: string | nu
   ]);
 }
 
-export async function getSeasonRules(season: Season) {
+export async function getSeasonRules(_season: Season) {
   const { COSTS, LIMITS } = await import("./constants.js");
   return {
-    coreAttrCost:    season.coreAttrCostOverride    ?? COSTS.core_attribute,
-    coreAttrCap:     season.coreAttrCapOverride     ?? LIMITS.coreAttrPerSeason,
-    nonCoreAttrCost: season.nonCoreAttrCostOverride ?? COSTS.non_core_attribute,
-    nonCoreAttrCap:  season.nonCoreAttrCapOverride  ?? LIMITS.nonCoreAttrPerSeason,
-    devUpsCap:        season.devUpsCapOverride        ?? LIMITS.devUpsPerSeason,
-    devUpsCost:       season.devUpsCostOverride       ?? COSTS.dev_up,
-    ageResetsCap:     season.ageResetsCapOverride     ?? LIMITS.ageResetsPerSeason,
-    ageResetCost:     season.ageResetsCostOverride    ?? COSTS.age_reset,
-    legendCost:       season.legendCostOverride       ?? COSTS.legend,
-    customGoldCost:   season.customGoldCostOverride   ?? COSTS.custom_player_gold,
-    customSilverCost: season.customSilverCostOverride ?? COSTS.custom_player_silver,
-    customBronzeCost: season.customBronzeCostOverride ?? COSTS.custom_player_bronze,
-    // Contract / Roster Mods
-    contractExtensionCost: season.contractExtensionCostOverride ?? COSTS.contract_extension,
-    contractExtensionCap:  season.contractExtensionCapOverride  ?? LIMITS.contractExtensionsPerSeason,
-    salaryReductionCost:   season.salaryReductionCostOverride   ?? COSTS.salary_reduction,
-    salaryReductionCap:    season.salaryReductionCapOverride    ?? LIMITS.salaryReductionsPerSeason,
-    bonusReductionCost:    season.bonusReductionCostOverride    ?? COSTS.bonus_reduction,
-    bonusReductionCap:     season.bonusReductionCapOverride     ?? LIMITS.bonusReductionsPerSeason,
+    coreAttrCost:    COSTS.core_attribute,
+    coreAttrCap:     LIMITS.coreAttrPerSeason,
+    nonCoreAttrCost: COSTS.non_core_attribute,
+    nonCoreAttrCap:  LIMITS.nonCoreAttrPerSeason,
+    devUpsCap:        LIMITS.devUpsPerSeason,
+    devUpsCost:       COSTS.dev_up,
+    ageResetsCap:     LIMITS.ageResetsPerSeason,
+    ageResetCost:     COSTS.age_reset,
+    legendCost:       COSTS.legend,
+    customGoldCost:   COSTS.custom_player_gold,
+    customSilverCost: COSTS.custom_player_silver,
+    customBronzeCost: COSTS.custom_player_bronze,
+    contractExtensionCost: COSTS.contract_extension,
+    contractExtensionCap:  LIMITS.contractExtensionsPerSeason,
+    salaryReductionCost:   COSTS.salary_reduction,
+    salaryReductionCap:    LIMITS.salaryReductionsPerSeason,
+    bonusReductionCost:    COSTS.bonus_reduction,
+    bonusReductionCap:     LIMITS.bonusReductionsPerSeason,
   };
+}
+
+/**
+ * Count how many legends + custom players a team currently owns.
+ * Used for team-based cap enforcement (legendsPerTeam = 2).
+ *
+ * Counts:
+ *  - inventoryTable rows where team = teamName (approved/applied, current category)
+ *  - purchasesTable pending legend rows for this user in this season (not yet approved)
+ *  - customPlayersTable rows for this user this season (not refunded)
+ */
+export async function getTeamLegendCount(
+  teamName: string | null | undefined,
+  discordId: string,
+  seasonId: number,
+): Promise<{ legends: number; customs: number; total: number }> {
+  // Inventory (approved items that belong to this team)
+  const invItems = teamName
+    ? await db.select({ itemType: inventoryTable.itemType, legendCategory: inventoryTable.legendCategory })
+        .from(inventoryTable)
+        .where(and(
+          eq(inventoryTable.team, teamName),
+          eq(inventoryTable.seasonId, seasonId),
+        ))
+    : [];
+
+  const invLegends  = invItems.filter(i => i.itemType === "legend" && i.legendCategory === "current").length;
+  const invCustoms  = invItems.filter(i =>
+    (i.itemType === "custom_player_gold" || i.itemType === "custom_player_silver" || i.itemType === "custom_player_bronze")
+    && i.legendCategory === "current"
+  ).length;
+
+  // Pending legend purchases this season by this user (not yet in inventory)
+  const [pendingRows, cpRows] = await Promise.all([
+    db.select({ id: purchasesTable.id })
+      .from(purchasesTable)
+      .where(and(
+        eq(purchasesTable.discordId, discordId),
+        eq(purchasesTable.seasonId, seasonId),
+        eq(purchasesTable.purchaseType, "legend"),
+        eq(purchasesTable.status, "pending"),
+      )),
+    db.select({ id: customPlayersTable.id })
+      .from(customPlayersTable)
+      .where(and(
+        eq(customPlayersTable.discordId, discordId),
+        eq(customPlayersTable.seasonId, seasonId),
+        ne(customPlayersTable.status, "refunded"),
+      )),
+  ]);
+
+  const legends = invLegends + pendingRows.length;
+  const customs = invCustoms + cpRows.length;
+  return { legends, customs, total: legends + customs };
 }
 
 export async function upsertH2HRecord(

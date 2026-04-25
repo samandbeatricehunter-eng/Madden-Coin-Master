@@ -155,6 +155,19 @@ export async function sendCommissionerNotification(
         "",
         "Click the button below once this has been applied in-game.",
       ].filter(Boolean).join("\n");
+    } else if (type.startsWith("training_")) {
+      const tierLabel = type === "training_gold" ? "🥇 Gold" : type === "training_silver" ? "🥈 Silver" : "🥉 Bronze";
+      const points    = type === "training_gold" ? 4 : type === "training_silver" ? 2 : 1;
+      title = `🎓 Training Package — ${tierLabel}`;
+      description = [
+        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
+        `**Tier:** ${tierLabel}`,
+        `**🎲 Lottery Roll:** **${details["attributeName"]}** (+${details["points"] ?? points} pts)`,
+        `**Purchase ID:** #${purchaseId}`,
+        "",
+        `Apply **+${details["points"] ?? points} ${details["attributeName"]}** to any player on this member's roster.`,
+      ].join("\n");
+      buttonLabel = "✅ Applied in Game";
     }
 
     const embed = new EmbedBuilder()

@@ -1747,7 +1747,6 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
       "Use the buttons below to manage your league's store settings.\n\n" +
       "📋 **Archetypes** — Browse and edit custom player archetype attributes\n" +
       "⭐ **Legend Templates** — Set base attribute templates for each legend model\n" +
-      "💰 **Prices & Caps** — Set prices and purchase limits for all store items\n" +
       "🎨 **Core Attributes** — Toggle which attributes are core (⭐) vs non-core"
     )
     .setFooter({ text: "Changes take effect immediately" });
@@ -1758,7 +1757,6 @@ async function handleStoreSettingsHub(interaction: ButtonInteraction) {
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("ss_arch").setLabel("📋 Archetypes").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("ss_lt").setLabel("⭐ Legend Templates").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("ss_pc").setLabel("💰 Prices & Caps").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("ss_core_attrs").setLabel("🎨 Core Attributes").setStyle(ButtonStyle.Success),
       ) as ActionRowBuilder<any>,
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -3037,21 +3035,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
                 }
               }
 
-              if (awayMca?.teamId && homeMca?.teamId) {
-                const breakdownEmbed = await generateMatchupBreakdown({
-                  seasonId:       season.id,
-                  awayTeamName:   awayProper,
-                  homeTeamName:   homeProper,
-                  awayTeamId:     awayMca.teamId,
-                  homeTeamId:     homeMca.teamId,
-                  awayDiscordId,
-                  homeDiscordId,
-                  awayDiscordTag: `<@${awayDiscordId}>`,
-                  homeDiscordTag: `<@${homeDiscordId}>`,
-                  weekLabel:      channelWeekDisplayLabel,
-                });
-                await newChannel.send({ embeds: [breakdownEmbed] });
-              }
             } catch (postErr) {
               console.error(`[admin-operations] Failed to post banner/breakdown for ${chanName}:`, postErr);
             }

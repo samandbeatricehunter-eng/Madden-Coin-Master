@@ -29,10 +29,11 @@ import {
   type ViolationRecord,
 } from "./stat-padding-detector.js";
 
-// ── Coin payouts (mirrors discord-bot/franchise-update.ts) ────────────────────
-const H2H_WIN_PAYOUT  = 50;
-const H2H_LOSS_PAYOUT = 20;
-const CPU_WIN_PAYOUT  = 20;
+// ── Coin payouts ──────────────────────────────────────────────────────────────
+// No distinction between H2H and CPU games — all wins pay 25, all losses 0.
+const H2H_WIN_PAYOUT  = 25;
+const H2H_LOSS_PAYOUT = 0;
+const CPU_WIN_PAYOUT  = 25;
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Win milestones ─────────────────────────────────────────────────────────────

@@ -7,17 +7,28 @@ import { db } from "@workspace/db";
 import { customPlayerSettingsTable } from "@workspace/db";
 import { createSession } from "../lib/custom-player-session.js";
 import { getOrCreateActiveSeason, getInventoryCount } from "../lib/db-helpers.js";
-import { LIMITS } from "../lib/constants.js";
+import { LIMITS, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchasecustomplayer")
-  .setDescription("Build and purchase a custom player for the draft class");
+  .setDescription("Build and purchase a custom player for the draft class (available Week 9 only)");
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const season    = await getOrCreateActiveSeason(interaction.guildId!);
   const discordId = interaction.user.id;
+
+  // Week availability window: custom players can only be purchased during week 9
+  if (!LEGEND_CUSTOM_PURCHASE_WEEKS.has(season.currentWeek ?? "")) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Orange)
+        .setTitle("❌ Purchase Window Closed")
+        .setDescription(`Custom player purchases are only available during **Week 9**. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
+    });
+    return;
+  }
 
   // ── Fetch settings + combined season inventory count in parallel ───────────
   const [[settingsRow], invCount] = await Promise.all([

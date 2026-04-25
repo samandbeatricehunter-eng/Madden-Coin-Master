@@ -16,30 +16,39 @@ export function eaPortraitUrl(playerId: number | null | undefined): string | nul
 }
 
 export const COSTS = {
-  legend: 1000,
+  legend: 2000,
+  training_gold: 1000,
+  training_silver: 500,
+  training_bronze: 250,
   core_attribute: 25,
   non_core_attribute: 10,
-  dev_up: 250,
-  age_reset: 250,
-  custom_player_gold: 300,
-  custom_player_silver: 200,
-  custom_player_bronze: 100,
-  contract_extension: 250,
-  salary_reduction: 250,
-  bonus_reduction: 250,
+  dev_up: 750,
+  age_reset: 1000,
+  custom_player_gold: 1000,
+  custom_player_silver: 750,
+  custom_player_bronze: 500,
+  contract_extension: 750,
+  salary_reduction: 1250,
+  bonus_reduction: 1250,
 } as const;
 
 export const LIMITS = {
   coreAttrPerSeason: 5,
   nonCoreAttrPerSeason: 15,
-  devUpsPerSeason: 2,
-  ageResetsPerSeason: 2,
-  legendsAllTime: 4,
-  maxLegendsInInventory: 4,
-  maxLegendsPlusCustomPlayers: 4,
-  contractExtensionsPerSeason: 2,
-  salaryReductionsPerSeason: 2,
-  bonusReductionsPerSeason: 2,
+  devUpsPerSeason: 1,
+  ageResetsPerSeason: 1,
+  legendsPerTeam: 2,
+  maxLegendsInInventory: 2,
+  maxLegendsPlusCustomPlayers: 2,
+  customPlayersPerDraft: 1,
+  contractExtensionsPerSeason: 1,
+  contractExtensionsCareer: 1,
+  salaryReductionsPerSeason: 1,
+  salaryReductionsCareer: 1,
+  bonusReductionsPerSeason: 1,
+  bonusReductionsCareer: 1,
+  trainingGoldPerSeason: 2,
+  trainingSilverPerSeason: 2,
 } as const;
 
 // Core attributes: Speed, Acceleration, Change of Direction, Agility, Strength,
@@ -123,6 +132,13 @@ export const NFL_POSITIONS = [
 ] as const;
 
 export type NFLPosition = typeof NFL_POSITIONS[number];
+
+/**
+ * Weeks during which legend and custom player purchases are open.
+ * Purchases submitted outside these weeks are rejected.
+ * Values match season.currentWeek (e.g. "9" for regular-season week 9).
+ */
+export const LEGEND_CUSTOM_PURCHASE_WEEKS: ReadonlySet<string> = new Set(["9"]);
 
 export const DEV_UP_TYPES = ["Star", "Superstar"] as const;
 

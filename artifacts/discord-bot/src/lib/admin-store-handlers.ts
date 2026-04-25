@@ -183,8 +183,7 @@ function buildHubEmbed() {
     .setDescription(
       "Select a category to view and edit:\n\n" +
       "📋 **Archetypes** — Browse and edit custom player archetype attributes\n" +
-      "⭐ **Legend Templates** — Set base attribute templates for each legend model\n" +
-      "💰 **Prices & Caps** — Set prices and purchase limits for all store items"
+      "⭐ **Legend Templates** — Set base attribute templates for each legend model"
     )
     .setFooter({ text: "Changes take effect immediately" });
 }
@@ -193,7 +192,6 @@ function buildHubComponents() {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ss_arch").setLabel("📋 Archetypes").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ss_lt").setLabel("⭐ Legend Templates").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ss_pc").setLabel("💰 Prices & Caps").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ss_core_attrs").setLabel("🎨 Core Attributes").setStyle(ButtonStyle.Success),
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -424,7 +422,7 @@ async function buildPcEmbed(guildId: string): Promise<EmbedBuilder> {
   const rules = await getSeasonRules(season);
   const settings = await getServerSettings(guildId);
 
-  const allTimeLegend = settings.allTimeLegendCap ?? LIMITS.legendsAllTime;
+  const allTimeLegend = LIMITS.legendsPerTeam;
   const legendsPerSeason = season.legendsPerSeasonCapOverride ?? 2;
   const customPerSeason  = season.customPlayersPerSeasonCapOverride ?? "—";
   const salaryCareer = settings.salaryReductionCareerCap ?? "—";
@@ -1052,7 +1050,7 @@ export async function handleSsPcAlltimeCaps(interaction: ButtonInteraction) {
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId("allTimeLegendCap").setLabel("All-Time Legends Cap (total ever)")
           .setStyle(TextInputStyle.Short).setRequired(true)
-          .setValue(String(settings.allTimeLegendCap ?? LIMITS.legendsAllTime))
+          .setValue(String(LIMITS.legendsPerTeam))
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId("nonCoreAttrCap").setLabel("Non-Core Attributes per Season Cap")
