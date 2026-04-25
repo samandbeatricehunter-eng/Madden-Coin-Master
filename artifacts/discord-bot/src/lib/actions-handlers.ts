@@ -96,7 +96,7 @@ interface ActionsSession {
   selectedLegendCost?: number;
   // training package flow
   trainingTier?: string;
-  trainingGoal?: "speed" | "power" | "balanced";
+  trainingGoal?: "speed" | "power" | "balanced" | "position";
   trainingPlayerId?: number;
   trainingPlayerName?: string;
   trainingPlayerPos?: string;
@@ -1900,6 +1900,32 @@ const TRAINING_POWER_ATTRS = new Set([
   "Lead Block", "Impact Blocking", "Block Shedding", "Tackling",
 ]);
 
+// Position-focused boost sets — 2× weight on these when goal === "position"
+const TRAINING_POS_FOCUS: Record<string, Set<string>> = {
+  QB:    new Set(["Throwing Power","Short Accuracy","Medium Accuracy","Deep Accuracy","Throw on the Run","Throw Under Pressure","Break Sack","Play Action"]),
+  HB:    new Set(["Carrying","BC Vision","Break Tackle","Trucking","Stiff Arm","Spin Move","Juke Move"]),
+  FB:    new Set(["Carrying","Break Tackle","Trucking","Stiff Arm","Lead Block","Impact Blocking"]),
+  WR:    new Set(["Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release"]),
+  TE:    new Set(["Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release","Lead Block","Impact Blocking"]),
+  LT:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  LG:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  C:     new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  RG:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  RT:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  LEDGE: new Set(["Block Shedding","Finesse Moves","Power Moves","Pursuit","Tackling","Hit Power"]),
+  REDGE: new Set(["Block Shedding","Finesse Moves","Power Moves","Pursuit","Tackling","Hit Power"]),
+  DT:    new Set(["Block Shedding","Finesse Moves","Power Moves","Pursuit","Tackling","Hit Power"]),
+  MIKE:  new Set(["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit","Play Recognition","Man Coverage","Zone Coverage"]),
+  WILL:  new Set(["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit","Play Recognition","Man Coverage","Zone Coverage"]),
+  SAM:   new Set(["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit","Play Recognition","Man Coverage","Zone Coverage"]),
+  CB:    new Set(["Man Coverage","Zone Coverage","Press","Play Recognition","Tackling","Hit Power","Pursuit"]),
+  FS:    new Set(["Man Coverage","Zone Coverage","Press","Play Recognition","Tackling","Hit Power","Pursuit"]),
+  SS:    new Set(["Man Coverage","Zone Coverage","Press","Play Recognition","Tackling","Hit Power","Pursuit"]),
+  K:     new Set(["Kicking Power","Kicking Accuracy"]),
+  P:     new Set(["Kicking Power","Kicking Accuracy"]),
+  LS:    new Set(["Long Snap"]),
+};
+
 // Position-relevant attribute sets — only eligible attrs for a given roster spot
 const _A = (...attrs: string[]) => new Set(attrs);
 const SHARED_ATHLETE   = ["Speed","Acceleration","Agility","Strength","Awareness","Change of Direction","Jumping","Stamina","Toughness","Injury"] as const;
@@ -1935,15 +1961,20 @@ const TRAINING_POS_ATTRS: Record<string, Set<string>> = {
 /** Weighted random attribute roll.
  *  - Filters to position-relevant attributes only (no KAC for a WR, no Tackling for a QB, etc.)
  *  - Filters out any attribute where playerAttrs[attr] + points > 99 (already at/near cap).
- *  - Goal attrs get 1.5× weight; all others get 1×. */
+ *  - speed/power goal attrs get 1.5× weight; position-focused attrs get 2× weight; all others get 1×. */
 function rollTrainingAttr(
-  goal: "speed" | "power" | "balanced",
+  goal: "speed" | "power" | "balanced" | "position",
   playerAttrs: Record<string, number>,
   points: number,
   position: string,
 ): string {
-  const boostSet  = goal === "speed" ? TRAINING_SPEED_ATTRS : goal === "power" ? TRAINING_POWER_ATTRS : null;
-  const posFilter = TRAINING_POS_ATTRS[position.toUpperCase()]; // undefined = unknown pos, allow all
+  const pos       = position.toUpperCase();
+  const boostSet  = goal === "speed"    ? TRAINING_SPEED_ATTRS
+                  : goal === "power"    ? TRAINING_POWER_ATTRS
+                  : goal === "position" ? (TRAINING_POS_FOCUS[pos] ?? null)
+                  : null;
+  const boostMult = goal === "position" ? 2.0 : 1.5;
+  const posFilter = TRAINING_POS_ATTRS[pos]; // undefined = unknown pos, allow all
   const allAttrs  = [...ATTRIBUTES] as string[];
   // Apply position filter first, then 99-cap filter
   const eligible  = allAttrs.filter(a =>
@@ -1951,7 +1982,7 @@ function rollTrainingAttr(
     (playerAttrs[a] ?? 0) + points <= 99,        // won't exceed 99
   );
   const pool    = eligible.length > 0 ? eligible : allAttrs; // safety fallback
-  const weights = pool.map(a => (boostSet && boostSet.has(a) ? 1.5 : 1.0));
+  const weights = pool.map(a => (boostSet && boostSet.has(a) ? boostMult : 1.0));
   const total   = weights.reduce((s, w) => s + w, 0);
   let rng       = Math.random() * total;
   for (let i = 0; i < pool.length; i++) {
@@ -2142,6 +2173,10 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
         .setLabel("⚖️ Balanced")
         .setDescription("Even chance across all attributes — no bias")
         .setValue("balanced"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("🎯 Position Focused")
+        .setDescription("100% higher chance of rolling the core attributes for this player's position")
+        .setValue("position"),
     ]);
 
   await interaction.update({
@@ -2154,7 +2189,8 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
         "Choose a **training goal** to bias the attribute lottery:\n\n" +
         "⚡ **Speed** — 50% boost to rolls for quickness, finesse & movement attributes\n" +
         "💪 **Power** — 50% boost to rolls for strength, power & physical attributes\n" +
-        "⚖️ **Balanced** — all attributes equally likely\n\n" +
+        "⚖️ **Balanced** — all attributes equally likely\n" +
+        "🎯 **Position Focused** — 100% boost to rolls for this player's core position attributes\n\n" +
         "_The boost increases the probability, not a guarantee. The result is still a lottery._",
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(goalMenu), cancelRow()],
@@ -2163,7 +2199,7 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
 
 // Confirmation screen (after goal selected)
 async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const goal = interaction.values[0] as "speed" | "power" | "balanced";
+  const goal = interaction.values[0] as "speed" | "power" | "balanced" | "position";
   sess.trainingGoal = goal;
 
   const tier = sess.trainingTier as TrainingTier | undefined;
@@ -2176,10 +2212,14 @@ async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction
   const gid  = interaction.guildId!;
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
 
-  const goalLabel = goal === "speed" ? "⚡ Speed" : goal === "power" ? "💪 Power" : "⚖️ Balanced";
-  const goalDesc  = goal === "balanced"
-    ? "all attributes rolled evenly"
-    : `${goal === "speed" ? "movement/quickness" : "strength/power"} attributes have 50% higher roll chance`;
+  const goalLabel = goal === "speed"    ? "⚡ Speed"
+                  : goal === "power"    ? "💪 Power"
+                  : goal === "position" ? "🎯 Position Focused"
+                  : "⚖️ Balanced";
+  const goalDesc  = goal === "balanced"  ? "all attributes rolled evenly"
+                  : goal === "speed"     ? "movement/quickness attributes have 50% higher roll chance"
+                  : goal === "power"     ? "strength/power attributes have 50% higher roll chance"
+                  : `core ${sess.trainingPlayerPos ?? "position"} attributes have 100% higher roll chance`;
 
   await interaction.update({
     embeds: [new EmbedBuilder()
