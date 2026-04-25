@@ -778,7 +778,9 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       continue;
     }
 
-    const chanName = `${toChannelName(awayProper)}-vs-${toChannelName(homeProper)}`;
+    const awayNick = discordIdToMca.get(awayDiscordId)?.nickName ?? discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName.split(/\s+/).pop()!;
+    const homeNick = discordIdToMca.get(homeDiscordId)?.nickName ?? discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName.split(/\s+/).pop()!;
+    const chanName = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
 
     try {
       const newChannel = await guild.channels.create({
@@ -2967,7 +2969,9 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         const homeDiscordId = teamToDiscord.get(g.homeTeamName.toLowerCase().trim())!;
         const awayProper    = discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName;
         const homeProper    = discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName;
-        const chanName      = `${toChannelName(awayProper)}-vs-${toChannelName(homeProper)}`;
+        const awayNick      = discordIdToMca.get(awayDiscordId)?.nickName ?? discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName.split(/\s+/).pop()!;
+        const homeNick      = discordIdToMca.get(homeDiscordId)?.nickName ?? discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName.split(/\s+/).pop()!;
+        const chanName      = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
 
         try {
           const newChannel = await guild.channels.create({
