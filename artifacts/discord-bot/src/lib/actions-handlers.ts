@@ -1958,38 +1958,86 @@ const TRAINING_POS_ATTRS: Record<string, Set<string>> = {
   LS:    _A("Strength","Awareness","Long Snap","Stamina","Toughness","Injury"),
 };
 
-/** Weighted random attribute roll.
- *  - Filters to position-relevant attributes only (no KAC for a WR, no Tackling for a QB, etc.)
- *  - Filters out any attribute where playerAttrs[attr] + points > 99 (already at/near cap).
- *  - speed/power goal attrs get 1.5× weight; position-focused attrs get 2× weight; all others get 1×. */
-function rollTrainingAttr(
+// How many attributes can be upgraded per tier — higher tier biased toward max
+const TRAINING_ATTR_COUNT_RANGE = {
+  gold:   { min: 3, max: 5 },
+  silver: { min: 2, max: 4 },
+  bronze: { min: 2, max: 3 },
+} as const;
+
+/** Roll how many attributes to improve this purchase (ascending weights → biased toward tier max). */
+function rollAttrCount(tier: TrainingTier): number {
+  const { min, max } = TRAINING_ATTR_COUNT_RANGE[tier];
+  if (min === max) return min;
+  const range = max - min + 1;
+  // weights: count[min]=1, count[min+1]=2, …, count[max]=range → higher count is more likely
+  const total = (range * (range + 1)) / 2;
+  let rng = Math.random() * total;
+  for (let i = 0; i < range; i++) {
+    rng -= (i + 1);
+    if (rng <= 0) return min + i;
+  }
+  return max;
+}
+
+/** Roll N distinct attributes via weighted lottery (without replacement).
+ *  - Position-filtered, excludes attrs already at 99.
+ *  - Goal attrs get boosted weight (1.5× for speed/power, 2× for position). */
+function rollTrainingAttrs(
   goal: "speed" | "power" | "balanced" | "position",
   playerAttrs: Record<string, number>,
-  points: number,
   position: string,
-): string {
+  count: number,
+): string[] {
   const pos       = position.toUpperCase();
   const boostSet  = goal === "speed"    ? TRAINING_SPEED_ATTRS
                   : goal === "power"    ? TRAINING_POWER_ATTRS
                   : goal === "position" ? (TRAINING_POS_FOCUS[pos] ?? null)
                   : null;
   const boostMult = goal === "position" ? 2.0 : 1.5;
-  const posFilter = TRAINING_POS_ATTRS[pos]; // undefined = unknown pos, allow all
+  const posFilter = TRAINING_POS_ATTRS[pos];
   const allAttrs  = [...ATTRIBUTES] as string[];
-  // Apply position filter first, then 99-cap filter
   const eligible  = allAttrs.filter(a =>
-    (!posFilter || posFilter.has(a)) &&          // relevant to this position
-    (playerAttrs[a] ?? 0) + points <= 99,        // won't exceed 99
+    (!posFilter || posFilter.has(a)) &&
+    (playerAttrs[a] ?? 0) < 99,
   );
-  const pool    = eligible.length > 0 ? eligible : allAttrs; // safety fallback
-  const weights = pool.map(a => (boostSet && boostSet.has(a) ? boostMult : 1.0));
-  const total   = weights.reduce((s, w) => s + w, 0);
-  let rng       = Math.random() * total;
-  for (let i = 0; i < pool.length; i++) {
-    rng -= weights[i]!;
-    if (rng <= 0) return pool[i]!;
+  const pool = eligible.length > 0 ? eligible : allAttrs;
+
+  // Weighted selection without replacement
+  const remaining        = pool.slice();
+  const remainingWeights = remaining.map(a => (boostSet && boostSet.has(a) ? boostMult : 1.0));
+  const results: string[] = [];
+  const n = Math.min(count, remaining.length);
+
+  for (let i = 0; i < n; i++) {
+    const total = remainingWeights.reduce((s, w) => s + w, 0);
+    let rng     = Math.random() * total;
+    let sel     = remaining.length - 1;
+    for (let j = 0; j < remaining.length; j++) {
+      rng -= remainingWeights[j]!;
+      if (rng <= 0) { sel = j; break; }
+    }
+    results.push(remaining[sel]!);
+    remaining.splice(sel, 1);
+    remainingWeights.splice(sel, 1);
   }
-  return pool[pool.length - 1]!;
+  return results;
+}
+
+/** Roll points for one attribute: ascending weights → biased toward tier max.
+ *  Capped so the attribute won't exceed 99. */
+function rollTierPoints(tierMax: number, currentValue: number): number {
+  const cap = Math.min(tierMax, 99 - currentValue);
+  if (cap <= 0) return 0;
+  if (cap === 1) return 1;
+  // weights: +1=1, +2=2, …, +cap=cap → higher rolls more likely for better tiers
+  const total = (cap * (cap + 1)) / 2;
+  let rng = Math.random() * total;
+  for (let pts = 1; pts <= cap; pts++) {
+    rng -= pts;
+    if (rng <= 0) return pts;
+  }
+  return cap;
 }
 
 // Step 1 — Pick a position
@@ -2021,10 +2069,10 @@ async function handleBuyTrainingPosPick(interaction: ButtonInteraction, sess: Ac
       .setColor(0x3a7bd5)
       .setTitle("🎓 Training Package — Step 1 of 4")
       .setDescription(
-        "Training packages give your player a **randomly rolled attribute upgrade**.\n\n" +
-        "**Gold** — 1,000 coins · **+4 pts** · max 2/season\n" +
-        "**Silver** — 500 coins · **+2 pts** · max 2/season\n" +
-        "**Bronze** — 250 coins · **+1 pt** · unlimited\n\n" +
+        "Training packages give your player a **multi-attribute lottery upgrade**. The number of attributes rolled and the points per attribute are both random, biased toward the higher end.\n\n" +
+        "**Gold** — 1,000 coins · **3-5 attributes** · up to **+4 pts** each · max 2/season\n" +
+        "**Silver** — 500 coins · **2-4 attributes** · up to **+2 pts** each · max 2/season\n" +
+        "**Bronze** — 250 coins · **2-3 attributes** · **+1 pt** each · unlimited\n\n" +
         "First, pick the **position** of the player you want to train.",
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
@@ -2094,17 +2142,17 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
   const tierRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:gold")
-      .setLabel(`🥇 Gold — 1,000 coins (+4 pts)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setLabel(`🥇 Gold — 1,000 coins (3-5 attrs · up to +4 pts each)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Primary)
       .setDisabled(goldDisabled || user.balance < TRAINING_TIERS.gold.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:silver")
-      .setLabel(`🥈 Silver — 500 coins (+2 pts)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setLabel(`🥈 Silver — 500 coins (2-4 attrs · up to +2 pts each)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(silverDisabled || user.balance < TRAINING_TIERS.silver.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:bronze")
-      .setLabel("🥉 Bronze — 250 coins (+1 pt)")
+      .setLabel("🥉 Bronze — 250 coins (2-3 attrs · +1 pt each)")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(user.balance < TRAINING_TIERS.bronze.cost),
   );
@@ -2113,9 +2161,9 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
     `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos}) — OVR ${sess.trainingPlayerOvr}`,
     `**Your balance:** ${user.balance.toLocaleString()} coins`,
     "",
-    `**Gold** — 1,000 coins · +4 pts · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
-    `**Silver** — 500 coins · +2 pts · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
-    "**Bronze** — 250 coins · +1 pt · unlimited",
+    `**Gold** — 1,000 coins · 3-5 attrs · up to +4 pts each · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
+    `**Silver** — 500 coins · 2-4 attrs · up to +2 pts each · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
+    "**Bronze** — 250 coins · 2-3 attrs · +1 pt each · unlimited",
     "",
     "Select the tier you want to buy. You'll choose a **training goal** next to bias the roll.",
   ];
@@ -2179,14 +2227,19 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
         .setValue("position"),
     ]);
 
+  const attrRange = TRAINING_ATTR_COUNT_RANGE[tier];
+  const attrRangeLabel = attrRange.min === attrRange.max
+    ? `${attrRange.min} attributes`
+    : `${attrRange.min}-${attrRange.max} attributes`;
+
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x3a7bd5)
       .setTitle("🎓 Training Package — Step 4 of 4")
       .setDescription(
         `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos})\n` +
-        `**Tier:** ${meta.label} — +${meta.points} pts\n\n` +
-        "Choose a **training goal** to bias the attribute lottery:\n\n" +
+        `**Tier:** ${meta.label} — **${attrRangeLabel}** rolled · up to +${meta.points} pts each\n\n` +
+        "Choose a **training goal** to bias which attributes get selected:\n\n" +
         "⚡ **Speed** — 50% boost to rolls for quickness, finesse & movement attributes\n" +
         "💪 **Power** — 50% boost to rolls for strength, power & physical attributes\n" +
         "⚖️ **Balanced** — all attributes equally likely\n" +
@@ -2208,9 +2261,11 @@ async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction
     return;
   }
 
-  const meta = TRAINING_TIERS[tier];
-  const gid  = interaction.guildId!;
-  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const meta  = TRAINING_TIERS[tier];
+  const gid   = interaction.guildId!;
+  const user  = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const cRange = TRAINING_ATTR_COUNT_RANGE[tier];
+  const cLabel = cRange.min === cRange.max ? `${cRange.min}` : `${cRange.min}-${cRange.max}`;
 
   const goalLabel = goal === "speed"    ? "⚡ Speed"
                   : goal === "power"    ? "💪 Power"
@@ -2227,11 +2282,11 @@ async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction
       .setTitle(`🎓 Confirm ${meta.label} Training Package`)
       .setDescription(
         `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos})\n` +
-        `**Tier:** ${meta.label} — +${meta.points} pts to a randomly rolled attribute\n` +
+        `**Tier:** ${meta.label} — **${cLabel} attributes** rolled · up to +${meta.points} pts each\n` +
         `**Training Goal:** ${goalLabel} — ${goalDesc}\n` +
         `**Cost:** ${meta.cost.toLocaleString()} coins\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n\n` +
-        "The lottery will roll when you confirm. The result and the player's before/after attribute values will be posted to your commissioner.",
+        "The lottery will roll when you confirm. All rolled attribute changes will be posted to your commissioner.",
       )],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -2284,19 +2339,31 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
   }
 
-  // 🎲 Weighted lottery roll — position-filtered, excludes attrs that would exceed 99
-  const rolledAttr = rollTrainingAttr(goal, playerAttrs, meta.points, sess.trainingPlayerPos ?? "");
+  // 🎲 Step 1 — Roll how many attributes are upgraded (tier-biased, higher tier → more attrs)
+  const attrCount   = rollAttrCount(tier);
+  // 🎲 Step 2 — Roll which attributes (weighted by goal, without replacement, excludes 99s)
+  const rolledAttrs = rollTrainingAttrs(goal, playerAttrs, sess.trainingPlayerPos ?? "", attrCount);
+  // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max)
+  type TrainingResult = { attr: string; before: number | null; after: number | null; points: number };
+  const results: TrainingResult[] = rolledAttrs.map(attr => {
+    const before = playerAttrs[attr] !== undefined ? playerAttrs[attr]! : null;
+    const points = rollTierPoints(meta.points, before ?? 0);
+    const after  = before !== null ? before + points : null;
+    return { attr, before, after, points };
+  });
 
-  const attrBefore = playerAttrs[rolledAttr] !== undefined ? playerAttrs[rolledAttr]! : null;
-  const attrAfter  = attrBefore !== null ? attrBefore + meta.points : null;
-  const beforeAfterText = attrBefore !== null
-    ? `${rolledAttr}: **${attrBefore} → ${attrAfter}**`
-    : `+${meta.points} ${rolledAttr}`;
+  const resultLines     = results.map(r =>
+    r.before !== null
+      ? `• **${r.attr}:** ${r.before} → **${r.after}** (+${r.points})`
+      : `• +${r.points} ${r.attr}`,
+  );
+  const beforeAfterText  = `**${results.length} attribute${results.length !== 1 ? "s" : ""} upgraded:**\n${resultLines.join("\n")}`;
+  const attrNamesSummary = results.map(r => `${r.attr} +${r.points}`).join(", ");
 
   await deductBalance(interaction.user.id, meta.cost, gid);
   await logTransaction(
     interaction.user.id, -meta.cost, "purchase",
-    `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — rolled: ${rolledAttr} (+${meta.points})`, gid,
+    `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — ${attrNamesSummary}`, gid,
   );
 
   const [inserted] = await db.insert(purchasesTable).values({
@@ -2305,10 +2372,10 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     purchaseType:   meta.purchaseType,
     playerName:     sess.trainingPlayerName,
     playerPosition: sess.trainingPlayerPos ?? "",
-    attributeName:  rolledAttr,
+    attributeName:  attrNamesSummary,
     cost:           meta.cost,
     status:         "pending",
-    notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${rolledAttr} +${meta.points}${attrBefore !== null ? ` (${attrBefore}→${attrAfter})` : ""}`,
+    notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${attrNamesSummary}`,
   }).returning({ id: purchasesTable.id });
 
   if (meta.seasonStatKey === "trainingGoldPurchased") {
@@ -2322,13 +2389,11 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
   }
 
   await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted!.id, {
-    playerName:    sess.trainingPlayerName,
-    playerPos:     sess.trainingPlayerPos ?? "",
-    trainingGoal:  goal,
-    attributeName: rolledAttr,
-    attrBefore:    attrBefore ?? undefined,
-    attrAfter:     attrAfter ?? undefined,
-    points:        meta.points,
+    playerName:      sess.trainingPlayerName,
+    playerPos:       sess.trainingPlayerPos ?? "",
+    trainingGoal:    goal,
+    trainingResults: beforeAfterText,
+    attributeName:   attrNamesSummary,
     tier,
   });
 

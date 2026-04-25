@@ -38,9 +38,8 @@ export function buildPayoutHubEmbed(): EmbedBuilder {
       "🔴 GOTW Voting | 🔵 POTW Winners | 🟢 Issue One-Time Payout\n" +
       "🔴 Deduct Coins | ⬛ Transfer Coins\n\n" +
       "**Row 2 — Game Management**\n" +
-      "⬛ Issue Game Payout | 🟡 Correct Game Payout | 🔵 Set Game Payouts | ⬛ Set Referral Bonuses\n\n" +
+      "⬛ Issue Game Payout | 🟡 Correct Game Payout\n\n" +
       "**Row 3 — Configuration**\n" +
-      "⬛ New Member Bonus | ⬛ GOTW Guess Bonus | ⬛ POTW Winner Bonus\n" +
       "⬛ EOS Payouts & Tiers | ⬛ Milestone Payouts & Tiers\n\n" +
       "**Row 4 — Activity Payouts**\n" +
       "🟡 Tweet Payouts This Week | 🔵 Pending Interview Payouts"
@@ -60,13 +59,8 @@ export function buildPayoutHubRows(): ActionRowBuilder<ButtonBuilder>[] {
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ap_game").setLabel("Issue Game Payout").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ap_correct").setLabel("Correct Game Payout").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ap_setpay").setLabel("Set Game Payouts (Reg/Playoffs)").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ap_referral").setLabel("Set Referral Bonuses").setStyle(ButtonStyle.Secondary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ap_newmember").setLabel("Set New Member Bonus").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ap_gotwbonus").setLabel("Set GOTW Guess Bonus").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ap_potwbonus").setLabel("Set POTW Winner Bonus").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ap_eos").setLabel("Set EOS Payouts & Tiers").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ap_milestone").setLabel("Set Milestone Payouts & Tiers").setStyle(ButtonStyle.Secondary),
   );
