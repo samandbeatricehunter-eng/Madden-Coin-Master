@@ -64,6 +64,7 @@ import {
   fetchWeeklyStats,
   fetchNewsData,
   fetchLeagueTeamsAndRosters,
+  fetchAllWeekSchedules,
   updateStoredToken,
   refreshTokenIfNeeded,
   type EALeague,
@@ -1006,10 +1007,11 @@ async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; 
   }
 }
 
-async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild | null): Promise<{ summaryLine: string; allOk: boolean }> {
+async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild | null, guildId?: string): Promise<{ summaryLine: string; allOk: boolean }> {
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
   const platform   = token.platform;
+  const guildQs    = guildId ? `?guildId=${encodeURIComponent(guildId)}` : "";
   const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
 
   if (guild) {
@@ -1041,15 +1043,15 @@ async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild
 
   const results: { name: string; ok: boolean; status: number }[] = [];
 
-  const teamsRes = await postToApi(`${leagueBase}/leagueteams`, rosterData.leagueTeams);
+  const teamsRes = await postToApi(`${leagueBase}/leagueteams${guildQs}`, rosterData.leagueTeams);
   results.push({ name: "leagueTeams", ...teamsRes });
 
   for (const { teamId, data } of rosterData.teamRosters) {
-    const res = await postToApi(`${leagueBase}/team/${teamId}/roster`, data);
+    const res = await postToApi(`${leagueBase}/team/${teamId}/roster${guildQs}`, data);
     results.push({ name: `roster:${teamId}`, ...res });
   }
 
-  const faRes = await postToApi(`${leagueBase}/freeagents/roster`, rosterData.freeAgents);
+  const faRes = await postToApi(`${leagueBase}/freeagents/roster${guildQs}`, rosterData.freeAgents);
   results.push({ name: "freeAgents", ...faRes });
 
   const failed       = results.filter(r => !r.ok);
@@ -1127,12 +1129,14 @@ export async function runWeekImport(ctx: {
   });
 
   const { summaryLine: rosterSummary, allOk: rostersAllOk } =
-    await runRosterSync(token, eaLeagueId, guild);
+    await runRosterSync(token, eaLeagueId, guild, guildId);
 
   const apiBase  = getApiBase();
   const key      = getWebhookKey();
   const platform = token.platform;
-  const weekBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}/week/${weekType}/${weekNum}`;
+  const guildQs  = `?guildId=${encodeURIComponent(guildId)}`;
+  const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+  const weekBase = `${leagueBase}/week/${weekType}/${weekNum}`;
 
   await editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Sending **${wkLabel}** stats to processor…`)],
@@ -1148,7 +1152,7 @@ export async function runWeekImport(ctx: {
       embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Clearing existing **${wkLabel}** data before reimport…`)],
       components: [],
     });
-    const clearRes = await postToApi(`${weekBase}/clear`, {});
+    const clearRes = await postToApi(`${weekBase}/clear${guildQs}`, {});
     if (!clearRes.ok) {
       console.warn(`[ld/import] clearWeek returned HTTP ${clearRes.status} — proceeding anyway`);
     }
@@ -1168,24 +1172,49 @@ export async function runWeekImport(ctx: {
   ] as const) {
     const payload = stats[statType as keyof typeof stats];
     if (payload == null) { results.push({ name: statType, ok: true, status: 0, skipped: true }); continue; }
-    const res = await postToApi(`${weekBase}/${urlSuffix}`, payload);
+    const res = await postToApi(`${weekBase}/${urlSuffix}${guildQs}`, payload);
     results.push({ name: statType, ...res });
   }
 
-  const teamRes = await postToApi(`${weekBase}/team`, stats.teamStats);
+  const teamRes = await postToApi(`${weekBase}/team${guildQs}`, stats.teamStats);
   results.push({ name: "teamStats", ...teamRes });
 
-  const schedulesUrl = skipPayouts ? `${weekBase}/schedules?skipPayouts=1` : `${weekBase}/schedules`;
+  const schedulesUrl = skipPayouts
+    ? `${weekBase}/schedules${guildQs}&skipPayouts=1`
+    : `${weekBase}/schedules${guildQs}`;
   const schedRes = await postToApi(schedulesUrl, stats.schedules);
   results.push({ name: "schedules", ...schedRes });
 
   try {
     const newsData = await fetchNewsData(token, eaLeagueId);
     if (newsData != null) {
-      const newsRes = await postToApi(`${apiBase}/madden/${key}/${platform}/${eaLeagueId}/news`, newsData);
+      const newsRes = await postToApi(`${leagueBase}/news${guildQs}`, newsData);
       results.push({ name: "in-game news", ...newsRes });
     }
   } catch { /* non-fatal */ }
+
+  // ── Full season schedule sync (all 18 weeks) ─────────────────────────────────
+  // Each week import only fetches the current week's schedule data. Fetch all
+  // 18 weeks using a single Blaze session and store them idempotently so the
+  // /schedule button can show the full season immediately.
+  await editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing full season schedule (all ${weekType === "pre" ? "preseason" : "18"} weeks)…`)],
+    components: [],
+  });
+
+  let schedulesSynced = 0;
+  if (weekType !== "pre") {
+    try {
+      const { weekResults: allWeekSchedules } = await fetchAllWeekSchedules(token, eaLeagueId);
+      for (const { weekNum: wk, data } of allWeekSchedules) {
+        const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
+        const r = await postToApi(url, data);
+        if (r.ok) schedulesSynced++;
+      }
+    } catch (err) {
+      console.warn("[ld/import] Full schedule sync failed (non-fatal):", err);
+    }
+  }
 
   const failCount    = results.filter(r => !r.ok && !r.skipped).length;
   const successCount = results.filter(r => r.ok).length;
@@ -1212,6 +1241,7 @@ export async function runWeekImport(ctx: {
     .addFields(
       { name: "📊 Player & Team Stats", value: statsLines.join("\n") || "none" },
       { name: "🏈 Roster Sync",         value: rosterSummary },
+      { name: "📅 Season Schedule",      value: weekType === "pre" ? "⏭ Skipped (preseason)" : schedulesSynced > 0 ? `✅ ${schedulesSynced}/18 weeks stored` : "⚠️ Schedule sync failed (non-fatal)" },
       { name: "Result",                  value: overallOk
         ? "✅ All data imported successfully"
         : `⚠️ ${successCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "roster errors"}`,

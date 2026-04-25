@@ -162,7 +162,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, a
   saveMcaPayload("mca/leagueteams.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/leagueteams] Received payload, processing async...");
-  const result = await processLeagueTeams(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processLeagueTeams(req.body, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leagueteams] Result:", result.message);
 });
 
@@ -192,7 +193,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/teamstats", validateKey, asy
   saveMcaPayload("mca/teamstats.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/teamstats] Received payload, processing async...");
-  const result = await processTeamStats(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processTeamStats(req.body, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/teamstats] Result:", result.message);
 });
 
@@ -205,8 +207,9 @@ router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, asyn
   saveMcaPayload("mca/seedings-latest.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/seedings] Received playoff seedings payload, processing...");
+  const guildId = String(req.query["guildId"] ?? "");
   const [result, channels] = await Promise.all([
-    processPlayoffSeedings(req.body, leagueId).catch(err => ({ ok: false, message: String(err) })),
+    processPlayoffSeedings(req.body, leagueId, guildId).catch(err => ({ ok: false, message: String(err) })),
     resolveLeagueChannels(leagueId),
   ]);
   console.log("[mca/seedings] Result:", result.message);
@@ -242,11 +245,12 @@ router.post("/internal/reseed-from-standings", async (req: Request, res: Respons
 // ── /schedules — full season schedule ─────────────────────────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, async (req, res) => {
   const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const guildId  = String(req.query["guildId"] ?? "");
   saveMcaPayload("mca/schedules.json", req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/schedules] Received payload, processing async...");
   const [result, channels] = await Promise.all([
-    processSchedules(req.body, leagueId).catch(err => ({ ok: false, message: String(err) })),
+    processSchedules(req.body, leagueId, guildId).catch(err => ({ ok: false, message: String(err) })),
     resolveLeagueChannels(leagueId),
   ]);
   console.log("[mca/schedules] Result:", result.message);
@@ -263,7 +267,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
 router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validateKey, async (req, res) => {
   saveMcaPayload("mca/freeagents-roster.json", req.body);
   res.status(200).json({ status: "received" });
-  const result = await processFreeAgentRoster(req.body, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processFreeAgentRoster(req.body, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/freeagents/roster]", result.message);
 });
 
@@ -271,10 +276,11 @@ router.post("/madden/:leagueKey/:platform/:leagueId/freeagents/roster", validate
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/team", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+  const guildId  = String(req.query["guildId"] ?? "");
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-team.json`, req.body);
   res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/team] Received team stats (weekType=${weekType}), processing...`);
-  const result = await processTeamWeekStats(req.body, weekType, weekNum, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const result = await processTeamWeekStats(req.body, weekType, weekNum, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log(`[mca/week${weekNum}/team] Result:`, result.message);
 });
 
@@ -286,9 +292,10 @@ for (const statType of ["passing", "rushing", "receiving", "defense", "kicking",
     async (req, res) => {
       const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
       const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
+      const guildId  = String(req.query["guildId"] ?? "");
       saveMcaPayload(`mca/week-${weekType}-${weekNum}-${statType}.json`, req.body);
       res.status(200).json({ status: "received" });
-      const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({
+      const result = await processPlayerWeekStats(req.body, statType, weekType, weekNum, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({
         ok: false, message: String(err), violations: [] as ViolationRecord[],
       }));
       if (result.ok) {
@@ -313,7 +320,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/clea
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
-  const result = await clearWeekData(weekType, weekNum, leagueId).catch(err => ({ ok: false, message: String(err) }));
+  const guildId  = String(req.query["guildId"] ?? "");
+  const result = await clearWeekData(weekType, weekNum, leagueId, guildId).catch(err => ({ ok: false, message: String(err) }));
   res.status(result.ok ? 200 : 500).json(result);
   console.log(`[clearWeek] ${weekType} week ${weekNum}: ${result.message}`);
 });
@@ -344,7 +352,8 @@ router.delete("/madden/:leagueKey/:platform/:leagueId/schedule-purge", validateK
   }
 
   try {
-    const season = await getOrCreateActiveSeason(leagueId);
+    const guildId = String(req.query["guildId"] ?? "");
+    const season = await getOrCreateActiveSeason(leagueId, guildId);
 
     const conditions = [
       eq(franchiseScheduleTable.seasonId, season.id),
@@ -378,9 +387,10 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   const leagueId  = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const guildId   = String(req.query["guildId"] ?? "");
   const doReset   = String(req.query["reset"] ?? "false").toLowerCase() === "true";
   try {
-    const count = await syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, true, doReset);
+    const count = await syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, true, doReset, guildId);
     res.status(200).json({ ok: true, count, week: weekNum });
   } catch (err) {
     res.status(500).json({ ok: false, count: 0, week: weekNum, error: String(err) });
@@ -394,6 +404,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   const weekNum    = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType   = String(req.params["weekType"] ?? "reg").toLowerCase();
   const leagueId   = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const guildId    = String(req.query["guildId"] ?? "");
   const skipPayouts = String(req.query["skipPayouts"] ?? "0") === "1";
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-schedules.json`, req.body);
   res.status(200).json({ status: "received" });
@@ -401,12 +412,12 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
   // Resolve guild-scoped channels and sync schedule concurrently.
   const [, channels] = await Promise.all([
-    syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId),
+    syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
     resolveLeagueChannels(leagueId),
   ]);
   const { commCh, genCh } = channels;
 
-  const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts).catch(err => ({
+  const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts, guildId).catch(err => ({
     ok: false, message: String(err),
     gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
     payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -525,14 +536,16 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 router.post("/madden/:leagueKey/:platform/:leagueId/draftpicks", validateKey, async (req, res) => {
   saveMcaPayload("mca/draftpicks.json", req.body);
   res.status(200).json({ status: "received" });
-  const result = await processDraftPicks(req.body, undefined, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processDraftPicks(req.body, undefined, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/draftpicks]", result.message);
 });
 
 router.post("/madden/:leagueKey/:platform/:leagueId/leaguedraftpicks", validateKey, async (req, res) => {
   saveMcaPayload("mca/draftpicks.json", req.body);
   res.status(200).json({ status: "received" });
-  const result = await processDraftPicks(req.body, undefined, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err) }));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processDraftPicks(req.body, undefined, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leaguedraftpicks]", result.message);
 });
 
@@ -545,7 +558,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/draftpicks", va
   const mcaTeamId = parseInt(teamIdStr, 10);
   saveMcaPayload(`mca/team-${teamIdStr}-draftpicks.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processDraftPicks(req.body, isNaN(mcaTeamId) ? undefined : mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10))
+  const guildIdDp = String(req.query["guildId"] ?? "");
+  const result = await processDraftPicks(req.body, isNaN(mcaTeamId) ? undefined : mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10), guildIdDp)
     .catch(err => ({ ok: false, message: String(err) }));
   console.log(`[mca/team/${teamIdStr}/draftpicks]`, result.message);
 });
@@ -579,7 +593,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
     console.warn(`[mca/team/${teamIdStr}/roster] Invalid teamId — skipping`);
     return;
   }
-  const result = await processTeamRoster(req.body, mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10)).catch(err => ({ ok: false, message: String(err), details: undefined }));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processTeamRoster(req.body, mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err), details: undefined }));
   console.log(`[mca/team/${teamIdStr}/roster] ${result.message}`);
 
   // Post detected transactions to the guild-scoped transactions channel
@@ -601,12 +616,13 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const guildId  = String(req.query["guildId"] ?? "");
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-scores.json`, req.body);
   res.status(200).json({ status: "received" });
 
   console.log(`[mca/week${weekNum}/scores] Received (weekType=${weekType}), processing payouts...`);
   const [result, channels] = await Promise.all([
-    processWeekScores(req.body, weekNum, weekType, leagueId).catch(err => ({
+    processWeekScores(req.body, weekNum, weekType, leagueId, false, guildId).catch(err => ({
       ok: false, message: String(err),
       gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
       payoutLines: [] as string[], milestoneLines: [] as string[],
@@ -725,7 +741,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/news", validateKey, async (r
   const body = req.body as Record<string, unknown>;
   const keys = Object.keys(body ?? {});
   console.log("[mca/news] Received. Top-level keys:", keys.join(", "));
-  const result = await processLeagueNews(req.body, parseInt(String(req.params.leagueId ?? "0"), 10));
+  const guildId = String(req.query["guildId"] ?? "");
+  const result = await processLeagueNews(req.body, parseInt(String(req.params.leagueId ?? "0"), 10), guildId);
   console.log("[mca/news]", result.message);
   res.status(result.ok ? 200 : 500).json({ status: result.ok ? "ok" : "error", message: result.message });
 });
