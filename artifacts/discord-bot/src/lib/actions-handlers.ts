@@ -5655,16 +5655,16 @@ async function handleActiveTeams(interaction: ButtonInteraction, sess: ActionsSe
   // MCA is authoritative — pull current team assignments keyed by discordId
   const mcaRows = await db.select({
     discordId: franchiseMcaTeamsTable.discordId,
-    fullName:  franchiseMcaTeamsTable.fullName,
+    nickName:  franchiseMcaTeamsTable.nickName,
   }).from(franchiseMcaTeamsTable)
     .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
 
   const mcaByDiscordId = new Map<string, string>();
   for (const m of mcaRows) {
-    if (m.discordId) mcaByDiscordId.set(m.discordId, m.fullName);
+    if (m.discordId && m.nickName) mcaByDiscordId.set(m.discordId, m.nickName);
   }
 
-  // Build team → discordId map: prefer MCA team name, fall back to usersTable.team
+  // Build team → discordId map: prefer MCA nickname, fall back to usersTable.team
   const activeMap = new Map<string, string>();
   for (const u of users) {
     if (u.discordId.startsWith("unlinked_") || !u.team) continue;
@@ -5715,16 +5715,16 @@ async function handleOpenTeams(interaction: ButtonInteraction, sess: ActionsSess
   // MCA is authoritative for current team assignments
   const mcaRows = await db.select({
     discordId: franchiseMcaTeamsTable.discordId,
-    fullName:  franchiseMcaTeamsTable.fullName,
+    nickName:  franchiseMcaTeamsTable.nickName,
   }).from(franchiseMcaTeamsTable)
     .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
 
   const mcaByDiscordId = new Map<string, string>();
   for (const m of mcaRows) {
-    if (m.discordId) mcaByDiscordId.set(m.discordId, m.fullName);
+    if (m.discordId && m.nickName) mcaByDiscordId.set(m.discordId, m.nickName);
   }
 
-  // Taken = teams currently held by real (non-unlinked) users; prefer MCA over usersTable
+  // Taken = teams currently held by real (non-unlinked) users; prefer MCA nickname over usersTable
   const taken = new Set<string>();
   for (const r of takenRows) {
     if (!r.discordId || r.discordId.startsWith("unlinked_")) continue;
@@ -6496,13 +6496,13 @@ async function getTakenTeams(gid: string): Promise<Set<string>> {
   ]);
   const mcaRows = await db.select({
     discordId: franchiseMcaTeamsTable.discordId,
-    fullName:  franchiseMcaTeamsTable.fullName,
+    nickName:  franchiseMcaTeamsTable.nickName,
   }).from(franchiseMcaTeamsTable)
     .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
 
   const mcaByDiscordId = new Map<string, string>();
   for (const m of mcaRows) {
-    if (m.discordId) mcaByDiscordId.set(m.discordId, m.fullName);
+    if (m.discordId && m.nickName) mcaByDiscordId.set(m.discordId, m.nickName);
   }
 
   const taken = new Set<string>();
