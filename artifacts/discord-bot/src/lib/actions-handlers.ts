@@ -1958,11 +1958,11 @@ const TRAINING_POS_ATTRS: Record<string, Set<string>> = {
   LS:    _A("Strength","Awareness","Long Snap","Stamina","Toughness","Injury"),
 };
 
-// How many attributes can be upgraded per tier — higher tier biased toward max
+// How many attributes can be upgraded per tier — strictly ordered so Gold > Silver > Bronze always
 const TRAINING_ATTR_COUNT_RANGE = {
-  gold:   { min: 3, max: 5 },
-  silver: { min: 2, max: 4 },
-  bronze: { min: 2, max: 3 },
+  gold:   { min: 4, max: 5 },  // 4 or 5, biased toward 5
+  silver: { min: 3, max: 3 },  // always 3
+  bronze: { min: 2, max: 2 },  // always 2
 } as const;
 
 /** Roll how many attributes to improve this purchase (ascending weights → biased toward tier max). */
@@ -2069,10 +2069,10 @@ async function handleBuyTrainingPosPick(interaction: ButtonInteraction, sess: Ac
       .setColor(0x3a7bd5)
       .setTitle("🎓 Training Package — Step 1 of 4")
       .setDescription(
-        "Training packages give your player a **multi-attribute lottery upgrade**. The number of attributes rolled and the points per attribute are both random, biased toward the higher end.\n\n" +
-        "**Gold** — 1,000 coins · **3-5 attributes** · up to **+4 pts** each · max 2/season\n" +
-        "**Silver** — 500 coins · **2-4 attributes** · up to **+2 pts** each · max 2/season\n" +
-        "**Bronze** — 250 coins · **2-3 attributes** · **+1 pt** each · unlimited\n\n" +
+        "Training packages give your player a **multi-attribute lottery upgrade**. Higher tiers always roll more attributes and larger point gains.\n\n" +
+        "**Gold** — 1,000 coins · **4-5 attributes** · up to **+4 pts** each · max 2/season\n" +
+        "**Silver** — 500 coins · **3 attributes** · up to **+2 pts** each · max 2/season\n" +
+        "**Bronze** — 250 coins · **2 attributes** · **+1 pt** each · unlimited\n\n" +
         "First, pick the **position** of the player you want to train.",
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
@@ -2142,17 +2142,17 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
   const tierRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:gold")
-      .setLabel(`🥇 Gold — 1,000 coins (3-5 attrs · up to +4 pts each)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setLabel(`🥇 Gold — 1,000 coins (4-5 attrs · up to +4 pts each)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Primary)
       .setDisabled(goldDisabled || user.balance < TRAINING_TIERS.gold.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:silver")
-      .setLabel(`🥈 Silver — 500 coins (2-4 attrs · up to +2 pts each)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setLabel(`🥈 Silver — 500 coins (3 attrs · up to +2 pts each)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(silverDisabled || user.balance < TRAINING_TIERS.silver.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:bronze")
-      .setLabel("🥉 Bronze — 250 coins (2-3 attrs · +1 pt each)")
+      .setLabel("🥉 Bronze — 250 coins (2 attrs · +1 pt each)")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(user.balance < TRAINING_TIERS.bronze.cost),
   );
@@ -2161,9 +2161,9 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
     `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos}) — OVR ${sess.trainingPlayerOvr}`,
     `**Your balance:** ${user.balance.toLocaleString()} coins`,
     "",
-    `**Gold** — 1,000 coins · 3-5 attrs · up to +4 pts each · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
-    `**Silver** — 500 coins · 2-4 attrs · up to +2 pts each · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
-    "**Bronze** — 250 coins · 2-3 attrs · +1 pt each · unlimited",
+    `**Gold** — 1,000 coins · 4-5 attrs · up to +4 pts each · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
+    `**Silver** — 500 coins · 3 attrs · up to +2 pts each · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
+    "**Bronze** — 250 coins · 2 attrs · +1 pt each · unlimited",
     "",
     "Select the tier you want to buy. You'll choose a **training goal** next to bias the roll.",
   ];
