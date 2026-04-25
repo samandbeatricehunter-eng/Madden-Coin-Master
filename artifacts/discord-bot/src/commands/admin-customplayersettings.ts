@@ -38,7 +38,7 @@ function buildSettingsEmbed(s: Awaited<ReturnType<typeof getSettings>>, title: s
       { name: "Silver",            value: `${s.silverPoints} pts — ${s.silverCost} coins`, inline: true },
       { name: "Gold",              value: `${s.goldPoints} pts — ${s.goldCost} coins`,     inline: true },
       { name: "K/P Default",       value: `${s.kpPoints} pts — ${s.kpCost} coins`,         inline: true },
-      { name: "Per-User Season Cap", value: `${LIMITS.maxLegendsPlusCustomPlayers} combined (legends + custom players)`, inline: true },
+      { name: "Custom Players/Season", value: `${LIMITS.customPlayersPerDraft} per season`, inline: true },
     )
     .setTimestamp();
 }

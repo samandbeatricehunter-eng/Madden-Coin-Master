@@ -446,9 +446,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (invCount.legends >= LIMITS.maxLegendsInInventory) {
       return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${LIMITS.maxLegendsInInventory} legends** in your inventory.`)] });
     }
-    if (invCount.legends + invCount.customs >= LIMITS.maxLegendsPlusCustomPlayers) {
-      return interaction.editReply({ embeds: [errorEmbed("Inventory Full", `You already have **${invCount.legends + invCount.customs}** combined legends and custom players (max ${LIMITS.maxLegendsPlusCustomPlayers}).`)] });
-    }
 
     await deductBalance(interaction.user.id, cost, interaction.guildId!);
     await logTransaction(interaction.user.id, -cost, "purchase", `Legend purchase — ${legend.name} (${legend.position})`, interaction.guildId!);

@@ -1682,24 +1682,17 @@ async function handleBuyCustomInfo(interaction: ButtonInteraction) {
   const discordId = interaction.user.id;
   const season    = await getOrCreateActiveSeason(gid);
 
-  const invCount = await getInventoryCount(discordId, season.id);
+  const invCount   = await getInventoryCount(discordId, season.id);
+  const customsCap = LIMITS.customPlayersPerDraft;
 
-  const combined = invCount.legends + invCount.customs;
-  const cap      = LIMITS.maxLegendsPlusCustomPlayers;
-
-  if (combined >= cap) {
+  if (invCount.customs >= customsCap) {
     await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(Colors.Red)
-        .setTitle("❌ Season Inventory Full")
+        .setTitle("❌ Custom Player Limit Reached")
         .setDescription(
-          `You already have **${combined}** combined legends and custom players this season ` +
-          `(max **${cap}**). You cannot add another custom player.`,
-        )
-        .addFields(
-          { name: "Legends",        value: `${invCount.legends}`, inline: true },
-          { name: "Custom Players", value: `${invCount.customs}`, inline: true },
-          { name: "Limit",          value: `${cap} combined`,     inline: true },
+          `You have already purchased **${invCount.customs}** custom player this season ` +
+          `(max **${customsCap}** per season). You cannot purchase another until next season.`,
         )],
       components: [backToHubRow()],
     });
@@ -1707,7 +1700,6 @@ async function handleBuyCustomInfo(interaction: ButtonInteraction) {
   }
 
   const sessionId = createSession(discordId, gid, season.id);
-  const slotsLeft = cap - combined;
 
   const warningEmbed = new EmbedBuilder()
     .setColor(Colors.Yellow)
@@ -1727,8 +1719,8 @@ async function handleBuyCustomInfo(interaction: ButtonInteraction) {
           "4. They join your roster once drafted.",
       },
       {
-        name: "Season inventory slots",
-        value: `You have **${combined}** of **${cap}** slots used. **${slotsLeft}** slot${slotsLeft !== 1 ? "s" : ""} remaining.`,
+        name: "Custom player limit",
+        value: `You have used **${invCount.customs}** of **${customsCap}** custom player slot this season.`,
       },
     )
     .setFooter({ text: "Make sure you have a draft pick saved before proceeding." });

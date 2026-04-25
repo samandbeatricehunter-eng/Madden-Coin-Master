@@ -855,7 +855,7 @@ function buildPricingBlock(rules: SeasonRulesShape): string {
     : `Current core attributes this season: Speed, Acceleration, Change of Direction, Agility, Strength, Jumping, Throwing Power, Awareness, Stamina (default list — no overrides set)`;
   return [
     `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Week 9 only`,
-    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · Legends + Custom combined max ${LIMITS.maxLegendsPlusCustomPlayers}/season`,
+    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · max ${LIMITS.customPlayersPerDraft}/season`,
     `Core Attribute Upgrade: ${rules.coreAttrCost} coins/point · max ${rules.coreAttrCap} points/season · ${coreAttrRule}`,
     coreAttrListLine,
     `Non-Core Attribute Upgrade: ${rules.nonCoreAttrCost} coins/point · max ${rules.nonCoreAttrCap} points/season · any attribute NOT in the core list above`,

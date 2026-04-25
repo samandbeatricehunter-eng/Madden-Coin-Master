@@ -205,7 +205,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     embed.setDescription("*No store items are currently enabled.*");
   }
 
-  embed.setFooter({ text: `Season ${season.seasonNumber} rates • Use /purchase to buy • Legends + Custom Players combined cap: ${LIMITS.maxLegendsPlusCustomPlayers}` });
+  embed.setFooter({ text: `Season ${season.seasonNumber} rates • Use /purchase to buy • Legends: max ${LIMITS.legendsPerTeam}/team • Custom Players: max ${LIMITS.customPlayersPerDraft}/season` });
 
   return interaction.editReply({ embeds: [embed] });
 }

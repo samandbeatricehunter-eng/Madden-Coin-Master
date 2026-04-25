@@ -39,7 +39,6 @@ export const LIMITS = {
   ageResetsPerSeason: 1,
   legendsPerTeam: 2,
   maxLegendsInInventory: 2,
-  maxLegendsPlusCustomPlayers: 2,
   customPlayersPerDraft: 1,
   contractExtensionsPerSeason: 1,
   contractExtensionsCareer: 1,
