@@ -156,15 +156,22 @@ export async function sendCommissionerNotification(
         "Click the button below once this has been applied in-game.",
       ].filter(Boolean).join("\n");
     } else if (type.startsWith("training_")) {
-      const tierLabel = type === "training_gold" ? "🥇 Gold" : type === "training_silver" ? "🥈 Silver" : "🥉 Bronze";
-      const points    = type === "training_gold" ? 4 : type === "training_silver" ? 2 : 1;
-      const pts       = details["points"] ?? points;
+      const tierLabel  = type === "training_gold" ? "🥇 Gold" : type === "training_silver" ? "🥈 Silver" : "🥉 Bronze";
+      const basePoints = type === "training_gold" ? 4 : type === "training_silver" ? 2 : 1;
+      const pts        = details["points"] ?? basePoints;
+      const goalLabel  = details["trainingGoal"] === "speed" ? "⚡ Speed" : details["trainingGoal"] === "power" ? "💪 Power" : "⚖️ Balanced";
+      const before     = details["attrBefore"] !== undefined ? Number(details["attrBefore"]) : null;
+      const after      = details["attrAfter"]  !== undefined ? Number(details["attrAfter"])  : null;
+      const attrChange = before !== null && after !== null
+        ? `**${details["attributeName"]}:** ${before} → **${after}**`
+        : `**+${pts} ${details["attributeName"]}**`;
       title = `🎓 Training Package — ${tierLabel}`;
       description = [
         `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
         `**Tier:** ${tierLabel}`,
+        details["trainingGoal"] ? `**Training Goal:** ${goalLabel}` : null,
         details["playerName"] ? `**Player:** ${details["playerName"]}${details["playerPos"] ? ` (${details["playerPos"]})` : ""}` : null,
-        `**🎲 Lottery Roll:** **${details["attributeName"]}** (+${pts} pts)`,
+        `**🎲 Lottery Roll:** ${attrChange}`,
         `**Purchase ID:** #${purchaseId}`,
         "",
         `Apply **+${pts} ${details["attributeName"]}** to **${details["playerName"] ?? "their chosen player"}**.`,

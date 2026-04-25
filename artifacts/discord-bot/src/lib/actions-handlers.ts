@@ -96,6 +96,7 @@ interface ActionsSession {
   selectedLegendCost?: number;
   // training package flow
   trainingTier?: string;
+  trainingGoal?: "speed" | "power" | "balanced";
   trainingPlayerId?: number;
   trainingPlayerName?: string;
   trainingPlayerPos?: string;
@@ -705,8 +706,9 @@ export async function handleActionsInteraction(
   if (id.startsWith("ac_buy_trainingplayer:")) { await handleBuyTrainingTierPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_training_tier:")) {
     const tier = id.split(":")[1] as TrainingTier;
-    if (tier in TRAINING_TIERS) { await handleBuyTrainingTier(interaction as ButtonInteraction, sess, tier); return true; }
+    if (tier in TRAINING_TIERS) { await handleBuyTrainingGoalPick(interaction as ButtonInteraction, sess, tier); return true; }
   }
+  if (id.startsWith("ac_buy_training_goal:"))  { await handleBuyTrainingConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_training_execute")        { await handleBuyTrainingExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_contract_ext")  { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "contract_extension"); return true; }
   if (id === "ac_buy_salary_red")    { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "salary_reduction"); return true; }
@@ -1884,11 +1886,40 @@ const TRAINING_TIERS = {
 } as const;
 type TrainingTier = keyof typeof TRAINING_TIERS;
 
+// Attribute pools for weighted lottery (1.5× chance when goal matches)
+const TRAINING_SPEED_ATTRS = new Set([
+  "Speed", "Acceleration", "Agility", "Change of Direction",
+  "Juke Move", "Spin Move", "Release",
+  "Pass Block Finesse", "Run Block Finesse", "Finesse Moves",
+  "Pursuit", "Man Coverage", "Zone Coverage", "Kick/Punt Return",
+]);
+const TRAINING_POWER_ATTRS = new Set([
+  "Strength", "Trucking", "Stiff Arm", "Break Tackle",
+  "Hit Power", "Throwing Power", "Power Moves",
+  "Pass Block Power", "Run Block Power",
+  "Lead Block", "Impact Blocking", "Block Shedding", "Tackling",
+]);
+
+/** Weighted random attribute roll. Goal attrs get 1.5× weight; others get 1× */
+function rollTrainingAttr(goal: "speed" | "power" | "balanced"): string {
+  const boostSet = goal === "speed" ? TRAINING_SPEED_ATTRS : goal === "power" ? TRAINING_POWER_ATTRS : null;
+  const attrs    = [...ATTRIBUTES] as string[];
+  const weights  = attrs.map(a => (boostSet && boostSet.has(a) ? 1.5 : 1.0));
+  const total    = weights.reduce((s, w) => s + w, 0);
+  let rng        = Math.random() * total;
+  for (let i = 0; i < attrs.length; i++) {
+    rng -= weights[i]!;
+    if (rng <= 0) return attrs[i]!;
+  }
+  return attrs[attrs.length - 1]!;
+}
+
 // Step 1 — Pick a position
 async function handleBuyTrainingPosPick(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
   sess.trainingTier = undefined;
+  sess.trainingGoal = undefined;
   sess.trainingPlayerId = undefined;
   sess.trainingPlayerName = undefined;
   sess.trainingPlayerPos = undefined;
@@ -1910,7 +1941,7 @@ async function handleBuyTrainingPosPick(interaction: ButtonInteraction, sess: Ac
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x3a7bd5)
-      .setTitle("🎓 Training Package — Step 1 of 3")
+      .setTitle("🎓 Training Package — Step 1 of 4")
       .setDescription(
         "Training packages give your player a **randomly rolled attribute upgrade**.\n\n" +
         "**Gold** — 1,000 coins · **+4 pts** · max 2/season\n" +
@@ -1923,9 +1954,9 @@ async function handleBuyTrainingPosPick(interaction: ButtonInteraction, sess: Ac
 }
 
 // Step 2 — Pick a player from the chosen position
-async function handleBuyTrainingPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+async function handleBuyTrainingPlayerPick(interaction: StringSelectMenuInteraction, _sess: ActionsSession) {
   const position = interaction.values[0]!;
-  const gid = interaction.guildId!;
+  const gid      = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
 
   const rows = await getRosterRows(interaction as any, seasonId, {
@@ -1957,13 +1988,13 @@ async function handleBuyTrainingPlayerPick(interaction: StringSelectMenuInteract
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x3a7bd5)
-      .setTitle("🎓 Training Package — Step 2 of 3")
+      .setTitle("🎓 Training Package — Step 2 of 4")
       .setDescription(`**Position: ${position}**\nNow pick the specific player you want to train.`)],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
 }
 
-// Step 3 — Pick a tier (show availability check before rendering)
+// Step 3 — Pick a tier
 async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
   const parts = interaction.values[0]!.split("|");
   sess.trainingPlayerId   = Number(parts[0]);
@@ -1995,7 +2026,7 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
       .setDisabled(silverDisabled || user.balance < TRAINING_TIERS.silver.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:bronze")
-      .setLabel(`🥉 Bronze — 250 coins (+1 pt)`)
+      .setLabel("🥉 Bronze — 250 coins (+1 pt)")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(user.balance < TRAINING_TIERS.bronze.cost),
   );
@@ -2006,38 +2037,38 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
     "",
     `**Gold** — 1,000 coins · +4 pts · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
     `**Silver** — 500 coins · +2 pts · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
-    `**Bronze** — 250 coins · +1 pt · unlimited`,
+    "**Bronze** — 250 coins · +1 pt · unlimited",
     "",
-    "Select the tier you want to buy. The attribute upgraded will be **randomly rolled** and applied by your commissioner.",
+    "Select the tier you want to buy. You'll choose a **training goal** next to bias the roll.",
   ];
 
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x3a7bd5)
-      .setTitle("🎓 Training Package — Step 3 of 3")
+      .setTitle("🎓 Training Package — Step 3 of 4")
       .setDescription(lines.join("\n"))],
     components: [tierRow, cancelRow()],
   });
 }
 
-// Step 4 — Confirm (after tier button is clicked)
-async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: ActionsSession, tier: TrainingTier) {
+// Step 4 — Pick a training goal (after tier button, before confirmation)
+async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: ActionsSession, tier: TrainingTier) {
   const meta = TRAINING_TIERS[tier];
   const gid  = interaction.guildId!;
   sess.trainingTier = tier;
+  sess.trainingGoal = undefined;
 
   if (!sess.trainingPlayerName) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
     return;
   }
 
+  // Re-check balance & season limits before showing goal picker
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-
   if (user.balance < meta.cost) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
-
   if (meta.limit < 999 && meta.seasonStatKey) {
     const season = await getOrCreateActiveSeason(gid);
     const stats  = await getSeasonStats(interaction.user.id, season.id);
@@ -2048,6 +2079,61 @@ async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: Actio
     }
   }
 
+  const goalMenu = new StringSelectMenuBuilder()
+    .setCustomId("ac_buy_training_goal:")
+    .setPlaceholder("Choose a training focus…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder()
+        .setLabel("⚡ Speed")
+        .setDescription("50% higher chance of rolling Speed, Agility, Acceleration, and other movement attributes")
+        .setValue("speed"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("💪 Power")
+        .setDescription("50% higher chance of rolling Strength, Trucking, Hit Power, and other physical attributes")
+        .setValue("power"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("⚖️ Balanced")
+        .setDescription("Even chance across all attributes — no bias")
+        .setValue("balanced"),
+    ]);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0x3a7bd5)
+      .setTitle("🎓 Training Package — Step 4 of 4")
+      .setDescription(
+        `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos})\n` +
+        `**Tier:** ${meta.label} — +${meta.points} pts\n\n` +
+        "Choose a **training goal** to bias the attribute lottery:\n\n" +
+        "⚡ **Speed** — 50% boost to rolls for quickness, finesse & movement attributes\n" +
+        "💪 **Power** — 50% boost to rolls for strength, power & physical attributes\n" +
+        "⚖️ **Balanced** — all attributes equally likely\n\n" +
+        "_The boost increases the probability, not a guarantee. The result is still a lottery._",
+      )],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(goalMenu), cancelRow()],
+  });
+}
+
+// Confirmation screen (after goal selected)
+async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const goal = interaction.values[0] as "speed" | "power" | "balanced";
+  sess.trainingGoal = goal;
+
+  const tier = sess.trainingTier as TrainingTier | undefined;
+  if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const meta = TRAINING_TIERS[tier];
+  const gid  = interaction.guildId!;
+  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+
+  const goalLabel = goal === "speed" ? "⚡ Speed" : goal === "power" ? "💪 Power" : "⚖️ Balanced";
+  const goalDesc  = goal === "balanced"
+    ? "all attributes rolled evenly"
+    : `${goal === "speed" ? "movement/quickness" : "strength/power"} attributes have 50% higher roll chance`;
+
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Yellow)
@@ -2055,9 +2141,10 @@ async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: Actio
       .setDescription(
         `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos})\n` +
         `**Tier:** ${meta.label} — +${meta.points} pts to a randomly rolled attribute\n` +
+        `**Training Goal:** ${goalLabel} — ${goalDesc}\n` +
         `**Cost:** ${meta.cost.toLocaleString()} coins\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n\n` +
-        `The attribute rolled will be posted to your commissioner for application.`,
+        "The lottery will roll when you confirm. The result and the player's before/after attribute values will be posted to your commissioner.",
       )],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -2068,10 +2155,11 @@ async function handleBuyTrainingTier(interaction: ButtonInteraction, sess: Actio
   });
 }
 
-// Step 5 — Execute
+// Execute — lottery roll, deduct, record, notify commissioner with before/after values
 async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid  = interaction.guildId!;
   const tier = sess.trainingTier as TrainingTier | undefined;
+  const goal = sess.trainingGoal ?? "balanced";
   if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
     return;
@@ -2095,12 +2183,33 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     }
   }
 
-  // 🎲 Lottery roll — pick a random attribute
-  const attrList   = [...ATTRIBUTES];
-  const rolledAttr = attrList[Math.floor(Math.random() * attrList.length)]!;
+  // 🎲 Weighted lottery roll
+  const rolledAttr = rollTrainingAttr(goal);
+
+  // Look up the player's current attribute value for before/after display
+  let attrBefore: number | null = null;
+  if (sess.trainingPlayerId) {
+    const seasonId = await getRosterSeasonId(gid);
+    const rosterRows = await db.select({ attributes: franchiseRostersTable.attributes })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, seasonId),
+        eq(franchiseRostersTable.playerId, sess.trainingPlayerId),
+      ))
+      .limit(1);
+    const attrs = rosterRows[0]?.attributes as Record<string, number> | null | undefined;
+    attrBefore = attrs?.[rolledAttr] ?? null;
+  }
+  const attrAfter = attrBefore !== null ? attrBefore + meta.points : null;
+  const beforeAfterText = attrBefore !== null
+    ? `${rolledAttr}: **${attrBefore} → ${attrAfter}**`
+    : `+${meta.points} ${rolledAttr}`;
 
   await deductBalance(interaction.user.id, meta.cost, gid);
-  await logTransaction(interaction.user.id, -meta.cost, "purchase", `${meta.label} Training Package — ${sess.trainingPlayerName} — rolled: ${rolledAttr}`, gid);
+  await logTransaction(
+    interaction.user.id, -meta.cost, "purchase",
+    `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — rolled: ${rolledAttr} (+${meta.points})`, gid,
+  );
 
   const [inserted] = await db.insert(purchasesTable).values({
     discordId:      interaction.user.id,
@@ -2111,7 +2220,7 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     attributeName:  rolledAttr,
     cost:           meta.cost,
     status:         "pending",
-    notes:          `Training ${tier} — ${sess.trainingPlayerName} — rolled: ${rolledAttr} (+${meta.points} pts)`,
+    notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${rolledAttr} +${meta.points}${attrBefore !== null ? ` (${attrBefore}→${attrAfter})` : ""}`,
   }).returning({ id: purchasesTable.id });
 
   if (meta.seasonStatKey === "trainingGoldPurchased") {
@@ -2127,7 +2236,10 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
   await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted!.id, {
     playerName:    sess.trainingPlayerName,
     playerPos:     sess.trainingPlayerPos ?? "",
+    trainingGoal:  goal,
     attributeName: rolledAttr,
+    attrBefore:    attrBefore ?? undefined,
+    attrAfter:     attrAfter ?? undefined,
     points:        meta.points,
     tier,
   });
@@ -2138,7 +2250,7 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
       .setTitle("🎓 Training Package Purchased!")
       .setDescription(
         `**${meta.label} Training Package** purchased for **${sess.trainingPlayerName}** (${sess.trainingPlayerPos})!\n\n` +
-        `🎲 **Lottery Result:** **+${meta.points} ${rolledAttr}**\n\n` +
+        `🎲 **Lottery Result:** ${beforeAfterText}\n\n` +
         `Your commissioner has been notified and will apply this upgrade. **${meta.cost.toLocaleString()} coins** deducted.`,
       )],
     components: [backToHubRow()],
