@@ -19,7 +19,7 @@ import {
   legendsTable, franchiseScheduleTable,
   guildTweetsTable, autoPilotRequestsTable, ruleViolationsTable,
   playerEaIdsTable, customPlayersTable,
-  playerSeasonStatsTable, waitlistTable,
+  playerSeasonStatsTable, waitlistTable, payoutConfigTable,
 } from "@workspace/db";
 import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -42,6 +42,7 @@ import {
 } from "../commands/interviewrequest.js";
 import { buildActionsHubEmbed, buildActionsHubRows, buildUnlinkedHubEmbed, buildUnlinkedHubRows } from "../commands/actions.js";
 import { buildUserProfilePages, buildProfileNavRow, buildProfileBackRow } from "./user-stats-embed.js";
+import { getSavingsInterestRateBps } from "./savings-interest.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
@@ -2923,10 +2924,45 @@ async function handleCoins(interaction: ButtonInteraction, sess: ActionsSession)
 
 async function handleBankTransfer(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid  = interaction.guildId!;
-  const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-  const savingsRow = (await db.select({ balance: userSavingsTable.balance }).from(userSavingsTable)
-    .where(eq(userSavingsTable.discordId, interaction.user.id)).limit(1))[0];
+  const [user, savingsRow, rateBps, lastRunRow] = await Promise.all([
+    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
+    db.select({ balance: userSavingsTable.balance }).from(userSavingsTable)
+      .where(eq(userSavingsTable.discordId, interaction.user.id)).limit(1).then(r => r[0]),
+    getSavingsInterestRateBps(),
+    db.select({ value: payoutConfigTable.value }).from(payoutConfigTable)
+      .where(eq(payoutConfigTable.key, "savings_last_interest_at")).limit(1).then(r => r[0]),
+  ]);
   const savings = savingsRow?.balance ?? 0;
+
+  // Projected daily interest
+  const projectedInterest = rateBps > 0 && savings > 0
+    ? Math.ceil(savings * rateBps / 10000)
+    : 0;
+  const ratePercent = (rateBps / 100).toFixed(2);
+
+  // Time until next payout
+  let nextPayoutStr = "~24h from last payout";
+  if (lastRunRow?.value) {
+    const lastRunMs   = lastRunRow.value * 1000;
+    const nextRunMs   = lastRunMs + 24 * 60 * 60 * 1000;
+    const msleft      = nextRunMs - Date.now();
+    if (msleft > 0) {
+      const hLeft = Math.floor(msleft / (60 * 60 * 1000));
+      const mLeft = Math.floor((msleft % (60 * 60 * 1000)) / 60000);
+      nextPayoutStr = `~${hLeft}h ${mLeft}m`;
+    } else {
+      nextPayoutStr = "very soon";
+    }
+  }
+
+  let interestFieldValue: string;
+  if (rateBps <= 0) {
+    interestFieldValue = "No interest rate currently set.";
+  } else if (savings <= 0) {
+    interestFieldValue = `Rate: **${ratePercent}%**/day\nDeposit coins to start earning.`;
+  } else {
+    interestFieldValue = `**+${projectedInterest.toLocaleString()} coins** next payout\nRate: **${ratePercent}%**/day · Next: **${nextPayoutStr}**`;
+  }
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
@@ -2935,6 +2971,7 @@ async function handleBankTransfer(interaction: ButtonInteraction, sess: ActionsS
     .addFields(
       { name: "💰 Wallet",  value: `**${user.balance.toLocaleString()}** coins`, inline: true },
       { name: "🏦 Savings", value: `**${savings.toLocaleString()}** coins`, inline: true },
+      { name: "📈 Projected Interest", value: interestFieldValue, inline: false },
     );
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
