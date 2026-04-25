@@ -1900,21 +1900,60 @@ const TRAINING_POWER_ATTRS = new Set([
   "Lead Block", "Impact Blocking", "Block Shedding", "Tackling",
 ]);
 
+// Position-relevant attribute sets — only eligible attrs for a given roster spot
+const _A = (...attrs: string[]) => new Set(attrs);
+const SHARED_ATHLETE   = ["Speed","Acceleration","Agility","Strength","Awareness","Change of Direction","Jumping","Stamina","Toughness","Injury"] as const;
+const SHARED_COVERAGE  = ["Tackling","Hit Power","Pursuit","Play Recognition","Man Coverage","Zone Coverage","Press"] as const;
+const SHARED_DLINE     = ["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit"] as const;
+const SHARED_OL_BLOCKS = ["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"] as const;
+
+const TRAINING_POS_ATTRS: Record<string, Set<string>> = {
+  QB:    _A(...SHARED_ATHLETE, "Throwing Power","Short Accuracy","Medium Accuracy","Deep Accuracy","Throw on the Run","Throw Under Pressure","Break Sack","Play Action"),
+  HB:    _A(...SHARED_ATHLETE, "Carrying","BC Vision","Break Tackle","Trucking","Stiff Arm","Spin Move","Juke Move","Catching","Catch in Traffic","Kick/Punt Return"),
+  FB:    _A(...SHARED_ATHLETE, "Carrying","Break Tackle","Trucking","Stiff Arm","Catching","Catch in Traffic",...SHARED_OL_BLOCKS),
+  WR:    _A(...SHARED_ATHLETE, "Carrying","Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release","Kick/Punt Return"),
+  TE:    _A(...SHARED_ATHLETE, "Carrying","Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release",...SHARED_OL_BLOCKS),
+  LT:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  LG:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  C:     _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  RG:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  RT:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  LEDGE: _A(...SHARED_ATHLETE, ...SHARED_DLINE),
+  REDGE: _A(...SHARED_ATHLETE, ...SHARED_DLINE),
+  DT:    _A(...SHARED_ATHLETE, ...SHARED_DLINE),
+  WILL:  _A(...SHARED_ATHLETE, ...SHARED_DLINE, "Play Recognition","Man Coverage","Zone Coverage"),
+  MIKE:  _A(...SHARED_ATHLETE, ...SHARED_DLINE, "Play Recognition","Man Coverage","Zone Coverage"),
+  SAM:   _A(...SHARED_ATHLETE, ...SHARED_DLINE, "Play Recognition","Man Coverage","Zone Coverage"),
+  CB:    _A(...SHARED_ATHLETE, "Catching",...SHARED_COVERAGE,"Kick/Punt Return"),
+  FS:    _A(...SHARED_ATHLETE, "Catching",...SHARED_COVERAGE),
+  SS:    _A(...SHARED_ATHLETE, "Catching",...SHARED_COVERAGE),
+  K:     _A("Kicking Power","Kicking Accuracy","Stamina","Toughness","Injury"),
+  P:     _A("Kicking Power","Kicking Accuracy","Stamina","Toughness","Injury"),
+  LS:    _A("Strength","Awareness","Long Snap","Stamina","Toughness","Injury"),
+};
+
 /** Weighted random attribute roll.
+ *  - Filters to position-relevant attributes only (no KAC for a WR, no Tackling for a QB, etc.)
  *  - Filters out any attribute where playerAttrs[attr] + points > 99 (already at/near cap).
- *  - Goal attrs get 1.5× weight; others get 1×. */
+ *  - Goal attrs get 1.5× weight; all others get 1×. */
 function rollTrainingAttr(
   goal: "speed" | "power" | "balanced",
   playerAttrs: Record<string, number>,
   points: number,
+  position: string,
 ): string {
-  const boostSet = goal === "speed" ? TRAINING_SPEED_ATTRS : goal === "power" ? TRAINING_POWER_ATTRS : null;
-  // Only eligible: adding points won't push the value past 99
-  const eligible = (ATTRIBUTES as readonly string[]).filter(a => (playerAttrs[a] ?? 0) + points <= 99);
-  const pool     = eligible.length > 0 ? eligible : [...ATTRIBUTES] as string[]; // fallback: all attrs
-  const weights  = pool.map(a => (boostSet && boostSet.has(a) ? 1.5 : 1.0));
-  const total    = weights.reduce((s, w) => s + w, 0);
-  let rng        = Math.random() * total;
+  const boostSet  = goal === "speed" ? TRAINING_SPEED_ATTRS : goal === "power" ? TRAINING_POWER_ATTRS : null;
+  const posFilter = TRAINING_POS_ATTRS[position.toUpperCase()]; // undefined = unknown pos, allow all
+  const allAttrs  = [...ATTRIBUTES] as string[];
+  // Apply position filter first, then 99-cap filter
+  const eligible  = allAttrs.filter(a =>
+    (!posFilter || posFilter.has(a)) &&          // relevant to this position
+    (playerAttrs[a] ?? 0) + points <= 99,        // won't exceed 99
+  );
+  const pool    = eligible.length > 0 ? eligible : allAttrs; // safety fallback
+  const weights = pool.map(a => (boostSet && boostSet.has(a) ? 1.5 : 1.0));
+  const total   = weights.reduce((s, w) => s + w, 0);
+  let rng       = Math.random() * total;
   for (let i = 0; i < pool.length; i++) {
     rng -= weights[i]!;
     if (rng <= 0) return pool[i]!;
@@ -2205,8 +2244,8 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
   }
 
-  // 🎲 Weighted lottery roll — excludes attrs that would exceed 99
-  const rolledAttr = rollTrainingAttr(goal, playerAttrs, meta.points);
+  // 🎲 Weighted lottery roll — position-filtered, excludes attrs that would exceed 99
+  const rolledAttr = rollTrainingAttr(goal, playerAttrs, meta.points, sess.trainingPlayerPos ?? "");
 
   const attrBefore = playerAttrs[rolledAttr] !== undefined ? playerAttrs[rolledAttr]! : null;
   const attrAfter  = attrBefore !== null ? attrBefore + meta.points : null;
