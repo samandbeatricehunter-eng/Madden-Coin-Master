@@ -704,9 +704,10 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     const keys = [t.fullName.toLowerCase().trim(), t.nickName.toLowerCase().trim()];
     for (const k of keys) {
       if (!teamToMca.has(k)) teamToMca.set(k, t);
-      if (t.discordId && !teamToDiscord.has(k)) teamToDiscord.set(k, t.discordId);
+      if (t.discordId && !t.discordId.startsWith("unlinked_") && !teamToDiscord.has(k))
+        teamToDiscord.set(k, t.discordId);
     }
-    if (t.discordId) discordIdToMca.set(t.discordId, t);
+    if (t.discordId && !t.discordId.startsWith("unlinked_")) discordIdToMca.set(t.discordId, t);
   }
 
   const discordIdToProperTeam = new Map<string, string>();
@@ -715,6 +716,16 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       const k = u.team.toLowerCase().trim();
       if (!teamToDiscord.has(k)) teamToDiscord.set(k, u.discordId);
       discordIdToProperTeam.set(u.discordId, u.team);
+    }
+  }
+
+  // Alias full team names to real Discord IDs resolved via nickname, and enrich discordIdToMca
+  for (const t of mcaTeams) {
+    const byNick = teamToDiscord.get(t.nickName.toLowerCase().trim());
+    if (byNick) {
+      if (!teamToDiscord.has(t.fullName.toLowerCase().trim()))
+        teamToDiscord.set(t.fullName.toLowerCase().trim(), byNick);
+      if (!discordIdToMca.has(byNick)) discordIdToMca.set(byNick, t);
     }
   }
 
@@ -789,9 +800,11 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
         parent: matchupCategory.id,
       });
       await newChannel.lockPermissions();
+      const awayMention = awayDiscordId && !awayDiscordId.startsWith("unlinked_") ? `<@${awayDiscordId}>` : awayProper;
+      const homeMention = homeDiscordId && !homeDiscordId.startsWith("unlinked_") ? `<@${homeDiscordId}>` : homeProper;
       await newChannel.send(
         `🏈 **${awayProper} vs ${homeProper}** — ${displayLabel}\n` +
-        `<@${awayDiscordId}> <@${homeDiscordId}>\nGood luck this week!`,
+        `${awayMention} ${homeMention}\nGood luck this week!`,
       );
       await db.insert(gameChannelsTable).values({
         seasonId:     schedSeasonId,
@@ -2917,13 +2930,14 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         ];
         for (const key of keys) {
           if (!teamToMca.has(key)) teamToMca.set(key, t);
-          if (t.discordId && !teamToDiscord.has(key)) teamToDiscord.set(key, t.discordId);
+          if (t.discordId && !t.discordId.startsWith("unlinked_") && !teamToDiscord.has(key))
+            teamToDiscord.set(key, t.discordId);
         }
       }
 
       const discordIdToMca = new Map<string, typeof mcaTeams[0]>();
       for (const t of mcaTeams) {
-        if (t.discordId) discordIdToMca.set(t.discordId, t);
+        if (t.discordId && !t.discordId.startsWith("unlinked_")) discordIdToMca.set(t.discordId, t);
       }
 
       const allUsers = await db.select({
@@ -2939,6 +2953,16 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
       const discordIdToProperTeam = new Map<string, string>();
       for (const u of allUsers) {
         if (u.team) discordIdToProperTeam.set(u.discordId, u.team);
+      }
+
+      // Alias full team names to real Discord IDs resolved via nickname, and enrich discordIdToMca
+      for (const t of mcaTeams) {
+        const byNick = teamToDiscord.get(t.nickName.toLowerCase().trim());
+        if (byNick) {
+          if (!teamToDiscord.has(t.fullName.toLowerCase().trim()))
+            teamToDiscord.set(t.fullName.toLowerCase().trim(), byNick);
+          if (!discordIdToMca.has(byNick)) discordIdToMca.set(byNick, t);
+        }
       }
 
       const h2hGames = games.filter(g => {
@@ -2982,9 +3006,11 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
 
           await newChannel.lockPermissions();
 
+          const awayMention2 = awayDiscordId && !awayDiscordId.startsWith("unlinked_") ? `<@${awayDiscordId}>` : awayProper;
+          const homeMention2 = homeDiscordId && !homeDiscordId.startsWith("unlinked_") ? `<@${homeDiscordId}>` : homeProper;
           await newChannel.send(
             `🏈 **${awayProper} vs ${homeProper}** — ${channelWeekDisplayLabel}\n` +
-            `<@${awayDiscordId}> <@${homeDiscordId}>\n` +
+            `${awayMention2} ${homeMention2}\n` +
             `Good luck this week!`,
           );
 
