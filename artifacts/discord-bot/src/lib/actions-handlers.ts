@@ -25,7 +25,7 @@ import {
 import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
-  getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId,
+  getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId, getScheduleSeasonId,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
   getSeasonStats, getSeasonRules, getInventoryCount,
   getOrSeedRules, getAllSections, isAdminUser, getTeamLegendCount,
@@ -6803,14 +6803,17 @@ async function handleSchedule(interaction: ButtonInteraction, sess: ActionsSessi
     return;
   }
 
-  const season         = await getOrCreateActiveSeason(guildId);
-  const rosterSeasonId = await getRosterSeasonId(guildId);
+  const season           = await getOrCreateActiveSeason(guildId);
+  const scheduleSeasonId = await getScheduleSeasonId(guildId);
 
+  // Use scheduleSeasonId for the MCA lookup so team names are consistent with
+  // the schedule data — e.g. if the active season has no schedule yet, both
+  // the MCA entry and the schedule rows come from the same prior season.
   const [mcaEntry] = await db
     .select({ fullName: franchiseMcaTeamsTable.fullName, nickName: franchiseMcaTeamsTable.nickName })
     .from(franchiseMcaTeamsTable)
     .where(and(
-      eq(franchiseMcaTeamsTable.seasonId,  rosterSeasonId),
+      eq(franchiseMcaTeamsTable.seasonId,  scheduleSeasonId),
       eq(franchiseMcaTeamsTable.discordId, userId),
     ))
     .limit(1);
@@ -6831,17 +6834,26 @@ async function handleSchedule(interaction: ButtonInteraction, sess: ActionsSessi
     .select()
     .from(franchiseScheduleTable)
     .where(and(
-      eq(franchiseScheduleTable.seasonId, season.id),
+      eq(franchiseScheduleTable.seasonId, scheduleSeasonId),
       or(...nameConditions),
     ))
     .orderBy(asc(franchiseScheduleTable.weekIndex));
 
   const regularGames = allGames.filter(g => g.weekIndex >= 0 && g.weekIndex <= 17);
 
+  // Resolve the season number to display — may differ from the active season
+  // when scheduleSeasonId falls back to a prior season's data.
+  let displaySeasonNumber = season.seasonNumber;
+  if (scheduleSeasonId !== season.id) {
+    const [altSeason] = await db.select({ seasonNumber: seasonsTable.seasonNumber })
+      .from(seasonsTable).where(eq(seasonsTable.id, scheduleSeasonId)).limit(1);
+    if (altSeason) displaySeasonNumber = altSeason.seasonNumber;
+  }
+
   if (regularGames.length === 0) {
     const teamDisplay = mcaEntry?.fullName ?? user.team;
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("📅 Season Schedule").setDescription(`📭 No schedule data found for **${teamDisplay}** in Season ${season.seasonNumber}. Make sure the full season schedule has been imported.`)],
+      embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("📅 Season Schedule").setDescription(`📭 No schedule data found for **${teamDisplay}** in Season ${displaySeasonNumber}. Make sure the full season schedule has been imported.`)],
       components: [backToHubRow() as ActionRowBuilder<any>],
     });
     return;
@@ -6881,7 +6893,7 @@ async function handleSchedule(interaction: ButtonInteraction, sess: ActionsSessi
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Blue)
-        .setTitle(`📅 ${displayName} — Season ${season.seasonNumber} Schedule`)
+        .setTitle(`📅 ${displayName} — Season ${displaySeasonNumber} Schedule`)
         .setDescription(description.length > 4000 ? description.slice(0, 3997) + "..." : description)
         .setFooter({ text: `${played} of ${regularGames.length} games played` })
         .setTimestamp(),
