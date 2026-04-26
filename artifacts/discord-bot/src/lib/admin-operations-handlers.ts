@@ -712,7 +712,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
 
   const discordIdToProperTeam = new Map<string, string>();
   for (const u of allUsers) {
-    if (u.team) {
+    if (u.team && !u.discordId.startsWith("unlinked_")) {
       const k = u.team.toLowerCase().trim();
       if (!teamToDiscord.has(k)) teamToDiscord.set(k, u.discordId);
       discordIdToProperTeam.set(u.discordId, u.team);
@@ -817,11 +817,13 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       created++;
       results.push(`✅ Created <#${newChannel.id}>`);
 
-      // Fire-and-forget: banner + AI breakdown
+      // Fire-and-forget: matchup banner only
       const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim()) ?? discordIdToMca.get(awayDiscordId);
       const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim()) ?? discordIdToMca.get(homeDiscordId);
       const awayGcsPath = resolveLogoPath(awayProper, awayMca);
       const homeGcsPath = resolveLogoPath(homeProper, homeMca);
+      const awayMentionBanner = !awayDiscordId.startsWith("unlinked_") ? `<@${awayDiscordId}>` : awayProper;
+      const homeMentionBanner = !homeDiscordId.startsWith("unlinked_") ? `<@${homeDiscordId}>` : homeProper;
 
       (async () => {
         try {
@@ -835,7 +837,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
                   new EmbedBuilder()
                     .setColor(0x7c3aed)
                     .setTitle(`${awayProper} @ ${homeProper}`)
-                    .setDescription(`<@${awayDiscordId}> **vs** <@${homeDiscordId}>`)
+                    .setDescription(`${awayMentionBanner} **vs** ${homeMentionBanner}`)
                     .setImage("attachment://matchup-banner.png")
                     .setFooter({ text: displayLabel }),
                 ],
@@ -843,23 +845,8 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
               });
             }
           }
-          if (awayMca?.teamId != null && homeMca?.teamId != null) {
-            const breakdownEmbed = await generateMatchupBreakdown({
-              seasonId:       schedSeasonId,
-              awayTeamName:   awayProper,
-              homeTeamName:   homeProper,
-              awayTeamId:     awayMca.teamId,
-              homeTeamId:     homeMca.teamId,
-              awayDiscordId,
-              homeDiscordId,
-              awayDiscordTag: `<@${awayDiscordId}>`,
-              homeDiscordTag: `<@${homeDiscordId}>`,
-              weekLabel:      displayLabel,
-            });
-            await newChannel.send({ embeds: [breakdownEmbed] });
-          }
         } catch (err) {
-          console.error(`[handlePostGameChannelsModal] Banner/breakdown error for ${chanName}:`, err);
+          console.error(`[handlePostGameChannelsModal] Banner error for ${chanName}:`, err);
         }
       })();
     } catch (err) {
@@ -877,7 +864,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       { name: "H2H Games",        value: String(h2hGames.length),      inline: true },
       { name: "Total Schedule",   value: String(games.length),         inline: true },
     )
-    .setFooter({ text: "Banners & AI breakdowns are posting in the background" })
+    .setFooter({ text: "Matchup banners are posting in the background" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
@@ -2944,14 +2931,14 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         team:      usersTable.team,
       }).from(usersTable).where(eq(usersTable.guildId, guildId));
       for (const u of allUsers) {
-        if (u.team && !teamToDiscord.has(u.team.toLowerCase().trim())) {
+        if (u.team && !u.discordId.startsWith("unlinked_") && !teamToDiscord.has(u.team.toLowerCase().trim())) {
           teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
         }
       }
 
       const discordIdToProperTeam = new Map<string, string>();
       for (const u of allUsers) {
-        if (u.team) discordIdToProperTeam.set(u.discordId, u.team);
+        if (u.team && !u.discordId.startsWith("unlinked_")) discordIdToProperTeam.set(u.discordId, u.team);
       }
 
       // Alias full team names to real Discord IDs resolved via nickname, and enrich discordIdToMca
