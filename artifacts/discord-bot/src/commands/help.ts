@@ -60,12 +60,12 @@ export function buildMemberHelpEmbed(
     embed.addFields({ name: "🛒 Store — Commands", value: storeCommands.join("\n") });
 
     const pricingLines: string[] = [];
-    if (legends)      pricingLines.push("• **Legends** — 2,000 coins | 2 max per team | available Week 9");
+    if (legends)      pricingLines.push("• **Legends** — 2,000 coins | 2 max per team | available Weeks 1–9");
     if (devUpgrades)  pricingLines.push("• **Dev Upgrades** — 750 coins | 1/season");
     if (ageResets)    pricingLines.push("• **Age Resets** — 1,000 coins | 1/season");
-    if (custom)       pricingLines.push("• **Custom Players** — Bronze/Silver/Gold tiers | 1/season | available Week 9");
+    if (custom)       pricingLines.push("• **Custom Players** — Bronze/Silver/Gold tiers | 1/season | available Weeks 1–9");
     pricingLines.push(
-      "• **Training Packages** — Bronze 250 / Silver 500 / Gold 1,000 coins | available Week 9",
+      "• **Training Packages** — Bronze 250 / Silver 500 / Gold 1,000 coins | available all season (subject to purchase cap)",
       "",
       "⚠️ *Commissioners may adjust prices per season.*",
     );

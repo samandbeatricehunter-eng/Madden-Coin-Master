@@ -20,6 +20,7 @@ import {
   guildTweetsTable, autoPilotRequestsTable, ruleViolationsTable,
   playerEaIdsTable, customPlayersTable,
   playerSeasonStatsTable, waitlistTable, payoutConfigTable,
+  seasonStatTierConfigsTable,
 } from "@workspace/db";
 import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -48,6 +49,7 @@ import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
 import { ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl, LEGEND_CUSTOM_PURCHASE_WEEKS } from "./constants.js";
+import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "./stat-categories.js";
 import { createSession } from "./custom-player-session.js";
 
 
@@ -1636,7 +1638,7 @@ async function handleBuyLegendPick(interaction: ButtonInteraction, sess: Actions
     );
 
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 Buy a Legend — Select").setDescription("Choose a legend from the available options below.\n\nMax **2 legends per team** (purchase window: Week 9 only). Legends follow the team if ownership changes.")],
+    embeds: [new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 Buy a Legend — Select").setDescription("Choose a legend from the available options below.\n\nMax **2 legends per team** (purchase window: through Week 9). Legends follow the team if ownership changes.")],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
 }
@@ -1689,9 +1691,9 @@ async function handleBuyLegendExecute(interaction: ButtonInteraction, sess: Acti
     return;
   }
 
-  // Week availability window check
+  // Purchase window: legends available through Week 9; closes once Week 10 is reached
   if (!LEGEND_CUSTOM_PURCHASE_WEEKS.has(season.currentWeek ?? "")) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Orange).setDescription(`❌ Legend purchases are only available during **Week 9**. Current week: **Week ${season.currentWeek ?? "?"}**.`)], components: [backToHubRow()] });
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Orange).setDescription(`❌ Legend purchases are available through **Week 9** only. Current week: **Week ${season.currentWeek ?? "?"}**.`)], components: [backToHubRow()] });
     return;
   }
 
@@ -5490,9 +5492,16 @@ async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSes
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const configMap = await getAllPayoutConfig(gid);
-  const allKeys   = getAllPayoutKeys();
+  const season = await getOrCreateActiveSeason(gid);
 
+  const [configMap, tierRows] = await Promise.all([
+    getAllPayoutConfig(gid),
+    db.select().from(seasonStatTierConfigsTable)
+      .where(eq(seasonStatTierConfigsTable.seasonId, season.id)),
+  ]);
+  const allKeys = getAllPayoutKeys();
+
+  // ── Flat payout categories ───────────────────────────────────────────────────
   const cats: Record<string, string[]> = {};
   for (const meta of allKeys) {
     const val = configMap.get(meta.key as any) ?? meta.defaultValue;
@@ -5508,6 +5517,32 @@ async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSes
   for (const [cat, items] of Object.entries(cats)) {
     const chunk = items.join("\n");
     if (chunk) embed.addFields({ name: cat, value: chunk.slice(0, 1024), inline: false });
+  }
+
+  // ── Stat tier thresholds (passing yards, rushing yards, etc.) ────────────────
+  const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
+  for (const row of tierRows) {
+    if (!tiersByCategory.has(row.statCategory)) tiersByCategory.set(row.statCategory, []);
+    tiersByCategory.get(row.statCategory)!.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
+  }
+  for (const [key, defaults] of Object.entries(STAT_TIER_DEFAULTS)) {
+    if (!tiersByCategory.has(key)) {
+      tiersByCategory.set(key, defaults.map((d, i) => ({ tier: i + 1, threshold: d.threshold, payout: d.payout })));
+    }
+  }
+
+  const dirSym = (dir: string) => dir === "higher" ? "≥" : "≤";
+  const statLines: string[] = [];
+  for (const cat of STAT_CATEGORIES) {
+    const tiers = tiersByCategory.get(cat.key);
+    if (!tiers || !tiers.length) continue;
+    const sorted = [...tiers].sort((a, b) => a.tier - b.tier);
+    const sym    = dirSym(cat.direction);
+    const tierStr = sorted.map(t => `T${t.tier}:${sym}${t.threshold.toLocaleString()} →${t.payout}c`).join(" | ");
+    statLines.push(`**${cat.label}:** ${tierStr}`);
+  }
+  if (statLines.length) {
+    embed.addFields({ name: "📊 EOS Stat Tier Bonuses", value: statLines.join("\n").slice(0, 1024), inline: false });
   }
 
   embed.setTimestamp();

@@ -729,7 +729,7 @@ There is no payout for CPU losses.
 Use /menu → Purchase to browse the store. Available purchases:
 /purchase legend — Spend coins to claim a legend player. See "HOW THE ANNUAL DRAFT WORKS" below.
 /purchase customplayer — Spend coins to create a custom superstar (Gold/Silver/Bronze tier). See "HOW THE ANNUAL DRAFT WORKS" below.
-Training Packages — Use the store menu to buy Bronze/Silver/Gold training packages for attribute upgrades (Week 9 only).
+Training Packages — Use the store menu to buy Bronze/Silver/Gold training packages for attribute upgrades (available all season, subject to purchase cap).
 /purchase devup — Spend coins to boost a player's development trait (Normal → Star, or Star → Superstar). Max 1 per season. Applied by commissioners.
 /purchase agereset — Spend coins to roll back a player's age in MCA, extending their career. Max 1 per season. Applied by commissioners.
 
@@ -841,9 +841,9 @@ type SeasonRulesShape = {
 
 function buildPricingBlock(rules: SeasonRulesShape): string {
   return [
-    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Week 9 only`,
-    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · max ${LIMITS.customPlayersPerDraft}/season`,
-    `Training Packages: Bronze ${COSTS.training_bronze} / Silver ${COSTS.training_silver} / Gold ${COSTS.training_gold} coins · multi-attribute boosts · purchase window: Week 9 only`,
+    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Weeks 1–9 (closes at Week 10)`,
+    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · max ${LIMITS.customPlayersPerDraft}/season · purchase window: Weeks 1–9 (closes at Week 10)`,
+    `Training Packages: Bronze ${COSTS.training_bronze} / Silver ${COSTS.training_silver} / Gold ${COSTS.training_gold} coins · multi-attribute boosts · available all season (subject to purchase cap)`,
     `Dev Upgrade: ${rules.devUpsCost} coins · max ${rules.devUpsCap}/season`,
     `Age Reset: ${rules.ageResetCost} coins · max ${rules.ageResetsCap}/season`,
   ].join("\n");

@@ -18,7 +18,7 @@ import { insufficientFunds, sendCommissionerNotification } from "../lib/purchase
 
 export const data = new SlashCommandBuilder()
   .setName("buy-legend")
-  .setDescription("Buy a legend — available Week 9 only (max 2 per team)")
+  .setDescription("Buy a legend — available through Week 9 (max 2 per team)")
   .addStringOption(opt =>
     opt.setName("legend_name")
       .setDescription("Select a legend from the store")
@@ -94,10 +94,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const rules  = await getSeasonRules(season);
   const cost   = rules.legendCost;
 
-  // Week availability window: legends can only be purchased during week 9
+  // Purchase window: legends available through Week 9; closes once Week 10 is reached
   if (!LEGEND_CUSTOM_PURCHASE_WEEKS.has(season.currentWeek ?? "")) {
     return interaction.editReply({
-      embeds: [errorEmbed("Purchase Window Closed", `Legend purchases are only available during **Week 9**. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
+      embeds: [errorEmbed("Purchase Window Closed", `Legend purchases are available through **Week 9** only. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
     });
   }
 

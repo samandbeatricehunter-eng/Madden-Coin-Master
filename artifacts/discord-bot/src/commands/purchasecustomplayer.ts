@@ -11,7 +11,7 @@ import { LIMITS, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../lib/constants.js";
 
 export const data = new SlashCommandBuilder()
   .setName("purchasecustomplayer")
-  .setDescription("Build and purchase a custom player for the draft class (available Week 9 only)");
+  .setDescription("Build and purchase a custom player for the draft class (available through Week 9)");
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
@@ -19,13 +19,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const season    = await getOrCreateActiveSeason(interaction.guildId!);
   const discordId = interaction.user.id;
 
-  // Week availability window: custom players can only be purchased during week 9
+  // Purchase window: custom players available through Week 9; closes once Week 10 is reached
   if (!LEGEND_CUSTOM_PURCHASE_WEEKS.has(season.currentWeek ?? "")) {
     await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(Colors.Orange)
         .setTitle("❌ Purchase Window Closed")
-        .setDescription(`Custom player purchases are only available during **Week 9**. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
+        .setDescription(`Custom player purchases are available through **Week 9** only. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
     });
     return;
   }

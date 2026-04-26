@@ -134,10 +134,13 @@ export type NFLPosition = typeof NFL_POSITIONS[number];
 
 /**
  * Weeks during which legend and custom player purchases are open.
- * Purchases submitted outside these weeks are rejected.
+ * Purchases submitted AFTER the league advances to Week 10 are rejected.
+ * Available any time during weeks 1–9 of the regular season.
  * Values match season.currentWeek (e.g. "9" for regular-season week 9).
  */
-export const LEGEND_CUSTOM_PURCHASE_WEEKS: ReadonlySet<string> = new Set(["9"]);
+export const LEGEND_CUSTOM_PURCHASE_WEEKS: ReadonlySet<string> = new Set([
+  "1","2","3","4","5","6","7","8","9",
+]);
 
 export const DEV_UP_TYPES = ["Star", "Superstar"] as const;
 
