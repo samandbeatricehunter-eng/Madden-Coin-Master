@@ -9,6 +9,7 @@
  *   ao_milestone_audit
  *   ts_repair_schedules | ts_sched_review_week | ts_sched_sel | ts_sched_delete:<id>
  *   ts_modal_sched_week (modal)
+ *   ts_import_schedule
  */
 
 import {
@@ -40,6 +41,7 @@ import {
   formatSeedingLines,
 } from "./playoff-seeding.js";
 import { getArticleStandings } from "./gcs-fallback.js";
+import { runScheduleOnlyImport } from "./league-data-handlers.js";
 
 // ── Win milestones (mirror of admin-milestone-audit.ts) ───────────────────────
 const WIN_MILESTONES = [
@@ -83,7 +85,11 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "⚠️ Only run this once — duplicate runs will create duplicate payout requests.\n\n" +
       "**🎯 Milestone Audit**\n" +
       "Retroactively checks and pays any owed win-milestone bonuses for every registered " +
-      "user on this server. Safe to run multiple times — duplicate detection is built in.",
+      "user on this server. Safe to run multiple times — duplicate detection is built in.\n\n" +
+      "**📅 Import Schedule Only**\n" +
+      "Connects to EA and fetches the full regular season schedule (all 18 weeks) without " +
+      "importing any stats, rosters, or awarding payouts. Use this to load schedule data " +
+      "after advancing a week early, or any time the schedule is missing or incomplete.",
     )
     .setFooter({ text: "All operations are scoped to this server only" })
     .setTimestamp();
@@ -100,6 +106,7 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_eos_manual").setLabel("⚡ EOS Manual Run").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ao_milestone_audit").setLabel("🎯 Milestone Audit").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ts_import_schedule").setLabel("📅 Import Schedule Only").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
@@ -1022,6 +1029,62 @@ export async function handleTsSchedSel(interaction: StringSelectMenuInteraction)
       ) as ActionRowBuilder<any>,
     ],
   });
+}
+
+// ── 9. Import Schedule Only ───────────────────────────────────────────────────
+export async function handleTsImportSchedule(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId!;
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blurple)
+        .setTitle("📅 Importing Schedule…")
+        .setDescription("Connecting to EA and fetching all 18 weeks of regular season schedule data.\nThis may take 10–20 seconds.")
+        .setTimestamp(),
+    ],
+  });
+
+  const result = await runScheduleOnlyImport(guildId);
+
+  if (!result.ok) {
+    const msgs: Record<string, string> = {
+      no_connection:        "No EA connection found for this server. Set up your EA connection first via the League Data menu.",
+      token_refresh_failed: "Failed to refresh the EA access token. The stored credentials may have expired.",
+      fetch_failed:         "Failed to fetch schedule data from EA. Check that the EA franchise is active and try again.",
+    };
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ Schedule Import Failed")
+          .setDescription(msgs[result.error ?? ""] ?? `An unexpected error occurred: \`${result.error}\``)
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Green)
+    .setTitle("📅 Schedule Import Complete")
+    .addFields(
+      { name: "Weeks Synced",  value: result.synced.toString(),                       inline: true },
+      { name: "Total Weeks",   value: result.total.toString(),                         inline: true },
+      { name: "Coverage",      value: `${Math.round((result.synced / result.total) * 100)}%`, inline: true },
+    )
+    .setDescription(
+      "The full regular season schedule has been imported from EA.\n" +
+      "No stats, rosters, or payouts were changed.",
+    )
+    .setFooter({ text: "Only schedule data was touched — run a full import to get scores and stats" })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
 }
 
 export async function handleTsSchedDelete(interaction: ButtonInteraction): Promise<void> {

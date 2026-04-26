@@ -1007,6 +1007,52 @@ async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; 
   }
 }
 
+// ── Schedule-only import (used by Troubleshoot panel) ─────────────────────────
+export async function runScheduleOnlyImport(guildId: string): Promise<{
+  ok:     boolean;
+  synced: number;
+  total:  number;
+  error?: "no_connection" | "token_refresh_failed" | "fetch_failed";
+}> {
+  const conn = await loadEAConnection(guildId);
+  if (!conn) return { ok: false, synced: 0, total: 0, error: "no_connection" };
+
+  let { token, eaLeagueId } = conn;
+  try {
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) {
+      await updateStoredToken(eaLeagueId, refreshed);
+      token = refreshed;
+    }
+  } catch {
+    return { ok: false, synced: 0, total: 0, error: "token_refresh_failed" };
+  }
+
+  const platform   = token.platform;
+  const apiBase    = getApiBase();
+  const key        = getWebhookKey();
+  const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+  const guildQs    = `?guildId=${encodeURIComponent(guildId)}`;
+
+  let weekResults: { weekNum: number; data: unknown }[];
+  try {
+    const result = await fetchAllWeekSchedules(token, eaLeagueId);
+    weekResults = result.weekResults;
+  } catch {
+    return { ok: false, synced: 0, total: 0, error: "fetch_failed" };
+  }
+
+  let synced = 0;
+  const total = weekResults.length;
+  for (const { weekNum: wk, data } of weekResults) {
+    const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
+    const r = await postToApi(url, data);
+    if (r.ok) synced++;
+  }
+
+  return { ok: synced === total, synced, total };
+}
+
 async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild | null, guildId?: string): Promise<{ summaryLine: string; allOk: boolean }> {
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
