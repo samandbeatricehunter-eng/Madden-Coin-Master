@@ -5581,31 +5581,16 @@ async function handleActiveTeams(interaction: ButtonInteraction, sess: ActionsSe
   const gid = interaction.guildId!;
   await interaction.deferUpdate();
 
-  const [users, rosterSeasonId] = await Promise.all([
-    db.select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable)
-      .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team), ne(usersTable.team, ""))),
-    getRosterSeasonId(gid),
-  ]);
+  const users = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, gid), isNotNull(usersTable.team), ne(usersTable.team, "")));
 
-  // MCA is authoritative — pull current team assignments keyed by discordId
-  const mcaRows = await db.select({
-    discordId: franchiseMcaTeamsTable.discordId,
-    nickName:  franchiseMcaTeamsTable.nickName,
-  }).from(franchiseMcaTeamsTable)
-    .where(and(eq(franchiseMcaTeamsTable.seasonId, rosterSeasonId), isNotNull(franchiseMcaTeamsTable.discordId)));
-
-  const mcaByDiscordId = new Map<string, string>();
-  for (const m of mcaRows) {
-    if (m.discordId && m.nickName) mcaByDiscordId.set(m.discordId, m.nickName);
-  }
-
-  // Build team → discordId map: prefer MCA nickname, fall back to usersTable.team
+  // Build team → discordId map using economy_users.team which is always the
+  // canonical NFL_TEAMS name set by the admin link button
   const activeMap = new Map<string, string>();
   for (const u of users) {
     if (u.discordId.startsWith("unlinked_") || !u.team) continue;
-    const currentTeam = mcaByDiscordId.get(u.discordId) ?? u.team;
-    activeMap.set(currentTeam, u.discordId);
+    activeMap.set(u.team, u.discordId);
   }
 
   if (!activeMap.size) {

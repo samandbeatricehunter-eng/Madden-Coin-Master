@@ -24,7 +24,7 @@ import {
   PAYOUT_KEYS, MILESTONE_TIER_KEYS, type PayoutKey,
 } from "./payout-config.js";
 import { weekLabel } from "./week-helpers.js";
-import { NFL_DIVISION_MAP } from "./constants.js";
+import { NFL_DIVISION_MAP, lookupNflDivision } from "./constants.js";
 
 // ── Payout Hub Embed / Rows (moved from admin-payout.ts) ──────────────────────
 
@@ -167,8 +167,8 @@ async function buildConferenceSelectRows(
     }))
     .filter(u => !!u.team);
 
-  const afcUsers = enriched.filter(u => NFL_DIVISION_MAP[u.team!]?.conference === "AFC");
-  const nfcUsers = enriched.filter(u => NFL_DIVISION_MAP[u.team!]?.conference === "NFC");
+  const afcUsers = enriched.filter(u => lookupNflDivision(u.team!)?.conference === "AFC");
+  const nfcUsers = enriched.filter(u => lookupNflDivision(u.team!)?.conference === "NFC");
 
   const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
 
