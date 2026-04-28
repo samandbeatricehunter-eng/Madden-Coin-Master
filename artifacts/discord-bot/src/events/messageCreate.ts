@@ -16,7 +16,7 @@ import {
   PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS,
 } from "../lib/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
-import { getAllPayoutConfig, getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
+import { getAllPayoutConfig, getPayoutValue, getMilestoneTiers, PAYOUT_KEYS } from "../lib/payout-config.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
 import { handleTwitterReply } from "../lib/league-twitter.js";
 import { getServerSettings } from "../lib/server-settings.js";
@@ -452,6 +452,128 @@ async function fetchEosPayoutContext(guildId: string): Promise<string> {
   }
 }
 
+// ── Live economy context ───────────────────────────────────────────────────────
+// Builds a complete coin-economy reference block from live DB values so the AI
+// always quotes what the league actually has configured, not hardcoded defaults.
+// Payouts are universal (not per-guild) so we use PRIMARY_GUILD_ID as the key.
+
+let _economyCtxCache: { text: string; at: number } | null = null;
+
+async function fetchEconomyContext(): Promise<string> {
+  if (_economyCtxCache && Date.now() - _economyCtxCache.at < CACHE_TTL) return _economyCtxCache.text;
+
+  try {
+    const [cfg, milestones] = await Promise.all([
+      getAllPayoutConfig(PRIMARY_GUILD_ID),
+      getMilestoneTiers(PRIMARY_GUILD_ID),
+    ]);
+
+    const v = (key: typeof PAYOUT_KEYS[keyof typeof PAYOUT_KEYS]) => cfg.get(key) ?? 0;
+
+    const lines: string[] = [];
+    lines.push("══════════════════════════════════════════");
+    lines.push("LIVE COIN ECONOMY — USE THESE EXACT VALUES");
+    lines.push("These are the actual configured values from the database.");
+    lines.push("They override any example values elsewhere in this prompt.");
+    lines.push("══════════════════════════════════════════");
+
+    lines.push("");
+    lines.push("GAME PAYOUTS (regular season):");
+    lines.push(`  H2H Win:  +${v(PAYOUT_KEYS.H2H_WIN)} coins`);
+    lines.push(`  H2H Loss: +${v(PAYOUT_KEYS.H2H_LOSS)} coins`);
+    lines.push(`  CPU Win:  +${v(PAYOUT_KEYS.CPU_WIN)} coins`);
+    lines.push(`  CPU Loss: +0 coins (no payout)`);
+
+    lines.push("");
+    lines.push("GAME PAYOUTS (playoffs):");
+    lines.push(`  Playoff H2H Win:  +${v(PAYOUT_KEYS.PLAYOFF_H2H_WIN)} coins`);
+    lines.push(`  Playoff H2H Loss: +${v(PAYOUT_KEYS.PLAYOFF_H2H_LOSS)} coins`);
+    lines.push(`  Playoff CPU Win:  +${v(PAYOUT_KEYS.PLAYOFF_CPU_WIN)} coins`);
+
+    lines.push("");
+    lines.push("PLAYOFF ROUND BONUSES:");
+    lines.push(`  Division Winner:         +${v(PAYOUT_KEYS.DIVISION_WINNER_BONUS)} coins`);
+    lines.push(`  Wild Card round win:     +${v(PAYOUT_KEYS.WILDCARD_BONUS)} coins`);
+    lines.push(`  Divisional round win:    +${v(PAYOUT_KEYS.DIVISIONAL_BONUS)} coins`);
+    lines.push(`  Conference Champ win:    +${v(PAYOUT_KEYS.CONFERENCE_WIN_BONUS)} coins`);
+    lines.push(`  Conference runner-up:    +${v(PAYOUT_KEYS.CONFERENCE_RUNNER_UP)} coins`);
+    lines.push(`  Super Bowl winner:       +${v(PAYOUT_KEYS.SUPERBOWL_WIN_BONUS)} coins`);
+    lines.push(`  Super Bowl runner-up:    +${v(PAYOUT_KEYS.SUPERBOWL_RUNNER_UP)} coins`);
+
+    lines.push("");
+    lines.push("ACTIVITY PAYOUTS:");
+    lines.push(`  Twitch stream post:         +${v(PAYOUT_KEYS.STREAM_PAYOUT)} coins (streamer only)`);
+    lines.push(`  Highlight video (reg. season): +${v(PAYOUT_KEYS.HIGHLIGHT_PAYOUT)} coins per video (max ${v(PAYOUT_KEYS.HIGHLIGHT_LIMIT)}/week)`);
+    lines.push(`  Highlight video (playoffs):    +${v(PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT)} coins per video (max ${v(PAYOUT_KEYS.HIGHLIGHT_LIMIT)}/week)`);
+    lines.push(`  GOTW correct guess (reg.):  +${v(PAYOUT_KEYS.GOTW_REGULAR_BONUS)} coins`);
+    lines.push(`  GOTW correct guess (playoffs): +${v(PAYOUT_KEYS.GOTW_PLAYOFF_BONUS)} coins`);
+    lines.push(`  Player of the Week winner:  +${v(PAYOUT_KEYS.POTW_BONUS)} coins`);
+    lines.push(`  Tweet post:                 +${v(PAYOUT_KEYS.TWEET_PAYOUT)} coins (max ${v(PAYOUT_KEYS.TWEET_WEEKLY_LIMIT)}/week)`);
+    lines.push(`  Post-game interview:        +${v(PAYOUT_KEYS.INTERVIEW_PAYOUT)} coins`);
+
+    lines.push("");
+    lines.push("END-OF-SEASON PR BONUSES (based on final standings rank):");
+    lines.push(`  #1 ranked:   +${v(PAYOUT_KEYS.SEASON_PR_1)} coins`);
+    lines.push(`  #2 ranked:   +${v(PAYOUT_KEYS.SEASON_PR_2)} coins`);
+    lines.push(`  #3–6 ranked: +${v(PAYOUT_KEYS.SEASON_PR_3_6)} coins each`);
+    lines.push(`  #7–8 ranked: +${v(PAYOUT_KEYS.SEASON_PR_7_8)} coins each`);
+    lines.push(`  #9–10 ranked: +${v(PAYOUT_KEYS.SEASON_PR_9_10)} coins each`);
+    lines.push(`  GOTY award winner: +${v(PAYOUT_KEYS.GOTY_WINNER)} coins`);
+    lines.push(`  In-game award winner (per award): +${v(PAYOUT_KEYS.AWARD_WIN_BONUS)} coins`);
+    lines.push(`  Missed playoffs consolation: +${v(PAYOUT_KEYS.EOS_MISSED_PLAYOFFS)} coins`);
+
+    const qbMinAtt = v(PAYOUT_KEYS.EOS_QB_MIN_ATT);
+    const qbMinYpa = v(PAYOUT_KEYS.EOS_QB_MIN_YPA) / 10;
+    const rbMinAtt = v(PAYOUT_KEYS.EOS_RB_MIN_ATT);
+    const rbMinYpc = v(PAYOUT_KEYS.EOS_RB_MIN_YPC) / 10;
+    const dbMinInt = v(PAYOUT_KEYS.EOS_DB_MIN_INTS);
+    lines.push("");
+    lines.push("EOS INDIVIDUAL PLAYER BONUSES:");
+    lines.push(`  QB ${qbMinYpa}+ YPA with ${qbMinAtt}+ attempts: +${v(PAYOUT_KEYS.EOS_QB_YPA_BONUS)} coins`);
+    lines.push(`  RB ${rbMinYpc}+ YPC with ${rbMinAtt}+ carries: +${v(PAYOUT_KEYS.EOS_RB_YPC_BONUS)} coins`);
+    lines.push(`  DB individual player with ${dbMinInt}+ INTs: +${v(PAYOUT_KEYS.EOS_DB_INT_BONUS)} coins`);
+
+    lines.push("");
+    lines.push("NEW MEMBER / REFERRAL BONUSES:");
+    lines.push(`  New member linked: +${v(PAYOUT_KEYS.NEW_MEMBER_BONUS)} coins`);
+    lines.push(`  Referral (new member gets): +${v(PAYOUT_KEYS.REFERRAL_BONUS_NEW)} coins`);
+    lines.push(`  Referral (referring member gets): +${v(PAYOUT_KEYS.REFERRAL_BONUS_MEMBER)} coins`);
+
+    const activeMilestones = milestones.filter(m => m.wins > 0);
+    if (activeMilestones.length > 0) {
+      lines.push("");
+      lines.push("CAREER WIN MILESTONES:");
+      for (const m of activeMilestones) {
+        lines.push(`  Tier ${m.tier}: ${m.wins} career wins → +${m.bonus} coins`);
+      }
+    }
+
+    lines.push("");
+    lines.push("STORE PRICES:");
+    lines.push(`  Legend:              ${COSTS.legend.toLocaleString()} coins (max ${LIMITS.legendsPerTeam} per team)`);
+    lines.push(`  Custom Player Gold:  ${COSTS.custom_player_gold.toLocaleString()} coins`);
+    lines.push(`  Custom Player Silver:${COSTS.custom_player_silver.toLocaleString()} coins`);
+    lines.push(`  Custom Player Bronze:${COSTS.custom_player_bronze.toLocaleString()} coins`);
+    lines.push(`  Training Gold:       ${COSTS.training_gold.toLocaleString()} coins (max ${LIMITS.trainingGoldPerSeason}/season)`);
+    lines.push(`  Training Silver:     ${COSTS.training_silver.toLocaleString()} coins (max ${LIMITS.trainingSilverPerSeason}/season)`);
+    lines.push(`  Training Bronze:     ${COSTS.training_bronze.toLocaleString()} coins`);
+    lines.push(`  Dev Upgrade:         ${COSTS.dev_up.toLocaleString()} coins (max ${LIMITS.devUpsPerSeason}/season)`);
+    lines.push(`  Age Reset:           ${COSTS.age_reset.toLocaleString()} coins (max ${LIMITS.ageResetsPerSeason}/season)`);
+    lines.push(`  Contract Extension:  ${COSTS.contract_extension.toLocaleString()} coins (max ${LIMITS.contractExtensionsPerSeason}/season)`);
+    lines.push(`  Salary Reduction:    ${COSTS.salary_reduction.toLocaleString()} coins (max ${LIMITS.salaryReductionsPerSeason}/season)`);
+    lines.push(`  Bonus Reduction:     ${COSTS.bonus_reduction.toLocaleString()} coins (max ${LIMITS.bonusReductionsPerSeason}/season)`);
+    lines.push(`  Core attribute upgrade:     ${COSTS.core_attribute} coins each (max ${LIMITS.coreAttrPerSeason}/season)`);
+    lines.push(`  Non-core attribute upgrade: ${COSTS.non_core_attribute} coins each (max ${LIMITS.nonCoreAttrPerSeason}/season)`);
+
+    const text = lines.join("\n");
+    _economyCtxCache = { text, at: Date.now() };
+    return text;
+  } catch (err) {
+    console.error("fetchEconomyContext error:", err);
+    return "(economy context unavailable)";
+  }
+}
+
 // ── User stat fetcher ──────────────────────────────────────────────────────────
 
 const DEV_TRAIT_LABEL: Record<number, string> = {
@@ -721,8 +843,8 @@ Most member features are accessible from /menu — a private interactive hub. Us
 • Report a violation, tweet, auto-pilot requests
 
 ── COIN PAYOUTS (automatic) ──
-Coins are awarded automatically when MCA game results are uploaded by the commissioners:
-  H2H Win: +50 coins · H2H Loss: +20 coins · CPU Win: +20 coins
+Coins are awarded automatically when MCA game results are uploaded by the commissioners.
+See LIVE COIN ECONOMY section for exact current payout amounts.
 There is no payout for CPU losses.
 
 ── STORE ──
@@ -773,9 +895,9 @@ These commands are only available to league commissioners/admins.
 ── PAYOUT & REWARD CONFIGURATION ──
 /admin-setpayouts view — Shows ALL current economy values in one place: game payouts, season bonuses, GOTY rewards, and store prices.
 /admin-setpayouts set [reward] [amount] — Update any single payout or bonus value. Options include:
-  • H2H Win payout (default 50 coins)
-  • H2H Loss payout (default 20 coins)
-  • CPU/force-win payout (default 20 coins)
+  • H2H Win payout
+  • H2H Loss payout
+  • CPU/force-win payout
   • Season PR bonus — #1 ranked (top of standings at season end)
   • Season PR bonus — #2 ranked
   • Season PR bonus — #3–6 ranked
@@ -783,6 +905,7 @@ These commands are only available to league commissioners/admins.
   • Season PR bonus — #9–10 ranked
   • In-game award winner bonus (per award category winner)
   • GOTY award — coins per winner
+See LIVE COIN ECONOMY section for current values of all these settings.
 
 /endofseasonpayout @user [stats] — Manually trigger the end-of-season stat-based bonus payout for a specific user. Commissioners enter the user's season totals (passing yards, rushing yards, TDs, points scored, red zone %, defensive stats, etc.) and the bot calculates and awards the appropriate bonus coins based on the configured tiers.
 
@@ -862,6 +985,7 @@ function buildSystemPrompt(
   isCoCommissioner: boolean = false,
   eosContext: string = "",
   pricingBlock: string = "",
+  economyContext: string = "",
 ): string {
   const adminMentions = adminIds.length
     ? adminIds.map(id => `<@${id}>`).join(" or ")
@@ -1075,6 +1199,8 @@ ${leagueContext || "(league context not yet available — MCA data may not have 
 
 ${eosContext || ""}
 
+${economyContext || ""}
+
 CURRENT USER STATS (the person speaking to you right now)
 ${statBlock}${mentionedBlock}
 
@@ -1082,8 +1208,8 @@ BOT CODE KNOWLEDGE — HOW THE R.E.C. LEAGUE BOT WORKS INTERNALLY
 Use this to answer questions about how the bot works, what triggers what, and how features are built. You have deep knowledge of every system.
 
 ECONOMY SYSTEM:
-- Coins are earned via: H2H win, H2H loss, CPU win, interview approval (+10), stream post (each side), highlight video (max per week configurable), GOTW vote payout, savings interest, season-end bonuses. All game/activity/GOTW payout amounts are admin-configurable via /admin-setpayouts. Highlight payouts are higher during postseason (also configurable).
-- Coins are spent in the /store: legends (1000), custom players (100/200/300 by tier), attribute upgrades (10–25/pt), dev upgrades (250), age resets (250).
+- Coins are earned via: H2H wins/losses, CPU wins, post-game interviews, stream posts, highlight videos, GOTW correct votes, savings interest, season-end PR bonuses, playoff round bonuses, POTW/GOTY awards, tweets, new member/referral bonuses, and career win milestones. See LIVE COIN ECONOMY section above for all exact amounts.
+- Coins are spent in the store: legends, custom players (Gold/Silver/Bronze tiers), training packages (Gold/Silver/Bronze), attribute upgrades (core and non-core), dev upgrades, age resets, contract extensions, salary reductions, and bonus reductions. See LIVE COIN ECONOMY section above for all exact prices.
 - Savings account: deposit coins to earn interest at a configurable weekly rate. Withdraw anytime.
 - Wagers: two users agree on an amount tied to their upcoming H2H game. Winner collects automatically when the score is uploaded.
 
@@ -1546,13 +1672,14 @@ export async function execute(message: Message): Promise<void> {
   });
 
   const guildId = message.guildId!;
-  const [isAdmin, userStats, rulesText, adminIds, leagueContext, eosContext, mentionedUsersData] = await Promise.all([
+  const [isAdmin, userStats, rulesText, adminIds, leagueContext, eosContext, economyContext, mentionedUsersData] = await Promise.all([
     isAdminUser(message.author.id, guildId).catch(() => false),
     fetchUserStats(message.author.id, guildId).catch(defaultStats),
     getCachedRules(guildId).catch(() => "(rules unavailable)"),
     getCachedAdminIds().catch(() => [] as string[]),
     fetchLeagueContext(guildId).catch(() => "(league context unavailable)"),
     fetchEosPayoutContext(guildId).catch(() => ""),
+    fetchEconomyContext().catch(() => ""),
     Promise.all(otherMentioned.map(async u => {
       const member = message.mentions.members?.get(u.id) ?? message.guild?.members.cache.get(u.id);
       const displayName = member?.displayName ?? u.username;
@@ -1583,6 +1710,7 @@ export async function execute(message: Message): Promise<void> {
     isCoComm && !isAdmin,
     eosContext,
     pricingBlock,
+    economyContext,
   );
 
   // Call the model (include per-user conversation history for context)
