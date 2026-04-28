@@ -2,7 +2,7 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { usersTable, userSavingsTable, userRecordsTable } from "@workspace/db";
+import { usersTable, userSavingsTable, userRecordsTable, globalUserRecordsTable } from "@workspace/db";
 import { eq, and, isNotNull, ne, inArray, sum, max } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
@@ -60,23 +60,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const thisGuildIds = thisGuildUsers.map(u => u.discordId);
 
   // ── 3. Parallel fetches ──────────────────────────────────────────────────────
-  const [globalRecordAgg, allServerBalances, savingsRows, sbRows] = await Promise.all([
+  // globalUserRecordsTable — authoritative all-time H2H W/L/ties/PD across every guild,
+  // incremented by upsertGlobalRecord() on every processed game result.
+  // userRecordsTable — used only for playoff W/L (not stored in globalUserRecordsTable).
+  const [globalH2HRows, playoffAgg, savingsRows, sbRows] = await Promise.all([
+    db.select({
+      discordId:         globalUserRecordsTable.discordId,
+      totalWins:         globalUserRecordsTable.wins,
+      totalLosses:       globalUserRecordsTable.losses,
+      totalTies:         globalUserRecordsTable.ties,
+      totalPD:           globalUserRecordsTable.pointDifferential,
+    })
+      .from(globalUserRecordsTable)
+      .where(inArray(globalUserRecordsTable.discordId, allGlobalIds)),
+
     db.select({
       discordId:     userRecordsTable.discordId,
-      totalWins:     sum(userRecordsTable.wins),
-      totalLosses:   sum(userRecordsTable.losses),
-      totalPD:       sum(userRecordsTable.pointDifferential),
       totalPOWins:   sum(userRecordsTable.playoffWins),
       totalPOLosses: sum(userRecordsTable.playoffLosses),
     })
       .from(userRecordsTable)
       .where(inArray(userRecordsTable.discordId, allGlobalIds))
       .groupBy(userRecordsTable.discordId),
-
-    db.select({ discordId: usersTable.discordId, totalBalance: sum(usersTable.balance) })
-      .from(usersTable)
-      .where(inArray(usersTable.discordId, thisGuildIds))
-      .groupBy(usersTable.discordId),
 
     db.select({ discordId: userSavingsTable.discordId, balance: userSavingsTable.balance })
       .from(userSavingsTable)
@@ -93,14 +98,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   ]);
 
   // ── 4. Build lookup maps ─────────────────────────────────────────────────────
-  const recordMap    = new Map(globalRecordAgg.map(r => [r.discordId, r]));
-  const globalWallet = new Map(allServerBalances.map(r => [r.discordId, Number(r.totalBalance ?? 0)]));
-  const savingsMap   = new Map(savingsRows.map(s => [s.discordId, s.balance]));
-  const sbMap        = new Map(sbRows.map(r => [r.discordId, r]));
-  const serverMap    = new Map(thisGuildUsers.map(u => [u.discordId, u]));
-
-  // suppress unused-variable warning — kept for potential future use
-  void globalWallet;
+  const recordMap  = new Map(globalH2HRows.map(r => [r.discordId, r]));
+  const playoffMap = new Map(playoffAgg.map(r => [r.discordId, r]));
+  const savingsMap = new Map(savingsRows.map(s => [s.discordId, s.balance]));
+  const sbMap      = new Map(sbRows.map(r => [r.discordId, r]));
+  const serverMap  = new Map(thisGuildUsers.map(u => [u.discordId, u]));
 
   // ── 5. Sort all global IDs by wins → losses → PD ────────────────────────────
   const globalSorted = [...allGlobalIds].sort((a, b) => {
@@ -126,26 +128,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const lines = displayUsers.map(u => {
     const rank = globalRankMap.get(u.discordId) ?? "?";
     const rec  = recordMap.get(u.discordId);
+    const po   = playoffMap.get(u.discordId);
     const sb   = sbMap.get(u.discordId);
 
-    const gW  = Number(rec?.totalWins     ?? 0);
-    const gL  = Number(rec?.totalLosses   ?? 0);
-    const gPD = Number(rec?.totalPD       ?? 0);
-    const poW = Number(rec?.totalPOWins   ?? 0);
-    const poL = Number(rec?.totalPOLosses ?? 0);
+    const gW  = rec?.totalWins   ?? 0;
+    const gL  = rec?.totalLosses ?? 0;
+    const gT  = rec?.totalTies   ?? 0;
+    const gPD = rec?.totalPD     ?? 0;
+    const poW = Number(po?.totalPOWins   ?? 0);
+    const poL = Number(po?.totalPOLosses ?? 0);
     const sbW = sb?.allTimeSuperbowlWins   ?? 0;
     const sbL = sb?.allTimeSuperbowlLosses ?? 0;
 
-    const pct     = gW + gL > 0 ? `${((gW / (gW + gL)) * 100).toFixed(0)}%` : "—";
-    const pdStr   = gPD >= 0 ? `+${gPD}` : `${gPD}`;
+    const pct   = gW + gL > 0 ? `${((gW / (gW + gL)) * 100).toFixed(0)}%` : "—";
+    const pdStr = gPD >= 0 ? `+${gPD}` : `${gPD}`;
     const savings = (savingsMap.get(u.discordId) ?? 0).toLocaleString();
     const wallet  = (serverMap.get(u.discordId)?.serverWallet ?? 0).toLocaleString();
+
+    const wlStr = gT > 0 ? `${gW}W-${gL}L-${gT}T` : `${gW}W-${gL}L`;
 
     const extra: string[] = [];
     if (poW + poL > 0) extra.push(`PO: ${poW}-${poL}`);
     if (sbW + sbL > 0) extra.push(`🏆 ${sbW}-${sbL}`);
 
-    const row1 = `**#${rank}** <@${u.discordId}> — ${u.team ?? "?"} · **${gW}W-${gL}L** (${pct}) · PD: ${pdStr}${extra.length ? ` · ${extra.join(" · ")}` : ""}`;
+    const row1 = `**#${rank}** <@${u.discordId}> — ${u.team ?? "?"} · **${wlStr}** (${pct}) · PD: ${pdStr}${extra.length ? ` · ${extra.join(" · ")}` : ""}`;
     const row2 = `> 💰 ${wallet}🪙 wallet · 🏦 ${savings}🪙 savings`;
 
     return `${row1}\n${row2}`;
