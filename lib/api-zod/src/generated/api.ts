@@ -364,7 +364,7 @@ export const GetLeagueNewsParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
 });
 
-export const getLeagueNewsQueryLimitDefault = 50;
+export const getLeagueNewsQueryLimitDefault = 25;
 export const getLeagueNewsQueryLimitMax = 200;
 
 export const GetLeagueNewsQueryParams = zod.object({
@@ -372,7 +372,7 @@ export const GetLeagueNewsQueryParams = zod.object({
     .number()
     .max(getLeagueNewsQueryLimitMax)
     .default(getLeagueNewsQueryLimitDefault)
-    .describe("Maximum number of results to return (max 200)"),
+    .describe("Maximum number of news items to return (default 25, max 200)"),
 });
 
 export const GetLeagueNewsResponse = zod.object({

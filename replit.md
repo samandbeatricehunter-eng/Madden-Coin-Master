@@ -24,9 +24,9 @@ artifacts-monorepo/
 │   ├── api-server/         # Express API server — MCA webhooks + app-facing read API
 │   │   └── src/
 │   │       ├── routes/franchise.ts        # MCA webhook routes (/api/madden/:key/*)
-│   │       ├── routes/leagueRead.ts       # Read API: /api/v1/leagues/:guildId/*
-│   │       ├── routes/economyRead.ts      # Read API: /api/v1/leagues/:guildId/economy/*
-│   │       ├── routes/globalRead.ts       # Read API: /api/v1/global/*
+│   │       ├── routes/leagueRead.ts       # Read API: /api/v1/leagues/:guildId/{teams,standings,schedule,roster/:teamId,player-stats,draft-picks,news}
+│   │       ├── routes/economyRead.ts      # Read API: /api/v1/leagues/:guildId/{users,users/:discordId,users/:discordId/transactions,wagers,store}
+│   │       ├── routes/globalRead.ts       # Read API: /api/v1/{leagues,records,users/:discordId}
 │   │       ├── middleware/requireApiKey.ts # Bearer token auth (MADDEN_WEBHOOK_KEY)
 │   │       ├── lib/franchise-processor.ts # Shared game/roster/stats processing logic
 │   │       └── lib/discord-notify.ts      # Discord REST API notifier (no discord.js)

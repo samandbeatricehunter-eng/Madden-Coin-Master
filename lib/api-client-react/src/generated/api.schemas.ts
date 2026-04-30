@@ -404,10 +404,10 @@ export type GetDraftPicks200 = {
 
 export type GetLeagueNewsParams = {
   /**
-   * Maximum number of results to return (max 200)
+   * Maximum number of news items to return (default 25, max 200)
    * @maximum 200
    */
-  limit?: LimitParameter;
+  limit?: number;
 };
 
 export type GetLeagueNews200 = {

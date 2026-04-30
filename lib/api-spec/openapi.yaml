@@ -355,7 +355,14 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/guildId"
-        - $ref: "#/components/parameters/limit"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of news items to return (default 25, max 200)
+          schema:
+            type: integer
+            default: 25
+            maximum: 200
       responses:
         "200":
           description: League news
