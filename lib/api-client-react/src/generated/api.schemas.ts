@@ -165,6 +165,8 @@ export interface LeagueUserWithRecord {
   discordId: string;
   discordUsername: string;
   serverNickname?: string | null;
+  /** In-game Madden username from the MCA import (matches franchiseMcaTeams.userName) */
+  mcaUserName?: string | null;
   team?: string | null;
   balance: number;
   eaId?: string | null;

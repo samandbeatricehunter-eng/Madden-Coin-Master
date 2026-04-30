@@ -10,6 +10,7 @@ import {
   userSavingsTable,
   globalUserRecordsTable,
   userRecordsTable,
+  franchiseMcaTeamsTable,
 } from "@workspace/db";
 import { eq, and, or, desc, asc } from "drizzle-orm";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -65,9 +66,22 @@ router.get("/v1/leagues/:guildId/users", requireApiKey, async (req: Request, res
         .where(eq(userRecordsTable.seasonId, season.id));
     }
 
+    let teamRows: { discordId: string | null; userName: string }[] = [];
+    if (season) {
+      teamRows = await db
+        .select({ discordId: franchiseMcaTeamsTable.discordId, userName: franchiseMcaTeamsTable.userName })
+        .from(franchiseMcaTeamsTable)
+        .where(eq(franchiseMcaTeamsTable.seasonId, season.id));
+    }
+    const mcaUserNameMap = new Map<string, string>();
+    for (const t of teamRows) {
+      if (t.discordId) mcaUserNameMap.set(t.discordId, t.userName);
+    }
+
     const recordMap = new Map(records.map((r) => [r.discordId, r]));
     const users = members.map((m) => ({
       ...m,
+      mcaUserName: mcaUserNameMap.get(m.discordId) ?? null,
       currentSeasonRecord: recordMap.get(m.discordId) ?? null,
     }));
 
@@ -97,6 +111,7 @@ router.get("/v1/leagues/:guildId/users/:discordId", requireApiKey, async (req: R
 
     let currentSeasonRecord = null;
     let inventory: typeof inventoryTable.$inferSelect[] = [];
+    let mcaUserName: string | null = null;
 
     if (season) {
       const [record] = await db
@@ -110,6 +125,13 @@ router.get("/v1/leagues/:guildId/users/:discordId", requireApiKey, async (req: R
         .select()
         .from(inventoryTable)
         .where(and(eq(inventoryTable.discordId, discordId), eq(inventoryTable.seasonId, season.id)));
+
+      const [mcaTeam] = await db
+        .select({ userName: franchiseMcaTeamsTable.userName })
+        .from(franchiseMcaTeamsTable)
+        .where(and(eq(franchiseMcaTeamsTable.seasonId, season.id), eq(franchiseMcaTeamsTable.discordId, discordId)))
+        .limit(1);
+      mcaUserName = mcaTeam?.userName ?? null;
     }
 
     const [globalRecord] = await db
@@ -125,7 +147,7 @@ router.get("/v1/leagues/:guildId/users/:discordId", requireApiKey, async (req: R
       .limit(1);
 
     res.json({
-      user,
+      user: { ...user, mcaUserName },
       currentSeasonRecord,
       inventory,
       globalRecord: globalRecord ?? null,

@@ -408,6 +408,12 @@ export const GetLeagueUsersResponse = zod.object({
       discordId: zod.string(),
       discordUsername: zod.string(),
       serverNickname: zod.string().nullish(),
+      mcaUserName: zod
+        .string()
+        .nullish()
+        .describe(
+          "In-game Madden username from the MCA import (matches franchiseMcaTeams.userName)",
+        ),
       team: zod.string().nullish(),
       balance: zod.number(),
       eaId: zod.string().nullish(),
@@ -454,6 +460,12 @@ export const GetLeagueUserResponse = zod.object({
     discordId: zod.string(),
     discordUsername: zod.string(),
     serverNickname: zod.string().nullish(),
+    mcaUserName: zod
+      .string()
+      .nullish()
+      .describe(
+        "In-game Madden username from the MCA import (matches franchiseMcaTeams.userName)",
+      ),
     team: zod.string().nullish(),
     balance: zod.number(),
     eaId: zod.string().nullish(),

@@ -906,6 +906,10 @@ components:
         serverNickname:
           type: string
           nullable: true
+        mcaUserName:
+          type: string
+          nullable: true
+          description: In-game Madden username from the MCA import (matches franchiseMcaTeams.userName)
         team:
           type: string
           nullable: true
