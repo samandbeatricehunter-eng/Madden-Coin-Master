@@ -7,7 +7,8 @@
  */
 import type { CoinTransaction } from "./coinTransaction";
 
-export type GetTransactions200 = {
+export type GetUserTransactions200 = {
   guildId: string;
+  discordId: string;
   transactions: CoinTransaction[];
 };

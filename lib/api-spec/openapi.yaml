@@ -31,12 +31,84 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
-  /v1/leagues/{guildId}/season:
+  /v1/leagues:
     get:
-      operationId: getActiveSeason
+      operationId: getLeagues
+      tags: [global]
+      summary: List all known guilds
+      description: Returns a summary of every guild that has at least one season in the database
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Guild list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  leagues:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LeagueSummary"
+                required: [leagues]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/records:
+    get:
+      operationId: getGlobalRecords
+      tags: [global]
+      summary: Global all-time W/L leaderboard
+      description: Returns cross-guild all-time records from global_user_records, sorted by wins
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: Global leaderboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  leaderboard:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GlobalUserRecord"
+                required: [leaderboard]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/users/{discordId}:
+    get:
+      operationId: getGlobalUser
+      tags: [global]
+      summary: Cross-guild profile for a Discord user
+      description: Returns global W/L record, savings balance, and per-guild profiles
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/discordId"
+      responses:
+        "200":
+          description: Global user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalUserProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/leagues/{guildId}:
+    get:
+      operationId: getLeagueInfo
       tags: [league]
-      summary: Get active season
-      description: Returns the currently active season for a guild including all config overrides
+      summary: Active season info
+      description: Returns the currently active season for a guild including id, week, season number, and config overrides
       security:
         - bearerAuth: []
       parameters:
@@ -61,7 +133,7 @@ paths:
     get:
       operationId: getLeagueTeams
       tags: [league]
-      summary: Get all franchise teams
+      summary: All franchise teams
       description: Returns all MCA teams for the active season including human/CPU status and Discord IDs
       security:
         - bearerAuth: []
@@ -93,14 +165,15 @@ paths:
     get:
       operationId: getLeagueStandings
       tags: [league]
-      summary: Get team standings and season stats
+      summary: Team standings and season stats
+      description: Returns wins/losses and offensive/defensive stats from team_season_stats
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/guildId"
       responses:
         "200":
-          description: Standings with offensive/defensive stats
+          description: Standings
           content:
             application/json:
               schema:
@@ -126,16 +199,16 @@ paths:
     get:
       operationId: getLeagueSchedule
       tags: [league]
-      summary: Get season schedule
-      description: Returns all games for the active season. Filter by week with ?week=N (0-based index)
+      summary: Full season schedule
+      description: Returns all games for the active season. Filter by 0-based week index with ?week=N.
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/guildId"
         - name: week
           in: query
-          description: 0-based week index to filter by
           required: false
+          description: 0-based week index to filter by
           schema:
             type: integer
       responses:
@@ -162,43 +235,12 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /v1/leagues/{guildId}/rosters:
-    get:
-      operationId: getAllRosters
-      tags: [league]
-      summary: Get all team rosters
-      description: Returns every player from all teams for the active season
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/guildId"
-      responses:
-        "200":
-          description: All rosters
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  seasonId:
-                    type: integer
-                  seasonNumber:
-                    type: integer
-                  rosters:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/RosterPlayer"
-                required: [seasonId, seasonNumber, rosters]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
   /v1/leagues/{guildId}/roster/{teamId}:
     get:
       operationId: getTeamRoster
       tags: [league]
-      summary: Get roster for a specific team
+      summary: Roster for a specific team
+      description: Returns all players on a team with attributes, sorted by overall rating
       security:
         - bearerAuth: []
       parameters:
@@ -233,12 +275,12 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /v1/leagues/{guildId}/players/stats:
+  /v1/leagues/{guildId}/player-stats:
     get:
       operationId: getPlayerStats
       tags: [league]
-      summary: Get player season stats
-      description: Returns cumulative player stats for the active season. Optionally filter by position.
+      summary: Cumulative player season stats
+      description: Returns season stats for all players. Filter by position with ?position=QB.
       security:
         - bearerAuth: []
       parameters:
@@ -275,8 +317,8 @@ paths:
     get:
       operationId: getDraftPicks
       tags: [league]
-      summary: Get draft pick inventory
-      description: Returns all draft picks held by each team for the active season
+      summary: Draft pick inventory
+      description: Returns all draft picks held by each team for the next 3 draft classes
       security:
         - bearerAuth: []
       parameters:
@@ -307,8 +349,8 @@ paths:
     get:
       operationId: getLeagueNews
       tags: [league]
-      summary: Get league news feed
-      description: Returns EA CFM news items for the active season
+      summary: League news headlines
+      description: Returns the latest EA CFM news items for the active season (most recent 25 by default)
       security:
         - bearerAuth: []
       parameters:
@@ -339,9 +381,9 @@ paths:
   /v1/leagues/{guildId}/users:
     get:
       operationId: getLeagueUsers
-      tags: [league]
-      summary: Get all league members
-      description: Returns all registered users for a guild with balances and all-time records
+      tags: [economy]
+      summary: All users with balances and season records
+      description: Returns all registered users for a guild including coin balance, season W/L/T/PD, and playoff seeds
       security:
         - bearerAuth: []
       parameters:
@@ -356,47 +398,23 @@ paths:
                 properties:
                   guildId:
                     type: string
-                  members:
+                  seasonId:
+                    type: integer
+                    nullable: true
+                  users:
                     type: array
                     items:
-                      $ref: "#/components/schemas/LeagueMember"
-                required: [guildId, members]
+                      $ref: "#/components/schemas/LeagueUserWithRecord"
+                required: [guildId, users]
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /v1/leagues/{guildId}/economy/leaderboard:
+  /v1/leagues/{guildId}/users/{discordId}:
     get:
-      operationId: getEconomyLeaderboard
+      operationId: getLeagueUser
       tags: [economy]
-      summary: Get coin balance leaderboard
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/guildId"
-      responses:
-        "200":
-          description: Coin leaderboard sorted by balance
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  guildId:
-                    type: string
-                  leaderboard:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/EconomyLeaderboardEntry"
-                required: [guildId, leaderboard]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/leagues/{guildId}/economy/users/{discordId}:
-    get:
-      operationId: getEconomyUser
-      tags: [economy]
-      summary: Get economy profile for a specific user
-      description: Returns full user record, current season W/L, and recent transactions
+      summary: Single user full profile
+      description: Returns user record, current season W/L, inventory, global record, and savings balance
       security:
         - bearerAuth: []
       parameters:
@@ -404,35 +422,29 @@ paths:
         - $ref: "#/components/parameters/discordId"
       responses:
         "200":
-          description: User economy profile
+          description: User profile
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EconomyUserDetail"
+                $ref: "#/components/schemas/LeagueUserDetail"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /v1/leagues/{guildId}/economy/transactions:
+  /v1/leagues/{guildId}/users/{discordId}/transactions:
     get:
-      operationId: getTransactions
+      operationId: getUserTransactions
       tags: [economy]
-      summary: Get coin transaction history
+      summary: Last 50 transactions for a user
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/guildId"
-        - name: discordId
-          in: query
-          required: false
-          description: Filter to a specific user
-          schema:
-            type: string
-        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/discordId"
       responses:
         "200":
-          description: Transaction log
+          description: Transaction history
           content:
             application/json:
               schema:
@@ -440,20 +452,22 @@ paths:
                 properties:
                   guildId:
                     type: string
+                  discordId:
+                    type: string
                   transactions:
                     type: array
                     items:
                       $ref: "#/components/schemas/CoinTransaction"
-                required: [guildId, transactions]
+                required: [guildId, discordId, transactions]
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /v1/leagues/{guildId}/economy/wagers:
+  /v1/leagues/{guildId}/wagers:
     get:
       operationId: getWagers
       tags: [economy]
-      summary: Get wagers
-      description: Returns wagers for a guild. Filter by status (pending/active/completed/refused/cancelled) or discordId.
+      summary: Wagers for a guild
+      description: Returns wagers. Filter by status (active/completed/pending/refused/cancelled).
       security:
         - bearerAuth: []
       parameters:
@@ -464,12 +478,6 @@ paths:
           schema:
             type: string
             enum: [pending, active, completed, refused, cancelled]
-        - name: discordId
-          in: query
-          required: false
-          description: Filter to wagers involving a specific user
-          schema:
-            type: string
       responses:
         "200":
           description: Wagers list
@@ -488,247 +496,23 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /v1/leagues/{guildId}/economy/payout-config:
+  /v1/leagues/{guildId}/store:
     get:
-      operationId: getPayoutConfig
+      operationId: getStore
       tags: [economy]
-      summary: Get payout configuration
-      description: Returns all configured payout key/value pairs for the guild
+      summary: Current payout config and store prices
+      description: Returns all payout config values (win/loss payouts, milestone tiers) and per-season store item cost overrides
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/guildId"
       responses:
         "200":
-          description: Payout config
+          description: Store and payout config
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  guildId:
-                    type: string
-                  payoutConfig:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/PayoutConfigEntry"
-                required: [guildId, payoutConfig]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/leagues/{guildId}/economy/legends:
-    get:
-      operationId: getLegends
-      tags: [economy]
-      summary: Get legends catalog
-      description: Returns all legends available for purchase in this guild
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/guildId"
-      responses:
-        "200":
-          description: Legends list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  guildId:
-                    type: string
-                  legends:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Legend"
-                required: [guildId, legends]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/leagues/{guildId}/economy/purchases:
-    get:
-      operationId: getPurchases
-      tags: [economy]
-      summary: Get purchase history for the active season
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/guildId"
-        - name: discordId
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: status
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [pending, approved, refunded]
-        - $ref: "#/components/parameters/limit"
-      responses:
-        "200":
-          description: Purchases
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  guildId:
-                    type: string
-                  seasonId:
-                    type: integer
-                  purchases:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Purchase"
-                required: [guildId, seasonId, purchases]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/leagues/{guildId}/economy/inventory:
-    get:
-      operationId: getInventory
-      tags: [economy]
-      summary: Get inventory for the active season
-      description: Returns legend and custom player inventory. Filter by discordId to get one user's items.
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/guildId"
-        - name: discordId
-          in: query
-          required: false
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Inventory items
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  guildId:
-                    type: string
-                  seasonId:
-                    type: integer
-                  seasonNumber:
-                    type: integer
-                  inventory:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/InventoryItem"
-                required: [guildId, seasonId, seasonNumber, inventory]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/leagues/{guildId}/economy/records:
-    get:
-      operationId: getSeasonRecords
-      tags: [economy]
-      summary: Get H2H records for the active season
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/guildId"
-      responses:
-        "200":
-          description: Season records
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  guildId:
-                    type: string
-                  seasonId:
-                    type: integer
-                  seasonNumber:
-                    type: integer
-                  currentWeek:
-                    type: string
-                  records:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/UserRecord"
-                required: [guildId, seasonId, seasonNumber, currentWeek, records]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/global/leaderboard:
-    get:
-      operationId: getGlobalLeaderboard
-      tags: [global]
-      summary: Get global cross-server W/L leaderboard
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/limit"
-      responses:
-        "200":
-          description: Global leaderboard
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  leaderboard:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/GlobalUserRecord"
-                required: [leaderboard]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/global/users/{discordId}:
-    get:
-      operationId: getGlobalUser
-      tags: [global]
-      summary: Get a user's global profile
-      description: Returns global W/L record, savings balance, and per-guild profiles for a Discord user
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/discordId"
-      responses:
-        "200":
-          description: Global user profile
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GlobalUserProfile"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/global/leagues:
-    get:
-      operationId: getGlobalLeagues
-      tags: [global]
-      summary: List all known guilds
-      description: Returns summary of every guild that has at least one season in the database
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Guild list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  leagues:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/LeagueSummary"
-                required: [leagues]
+                $ref: "#/components/schemas/StoreConfig"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -811,6 +595,15 @@ components:
         startedAt:
           type: string
           format: date-time
+        coreAttrCostOverride:
+          type: integer
+          nullable: true
+        coreAttrCapOverride:
+          type: integer
+          nullable: true
+        legendCostOverride:
+          type: integer
+          nullable: true
       required: [id, guildId, seasonNumber, isActive, currentWeek, catchupMode, startedAt]
 
     McaTeam:
@@ -1062,7 +855,39 @@ components:
           format: date-time
       required: [id, seasonId, headline, createdAt]
 
-    LeagueMember:
+    UserRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        discordId:
+          type: string
+        discordUsername:
+          type: string
+        team:
+          type: string
+          nullable: true
+        seasonId:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        ties:
+          type: integer
+        pointDifferential:
+          type: integer
+        playoffWins:
+          type: integer
+        playoffLosses:
+          type: integer
+        superbowlWins:
+          type: integer
+        superbowlLosses:
+          type: integer
+      required: [id, discordId, discordUsername, seasonId, wins, losses, ties, pointDifferential]
+
+    LeagueUserWithRecord:
       type: object
       properties:
         id:
@@ -1098,44 +923,61 @@ components:
         playoffConference:
           type: string
           nullable: true
-      required: [id, discordId, discordUsername, balance, isAdmin]
-
-    EconomyLeaderboardEntry:
-      type: object
-      properties:
-        discordId:
-          type: string
-        discordUsername:
-          type: string
-        serverNickname:
-          type: string
-          nullable: true
-        team:
-          type: string
-          nullable: true
-        balance:
-          type: integer
-        allTimeH2HWins:
-          type: integer
-        allTimeH2HLosses:
-          type: integer
-        allTimeSuperbowlWins:
-          type: integer
-      required: [discordId, discordUsername, balance]
-
-    EconomyUserDetail:
-      type: object
-      properties:
-        user:
-          $ref: "#/components/schemas/LeagueMember"
         currentSeasonRecord:
           $ref: "#/components/schemas/UserRecord"
           nullable: true
-        recentTransactions:
+      required: [id, discordId, discordUsername, balance, isAdmin]
+
+    LeagueUserDetail:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/LeagueUserWithRecord"
+        currentSeasonRecord:
+          $ref: "#/components/schemas/UserRecord"
+          nullable: true
+        inventory:
           type: array
           items:
-            $ref: "#/components/schemas/CoinTransaction"
-      required: [user, recentTransactions]
+            $ref: "#/components/schemas/InventoryItem"
+        globalRecord:
+          $ref: "#/components/schemas/GlobalUserRecord"
+          nullable: true
+        savingsBalance:
+          type: integer
+      required: [user, inventory, savingsBalance]
+
+    InventoryItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        discordId:
+          type: string
+        seasonId:
+          type: integer
+        purchaseId:
+          type: integer
+        itemType:
+          type: string
+        legendName:
+          type: string
+          nullable: true
+        playerName:
+          type: string
+          nullable: true
+        playerPosition:
+          type: string
+          nullable: true
+        attributeName:
+          type: string
+          nullable: true
+        legendCategory:
+          type: string
+        team:
+          type: string
+          nullable: true
+      required: [id, discordId, seasonId, purchaseId, itemType, legendCategory]
 
     CoinTransaction:
       type: object
@@ -1203,6 +1045,78 @@ components:
           nullable: true
       required: [id, guildId, challengerId, challengerUsername, opponentId, opponentUsername, amount, pot, teamFor, teamAgainst, status, createdAt]
 
+    StoreConfig:
+      type: object
+      properties:
+        guildId:
+          type: string
+        payoutConfig:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayoutConfigEntry"
+        seasonOverrides:
+          type: object
+          nullable: true
+          properties:
+            coreAttrCost:
+              type: integer
+              nullable: true
+            coreAttrCap:
+              type: integer
+              nullable: true
+            nonCoreAttrCost:
+              type: integer
+              nullable: true
+            nonCoreAttrCap:
+              type: integer
+              nullable: true
+            devUpsCost:
+              type: integer
+              nullable: true
+            devUpsCap:
+              type: integer
+              nullable: true
+            ageResetsCost:
+              type: integer
+              nullable: true
+            ageResetsCap:
+              type: integer
+              nullable: true
+            legendCost:
+              type: integer
+              nullable: true
+            legendsPerSeasonCap:
+              type: integer
+              nullable: true
+            customGoldCost:
+              type: integer
+              nullable: true
+            customSilverCost:
+              type: integer
+              nullable: true
+            customBronzeCost:
+              type: integer
+              nullable: true
+            contractExtensionCost:
+              type: integer
+              nullable: true
+            contractExtensionCap:
+              type: integer
+              nullable: true
+            salaryReductionCost:
+              type: integer
+              nullable: true
+            salaryReductionCap:
+              type: integer
+              nullable: true
+            bonusReductionCost:
+              type: integer
+              nullable: true
+            bonusReductionCap:
+              type: integer
+              nullable: true
+      required: [guildId, payoutConfig]
+
     PayoutConfigEntry:
       type: object
       properties:
@@ -1213,129 +1127,6 @@ components:
         description:
           type: string
       required: [key, value, description]
-
-    Legend:
-      type: object
-      properties:
-        id:
-          type: integer
-        guildId:
-          type: string
-        name:
-          type: string
-        position:
-          type: string
-        description:
-          type: string
-          nullable: true
-        cost:
-          type: integer
-        isAvailable:
-          type: boolean
-      required: [id, guildId, name, position, cost, isAvailable]
-
-    Purchase:
-      type: object
-      properties:
-        id:
-          type: integer
-        discordId:
-          type: string
-        seasonId:
-          type: integer
-        purchaseType:
-          type: string
-        status:
-          type: string
-        cost:
-          type: integer
-        playerName:
-          type: string
-          nullable: true
-        playerPosition:
-          type: string
-          nullable: true
-        attributeName:
-          type: string
-          nullable: true
-        notes:
-          type: string
-          nullable: true
-        teamName:
-          type: string
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
-        approvedAt:
-          type: string
-          format: date-time
-          nullable: true
-      required: [id, discordId, seasonId, purchaseType, status, cost, createdAt]
-
-    InventoryItem:
-      type: object
-      properties:
-        id:
-          type: integer
-        discordId:
-          type: string
-        seasonId:
-          type: integer
-        purchaseId:
-          type: integer
-        itemType:
-          type: string
-        legendName:
-          type: string
-          nullable: true
-        playerName:
-          type: string
-          nullable: true
-        playerPosition:
-          type: string
-          nullable: true
-        attributeName:
-          type: string
-          nullable: true
-        legendCategory:
-          type: string
-        team:
-          type: string
-          nullable: true
-      required: [id, discordId, seasonId, purchaseId, itemType, legendCategory]
-
-    UserRecord:
-      type: object
-      properties:
-        id:
-          type: integer
-        discordId:
-          type: string
-        discordUsername:
-          type: string
-        team:
-          type: string
-          nullable: true
-        seasonId:
-          type: integer
-        wins:
-          type: integer
-        losses:
-          type: integer
-        ties:
-          type: integer
-        pointDifferential:
-          type: integer
-        playoffWins:
-          type: integer
-        playoffLosses:
-          type: integer
-        superbowlWins:
-          type: integer
-        superbowlLosses:
-          type: integer
-      required: [id, discordId, discordUsername, seasonId, wins, losses, ties, pointDifferential]
 
     GlobalUserRecord:
       type: object
@@ -1430,4 +1221,3 @@ components:
         totalSeasons:
           type: integer
       required: [guildId, totalSeasons]
-

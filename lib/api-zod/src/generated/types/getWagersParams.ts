@@ -9,8 +9,4 @@ import type { GetWagersStatus } from "./getWagersStatus";
 
 export type GetWagersParams = {
   status?: GetWagersStatus;
-  /**
-   * Filter to wagers involving a specific user
-   */
-  discordId?: string;
 };

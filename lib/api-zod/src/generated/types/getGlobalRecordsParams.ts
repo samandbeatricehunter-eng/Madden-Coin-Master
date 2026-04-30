@@ -7,7 +7,7 @@
  */
 import type { LimitParameter } from "./limitParameter";
 
-export type GetGlobalLeaderboardParams = {
+export type GetGlobalRecordsParams = {
   /**
    * Maximum number of results to return (max 200)
    * @maximum 200

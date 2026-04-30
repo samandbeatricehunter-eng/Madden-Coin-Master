@@ -9,14 +9,11 @@ import {
   teamSeasonStatsTable,
   playerSeasonStatsTable,
   leagueNewsTable,
-  usersTable,
 } from "@workspace/db";
-import { eq, and, isNotNull, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc } from "drizzle-orm";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 
 const router: IRouter = Router();
-
-router.use("/v1/leagues", requireApiKey);
 
 function extractParam(p: string | string[]): string {
   return Array.isArray(p) ? p[0]! : p;
@@ -32,7 +29,7 @@ async function getActiveSeason(guildId: string) {
   return season ?? null;
 }
 
-router.get("/v1/leagues/:guildId/season", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   try {
     const season = await getActiveSeason(guildId);
@@ -42,12 +39,12 @@ router.get("/v1/leagues/:guildId/season", async (req: Request, res: Response) =>
     }
     res.json({ season });
   } catch (err) {
-    req.log.error(err, "GET /season failed");
+    req.log.error(err, "GET /leagues/:guildId failed");
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-router.get("/v1/leagues/:guildId/teams", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/teams", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   try {
     const season = await getActiveSeason(guildId);
@@ -67,7 +64,7 @@ router.get("/v1/leagues/:guildId/teams", async (req: Request, res: Response) => 
   }
 });
 
-router.get("/v1/leagues/:guildId/standings", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/standings", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   try {
     const season = await getActiveSeason(guildId);
@@ -106,7 +103,7 @@ router.get("/v1/leagues/:guildId/standings", async (req: Request, res: Response)
   }
 });
 
-router.get("/v1/leagues/:guildId/schedule", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/schedule", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   const weekIndex = req.query["week"] !== undefined ? Number(req.query["week"]) : undefined;
   try {
@@ -131,28 +128,9 @@ router.get("/v1/leagues/:guildId/schedule", async (req: Request, res: Response) 
   }
 });
 
-router.get("/v1/leagues/:guildId/rosters", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/roster/:teamId", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
-  try {
-    const season = await getActiveSeason(guildId);
-    if (!season) {
-      res.status(404).json({ error: "No active season found for this guild" });
-      return;
-    }
-    const rosters = await db
-      .select()
-      .from(franchiseRostersTable)
-      .where(eq(franchiseRostersTable.seasonId, season.id))
-      .orderBy(asc(franchiseRostersTable.teamName), desc(franchiseRostersTable.overall));
-    res.json({ seasonId: season.id, seasonNumber: season.seasonNumber, rosters });
-  } catch (err) {
-    req.log.error(err, "GET /rosters failed");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.get("/v1/leagues/:guildId/roster/:teamId", async (req: Request, res: Response) => {
-  const guildId = extractParam(req.params["guildId"]!); const teamId = extractParam(req.params["teamId"]!);
+  const teamId = extractParam(req.params["teamId"]!);
   const teamIdNum = Number(teamId);
   if (isNaN(teamIdNum)) {
     res.status(400).json({ error: "Invalid teamId" });
@@ -180,7 +158,7 @@ router.get("/v1/leagues/:guildId/roster/:teamId", async (req: Request, res: Resp
   }
 });
 
-router.get("/v1/leagues/:guildId/players/stats", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/player-stats", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   const position = typeof req.query["position"] === "string" ? req.query["position"].toUpperCase() : undefined;
   try {
@@ -189,22 +167,20 @@ router.get("/v1/leagues/:guildId/players/stats", async (req: Request, res: Respo
       res.status(404).json({ error: "No active season found for this guild" });
       return;
     }
-    const conditions = [eq(playerSeasonStatsTable.seasonId, season.id)];
-    const query = db
+    const allStats = await db
       .select()
       .from(playerSeasonStatsTable)
-      .where(and(...conditions))
+      .where(eq(playerSeasonStatsTable.seasonId, season.id))
       .orderBy(asc(playerSeasonStatsTable.teamName), asc(playerSeasonStatsTable.lastName));
-    const stats = await query;
-    const filtered = position ? stats.filter((p) => p.position === position) : stats;
-    res.json({ seasonId: season.id, seasonNumber: season.seasonNumber, stats: filtered });
+    const stats = position ? allStats.filter((p) => p.position === position) : allStats;
+    res.json({ seasonId: season.id, seasonNumber: season.seasonNumber, stats });
   } catch (err) {
-    req.log.error(err, "GET /players/stats failed");
+    req.log.error(err, "GET /player-stats failed");
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-router.get("/v1/leagues/:guildId/draft-picks", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/draft-picks", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   try {
     const season = await getActiveSeason(guildId);
@@ -224,9 +200,9 @@ router.get("/v1/leagues/:guildId/draft-picks", async (req: Request, res: Respons
   }
 });
 
-router.get("/v1/leagues/:guildId/news", async (req: Request, res: Response) => {
+router.get("/v1/leagues/:guildId/news", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
-  const limit = Math.min(Number(req.query["limit"] ?? 50), 200);
+  const limit = Math.min(Number(req.query["limit"] ?? 25), 200);
   try {
     const season = await getActiveSeason(guildId);
     if (!season) {
@@ -242,37 +218,6 @@ router.get("/v1/leagues/:guildId/news", async (req: Request, res: Response) => {
     res.json({ seasonId: season.id, seasonNumber: season.seasonNumber, news });
   } catch (err) {
     req.log.error(err, "GET /news failed");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.get("/v1/leagues/:guildId/users", async (req: Request, res: Response) => {
-  const guildId = extractParam(req.params["guildId"]!);
-  try {
-    const members = await db
-      .select({
-        id: usersTable.id,
-        discordId: usersTable.discordId,
-        discordUsername: usersTable.discordUsername,
-        serverNickname: usersTable.serverNickname,
-        team: usersTable.team,
-        balance: usersTable.balance,
-        eaId: usersTable.eaId,
-        isAdmin: usersTable.isAdmin,
-        allTimeSuperbowlWins: usersTable.allTimeSuperbowlWins,
-        allTimeSuperbowlLosses: usersTable.allTimeSuperbowlLosses,
-        allTimeH2HWins: usersTable.allTimeH2HWins,
-        allTimeH2HLosses: usersTable.allTimeH2HLosses,
-        playoffSeed: usersTable.playoffSeed,
-        playoffConference: usersTable.playoffConference,
-        createdAt: usersTable.createdAt,
-      })
-      .from(usersTable)
-      .where(eq(usersTable.guildId, guildId))
-      .orderBy(asc(usersTable.discordUsername));
-    res.json({ guildId, members });
-  } catch (err) {
-    req.log.error(err, "GET /leagues/:guildId/users failed");
     res.status(500).json({ error: "Internal server error" });
   }
 });

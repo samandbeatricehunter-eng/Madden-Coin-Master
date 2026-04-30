@@ -5,9 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { LeagueMember } from "./leagueMember";
+import type { LeagueUserWithRecord } from "./leagueUserWithRecord";
 
 export type GetLeagueUsers200 = {
   guildId: string;
-  members: LeagueMember[];
+  seasonId?: number | null;
+  users: LeagueUserWithRecord[];
 };

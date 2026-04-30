@@ -14,4 +14,7 @@ export interface Season {
   currentWeek: string;
   catchupMode: boolean;
   startedAt: Date;
+  coreAttrCostOverride?: number | null;
+  coreAttrCapOverride?: number | null;
+  legendCostOverride?: number | null;
 }

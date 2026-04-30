@@ -7,6 +7,6 @@
  */
 import type { GlobalUserRecord } from "./globalUserRecord";
 
-export type GetGlobalLeaderboard200 = {
+export type GetGlobalRecords200 = {
   leaderboard: GlobalUserRecord[];
 };

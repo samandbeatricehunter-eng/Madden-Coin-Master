@@ -14,16 +14,10 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
-  EconomyUserDetail,
-  GetActiveSeason200,
-  GetAllRosters200,
   GetDraftPicks200,
-  GetEconomyLeaderboard200,
-  GetGlobalLeaderboard200,
-  GetGlobalLeaderboardParams,
-  GetGlobalLeagues200,
-  GetInventory200,
-  GetInventoryParams,
+  GetGlobalRecords200,
+  GetGlobalRecordsParams,
+  GetLeagueInfo200,
   GetLeagueNews200,
   GetLeagueNewsParams,
   GetLeagueSchedule200,
@@ -31,21 +25,18 @@ import type {
   GetLeagueStandings200,
   GetLeagueTeams200,
   GetLeagueUsers200,
-  GetLegends200,
-  GetPayoutConfig200,
+  GetLeagues200,
   GetPlayerStats200,
   GetPlayerStatsParams,
-  GetPurchases200,
-  GetPurchasesParams,
-  GetSeasonRecords200,
   GetTeamRoster200,
-  GetTransactions200,
-  GetTransactionsParams,
+  GetUserTransactions200,
   GetWagers200,
   GetWagersParams,
   GlobalUserProfile,
   HealthStatus,
+  LeagueUserDetail,
   NotFoundResponse,
+  StoreConfig,
   UnauthorizedResponse,
 } from "./api.schemas";
 
@@ -135,35 +126,125 @@ export function useHealthCheck<
 }
 
 /**
- * Returns the currently active season for a guild including all config overrides
- * @summary Get active season
+ * Returns a summary of every guild that has at least one season in the database
+ * @summary List all known guilds
  */
-export const getGetActiveSeasonUrl = (guildId: string) => {
-  return `/api/v1/leagues/${guildId}/season`;
+export const getGetLeaguesUrl = () => {
+  return `/api/v1/leagues`;
 };
 
-export const getActiveSeason = async (
-  guildId: string,
+export const getLeagues = async (
   options?: RequestInit,
-): Promise<GetActiveSeason200> => {
-  return customFetch<GetActiveSeason200>(getGetActiveSeasonUrl(guildId), {
+): Promise<GetLeagues200> => {
+  return customFetch<GetLeagues200>(getGetLeaguesUrl(), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetActiveSeasonQueryKey = (guildId: string) => {
-  return [`/api/v1/leagues/${guildId}/season`] as const;
+export const getGetLeaguesQueryKey = () => {
+  return [`/api/v1/leagues`] as const;
 };
 
-export const getGetActiveSeasonQueryOptions = <
-  TData = Awaited<ReturnType<typeof getActiveSeason>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+export const getGetLeaguesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLeagues>>,
+  TError = ErrorType<UnauthorizedResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLeagues>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLeaguesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLeagues>>> = ({
+    signal,
+  }) => getLeagues({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLeagues>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetLeaguesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLeagues>>
+>;
+export type GetLeaguesQueryError = ErrorType<UnauthorizedResponse>;
+
+/**
+ * @summary List all known guilds
+ */
+
+export function useGetLeagues<
+  TData = Awaited<ReturnType<typeof getLeagues>>,
+  TError = ErrorType<UnauthorizedResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLeagues>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLeaguesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns cross-guild all-time records from global_user_records, sorted by wins
+ * @summary Global all-time W/L leaderboard
+ */
+export const getGetGlobalRecordsUrl = (params?: GetGlobalRecordsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/records?${stringifiedParams}`
+    : `/api/v1/records`;
+};
+
+export const getGlobalRecords = async (
+  params?: GetGlobalRecordsParams,
+  options?: RequestInit,
+): Promise<GetGlobalRecords200> => {
+  return customFetch<GetGlobalRecords200>(getGetGlobalRecordsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetGlobalRecordsQueryKey = (
+  params?: GetGlobalRecordsParams,
+) => {
+  return [`/api/v1/records`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetGlobalRecordsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getGlobalRecords>>,
+  TError = ErrorType<UnauthorizedResponse>,
 >(
-  guildId: string,
+  params?: GetGlobalRecordsParams,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getActiveSeason>>,
+      Awaited<ReturnType<typeof getGlobalRecords>>,
       TError,
       TData
     >;
@@ -173,11 +254,185 @@ export const getGetActiveSeasonQueryOptions = <
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getGetActiveSeasonQueryKey(guildId);
+    queryOptions?.queryKey ?? getGetGlobalRecordsQueryKey(params);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getActiveSeason>>> = ({
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getGlobalRecords>>
+  > = ({ signal }) => getGlobalRecords(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getGlobalRecords>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetGlobalRecordsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getGlobalRecords>>
+>;
+export type GetGlobalRecordsQueryError = ErrorType<UnauthorizedResponse>;
+
+/**
+ * @summary Global all-time W/L leaderboard
+ */
+
+export function useGetGlobalRecords<
+  TData = Awaited<ReturnType<typeof getGlobalRecords>>,
+  TError = ErrorType<UnauthorizedResponse>,
+>(
+  params?: GetGlobalRecordsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getGlobalRecords>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetGlobalRecordsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns global W/L record, savings balance, and per-guild profiles
+ * @summary Cross-guild profile for a Discord user
+ */
+export const getGetGlobalUserUrl = (discordId: string) => {
+  return `/api/v1/users/${discordId}`;
+};
+
+export const getGlobalUser = async (
+  discordId: string,
+  options?: RequestInit,
+): Promise<GlobalUserProfile> => {
+  return customFetch<GlobalUserProfile>(getGetGlobalUserUrl(discordId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetGlobalUserQueryKey = (discordId: string) => {
+  return [`/api/v1/users/${discordId}`] as const;
+};
+
+export const getGetGlobalUserQueryOptions = <
+  TData = Awaited<ReturnType<typeof getGlobalUser>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  discordId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getGlobalUser>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetGlobalUserQueryKey(discordId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getGlobalUser>>> = ({
     signal,
-  }) => getActiveSeason(guildId, { signal, ...requestOptions });
+  }) => getGlobalUser(discordId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!discordId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getGlobalUser>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetGlobalUserQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getGlobalUser>>
+>;
+export type GetGlobalUserQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Cross-guild profile for a Discord user
+ */
+
+export function useGetGlobalUser<
+  TData = Awaited<ReturnType<typeof getGlobalUser>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  discordId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getGlobalUser>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetGlobalUserQueryOptions(discordId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns the currently active season for a guild including id, week, season number, and config overrides
+ * @summary Active season info
+ */
+export const getGetLeagueInfoUrl = (guildId: string) => {
+  return `/api/v1/leagues/${guildId}`;
+};
+
+export const getLeagueInfo = async (
+  guildId: string,
+  options?: RequestInit,
+): Promise<GetLeagueInfo200> => {
+  return customFetch<GetLeagueInfo200>(getGetLeagueInfoUrl(guildId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLeagueInfoQueryKey = (guildId: string) => {
+  return [`/api/v1/leagues/${guildId}`] as const;
+};
+
+export const getGetLeagueInfoQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLeagueInfo>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  guildId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLeagueInfo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLeagueInfoQueryKey(guildId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLeagueInfo>>> = ({
+    signal,
+  }) => getLeagueInfo(guildId, { signal, ...requestOptions });
 
   return {
     queryKey,
@@ -185,38 +440,38 @@ export const getGetActiveSeasonQueryOptions = <
     enabled: !!guildId,
     ...queryOptions,
   } as UseQueryOptions<
-    Awaited<ReturnType<typeof getActiveSeason>>,
+    Awaited<ReturnType<typeof getLeagueInfo>>,
     TError,
     TData
   > & { queryKey: QueryKey };
 };
 
-export type GetActiveSeasonQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getActiveSeason>>
+export type GetLeagueInfoQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLeagueInfo>>
 >;
-export type GetActiveSeasonQueryError = ErrorType<
+export type GetLeagueInfoQueryError = ErrorType<
   UnauthorizedResponse | NotFoundResponse
 >;
 
 /**
- * @summary Get active season
+ * @summary Active season info
  */
 
-export function useGetActiveSeason<
-  TData = Awaited<ReturnType<typeof getActiveSeason>>,
+export function useGetLeagueInfo<
+  TData = Awaited<ReturnType<typeof getLeagueInfo>>,
   TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
 >(
   guildId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getActiveSeason>>,
+      Awaited<ReturnType<typeof getLeagueInfo>>,
       TError,
       TData
     >;
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetActiveSeasonQueryOptions(guildId, options);
+  const queryOptions = getGetLeagueInfoQueryOptions(guildId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -227,7 +482,7 @@ export function useGetActiveSeason<
 
 /**
  * Returns all MCA teams for the active season including human/CPU status and Discord IDs
- * @summary Get all franchise teams
+ * @summary All franchise teams
  */
 export const getGetLeagueTeamsUrl = (guildId: string) => {
   return `/api/v1/leagues/${guildId}/teams`;
@@ -289,7 +544,7 @@ export type GetLeagueTeamsQueryError = ErrorType<
 >;
 
 /**
- * @summary Get all franchise teams
+ * @summary All franchise teams
  */
 
 export function useGetLeagueTeams<
@@ -316,7 +571,8 @@ export function useGetLeagueTeams<
 }
 
 /**
- * @summary Get team standings and season stats
+ * Returns wins/losses and offensive/defensive stats from team_season_stats
+ * @summary Team standings and season stats
  */
 export const getGetLeagueStandingsUrl = (guildId: string) => {
   return `/api/v1/leagues/${guildId}/standings`;
@@ -380,7 +636,7 @@ export type GetLeagueStandingsQueryError = ErrorType<
 >;
 
 /**
- * @summary Get team standings and season stats
+ * @summary Team standings and season stats
  */
 
 export function useGetLeagueStandings<
@@ -407,8 +663,8 @@ export function useGetLeagueStandings<
 }
 
 /**
- * Returns all games for the active season. Filter by week with ?week=N (0-based index)
- * @summary Get season schedule
+ * Returns all games for the active season. Filter by 0-based week index with ?week=N.
+ * @summary Full season schedule
  */
 export const getGetLeagueScheduleUrl = (
   guildId: string,
@@ -498,7 +754,7 @@ export type GetLeagueScheduleQueryError = ErrorType<
 >;
 
 /**
- * @summary Get season schedule
+ * @summary Full season schedule
  */
 
 export function useGetLeagueSchedule<
@@ -530,97 +786,8 @@ export function useGetLeagueSchedule<
 }
 
 /**
- * Returns every player from all teams for the active season
- * @summary Get all team rosters
- */
-export const getGetAllRostersUrl = (guildId: string) => {
-  return `/api/v1/leagues/${guildId}/rosters`;
-};
-
-export const getAllRosters = async (
-  guildId: string,
-  options?: RequestInit,
-): Promise<GetAllRosters200> => {
-  return customFetch<GetAllRosters200>(getGetAllRostersUrl(guildId), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetAllRostersQueryKey = (guildId: string) => {
-  return [`/api/v1/leagues/${guildId}/rosters`] as const;
-};
-
-export const getGetAllRostersQueryOptions = <
-  TData = Awaited<ReturnType<typeof getAllRosters>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getAllRosters>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetAllRostersQueryKey(guildId);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAllRosters>>> = ({
-    signal,
-  }) => getAllRosters(guildId, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!guildId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getAllRosters>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetAllRostersQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getAllRosters>>
->;
-export type GetAllRostersQueryError = ErrorType<
-  UnauthorizedResponse | NotFoundResponse
->;
-
-/**
- * @summary Get all team rosters
- */
-
-export function useGetAllRosters<
-  TData = Awaited<ReturnType<typeof getAllRosters>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getAllRosters>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetAllRostersQueryOptions(guildId, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * @summary Get roster for a specific team
+ * Returns all players on a team with attributes, sorted by overall rating
+ * @summary Roster for a specific team
  */
 export const getGetTeamRosterUrl = (guildId: string, teamId: number) => {
   return `/api/v1/leagues/${guildId}/roster/${teamId}`;
@@ -685,7 +852,7 @@ export type GetTeamRosterQueryError = ErrorType<
 >;
 
 /**
- * @summary Get roster for a specific team
+ * @summary Roster for a specific team
  */
 
 export function useGetTeamRoster<
@@ -713,8 +880,8 @@ export function useGetTeamRoster<
 }
 
 /**
- * Returns cumulative player stats for the active season. Optionally filter by position.
- * @summary Get player season stats
+ * Returns season stats for all players. Filter by position with ?position=QB.
+ * @summary Cumulative player season stats
  */
 export const getGetPlayerStatsUrl = (
   guildId: string,
@@ -731,8 +898,8 @@ export const getGetPlayerStatsUrl = (
   const stringifiedParams = normalizedParams.toString();
 
   return stringifiedParams.length > 0
-    ? `/api/v1/leagues/${guildId}/players/stats?${stringifiedParams}`
-    : `/api/v1/leagues/${guildId}/players/stats`;
+    ? `/api/v1/leagues/${guildId}/player-stats?${stringifiedParams}`
+    : `/api/v1/leagues/${guildId}/player-stats`;
 };
 
 export const getPlayerStats = async (
@@ -751,7 +918,7 @@ export const getGetPlayerStatsQueryKey = (
   params?: GetPlayerStatsParams,
 ) => {
   return [
-    `/api/v1/leagues/${guildId}/players/stats`,
+    `/api/v1/leagues/${guildId}/player-stats`,
     ...(params ? [params] : []),
   ] as const;
 };
@@ -800,7 +967,7 @@ export type GetPlayerStatsQueryError = ErrorType<
 >;
 
 /**
- * @summary Get player season stats
+ * @summary Cumulative player season stats
  */
 
 export function useGetPlayerStats<
@@ -828,8 +995,8 @@ export function useGetPlayerStats<
 }
 
 /**
- * Returns all draft picks held by each team for the active season
- * @summary Get draft pick inventory
+ * Returns all draft picks held by each team for the next 3 draft classes
+ * @summary Draft pick inventory
  */
 export const getGetDraftPicksUrl = (guildId: string) => {
   return `/api/v1/leagues/${guildId}/draft-picks`;
@@ -891,7 +1058,7 @@ export type GetDraftPicksQueryError = ErrorType<
 >;
 
 /**
- * @summary Get draft pick inventory
+ * @summary Draft pick inventory
  */
 
 export function useGetDraftPicks<
@@ -918,8 +1085,8 @@ export function useGetDraftPicks<
 }
 
 /**
- * Returns EA CFM news items for the active season
- * @summary Get league news feed
+ * Returns the latest EA CFM news items for the active season (most recent 25 by default)
+ * @summary League news headlines
  */
 export const getGetLeagueNewsUrl = (
   guildId: string,
@@ -1005,7 +1172,7 @@ export type GetLeagueNewsQueryError = ErrorType<
 >;
 
 /**
- * @summary Get league news feed
+ * @summary League news headlines
  */
 
 export function useGetLeagueNews<
@@ -1033,8 +1200,8 @@ export function useGetLeagueNews<
 }
 
 /**
- * Returns all registered users for a guild with balances and all-time records
- * @summary Get all league members
+ * Returns all registered users for a guild including coin balance, season W/L/T/PD, and playoff seeds
+ * @summary All users with balances and season records
  */
 export const getGetLeagueUsersUrl = (guildId: string) => {
   return `/api/v1/leagues/${guildId}/users`;
@@ -1094,7 +1261,7 @@ export type GetLeagueUsersQueryResult = NonNullable<
 export type GetLeagueUsersQueryError = ErrorType<UnauthorizedResponse>;
 
 /**
- * @summary Get all league members
+ * @summary All users with balances and season records
  */
 
 export function useGetLeagueUsers<
@@ -1121,18 +1288,20 @@ export function useGetLeagueUsers<
 }
 
 /**
- * @summary Get coin balance leaderboard
+ * Returns user record, current season W/L, inventory, global record, and savings balance
+ * @summary Single user full profile
  */
-export const getGetEconomyLeaderboardUrl = (guildId: string) => {
-  return `/api/v1/leagues/${guildId}/economy/leaderboard`;
+export const getGetLeagueUserUrl = (guildId: string, discordId: string) => {
+  return `/api/v1/leagues/${guildId}/users/${discordId}`;
 };
 
-export const getEconomyLeaderboard = async (
+export const getLeagueUser = async (
   guildId: string,
+  discordId: string,
   options?: RequestInit,
-): Promise<GetEconomyLeaderboard200> => {
-  return customFetch<GetEconomyLeaderboard200>(
-    getGetEconomyLeaderboardUrl(guildId),
+): Promise<LeagueUserDetail> => {
+  return customFetch<LeagueUserDetail>(
+    getGetLeagueUserUrl(guildId, discordId),
     {
       ...options,
       method: "GET",
@@ -1140,116 +1309,22 @@ export const getEconomyLeaderboard = async (
   );
 };
 
-export const getGetEconomyLeaderboardQueryKey = (guildId: string) => {
-  return [`/api/v1/leagues/${guildId}/economy/leaderboard`] as const;
-};
-
-export const getGetEconomyLeaderboardQueryOptions = <
-  TData = Awaited<ReturnType<typeof getEconomyLeaderboard>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getEconomyLeaderboard>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetEconomyLeaderboardQueryKey(guildId);
-
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getEconomyLeaderboard>>
-  > = ({ signal }) =>
-    getEconomyLeaderboard(guildId, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!guildId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getEconomyLeaderboard>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetEconomyLeaderboardQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getEconomyLeaderboard>>
->;
-export type GetEconomyLeaderboardQueryError = ErrorType<UnauthorizedResponse>;
-
-/**
- * @summary Get coin balance leaderboard
- */
-
-export function useGetEconomyLeaderboard<
-  TData = Awaited<ReturnType<typeof getEconomyLeaderboard>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getEconomyLeaderboard>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetEconomyLeaderboardQueryOptions(guildId, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * Returns full user record, current season W/L, and recent transactions
- * @summary Get economy profile for a specific user
- */
-export const getGetEconomyUserUrl = (guildId: string, discordId: string) => {
-  return `/api/v1/leagues/${guildId}/economy/users/${discordId}`;
-};
-
-export const getEconomyUser = async (
-  guildId: string,
-  discordId: string,
-  options?: RequestInit,
-): Promise<EconomyUserDetail> => {
-  return customFetch<EconomyUserDetail>(
-    getGetEconomyUserUrl(guildId, discordId),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
-
-export const getGetEconomyUserQueryKey = (
+export const getGetLeagueUserQueryKey = (
   guildId: string,
   discordId: string,
 ) => {
-  return [`/api/v1/leagues/${guildId}/economy/users/${discordId}`] as const;
+  return [`/api/v1/leagues/${guildId}/users/${discordId}`] as const;
 };
 
-export const getGetEconomyUserQueryOptions = <
-  TData = Awaited<ReturnType<typeof getEconomyUser>>,
+export const getGetLeagueUserQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLeagueUser>>,
   TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
 >(
   guildId: string,
   discordId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getEconomyUser>>,
+      Awaited<ReturnType<typeof getLeagueUser>>,
       TError,
       TData
     >;
@@ -1259,11 +1334,11 @@ export const getGetEconomyUserQueryOptions = <
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getGetEconomyUserQueryKey(guildId, discordId);
+    queryOptions?.queryKey ?? getGetLeagueUserQueryKey(guildId, discordId);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEconomyUser>>> = ({
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLeagueUser>>> = ({
     signal,
-  }) => getEconomyUser(guildId, discordId, { signal, ...requestOptions });
+  }) => getLeagueUser(guildId, discordId, { signal, ...requestOptions });
 
   return {
     queryKey,
@@ -1271,39 +1346,39 @@ export const getGetEconomyUserQueryOptions = <
     enabled: !!(guildId && discordId),
     ...queryOptions,
   } as UseQueryOptions<
-    Awaited<ReturnType<typeof getEconomyUser>>,
+    Awaited<ReturnType<typeof getLeagueUser>>,
     TError,
     TData
   > & { queryKey: QueryKey };
 };
 
-export type GetEconomyUserQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getEconomyUser>>
+export type GetLeagueUserQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLeagueUser>>
 >;
-export type GetEconomyUserQueryError = ErrorType<
+export type GetLeagueUserQueryError = ErrorType<
   UnauthorizedResponse | NotFoundResponse
 >;
 
 /**
- * @summary Get economy profile for a specific user
+ * @summary Single user full profile
  */
 
-export function useGetEconomyUser<
-  TData = Awaited<ReturnType<typeof getEconomyUser>>,
+export function useGetLeagueUser<
+  TData = Awaited<ReturnType<typeof getLeagueUser>>,
   TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
 >(
   guildId: string,
   discordId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getEconomyUser>>,
+      Awaited<ReturnType<typeof getLeagueUser>>,
       TError,
       TData
     >;
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetEconomyUserQueryOptions(
+  const queryOptions = getGetLeagueUserQueryOptions(
     guildId,
     discordId,
     options,
@@ -1317,34 +1392,22 @@ export function useGetEconomyUser<
 }
 
 /**
- * @summary Get coin transaction history
+ * @summary Last 50 transactions for a user
  */
-export const getGetTransactionsUrl = (
+export const getGetUserTransactionsUrl = (
   guildId: string,
-  params?: GetTransactionsParams,
+  discordId: string,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/leagues/${guildId}/economy/transactions?${stringifiedParams}`
-    : `/api/v1/leagues/${guildId}/economy/transactions`;
+  return `/api/v1/leagues/${guildId}/users/${discordId}/transactions`;
 };
 
-export const getTransactions = async (
+export const getUserTransactions = async (
   guildId: string,
-  params?: GetTransactionsParams,
+  discordId: string,
   options?: RequestInit,
-): Promise<GetTransactions200> => {
-  return customFetch<GetTransactions200>(
-    getGetTransactionsUrl(guildId, params),
+): Promise<GetUserTransactions200> => {
+  return customFetch<GetUserTransactions200>(
+    getGetUserTransactionsUrl(guildId, discordId),
     {
       ...options,
       method: "GET",
@@ -1352,25 +1415,24 @@ export const getTransactions = async (
   );
 };
 
-export const getGetTransactionsQueryKey = (
+export const getGetUserTransactionsQueryKey = (
   guildId: string,
-  params?: GetTransactionsParams,
+  discordId: string,
 ) => {
   return [
-    `/api/v1/leagues/${guildId}/economy/transactions`,
-    ...(params ? [params] : []),
+    `/api/v1/leagues/${guildId}/users/${discordId}/transactions`,
   ] as const;
 };
 
-export const getGetTransactionsQueryOptions = <
-  TData = Awaited<ReturnType<typeof getTransactions>>,
+export const getGetUserTransactionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getUserTransactions>>,
   TError = ErrorType<UnauthorizedResponse>,
 >(
   guildId: string,
-  params?: GetTransactionsParams,
+  discordId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getTransactions>>,
+      Awaited<ReturnType<typeof getUserTransactions>>,
       TError,
       TData
     >;
@@ -1380,49 +1442,55 @@ export const getGetTransactionsQueryOptions = <
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey =
-    queryOptions?.queryKey ?? getGetTransactionsQueryKey(guildId, params);
+    queryOptions?.queryKey ??
+    getGetUserTransactionsQueryKey(guildId, discordId);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTransactions>>> = ({
-    signal,
-  }) => getTransactions(guildId, params, { signal, ...requestOptions });
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getUserTransactions>>
+  > = ({ signal }) =>
+    getUserTransactions(guildId, discordId, { signal, ...requestOptions });
 
   return {
     queryKey,
     queryFn,
-    enabled: !!guildId,
+    enabled: !!(guildId && discordId),
     ...queryOptions,
   } as UseQueryOptions<
-    Awaited<ReturnType<typeof getTransactions>>,
+    Awaited<ReturnType<typeof getUserTransactions>>,
     TError,
     TData
   > & { queryKey: QueryKey };
 };
 
-export type GetTransactionsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getTransactions>>
+export type GetUserTransactionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getUserTransactions>>
 >;
-export type GetTransactionsQueryError = ErrorType<UnauthorizedResponse>;
+export type GetUserTransactionsQueryError = ErrorType<UnauthorizedResponse>;
 
 /**
- * @summary Get coin transaction history
+ * @summary Last 50 transactions for a user
  */
 
-export function useGetTransactions<
-  TData = Awaited<ReturnType<typeof getTransactions>>,
+export function useGetUserTransactions<
+  TData = Awaited<ReturnType<typeof getUserTransactions>>,
   TError = ErrorType<UnauthorizedResponse>,
 >(
   guildId: string,
-  params?: GetTransactionsParams,
+  discordId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getTransactions>>,
+      Awaited<ReturnType<typeof getUserTransactions>>,
       TError,
       TData
     >;
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetTransactionsQueryOptions(guildId, params, options);
+  const queryOptions = getGetUserTransactionsQueryOptions(
+    guildId,
+    discordId,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -1432,8 +1500,8 @@ export function useGetTransactions<
 }
 
 /**
- * Returns wagers for a guild. Filter by status (pending/active/completed/refused/cancelled) or discordId.
- * @summary Get wagers
+ * Returns wagers. Filter by status (active/completed/pending/refused/cancelled).
+ * @summary Wagers for a guild
  */
 export const getGetWagersUrl = (guildId: string, params?: GetWagersParams) => {
   const normalizedParams = new URLSearchParams();
@@ -1447,8 +1515,8 @@ export const getGetWagersUrl = (guildId: string, params?: GetWagersParams) => {
   const stringifiedParams = normalizedParams.toString();
 
   return stringifiedParams.length > 0
-    ? `/api/v1/leagues/${guildId}/economy/wagers?${stringifiedParams}`
-    : `/api/v1/leagues/${guildId}/economy/wagers`;
+    ? `/api/v1/leagues/${guildId}/wagers?${stringifiedParams}`
+    : `/api/v1/leagues/${guildId}/wagers`;
 };
 
 export const getWagers = async (
@@ -1467,7 +1535,7 @@ export const getGetWagersQueryKey = (
   params?: GetWagersParams,
 ) => {
   return [
-    `/api/v1/leagues/${guildId}/economy/wagers`,
+    `/api/v1/leagues/${guildId}/wagers`,
     ...(params ? [params] : []),
   ] as const;
 };
@@ -1512,7 +1580,7 @@ export type GetWagersQueryResult = NonNullable<
 export type GetWagersQueryError = ErrorType<UnauthorizedResponse>;
 
 /**
- * @summary Get wagers
+ * @summary Wagers for a guild
  */
 
 export function useGetWagers<
@@ -1540,35 +1608,35 @@ export function useGetWagers<
 }
 
 /**
- * Returns all configured payout key/value pairs for the guild
- * @summary Get payout configuration
+ * Returns all payout config values (win/loss payouts, milestone tiers) and per-season store item cost overrides
+ * @summary Current payout config and store prices
  */
-export const getGetPayoutConfigUrl = (guildId: string) => {
-  return `/api/v1/leagues/${guildId}/economy/payout-config`;
+export const getGetStoreUrl = (guildId: string) => {
+  return `/api/v1/leagues/${guildId}/store`;
 };
 
-export const getPayoutConfig = async (
+export const getStore = async (
   guildId: string,
   options?: RequestInit,
-): Promise<GetPayoutConfig200> => {
-  return customFetch<GetPayoutConfig200>(getGetPayoutConfigUrl(guildId), {
+): Promise<StoreConfig> => {
+  return customFetch<StoreConfig>(getGetStoreUrl(guildId), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetPayoutConfigQueryKey = (guildId: string) => {
-  return [`/api/v1/leagues/${guildId}/economy/payout-config`] as const;
+export const getGetStoreQueryKey = (guildId: string) => {
+  return [`/api/v1/leagues/${guildId}/store`] as const;
 };
 
-export const getGetPayoutConfigQueryOptions = <
-  TData = Awaited<ReturnType<typeof getPayoutConfig>>,
+export const getGetStoreQueryOptions = <
+  TData = Awaited<ReturnType<typeof getStore>>,
   TError = ErrorType<UnauthorizedResponse>,
 >(
   guildId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getPayoutConfig>>,
+      Awaited<ReturnType<typeof getStore>>,
       TError,
       TData
     >;
@@ -1577,726 +1645,46 @@ export const getGetPayoutConfigQueryOptions = <
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getGetPayoutConfigQueryKey(guildId);
+  const queryKey = queryOptions?.queryKey ?? getGetStoreQueryKey(guildId);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPayoutConfig>>> = ({
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getStore>>> = ({
     signal,
-  }) => getPayoutConfig(guildId, { signal, ...requestOptions });
+  }) => getStore(guildId, { signal, ...requestOptions });
 
   return {
     queryKey,
     queryFn,
     enabled: !!guildId,
     ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getPayoutConfig>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
+  } as UseQueryOptions<Awaited<ReturnType<typeof getStore>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
 };
 
-export type GetPayoutConfigQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getPayoutConfig>>
+export type GetStoreQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getStore>>
 >;
-export type GetPayoutConfigQueryError = ErrorType<UnauthorizedResponse>;
+export type GetStoreQueryError = ErrorType<UnauthorizedResponse>;
 
 /**
- * @summary Get payout configuration
+ * @summary Current payout config and store prices
  */
 
-export function useGetPayoutConfig<
-  TData = Awaited<ReturnType<typeof getPayoutConfig>>,
+export function useGetStore<
+  TData = Awaited<ReturnType<typeof getStore>>,
   TError = ErrorType<UnauthorizedResponse>,
 >(
   guildId: string,
   options?: {
     query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getPayoutConfig>>,
+      Awaited<ReturnType<typeof getStore>>,
       TError,
       TData
     >;
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetPayoutConfigQueryOptions(guildId, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * Returns all legends available for purchase in this guild
- * @summary Get legends catalog
- */
-export const getGetLegendsUrl = (guildId: string) => {
-  return `/api/v1/leagues/${guildId}/economy/legends`;
-};
-
-export const getLegends = async (
-  guildId: string,
-  options?: RequestInit,
-): Promise<GetLegends200> => {
-  return customFetch<GetLegends200>(getGetLegendsUrl(guildId), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetLegendsQueryKey = (guildId: string) => {
-  return [`/api/v1/leagues/${guildId}/economy/legends`] as const;
-};
-
-export const getGetLegendsQueryOptions = <
-  TData = Awaited<ReturnType<typeof getLegends>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getLegends>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetLegendsQueryKey(guildId);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLegends>>> = ({
-    signal,
-  }) => getLegends(guildId, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!guildId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getLegends>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetLegendsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getLegends>>
->;
-export type GetLegendsQueryError = ErrorType<UnauthorizedResponse>;
-
-/**
- * @summary Get legends catalog
- */
-
-export function useGetLegends<
-  TData = Awaited<ReturnType<typeof getLegends>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getLegends>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetLegendsQueryOptions(guildId, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * @summary Get purchase history for the active season
- */
-export const getGetPurchasesUrl = (
-  guildId: string,
-  params?: GetPurchasesParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/leagues/${guildId}/economy/purchases?${stringifiedParams}`
-    : `/api/v1/leagues/${guildId}/economy/purchases`;
-};
-
-export const getPurchases = async (
-  guildId: string,
-  params?: GetPurchasesParams,
-  options?: RequestInit,
-): Promise<GetPurchases200> => {
-  return customFetch<GetPurchases200>(getGetPurchasesUrl(guildId, params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetPurchasesQueryKey = (
-  guildId: string,
-  params?: GetPurchasesParams,
-) => {
-  return [
-    `/api/v1/leagues/${guildId}/economy/purchases`,
-    ...(params ? [params] : []),
-  ] as const;
-};
-
-export const getGetPurchasesQueryOptions = <
-  TData = Awaited<ReturnType<typeof getPurchases>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  params?: GetPurchasesParams,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getPurchases>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetPurchasesQueryKey(guildId, params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPurchases>>> = ({
-    signal,
-  }) => getPurchases(guildId, params, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!guildId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getPurchases>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetPurchasesQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getPurchases>>
->;
-export type GetPurchasesQueryError = ErrorType<
-  UnauthorizedResponse | NotFoundResponse
->;
-
-/**
- * @summary Get purchase history for the active season
- */
-
-export function useGetPurchases<
-  TData = Awaited<ReturnType<typeof getPurchases>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  params?: GetPurchasesParams,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getPurchases>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetPurchasesQueryOptions(guildId, params, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * Returns legend and custom player inventory. Filter by discordId to get one user's items.
- * @summary Get inventory for the active season
- */
-export const getGetInventoryUrl = (
-  guildId: string,
-  params?: GetInventoryParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/leagues/${guildId}/economy/inventory?${stringifiedParams}`
-    : `/api/v1/leagues/${guildId}/economy/inventory`;
-};
-
-export const getInventory = async (
-  guildId: string,
-  params?: GetInventoryParams,
-  options?: RequestInit,
-): Promise<GetInventory200> => {
-  return customFetch<GetInventory200>(getGetInventoryUrl(guildId, params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetInventoryQueryKey = (
-  guildId: string,
-  params?: GetInventoryParams,
-) => {
-  return [
-    `/api/v1/leagues/${guildId}/economy/inventory`,
-    ...(params ? [params] : []),
-  ] as const;
-};
-
-export const getGetInventoryQueryOptions = <
-  TData = Awaited<ReturnType<typeof getInventory>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  params?: GetInventoryParams,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getInventory>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetInventoryQueryKey(guildId, params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getInventory>>> = ({
-    signal,
-  }) => getInventory(guildId, params, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!guildId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getInventory>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetInventoryQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getInventory>>
->;
-export type GetInventoryQueryError = ErrorType<
-  UnauthorizedResponse | NotFoundResponse
->;
-
-/**
- * @summary Get inventory for the active season
- */
-
-export function useGetInventory<
-  TData = Awaited<ReturnType<typeof getInventory>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  params?: GetInventoryParams,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getInventory>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetInventoryQueryOptions(guildId, params, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * @summary Get H2H records for the active season
- */
-export const getGetSeasonRecordsUrl = (guildId: string) => {
-  return `/api/v1/leagues/${guildId}/economy/records`;
-};
-
-export const getSeasonRecords = async (
-  guildId: string,
-  options?: RequestInit,
-): Promise<GetSeasonRecords200> => {
-  return customFetch<GetSeasonRecords200>(getGetSeasonRecordsUrl(guildId), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetSeasonRecordsQueryKey = (guildId: string) => {
-  return [`/api/v1/leagues/${guildId}/economy/records`] as const;
-};
-
-export const getGetSeasonRecordsQueryOptions = <
-  TData = Awaited<ReturnType<typeof getSeasonRecords>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getSeasonRecords>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetSeasonRecordsQueryKey(guildId);
-
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getSeasonRecords>>
-  > = ({ signal }) => getSeasonRecords(guildId, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!guildId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getSeasonRecords>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetSeasonRecordsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getSeasonRecords>>
->;
-export type GetSeasonRecordsQueryError = ErrorType<
-  UnauthorizedResponse | NotFoundResponse
->;
-
-/**
- * @summary Get H2H records for the active season
- */
-
-export function useGetSeasonRecords<
-  TData = Awaited<ReturnType<typeof getSeasonRecords>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  guildId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getSeasonRecords>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSeasonRecordsQueryOptions(guildId, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * @summary Get global cross-server W/L leaderboard
- */
-export const getGetGlobalLeaderboardUrl = (
-  params?: GetGlobalLeaderboardParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/global/leaderboard?${stringifiedParams}`
-    : `/api/v1/global/leaderboard`;
-};
-
-export const getGlobalLeaderboard = async (
-  params?: GetGlobalLeaderboardParams,
-  options?: RequestInit,
-): Promise<GetGlobalLeaderboard200> => {
-  return customFetch<GetGlobalLeaderboard200>(
-    getGetGlobalLeaderboardUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
-
-export const getGetGlobalLeaderboardQueryKey = (
-  params?: GetGlobalLeaderboardParams,
-) => {
-  return [`/api/v1/global/leaderboard`, ...(params ? [params] : [])] as const;
-};
-
-export const getGetGlobalLeaderboardQueryOptions = <
-  TData = Awaited<ReturnType<typeof getGlobalLeaderboard>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(
-  params?: GetGlobalLeaderboardParams,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getGlobalLeaderboard>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetGlobalLeaderboardQueryKey(params);
-
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getGlobalLeaderboard>>
-  > = ({ signal }) =>
-    getGlobalLeaderboard(params, { signal, ...requestOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getGlobalLeaderboard>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetGlobalLeaderboardQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getGlobalLeaderboard>>
->;
-export type GetGlobalLeaderboardQueryError = ErrorType<UnauthorizedResponse>;
-
-/**
- * @summary Get global cross-server W/L leaderboard
- */
-
-export function useGetGlobalLeaderboard<
-  TData = Awaited<ReturnType<typeof getGlobalLeaderboard>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(
-  params?: GetGlobalLeaderboardParams,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getGlobalLeaderboard>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetGlobalLeaderboardQueryOptions(params, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * Returns global W/L record, savings balance, and per-guild profiles for a Discord user
- * @summary Get a user's global profile
- */
-export const getGetGlobalUserUrl = (discordId: string) => {
-  return `/api/v1/global/users/${discordId}`;
-};
-
-export const getGlobalUser = async (
-  discordId: string,
-  options?: RequestInit,
-): Promise<GlobalUserProfile> => {
-  return customFetch<GlobalUserProfile>(getGetGlobalUserUrl(discordId), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetGlobalUserQueryKey = (discordId: string) => {
-  return [`/api/v1/global/users/${discordId}`] as const;
-};
-
-export const getGetGlobalUserQueryOptions = <
-  TData = Awaited<ReturnType<typeof getGlobalUser>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  discordId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getGlobalUser>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetGlobalUserQueryKey(discordId);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getGlobalUser>>> = ({
-    signal,
-  }) => getGlobalUser(discordId, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!discordId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getGlobalUser>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetGlobalUserQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getGlobalUser>>
->;
-export type GetGlobalUserQueryError = ErrorType<
-  UnauthorizedResponse | NotFoundResponse
->;
-
-/**
- * @summary Get a user's global profile
- */
-
-export function useGetGlobalUser<
-  TData = Awaited<ReturnType<typeof getGlobalUser>>,
-  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
->(
-  discordId: string,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getGlobalUser>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetGlobalUserQueryOptions(discordId, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * Returns summary of every guild that has at least one season in the database
- * @summary List all known guilds
- */
-export const getGetGlobalLeaguesUrl = () => {
-  return `/api/v1/global/leagues`;
-};
-
-export const getGlobalLeagues = async (
-  options?: RequestInit,
-): Promise<GetGlobalLeagues200> => {
-  return customFetch<GetGlobalLeagues200>(getGetGlobalLeaguesUrl(), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetGlobalLeaguesQueryKey = () => {
-  return [`/api/v1/global/leagues`] as const;
-};
-
-export const getGetGlobalLeaguesQueryOptions = <
-  TData = Awaited<ReturnType<typeof getGlobalLeagues>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getGlobalLeagues>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetGlobalLeaguesQueryKey();
-
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getGlobalLeagues>>
-  > = ({ signal }) => getGlobalLeagues({ signal, ...requestOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getGlobalLeagues>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetGlobalLeaguesQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getGlobalLeagues>>
->;
-export type GetGlobalLeaguesQueryError = ErrorType<UnauthorizedResponse>;
-
-/**
- * @summary List all known guilds
- */
-
-export function useGetGlobalLeagues<
-  TData = Awaited<ReturnType<typeof getGlobalLeagues>>,
-  TError = ErrorType<UnauthorizedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getGlobalLeagues>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetGlobalLeaguesQueryOptions(options);
+  const queryOptions = getGetStoreQueryOptions(guildId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

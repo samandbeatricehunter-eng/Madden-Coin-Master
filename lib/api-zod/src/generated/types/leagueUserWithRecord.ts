@@ -5,8 +5,9 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { UserRecord } from "./userRecord";
 
-export interface LeagueMember {
+export interface LeagueUserWithRecord {
   id: number;
   discordId: string;
   discordUsername: string;
@@ -21,4 +22,5 @@ export interface LeagueMember {
   allTimeH2HLosses?: number;
   playoffSeed?: number | null;
   playoffConference?: string | null;
+  currentSeasonRecord?: UserRecord | null;
 }

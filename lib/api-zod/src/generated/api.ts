@@ -16,14 +16,102 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
- * Returns the currently active season for a guild including all config overrides
- * @summary Get active season
+ * Returns a summary of every guild that has at least one season in the database
+ * @summary List all known guilds
  */
-export const GetActiveSeasonParams = zod.object({
+export const GetLeaguesResponse = zod.object({
+  leagues: zod.array(
+    zod.object({
+      guildId: zod.string(),
+      activeSeason: zod.number().nullish(),
+      currentWeek: zod.string().nullish(),
+      totalSeasons: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * Returns cross-guild all-time records from global_user_records, sorted by wins
+ * @summary Global all-time W/L leaderboard
+ */
+export const getGlobalRecordsQueryLimitDefault = 50;
+export const getGlobalRecordsQueryLimitMax = 200;
+
+export const GetGlobalRecordsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .max(getGlobalRecordsQueryLimitMax)
+    .default(getGlobalRecordsQueryLimitDefault)
+    .describe("Maximum number of results to return (max 200)"),
+});
+
+export const GetGlobalRecordsResponse = zod.object({
+  leaderboard: zod.array(
+    zod.object({
+      discordId: zod.string(),
+      wins: zod.number(),
+      losses: zod.number(),
+      ties: zod.number(),
+      pointDifferential: zod.number(),
+      updatedAt: zod.date(),
+    }),
+  ),
+});
+
+/**
+ * Returns global W/L record, savings balance, and per-guild profiles
+ * @summary Cross-guild profile for a Discord user
+ */
+export const GetGlobalUserParams = zod.object({
+  discordId: zod.coerce.string().describe("Discord user ID"),
+});
+
+export const GetGlobalUserResponse = zod.object({
+  discordId: zod.string(),
+  globalRecord: zod
+    .object({
+      discordId: zod.string(),
+      wins: zod.number(),
+      losses: zod.number(),
+      ties: zod.number(),
+      pointDifferential: zod.number(),
+      updatedAt: zod.date(),
+    })
+    .nullish(),
+  savingsBalance: zod.number(),
+  guildProfiles: zod.array(
+    zod.object({
+      guildId: zod.string(),
+      discordUsername: zod.string(),
+      serverNickname: zod.string().nullish(),
+      team: zod.string().nullish(),
+      balance: zod.number(),
+      isAdmin: zod.boolean(),
+      eaId: zod.string().nullish(),
+      allTimeH2HWins: zod.number().optional(),
+      allTimeH2HLosses: zod.number().optional(),
+      allTimeSuperbowlWins: zod.number().optional(),
+      allTimeSuperbowlLosses: zod.number().optional(),
+    }),
+  ),
+  eaIds: zod.array(
+    zod.object({
+      eaId: zod.string(),
+      console: zod.string(),
+      slot: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * Returns the currently active season for a guild including id, week, season number, and config overrides
+ * @summary Active season info
+ */
+export const GetLeagueInfoParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
 });
 
-export const GetActiveSeasonResponse = zod.object({
+export const GetLeagueInfoResponse = zod.object({
   season: zod.object({
     id: zod.number(),
     guildId: zod.string(),
@@ -32,12 +120,15 @@ export const GetActiveSeasonResponse = zod.object({
     currentWeek: zod.string(),
     catchupMode: zod.boolean(),
     startedAt: zod.date(),
+    coreAttrCostOverride: zod.number().nullish(),
+    coreAttrCapOverride: zod.number().nullish(),
+    legendCostOverride: zod.number().nullish(),
   }),
 });
 
 /**
  * Returns all MCA teams for the active season including human/CPU status and Discord IDs
- * @summary Get all franchise teams
+ * @summary All franchise teams
  */
 export const GetLeagueTeamsParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -63,7 +154,8 @@ export const GetLeagueTeamsResponse = zod.object({
 });
 
 /**
- * @summary Get team standings and season stats
+ * Returns wins/losses and offensive/defensive stats from team_season_stats
+ * @summary Team standings and season stats
  */
 export const GetLeagueStandingsParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -98,8 +190,8 @@ export const GetLeagueStandingsResponse = zod.object({
 });
 
 /**
- * Returns all games for the active season. Filter by week with ?week=N (0-based index)
- * @summary Get season schedule
+ * Returns all games for the active season. Filter by 0-based week index with ?week=N.
+ * @summary Full season schedule
  */
 export const GetLeagueScheduleParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -133,40 +225,8 @@ export const GetLeagueScheduleResponse = zod.object({
 });
 
 /**
- * Returns every player from all teams for the active season
- * @summary Get all team rosters
- */
-export const GetAllRostersParams = zod.object({
-  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
-});
-
-export const GetAllRostersResponse = zod.object({
-  seasonId: zod.number(),
-  seasonNumber: zod.number(),
-  rosters: zod.array(
-    zod.object({
-      id: zod.number(),
-      seasonId: zod.number(),
-      teamId: zod.number(),
-      teamName: zod.string(),
-      discordId: zod.string().nullish(),
-      playerId: zod.number(),
-      firstName: zod.string(),
-      lastName: zod.string(),
-      position: zod.string(),
-      overall: zod.number(),
-      devTrait: zod.number(),
-      age: zod.number().nullish(),
-      jerseyNum: zod.number().nullish(),
-      contractYearsLeft: zod.number().nullish(),
-      archetypeAbbrev: zod.string().nullish(),
-      portraitUrl: zod.string().nullish(),
-    }),
-  ),
-});
-
-/**
- * @summary Get roster for a specific team
+ * Returns all players on a team with attributes, sorted by overall rating
+ * @summary Roster for a specific team
  */
 export const GetTeamRosterParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -200,8 +260,8 @@ export const GetTeamRosterResponse = zod.object({
 });
 
 /**
- * Returns cumulative player stats for the active season. Optionally filter by position.
- * @summary Get player season stats
+ * Returns season stats for all players. Filter by position with ?position=QB.
+ * @summary Cumulative player season stats
  */
 export const GetPlayerStatsParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -250,8 +310,8 @@ export const GetPlayerStatsResponse = zod.object({
 });
 
 /**
- * Returns all draft picks held by each team for the active season
- * @summary Get draft pick inventory
+ * Returns all draft picks held by each team for the next 3 draft classes
+ * @summary Draft pick inventory
  */
 export const GetDraftPicksParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -277,8 +337,8 @@ export const GetDraftPicksResponse = zod.object({
 });
 
 /**
- * Returns EA CFM news items for the active season
- * @summary Get league news feed
+ * Returns the latest EA CFM news items for the active season (most recent 25 by default)
+ * @summary League news headlines
  */
 export const GetLeagueNewsParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -312,8 +372,8 @@ export const GetLeagueNewsResponse = zod.object({
 });
 
 /**
- * Returns all registered users for a guild with balances and all-time records
- * @summary Get all league members
+ * Returns all registered users for a guild including coin balance, season W/L/T/PD, and playoff seeds
+ * @summary All users with balances and season records
  */
 export const GetLeagueUsersParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -321,7 +381,8 @@ export const GetLeagueUsersParams = zod.object({
 
 export const GetLeagueUsersResponse = zod.object({
   guildId: zod.string(),
-  members: zod.array(
+  seasonId: zod.number().nullish(),
+  users: zod.array(
     zod.object({
       id: zod.number(),
       discordId: zod.string(),
@@ -337,43 +398,37 @@ export const GetLeagueUsersResponse = zod.object({
       allTimeH2HLosses: zod.number().optional(),
       playoffSeed: zod.number().nullish(),
       playoffConference: zod.string().nullish(),
+      currentSeasonRecord: zod
+        .object({
+          id: zod.number(),
+          discordId: zod.string(),
+          discordUsername: zod.string(),
+          team: zod.string().nullish(),
+          seasonId: zod.number(),
+          wins: zod.number(),
+          losses: zod.number(),
+          ties: zod.number(),
+          pointDifferential: zod.number(),
+          playoffWins: zod.number().optional(),
+          playoffLosses: zod.number().optional(),
+          superbowlWins: zod.number().optional(),
+          superbowlLosses: zod.number().optional(),
+        })
+        .nullish(),
     }),
   ),
 });
 
 /**
- * @summary Get coin balance leaderboard
+ * Returns user record, current season W/L, inventory, global record, and savings balance
+ * @summary Single user full profile
  */
-export const GetEconomyLeaderboardParams = zod.object({
-  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
-});
-
-export const GetEconomyLeaderboardResponse = zod.object({
-  guildId: zod.string(),
-  leaderboard: zod.array(
-    zod.object({
-      discordId: zod.string(),
-      discordUsername: zod.string(),
-      serverNickname: zod.string().nullish(),
-      team: zod.string().nullish(),
-      balance: zod.number(),
-      allTimeH2HWins: zod.number().optional(),
-      allTimeH2HLosses: zod.number().optional(),
-      allTimeSuperbowlWins: zod.number().optional(),
-    }),
-  ),
-});
-
-/**
- * Returns full user record, current season W/L, and recent transactions
- * @summary Get economy profile for a specific user
- */
-export const GetEconomyUserParams = zod.object({
+export const GetLeagueUserParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
   discordId: zod.coerce.string().describe("Discord user ID"),
 });
 
-export const GetEconomyUserResponse = zod.object({
+export const GetLeagueUserResponse = zod.object({
   user: zod.object({
     id: zod.number(),
     discordId: zod.string(),
@@ -389,6 +444,23 @@ export const GetEconomyUserResponse = zod.object({
     allTimeH2HLosses: zod.number().optional(),
     playoffSeed: zod.number().nullish(),
     playoffConference: zod.string().nullish(),
+    currentSeasonRecord: zod
+      .object({
+        id: zod.number(),
+        discordId: zod.string(),
+        discordUsername: zod.string(),
+        team: zod.string().nullish(),
+        seasonId: zod.number(),
+        wins: zod.number(),
+        losses: zod.number(),
+        ties: zod.number(),
+        pointDifferential: zod.number(),
+        playoffWins: zod.number().optional(),
+        playoffLosses: zod.number().optional(),
+        superbowlWins: zod.number().optional(),
+        superbowlLosses: zod.number().optional(),
+      })
+      .nullish(),
   }),
   currentSeasonRecord: zod
     .object({
@@ -407,44 +479,45 @@ export const GetEconomyUserResponse = zod.object({
       superbowlLosses: zod.number().optional(),
     })
     .nullish(),
-  recentTransactions: zod.array(
+  inventory: zod.array(
     zod.object({
       id: zod.number(),
-      guildId: zod.string(),
       discordId: zod.string(),
-      amount: zod.number(),
-      type: zod.string(),
-      description: zod.string(),
-      relatedUserId: zod.string().nullish(),
-      createdAt: zod.date(),
+      seasonId: zod.number(),
+      purchaseId: zod.number(),
+      itemType: zod.string(),
+      legendName: zod.string().nullish(),
+      playerName: zod.string().nullish(),
+      playerPosition: zod.string().nullish(),
+      attributeName: zod.string().nullish(),
+      legendCategory: zod.string(),
+      team: zod.string().nullish(),
     }),
   ),
+  globalRecord: zod
+    .object({
+      discordId: zod.string(),
+      wins: zod.number(),
+      losses: zod.number(),
+      ties: zod.number(),
+      pointDifferential: zod.number(),
+      updatedAt: zod.date(),
+    })
+    .nullish(),
+  savingsBalance: zod.number(),
 });
 
 /**
- * @summary Get coin transaction history
+ * @summary Last 50 transactions for a user
  */
-export const GetTransactionsParams = zod.object({
+export const GetUserTransactionsParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
+  discordId: zod.coerce.string().describe("Discord user ID"),
 });
 
-export const getTransactionsQueryLimitDefault = 50;
-export const getTransactionsQueryLimitMax = 200;
-
-export const GetTransactionsQueryParams = zod.object({
-  discordId: zod.coerce
-    .string()
-    .optional()
-    .describe("Filter to a specific user"),
-  limit: zod.coerce
-    .number()
-    .max(getTransactionsQueryLimitMax)
-    .default(getTransactionsQueryLimitDefault)
-    .describe("Maximum number of results to return (max 200)"),
-});
-
-export const GetTransactionsResponse = zod.object({
+export const GetUserTransactionsResponse = zod.object({
   guildId: zod.string(),
+  discordId: zod.string(),
   transactions: zod.array(
     zod.object({
       id: zod.number(),
@@ -460,8 +533,8 @@ export const GetTransactionsResponse = zod.object({
 });
 
 /**
- * Returns wagers for a guild. Filter by status (pending/active/completed/refused/cancelled) or discordId.
- * @summary Get wagers
+ * Returns wagers. Filter by status (active/completed/pending/refused/cancelled).
+ * @summary Wagers for a guild
  */
 export const GetWagersParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
@@ -471,10 +544,6 @@ export const GetWagersQueryParams = zod.object({
   status: zod
     .enum(["pending", "active", "completed", "refused", "cancelled"])
     .optional(),
-  discordId: zod.coerce
-    .string()
-    .optional()
-    .describe("Filter to wagers involving a specific user"),
 });
 
 export const GetWagersResponse = zod.object({
@@ -502,14 +571,14 @@ export const GetWagersResponse = zod.object({
 });
 
 /**
- * Returns all configured payout key/value pairs for the guild
- * @summary Get payout configuration
+ * Returns all payout config values (win/loss payouts, milestone tiers) and per-season store item cost overrides
+ * @summary Current payout config and store prices
  */
-export const GetPayoutConfigParams = zod.object({
+export const GetStoreParams = zod.object({
   guildId: zod.coerce.string().describe("Discord guild (server) ID"),
 });
 
-export const GetPayoutConfigResponse = zod.object({
+export const GetStoreResponse = zod.object({
   guildId: zod.string(),
   payoutConfig: zod.array(
     zod.object({
@@ -518,220 +587,27 @@ export const GetPayoutConfigResponse = zod.object({
       description: zod.string(),
     }),
   ),
-});
-
-/**
- * Returns all legends available for purchase in this guild
- * @summary Get legends catalog
- */
-export const GetLegendsParams = zod.object({
-  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
-});
-
-export const GetLegendsResponse = zod.object({
-  guildId: zod.string(),
-  legends: zod.array(
-    zod.object({
-      id: zod.number(),
-      guildId: zod.string(),
-      name: zod.string(),
-      position: zod.string(),
-      description: zod.string().nullish(),
-      cost: zod.number(),
-      isAvailable: zod.boolean(),
-    }),
-  ),
-});
-
-/**
- * @summary Get purchase history for the active season
- */
-export const GetPurchasesParams = zod.object({
-  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
-});
-
-export const getPurchasesQueryLimitDefault = 50;
-export const getPurchasesQueryLimitMax = 200;
-
-export const GetPurchasesQueryParams = zod.object({
-  discordId: zod.coerce.string().optional(),
-  status: zod.enum(["pending", "approved", "refunded"]).optional(),
-  limit: zod.coerce
-    .number()
-    .max(getPurchasesQueryLimitMax)
-    .default(getPurchasesQueryLimitDefault)
-    .describe("Maximum number of results to return (max 200)"),
-});
-
-export const GetPurchasesResponse = zod.object({
-  guildId: zod.string(),
-  seasonId: zod.number(),
-  purchases: zod.array(
-    zod.object({
-      id: zod.number(),
-      discordId: zod.string(),
-      seasonId: zod.number(),
-      purchaseType: zod.string(),
-      status: zod.string(),
-      cost: zod.number(),
-      playerName: zod.string().nullish(),
-      playerPosition: zod.string().nullish(),
-      attributeName: zod.string().nullish(),
-      notes: zod.string().nullish(),
-      teamName: zod.string().nullish(),
-      createdAt: zod.date(),
-      approvedAt: zod.date().nullish(),
-    }),
-  ),
-});
-
-/**
- * Returns legend and custom player inventory. Filter by discordId to get one user's items.
- * @summary Get inventory for the active season
- */
-export const GetInventoryParams = zod.object({
-  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
-});
-
-export const GetInventoryQueryParams = zod.object({
-  discordId: zod.coerce.string().optional(),
-});
-
-export const GetInventoryResponse = zod.object({
-  guildId: zod.string(),
-  seasonId: zod.number(),
-  seasonNumber: zod.number(),
-  inventory: zod.array(
-    zod.object({
-      id: zod.number(),
-      discordId: zod.string(),
-      seasonId: zod.number(),
-      purchaseId: zod.number(),
-      itemType: zod.string(),
-      legendName: zod.string().nullish(),
-      playerName: zod.string().nullish(),
-      playerPosition: zod.string().nullish(),
-      attributeName: zod.string().nullish(),
-      legendCategory: zod.string(),
-      team: zod.string().nullish(),
-    }),
-  ),
-});
-
-/**
- * @summary Get H2H records for the active season
- */
-export const GetSeasonRecordsParams = zod.object({
-  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
-});
-
-export const GetSeasonRecordsResponse = zod.object({
-  guildId: zod.string(),
-  seasonId: zod.number(),
-  seasonNumber: zod.number(),
-  currentWeek: zod.string(),
-  records: zod.array(
-    zod.object({
-      id: zod.number(),
-      discordId: zod.string(),
-      discordUsername: zod.string(),
-      team: zod.string().nullish(),
-      seasonId: zod.number(),
-      wins: zod.number(),
-      losses: zod.number(),
-      ties: zod.number(),
-      pointDifferential: zod.number(),
-      playoffWins: zod.number().optional(),
-      playoffLosses: zod.number().optional(),
-      superbowlWins: zod.number().optional(),
-      superbowlLosses: zod.number().optional(),
-    }),
-  ),
-});
-
-/**
- * @summary Get global cross-server W/L leaderboard
- */
-export const getGlobalLeaderboardQueryLimitDefault = 50;
-export const getGlobalLeaderboardQueryLimitMax = 200;
-
-export const GetGlobalLeaderboardQueryParams = zod.object({
-  limit: zod.coerce
-    .number()
-    .max(getGlobalLeaderboardQueryLimitMax)
-    .default(getGlobalLeaderboardQueryLimitDefault)
-    .describe("Maximum number of results to return (max 200)"),
-});
-
-export const GetGlobalLeaderboardResponse = zod.object({
-  leaderboard: zod.array(
-    zod.object({
-      discordId: zod.string(),
-      wins: zod.number(),
-      losses: zod.number(),
-      ties: zod.number(),
-      pointDifferential: zod.number(),
-      updatedAt: zod.date(),
-    }),
-  ),
-});
-
-/**
- * Returns global W/L record, savings balance, and per-guild profiles for a Discord user
- * @summary Get a user's global profile
- */
-export const GetGlobalUserParams = zod.object({
-  discordId: zod.coerce.string().describe("Discord user ID"),
-});
-
-export const GetGlobalUserResponse = zod.object({
-  discordId: zod.string(),
-  globalRecord: zod
+  seasonOverrides: zod
     .object({
-      discordId: zod.string(),
-      wins: zod.number(),
-      losses: zod.number(),
-      ties: zod.number(),
-      pointDifferential: zod.number(),
-      updatedAt: zod.date(),
+      coreAttrCost: zod.number().nullish(),
+      coreAttrCap: zod.number().nullish(),
+      nonCoreAttrCost: zod.number().nullish(),
+      nonCoreAttrCap: zod.number().nullish(),
+      devUpsCost: zod.number().nullish(),
+      devUpsCap: zod.number().nullish(),
+      ageResetsCost: zod.number().nullish(),
+      ageResetsCap: zod.number().nullish(),
+      legendCost: zod.number().nullish(),
+      legendsPerSeasonCap: zod.number().nullish(),
+      customGoldCost: zod.number().nullish(),
+      customSilverCost: zod.number().nullish(),
+      customBronzeCost: zod.number().nullish(),
+      contractExtensionCost: zod.number().nullish(),
+      contractExtensionCap: zod.number().nullish(),
+      salaryReductionCost: zod.number().nullish(),
+      salaryReductionCap: zod.number().nullish(),
+      bonusReductionCost: zod.number().nullish(),
+      bonusReductionCap: zod.number().nullish(),
     })
     .nullish(),
-  savingsBalance: zod.number(),
-  guildProfiles: zod.array(
-    zod.object({
-      guildId: zod.string(),
-      discordUsername: zod.string(),
-      serverNickname: zod.string().nullish(),
-      team: zod.string().nullish(),
-      balance: zod.number(),
-      isAdmin: zod.boolean(),
-      eaId: zod.string().nullish(),
-      allTimeH2HWins: zod.number().optional(),
-      allTimeH2HLosses: zod.number().optional(),
-      allTimeSuperbowlWins: zod.number().optional(),
-      allTimeSuperbowlLosses: zod.number().optional(),
-    }),
-  ),
-  eaIds: zod.array(
-    zod.object({
-      eaId: zod.string(),
-      console: zod.string(),
-      slot: zod.number(),
-    }),
-  ),
-});
-
-/**
- * Returns summary of every guild that has at least one season in the database
- * @summary List all known guilds
- */
-export const GetGlobalLeaguesResponse = zod.object({
-  leagues: zod.array(
-    zod.object({
-      guildId: zod.string(),
-      activeSeason: zod.number().nullish(),
-      currentWeek: zod.string().nullish(),
-      totalSeasons: zod.number(),
-    }),
-  ),
 });

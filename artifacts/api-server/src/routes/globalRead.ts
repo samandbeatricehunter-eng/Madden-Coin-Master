@@ -16,24 +16,67 @@ function extractParam(p: string | string[]): string {
   return Array.isArray(p) ? p[0]! : p;
 }
 
-router.use("/v1/global", requireApiKey);
-
-router.get("/v1/global/leaderboard", async (req: Request, res: Response) => {
-  const limit = Math.min(Number(req.query["limit"] ?? 50), 200);
+router.get("/v1/leagues", requireApiKey, async (req: Request, res: Response) => {
   try {
-    const leaderboard = await db
-      .select()
-      .from(globalUserRecordsTable)
-      .orderBy(desc(globalUserRecordsTable.wins), desc(globalUserRecordsTable.pointDifferential))
-      .limit(limit);
-    res.json({ leaderboard });
+    const rows = await db
+      .select({
+        guildId: seasonsTable.guildId,
+        seasonNumber: seasonsTable.seasonNumber,
+        isActive: seasonsTable.isActive,
+        currentWeek: seasonsTable.currentWeek,
+        startedAt: seasonsTable.startedAt,
+      })
+      .from(seasonsTable)
+      .orderBy(asc(seasonsTable.guildId), desc(seasonsTable.seasonNumber));
+
+    const leagueMap = new Map<string, {
+      guildId: string;
+      activeSeason: number | null;
+      currentWeek: string | null;
+      totalSeasons: number;
+    }>();
+
+    for (const row of rows) {
+      const existing = leagueMap.get(row.guildId);
+      if (!existing) {
+        leagueMap.set(row.guildId, {
+          guildId: row.guildId,
+          activeSeason: row.isActive ? row.seasonNumber : null,
+          currentWeek: row.isActive ? row.currentWeek : null,
+          totalSeasons: 1,
+        });
+      } else {
+        existing.totalSeasons += 1;
+        if (row.isActive) {
+          existing.activeSeason = row.seasonNumber;
+          existing.currentWeek = row.currentWeek;
+        }
+      }
+    }
+
+    res.json({ leagues: Array.from(leagueMap.values()) });
   } catch (err) {
-    req.log.error(err, "GET /global/leaderboard failed");
+    req.log.error(err, "GET /v1/leagues failed");
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-router.get("/v1/global/users/:discordId", async (req: Request, res: Response) => {
+router.get("/v1/records", requireApiKey, async (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query["limit"] ?? 50), 200);
+  try {
+    const records = await db
+      .select()
+      .from(globalUserRecordsTable)
+      .orderBy(desc(globalUserRecordsTable.wins), desc(globalUserRecordsTable.pointDifferential))
+      .limit(limit);
+    res.json({ leaderboard: records });
+  } catch (err) {
+    req.log.error(err, "GET /v1/records failed");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/v1/users/:discordId", requireApiKey, async (req: Request, res: Response) => {
   const discordId = extractParam(req.params["discordId"]!);
   try {
     const [globalRecord] = await db
@@ -85,46 +128,7 @@ router.get("/v1/global/users/:discordId", async (req: Request, res: Response) =>
       eaIds,
     });
   } catch (err) {
-    req.log.error(err, "GET /global/users/:discordId failed");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.get("/v1/global/leagues", async (req: Request, res: Response) => {
-  try {
-    const rows = await db
-      .selectDistinct({
-        guildId: seasonsTable.guildId,
-        seasonNumber: seasonsTable.seasonNumber,
-        isActive: seasonsTable.isActive,
-        currentWeek: seasonsTable.currentWeek,
-        startedAt: seasonsTable.startedAt,
-      })
-      .from(seasonsTable)
-      .orderBy(asc(seasonsTable.guildId), desc(seasonsTable.seasonNumber));
-
-    const leagueMap = new Map<string, { guildId: string; activeSeason: number | null; currentWeek: string | null; totalSeasons: number }>();
-    for (const row of rows) {
-      const existing = leagueMap.get(row.guildId);
-      if (!existing) {
-        leagueMap.set(row.guildId, {
-          guildId: row.guildId,
-          activeSeason: row.isActive ? row.seasonNumber : null,
-          currentWeek: row.isActive ? row.currentWeek : null,
-          totalSeasons: 1,
-        });
-      } else {
-        existing.totalSeasons += 1;
-        if (row.isActive) {
-          existing.activeSeason = row.seasonNumber;
-          existing.currentWeek = row.currentWeek;
-        }
-      }
-    }
-
-    res.json({ leagues: Array.from(leagueMap.values()) });
-  } catch (err) {
-    req.log.error(err, "GET /global/leagues failed");
+    req.log.error(err, "GET /v1/users/:discordId failed");
     res.status(500).json({ error: "Internal server error" });
   }
 });

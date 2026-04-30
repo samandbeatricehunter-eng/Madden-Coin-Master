@@ -21,6 +21,9 @@ export interface Season {
   currentWeek: string;
   catchupMode: boolean;
   startedAt: string;
+  coreAttrCostOverride?: number | null;
+  coreAttrCapOverride?: number | null;
+  legendCostOverride?: number | null;
 }
 
 export interface McaTeam {
@@ -141,34 +144,6 @@ export interface LeagueNewsItem {
   createdAt: string;
 }
 
-export interface LeagueMember {
-  id: number;
-  discordId: string;
-  discordUsername: string;
-  serverNickname?: string | null;
-  team?: string | null;
-  balance: number;
-  eaId?: string | null;
-  isAdmin: boolean;
-  allTimeSuperbowlWins?: number;
-  allTimeSuperbowlLosses?: number;
-  allTimeH2HWins?: number;
-  allTimeH2HLosses?: number;
-  playoffSeed?: number | null;
-  playoffConference?: string | null;
-}
-
-export interface EconomyLeaderboardEntry {
-  discordId: string;
-  discordUsername: string;
-  serverNickname?: string | null;
-  team?: string | null;
-  balance: number;
-  allTimeH2HWins?: number;
-  allTimeH2HLosses?: number;
-  allTimeSuperbowlWins?: number;
-}
-
 export interface UserRecord {
   id: number;
   discordId: string;
@@ -185,72 +160,22 @@ export interface UserRecord {
   superbowlLosses?: number;
 }
 
-export interface CoinTransaction {
+export interface LeagueUserWithRecord {
   id: number;
-  guildId: string;
   discordId: string;
-  amount: number;
-  type: string;
-  description: string;
-  relatedUserId?: string | null;
-  createdAt: string;
-}
-
-export interface EconomyUserDetail {
-  user: LeagueMember;
+  discordUsername: string;
+  serverNickname?: string | null;
+  team?: string | null;
+  balance: number;
+  eaId?: string | null;
+  isAdmin: boolean;
+  allTimeSuperbowlWins?: number;
+  allTimeSuperbowlLosses?: number;
+  allTimeH2HWins?: number;
+  allTimeH2HLosses?: number;
+  playoffSeed?: number | null;
+  playoffConference?: string | null;
   currentSeasonRecord?: UserRecord | null;
-  recentTransactions: CoinTransaction[];
-}
-
-export interface Wager {
-  id: number;
-  guildId: string;
-  challengerId: string;
-  challengerUsername: string;
-  opponentId: string;
-  opponentUsername: string;
-  amount: number;
-  pot: number;
-  teamFor: string;
-  teamAgainst: string;
-  status: string;
-  winnerId?: string | null;
-  spread?: number | null;
-  challengerSide?: string | null;
-  createdAt: string;
-  resolvedAt?: string | null;
-}
-
-export interface PayoutConfigEntry {
-  key: string;
-  value: number;
-  description: string;
-}
-
-export interface Legend {
-  id: number;
-  guildId: string;
-  name: string;
-  position: string;
-  description?: string | null;
-  cost: number;
-  isAvailable: boolean;
-}
-
-export interface Purchase {
-  id: number;
-  discordId: string;
-  seasonId: number;
-  purchaseType: string;
-  status: string;
-  cost: number;
-  playerName?: string | null;
-  playerPosition?: string | null;
-  attributeName?: string | null;
-  notes?: string | null;
-  teamName?: string | null;
-  createdAt: string;
-  approvedAt?: string | null;
 }
 
 export interface InventoryItem {
@@ -274,6 +199,78 @@ export interface GlobalUserRecord {
   ties: number;
   pointDifferential: number;
   updatedAt: string;
+}
+
+export interface LeagueUserDetail {
+  user: LeagueUserWithRecord;
+  currentSeasonRecord?: UserRecord | null;
+  inventory: InventoryItem[];
+  globalRecord?: GlobalUserRecord | null;
+  savingsBalance: number;
+}
+
+export interface CoinTransaction {
+  id: number;
+  guildId: string;
+  discordId: string;
+  amount: number;
+  type: string;
+  description: string;
+  relatedUserId?: string | null;
+  createdAt: string;
+}
+
+export interface Wager {
+  id: number;
+  guildId: string;
+  challengerId: string;
+  challengerUsername: string;
+  opponentId: string;
+  opponentUsername: string;
+  amount: number;
+  pot: number;
+  teamFor: string;
+  teamAgainst: string;
+  status: string;
+  winnerId?: string | null;
+  spread?: number | null;
+  challengerSide?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+
+export type StoreConfigSeasonOverrides = {
+  coreAttrCost?: number | null;
+  coreAttrCap?: number | null;
+  nonCoreAttrCost?: number | null;
+  nonCoreAttrCap?: number | null;
+  devUpsCost?: number | null;
+  devUpsCap?: number | null;
+  ageResetsCost?: number | null;
+  ageResetsCap?: number | null;
+  legendCost?: number | null;
+  legendsPerSeasonCap?: number | null;
+  customGoldCost?: number | null;
+  customSilverCost?: number | null;
+  customBronzeCost?: number | null;
+  contractExtensionCost?: number | null;
+  contractExtensionCap?: number | null;
+  salaryReductionCost?: number | null;
+  salaryReductionCap?: number | null;
+  bonusReductionCost?: number | null;
+  bonusReductionCap?: number | null;
+} | null;
+
+export interface PayoutConfigEntry {
+  key: string;
+  value: number;
+  description: string;
+}
+
+export interface StoreConfig {
+  guildId: string;
+  payoutConfig: PayoutConfigEntry[];
+  seasonOverrides?: StoreConfigSeasonOverrides;
 }
 
 export interface GuildProfile {
@@ -326,7 +323,23 @@ export type NotFoundResponse = ErrorResponse;
  */
 export type LimitParameter = number;
 
-export type GetActiveSeason200 = {
+export type GetLeagues200 = {
+  leagues: LeagueSummary[];
+};
+
+export type GetGlobalRecordsParams = {
+  /**
+   * Maximum number of results to return (max 200)
+   * @maximum 200
+   */
+  limit?: LimitParameter;
+};
+
+export type GetGlobalRecords200 = {
+  leaderboard: GlobalUserRecord[];
+};
+
+export type GetLeagueInfo200 = {
   season: Season;
 };
 
@@ -355,12 +368,6 @@ export type GetLeagueSchedule200 = {
   seasonNumber: number;
   currentWeek: string;
   games: ScheduleGame[];
-};
-
-export type GetAllRosters200 = {
-  seasonId: number;
-  seasonNumber: number;
-  rosters: RosterPlayer[];
 };
 
 export type GetTeamRoster200 = {
@@ -405,37 +412,18 @@ export type GetLeagueNews200 = {
 
 export type GetLeagueUsers200 = {
   guildId: string;
-  members: LeagueMember[];
+  seasonId?: number | null;
+  users: LeagueUserWithRecord[];
 };
 
-export type GetEconomyLeaderboard200 = {
+export type GetUserTransactions200 = {
   guildId: string;
-  leaderboard: EconomyLeaderboardEntry[];
-};
-
-export type GetTransactionsParams = {
-  /**
-   * Filter to a specific user
-   */
-  discordId?: string;
-  /**
-   * Maximum number of results to return (max 200)
-   * @maximum 200
-   */
-  limit?: LimitParameter;
-};
-
-export type GetTransactions200 = {
-  guildId: string;
+  discordId: string;
   transactions: CoinTransaction[];
 };
 
 export type GetWagersParams = {
   status?: GetWagersStatus;
-  /**
-   * Filter to wagers involving a specific user
-   */
-  discordId?: string;
 };
 
 export type GetWagersStatus =
@@ -452,74 +440,4 @@ export const GetWagersStatus = {
 export type GetWagers200 = {
   guildId: string;
   wagers: Wager[];
-};
-
-export type GetPayoutConfig200 = {
-  guildId: string;
-  payoutConfig: PayoutConfigEntry[];
-};
-
-export type GetLegends200 = {
-  guildId: string;
-  legends: Legend[];
-};
-
-export type GetPurchasesParams = {
-  discordId?: string;
-  status?: GetPurchasesStatus;
-  /**
-   * Maximum number of results to return (max 200)
-   * @maximum 200
-   */
-  limit?: LimitParameter;
-};
-
-export type GetPurchasesStatus =
-  (typeof GetPurchasesStatus)[keyof typeof GetPurchasesStatus];
-
-export const GetPurchasesStatus = {
-  pending: "pending",
-  approved: "approved",
-  refunded: "refunded",
-} as const;
-
-export type GetPurchases200 = {
-  guildId: string;
-  seasonId: number;
-  purchases: Purchase[];
-};
-
-export type GetInventoryParams = {
-  discordId?: string;
-};
-
-export type GetInventory200 = {
-  guildId: string;
-  seasonId: number;
-  seasonNumber: number;
-  inventory: InventoryItem[];
-};
-
-export type GetSeasonRecords200 = {
-  guildId: string;
-  seasonId: number;
-  seasonNumber: number;
-  currentWeek: string;
-  records: UserRecord[];
-};
-
-export type GetGlobalLeaderboardParams = {
-  /**
-   * Maximum number of results to return (max 200)
-   * @maximum 200
-   */
-  limit?: LimitParameter;
-};
-
-export type GetGlobalLeaderboard200 = {
-  leaderboard: GlobalUserRecord[];
-};
-
-export type GetGlobalLeagues200 = {
-  leagues: LeagueSummary[];
 };

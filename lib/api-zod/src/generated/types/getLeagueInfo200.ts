@@ -5,8 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { LeagueSummary } from "./leagueSummary";
+import type { Season } from "./season";
 
-export type GetGlobalLeagues200 = {
-  leagues: LeagueSummary[];
+export type GetLeagueInfo200 = {
+  season: Season;
 };

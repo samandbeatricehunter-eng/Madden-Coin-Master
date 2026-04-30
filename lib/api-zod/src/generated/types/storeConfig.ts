@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { PayoutConfigEntry } from "./payoutConfigEntry";
+import type { StoreConfigSeasonOverrides } from "./storeConfigSeasonOverrides";
 
-export type GetPayoutConfig200 = {
+export interface StoreConfig {
   guildId: string;
   payoutConfig: PayoutConfigEntry[];
-};
+  seasonOverrides?: StoreConfigSeasonOverrides;
+}
