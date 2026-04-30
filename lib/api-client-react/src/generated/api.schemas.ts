@@ -5,6 +5,521 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface ErrorResponse {
+  error: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
+
+export interface Season {
+  id: number;
+  guildId: string;
+  seasonNumber: number;
+  isActive: boolean;
+  currentWeek: string;
+  catchupMode: boolean;
+  startedAt: string;
+}
+
+export interface McaTeam {
+  id: number;
+  seasonId: number;
+  teamId: number;
+  fullName: string;
+  nickName: string;
+  conference?: string | null;
+  userName: string;
+  isHuman: boolean;
+  discordId?: string | null;
+  logoUrl?: string | null;
+}
+
+export interface TeamStanding {
+  teamId: number;
+  teamName: string;
+  discordId?: string | null;
+  wins: number;
+  losses: number;
+  offYds?: number;
+  offPassYds?: number;
+  offRushYds?: number;
+  offTDs?: number;
+  offPtsPerGame?: number;
+  defPassYds?: number;
+  defRushYds?: number;
+  defTDs?: number;
+  teamSacks?: number;
+  teamInts?: number;
+  offRedZonePct?: number;
+  defRedZonePct?: number;
+  turnoverDiff?: number;
+}
+
+export interface ScheduleGame {
+  id: number;
+  seasonId: number;
+  weekIndex: number;
+  homeTeamId: number;
+  awayTeamId: number;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  status: number;
+}
+
+export interface RosterPlayer {
+  id: number;
+  seasonId: number;
+  teamId: number;
+  teamName: string;
+  discordId?: string | null;
+  playerId: number;
+  firstName: string;
+  lastName: string;
+  position: string;
+  overall: number;
+  devTrait: number;
+  age?: number | null;
+  jerseyNum?: number | null;
+  contractYearsLeft?: number | null;
+  archetypeAbbrev?: string | null;
+  portraitUrl?: string | null;
+}
+
+export interface PlayerSeasonStats {
+  id: number;
+  seasonId: number;
+  playerId: number;
+  teamId: number;
+  teamName: string;
+  discordId?: string | null;
+  firstName: string;
+  lastName: string;
+  position: string;
+  passYds?: number;
+  passTDs?: number;
+  passAtt?: number;
+  passComp?: number;
+  passInts?: number;
+  rushYds?: number;
+  rushTDs?: number;
+  rushAtt?: number;
+  recYds?: number;
+  recTDs?: number;
+  recRec?: number;
+  sacks?: number;
+  defInts?: number;
+  totalTackles?: number;
+  defTDs?: number;
+  fgMade?: number;
+  fgAtt?: number;
+}
+
+export interface DraftPick {
+  id: number;
+  seasonId: number;
+  teamId: number;
+  teamName: string;
+  discordId?: string | null;
+  draftYear: number;
+  round: number;
+  pickNum: number;
+  originalTeamId?: number | null;
+  originalTeamName?: string | null;
+}
+
+export interface LeagueNewsItem {
+  id: number;
+  seasonId: number;
+  headline: string;
+  body?: string | null;
+  category?: string | null;
+  weekIndex?: number | null;
+  createdAt: string;
+}
+
+export interface LeagueMember {
+  id: number;
+  discordId: string;
+  discordUsername: string;
+  serverNickname?: string | null;
+  team?: string | null;
+  balance: number;
+  eaId?: string | null;
+  isAdmin: boolean;
+  allTimeSuperbowlWins?: number;
+  allTimeSuperbowlLosses?: number;
+  allTimeH2HWins?: number;
+  allTimeH2HLosses?: number;
+  playoffSeed?: number | null;
+  playoffConference?: string | null;
+}
+
+export interface EconomyLeaderboardEntry {
+  discordId: string;
+  discordUsername: string;
+  serverNickname?: string | null;
+  team?: string | null;
+  balance: number;
+  allTimeH2HWins?: number;
+  allTimeH2HLosses?: number;
+  allTimeSuperbowlWins?: number;
+}
+
+export interface UserRecord {
+  id: number;
+  discordId: string;
+  discordUsername: string;
+  team?: string | null;
+  seasonId: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  pointDifferential: number;
+  playoffWins?: number;
+  playoffLosses?: number;
+  superbowlWins?: number;
+  superbowlLosses?: number;
+}
+
+export interface CoinTransaction {
+  id: number;
+  guildId: string;
+  discordId: string;
+  amount: number;
+  type: string;
+  description: string;
+  relatedUserId?: string | null;
+  createdAt: string;
+}
+
+export interface EconomyUserDetail {
+  user: LeagueMember;
+  currentSeasonRecord?: UserRecord | null;
+  recentTransactions: CoinTransaction[];
+}
+
+export interface Wager {
+  id: number;
+  guildId: string;
+  challengerId: string;
+  challengerUsername: string;
+  opponentId: string;
+  opponentUsername: string;
+  amount: number;
+  pot: number;
+  teamFor: string;
+  teamAgainst: string;
+  status: string;
+  winnerId?: string | null;
+  spread?: number | null;
+  challengerSide?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface PayoutConfigEntry {
+  key: string;
+  value: number;
+  description: string;
+}
+
+export interface Legend {
+  id: number;
+  guildId: string;
+  name: string;
+  position: string;
+  description?: string | null;
+  cost: number;
+  isAvailable: boolean;
+}
+
+export interface Purchase {
+  id: number;
+  discordId: string;
+  seasonId: number;
+  purchaseType: string;
+  status: string;
+  cost: number;
+  playerName?: string | null;
+  playerPosition?: string | null;
+  attributeName?: string | null;
+  notes?: string | null;
+  teamName?: string | null;
+  createdAt: string;
+  approvedAt?: string | null;
+}
+
+export interface InventoryItem {
+  id: number;
+  discordId: string;
+  seasonId: number;
+  purchaseId: number;
+  itemType: string;
+  legendName?: string | null;
+  playerName?: string | null;
+  playerPosition?: string | null;
+  attributeName?: string | null;
+  legendCategory: string;
+  team?: string | null;
+}
+
+export interface GlobalUserRecord {
+  discordId: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  pointDifferential: number;
+  updatedAt: string;
+}
+
+export interface GuildProfile {
+  guildId: string;
+  discordUsername: string;
+  serverNickname?: string | null;
+  team?: string | null;
+  balance: number;
+  isAdmin: boolean;
+  eaId?: string | null;
+  allTimeH2HWins?: number;
+  allTimeH2HLosses?: number;
+  allTimeSuperbowlWins?: number;
+  allTimeSuperbowlLosses?: number;
+}
+
+export interface EaId {
+  eaId: string;
+  console: string;
+  slot: number;
+}
+
+export interface GlobalUserProfile {
+  discordId: string;
+  globalRecord?: GlobalUserRecord | null;
+  savingsBalance: number;
+  guildProfiles: GuildProfile[];
+  eaIds: EaId[];
+}
+
+export interface LeagueSummary {
+  guildId: string;
+  activeSeason?: number | null;
+  currentWeek?: string | null;
+  totalSeasons: number;
+}
+
+/**
+ * Missing or invalid API key
+ */
+export type UnauthorizedResponse = ErrorResponse;
+
+/**
+ * Resource not found
+ */
+export type NotFoundResponse = ErrorResponse;
+
+/**
+ * Maximum number of results to return (max 200)
+ */
+export type LimitParameter = number;
+
+export type GetActiveSeason200 = {
+  season: Season;
+};
+
+export type GetLeagueTeams200 = {
+  seasonId: number;
+  seasonNumber: number;
+  teams: McaTeam[];
+};
+
+export type GetLeagueStandings200 = {
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  standings: TeamStanding[];
+};
+
+export type GetLeagueScheduleParams = {
+  /**
+   * 0-based week index to filter by
+   */
+  week?: number;
+};
+
+export type GetLeagueSchedule200 = {
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  games: ScheduleGame[];
+};
+
+export type GetAllRosters200 = {
+  seasonId: number;
+  seasonNumber: number;
+  rosters: RosterPlayer[];
+};
+
+export type GetTeamRoster200 = {
+  seasonId: number;
+  seasonNumber: number;
+  teamId: number;
+  roster: RosterPlayer[];
+};
+
+export type GetPlayerStatsParams = {
+  /**
+   * Filter by position abbreviation (e.g. QB, WR, RB)
+   */
+  position?: string;
+};
+
+export type GetPlayerStats200 = {
+  seasonId: number;
+  seasonNumber: number;
+  stats: PlayerSeasonStats[];
+};
+
+export type GetDraftPicks200 = {
+  seasonId: number;
+  seasonNumber: number;
+  picks: DraftPick[];
+};
+
+export type GetLeagueNewsParams = {
+  /**
+   * Maximum number of results to return (max 200)
+   * @maximum 200
+   */
+  limit?: LimitParameter;
+};
+
+export type GetLeagueNews200 = {
+  seasonId: number;
+  seasonNumber: number;
+  news: LeagueNewsItem[];
+};
+
+export type GetLeagueUsers200 = {
+  guildId: string;
+  members: LeagueMember[];
+};
+
+export type GetEconomyLeaderboard200 = {
+  guildId: string;
+  leaderboard: EconomyLeaderboardEntry[];
+};
+
+export type GetTransactionsParams = {
+  /**
+   * Filter to a specific user
+   */
+  discordId?: string;
+  /**
+   * Maximum number of results to return (max 200)
+   * @maximum 200
+   */
+  limit?: LimitParameter;
+};
+
+export type GetTransactions200 = {
+  guildId: string;
+  transactions: CoinTransaction[];
+};
+
+export type GetWagersParams = {
+  status?: GetWagersStatus;
+  /**
+   * Filter to wagers involving a specific user
+   */
+  discordId?: string;
+};
+
+export type GetWagersStatus =
+  (typeof GetWagersStatus)[keyof typeof GetWagersStatus];
+
+export const GetWagersStatus = {
+  pending: "pending",
+  active: "active",
+  completed: "completed",
+  refused: "refused",
+  cancelled: "cancelled",
+} as const;
+
+export type GetWagers200 = {
+  guildId: string;
+  wagers: Wager[];
+};
+
+export type GetPayoutConfig200 = {
+  guildId: string;
+  payoutConfig: PayoutConfigEntry[];
+};
+
+export type GetLegends200 = {
+  guildId: string;
+  legends: Legend[];
+};
+
+export type GetPurchasesParams = {
+  discordId?: string;
+  status?: GetPurchasesStatus;
+  /**
+   * Maximum number of results to return (max 200)
+   * @maximum 200
+   */
+  limit?: LimitParameter;
+};
+
+export type GetPurchasesStatus =
+  (typeof GetPurchasesStatus)[keyof typeof GetPurchasesStatus];
+
+export const GetPurchasesStatus = {
+  pending: "pending",
+  approved: "approved",
+  refunded: "refunded",
+} as const;
+
+export type GetPurchases200 = {
+  guildId: string;
+  seasonId: number;
+  purchases: Purchase[];
+};
+
+export type GetInventoryParams = {
+  discordId?: string;
+};
+
+export type GetInventory200 = {
+  guildId: string;
+  seasonId: number;
+  seasonNumber: number;
+  inventory: InventoryItem[];
+};
+
+export type GetSeasonRecords200 = {
+  guildId: string;
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  records: UserRecord[];
+};
+
+export type GetGlobalLeaderboardParams = {
+  /**
+   * Maximum number of results to return (max 200)
+   * @maximum 200
+   */
+  limit?: LimitParameter;
+};
+
+export type GetGlobalLeaderboard200 = {
+  leaderboard: GlobalUserRecord[];
+};
+
+export type GetGlobalLeagues200 = {
+  leagues: LeagueSummary[];
+};

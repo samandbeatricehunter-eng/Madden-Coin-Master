@@ -21,9 +21,13 @@ pnpm workspace monorepo using TypeScript. Hosts a Discord economy bot for a Madd
 ```text
 artifacts-monorepo/
 ├── artifacts/
-│   ├── api-server/         # Express API server — hosts MCA webhook receiver + healthz
+│   ├── api-server/         # Express API server — MCA webhooks + app-facing read API
 │   │   └── src/
 │   │       ├── routes/franchise.ts        # MCA webhook routes (/api/madden/:key/*)
+│   │       ├── routes/leagueRead.ts       # Read API: /api/v1/leagues/:guildId/*
+│   │       ├── routes/economyRead.ts      # Read API: /api/v1/leagues/:guildId/economy/*
+│   │       ├── routes/globalRead.ts       # Read API: /api/v1/global/*
+│   │       ├── middleware/requireApiKey.ts # Bearer token auth (MADDEN_WEBHOOK_KEY)
 │   │       ├── lib/franchise-processor.ts # Shared game/roster/stats processing logic
 │   │       └── lib/discord-notify.ts      # Discord REST API notifier (no discord.js)
 │   ├── mockup-sandbox/     # UI prototyping sandbox
