@@ -194,6 +194,10 @@ export interface InventoryItem {
 
 export interface GlobalUserRecord {
   discordId: string;
+  /** Display name from the users table (present on leaderboard, null on profile) */
+  discordUsername?: string | null;
+  serverNickname?: string | null;
+  team?: string | null;
   wins: number;
   losses: number;
   ties: number;
@@ -303,6 +307,8 @@ export interface GlobalUserProfile {
 
 export interface LeagueSummary {
   guildId: string;
+  /** EA-reported league name from the connected franchise */
+  leagueName?: string | null;
   activeSeason?: number | null;
   currentWeek?: string | null;
   totalSeasons: number;

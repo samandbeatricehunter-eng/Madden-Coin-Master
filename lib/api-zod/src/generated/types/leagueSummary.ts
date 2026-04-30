@@ -8,6 +8,8 @@
 
 export interface LeagueSummary {
   guildId: string;
+  /** EA-reported league name from the connected franchise */
+  leagueName?: string | null;
   activeSeason?: number | null;
   currentWeek?: string | null;
   totalSeasons: number;

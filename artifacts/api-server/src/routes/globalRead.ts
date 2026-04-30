@@ -6,8 +6,9 @@ import {
   usersTable,
   seasonsTable,
   playerEaIdsTable,
+  eaConnectionsTable,
 } from "@workspace/db";
-import { eq, desc, asc } from "drizzle-orm";
+import { eq, desc, asc, inArray } from "drizzle-orm";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 
 const router: IRouter = Router();
@@ -18,19 +19,27 @@ function extractParam(p: string | string[]): string {
 
 router.get("/v1/leagues", requireApiKey, async (req: Request, res: Response) => {
   try {
-    const rows = await db
-      .select({
-        guildId: seasonsTable.guildId,
-        seasonNumber: seasonsTable.seasonNumber,
-        isActive: seasonsTable.isActive,
-        currentWeek: seasonsTable.currentWeek,
-        startedAt: seasonsTable.startedAt,
-      })
-      .from(seasonsTable)
-      .orderBy(asc(seasonsTable.guildId), desc(seasonsTable.seasonNumber));
+    const [rows, connections] = await Promise.all([
+      db
+        .select({
+          guildId: seasonsTable.guildId,
+          seasonNumber: seasonsTable.seasonNumber,
+          isActive: seasonsTable.isActive,
+          currentWeek: seasonsTable.currentWeek,
+          startedAt: seasonsTable.startedAt,
+        })
+        .from(seasonsTable)
+        .orderBy(asc(seasonsTable.guildId), desc(seasonsTable.seasonNumber)),
+      db
+        .select({ guildId: eaConnectionsTable.guildId, leagueName: eaConnectionsTable.leagueName })
+        .from(eaConnectionsTable),
+    ]);
+
+    const nameMap = new Map(connections.map((c) => [c.guildId, c.leagueName]));
 
     const leagueMap = new Map<string, {
       guildId: string;
+      leagueName: string | null;
       activeSeason: number | null;
       currentWeek: string | null;
       totalSeasons: number;
@@ -41,6 +50,7 @@ router.get("/v1/leagues", requireApiKey, async (req: Request, res: Response) => 
       if (!existing) {
         leagueMap.set(row.guildId, {
           guildId: row.guildId,
+          leagueName: nameMap.get(row.guildId) ?? null,
           activeSeason: row.isActive ? row.seasonNumber : null,
           currentWeek: row.isActive ? row.currentWeek : null,
           totalSeasons: 1,
@@ -69,7 +79,38 @@ router.get("/v1/records", requireApiKey, async (req: Request, res: Response) => 
       .from(globalUserRecordsTable)
       .orderBy(desc(globalUserRecordsTable.wins), desc(globalUserRecordsTable.pointDifferential))
       .limit(limit);
-    res.json({ leaderboard: records });
+
+    if (records.length === 0) {
+      res.json({ leaderboard: [] });
+      return;
+    }
+
+    const discordIds = records.map((r) => r.discordId);
+    const allUserRows = await db
+      .select({
+        discordId: usersTable.discordId,
+        discordUsername: usersTable.discordUsername,
+        serverNickname: usersTable.serverNickname,
+        team: usersTable.team,
+      })
+      .from(usersTable)
+      .where(inArray(usersTable.discordId, discordIds));
+
+    const userMap = new Map<string, { discordUsername: string; serverNickname: string | null; team: string | null }>();
+    for (const u of allUserRows) {
+      if (!userMap.has(u.discordId)) {
+        userMap.set(u.discordId, { discordUsername: u.discordUsername, serverNickname: u.serverNickname, team: u.team });
+      }
+    }
+
+    const leaderboard = records.map((r) => ({
+      ...r,
+      discordUsername: userMap.get(r.discordId)?.discordUsername ?? null,
+      serverNickname: userMap.get(r.discordId)?.serverNickname ?? null,
+      team: userMap.get(r.discordId)?.team ?? null,
+    }));
+
+    res.json({ leaderboard });
   } catch (err) {
     req.log.error(err, "GET /v1/records failed");
     res.status(500).json({ error: "Internal server error" });

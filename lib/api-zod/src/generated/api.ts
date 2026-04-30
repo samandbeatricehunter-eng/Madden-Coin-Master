@@ -23,6 +23,10 @@ export const GetLeaguesResponse = zod.object({
   leagues: zod.array(
     zod.object({
       guildId: zod.string(),
+      leagueName: zod
+        .string()
+        .nullish()
+        .describe("EA-reported league name from the connected franchise"),
       activeSeason: zod.number().nullish(),
       currentWeek: zod.string().nullish(),
       totalSeasons: zod.number(),
@@ -49,6 +53,14 @@ export const GetGlobalRecordsResponse = zod.object({
   leaderboard: zod.array(
     zod.object({
       discordId: zod.string(),
+      discordUsername: zod
+        .string()
+        .nullish()
+        .describe(
+          "Display name from the users table (present on leaderboard, null on profile)",
+        ),
+      serverNickname: zod.string().nullish(),
+      team: zod.string().nullish(),
       wins: zod.number(),
       losses: zod.number(),
       ties: zod.number(),
@@ -71,6 +83,14 @@ export const GetGlobalUserResponse = zod.object({
   globalRecord: zod
     .object({
       discordId: zod.string(),
+      discordUsername: zod
+        .string()
+        .nullish()
+        .describe(
+          "Display name from the users table (present on leaderboard, null on profile)",
+        ),
+      serverNickname: zod.string().nullish(),
+      team: zod.string().nullish(),
       wins: zod.number(),
       losses: zod.number(),
       ties: zod.number(),
@@ -497,6 +517,14 @@ export const GetLeagueUserResponse = zod.object({
   globalRecord: zod
     .object({
       discordId: zod.string(),
+      discordUsername: zod
+        .string()
+        .nullish()
+        .describe(
+          "Display name from the users table (present on leaderboard, null on profile)",
+        ),
+      serverNickname: zod.string().nullish(),
+      team: zod.string().nullish(),
       wins: zod.number(),
       losses: zod.number(),
       ties: zod.number(),

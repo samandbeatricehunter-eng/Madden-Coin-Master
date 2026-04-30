@@ -8,6 +8,10 @@
 
 export interface GlobalUserRecord {
   discordId: string;
+  /** Display name from the users table (present on leaderboard, null on profile) */
+  discordUsername?: string | null;
+  serverNickname?: string | null;
+  team?: string | null;
   wins: number;
   losses: number;
   ties: number;

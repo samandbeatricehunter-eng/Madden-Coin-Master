@@ -1133,6 +1133,16 @@ components:
       properties:
         discordId:
           type: string
+        discordUsername:
+          type: string
+          nullable: true
+          description: Display name from the users table (present on leaderboard, null on profile)
+        serverNickname:
+          type: string
+          nullable: true
+        team:
+          type: string
+          nullable: true
         wins:
           type: integer
         losses:
@@ -1212,6 +1222,10 @@ components:
       properties:
         guildId:
           type: string
+        leagueName:
+          type: string
+          nullable: true
+          description: EA-reported league name from the connected franchise
         activeSeason:
           type: integer
           nullable: true
