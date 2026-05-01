@@ -159,10 +159,15 @@ function validateKey(req: Request, res: Response, next: () => void) {
 
 // ── /leagueteams — team info ───────────────────────────────────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/leagueteams", validateKey, async (req, res) => {
+  const guildId = String(req.query["guildId"] ?? "");
+  // Save static key (latest import, any guild) — overwritten each time
   saveMcaPayload("mca/leagueteams.json", req.body);
+  // Save timestamped per-guild copy so repeated imports don't erase prior data
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const guildLabel = guildId || String(req.params.leagueId ?? "unknown");
+  saveMcaPayload(`mca/leagueteams-${guildLabel}-${ts}.json`, req.body);
   res.status(200).json({ status: "received" });
   console.log("[mca/leagueteams] Received payload, processing async...");
-  const guildId = String(req.query["guildId"] ?? "");
   const result = await processLeagueTeams(req.body, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err) }));
   console.log("[mca/leagueteams] Result:", result.message);
 });
