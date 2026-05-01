@@ -53,7 +53,16 @@ router.get("/v1/leagues/:guildId/teams", requireApiKey, async (req: Request, res
       return;
     }
     const teams = await db
-      .select()
+      .select({
+        teamId:     franchiseMcaTeamsTable.teamId,
+        fullName:   franchiseMcaTeamsTable.fullName,
+        nickName:   franchiseMcaTeamsTable.nickName,
+        conference: franchiseMcaTeamsTable.conference,
+        userName:   franchiseMcaTeamsTable.userName,
+        isHuman:    franchiseMcaTeamsTable.isHuman,
+        discordId:  franchiseMcaTeamsTable.discordId,
+        updatedAt:  franchiseMcaTeamsTable.updatedAt,
+      })
       .from(franchiseMcaTeamsTable)
       .where(eq(franchiseMcaTeamsTable.seasonId, season.id))
       .orderBy(asc(franchiseMcaTeamsTable.fullName));
