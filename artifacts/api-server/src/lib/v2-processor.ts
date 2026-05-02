@@ -25,7 +25,7 @@ import {
   appUsersTable,
   appUserLeagueLinksTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, ne } from "drizzle-orm";
 import { invalidateRostersCache } from "./rosterCache.js";
 import { logger } from "./logger.js";
 
@@ -472,7 +472,7 @@ export async function processV2Roster(
       rows.map(r => ({ ...r, portraitUrl: portraitMap.get(r.playerId!) ?? null })),
     );
 
-    invalidateRostersCache("v2", season.id);
+    invalidateRostersCache(season.id, "v2");
     return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (season ${season.seasonNumber})` };
   } catch (err) {
     logger.error({ err }, `[v2/roster/team/${mcaTeamId}]`);
@@ -499,7 +499,7 @@ export async function processV2FreeAgents(body: unknown, eaLeagueId: number): Pr
       and(eq(mcaRostersTable.eaSeasonId, season.id), eq(mcaRostersTable.teamId, V2_FA_TEAM_ID)),
     );
     await db.insert(mcaRostersTable).values(rows);
-    invalidateRostersCache("v2", season.id);
+    invalidateRostersCache(season.id, "v2");
     return { ok: true, message: `${rows.length} free agents imported (season ${season.seasonNumber})` };
   } catch (err) {
     logger.error({ err }, "[v2/freeagents]");
@@ -578,9 +578,6 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
             target: [mcaTeamStatsTable.eaSeasonId, mcaTeamStatsTable.teamId],
             set: {
               wins, losses, ties, ptsFor, ptsAgainst,
-              offYds, offPassYds, offRushYds, defPassYds, defRushYds,
-              teamSacks, teamInts, defFumblesRec, offRedZonePct, defRedZonePct,
-              tOTakeaways, tOGiveaways, turnoverDiff,
               homeWins: getN(t, "homeWins"), homeLosses: getN(t, "homeLosses"),
               awayWins: getN(t, "awayWins"), awayLosses: getN(t, "awayLosses"),
               confWins: getN(t, "confWins","divisionWins"), confLosses: getN(t, "confLosses","divisionLosses"),
@@ -619,27 +616,14 @@ export async function processV2TeamWeekStats(
       return { ok: true, message: "No team stats in payload" };
     }
 
-    const alreadyDone = await db.select({ id: mcaWeekProcessedTable.id })
-      .from(mcaWeekProcessedTable)
-      .where(and(
-        eq(mcaWeekProcessedTable.eaSeasonId, season.id),
-        eq(mcaWeekProcessedTable.weekType,   weekType),
-        eq(mcaWeekProcessedTable.weekNum,    weekNum),
-        eq(mcaWeekProcessedTable.statType,   "team"),
-      ))
-      .limit(1);
-
-    if (alreadyDone.length > 0) {
-      return { ok: true, message: `Week ${weekNum} team stats already recorded — skipped` };
-    }
-
     const teams = await db
       .select({ teamId: mcaTeamsTable.teamId, fullName: mcaTeamsTable.fullName })
       .from(mcaTeamsTable)
       .where(eq(mcaTeamsTable.eaSeasonId, season.id));
     const teamNameMap = new Map(teams.map(t => [t.teamId, t.fullName]));
 
-    const ops: Promise<unknown>[] = [];
+    type TeamWeekRow = typeof mcaTeamWeekStatsTable.$inferInsert;
+    const weekRows: TeamWeekRow[] = [];
     let upserted = 0;
 
     for (const t of rawStats) {
@@ -664,30 +648,80 @@ export async function processV2TeamWeekStats(
       })();
       const teamName = teamNameMap.get(teamId) ?? getStr(t, "teamName","cityName");
 
-      ops.push(
-        db.insert(mcaTeamWeekStatsTable)
-          .values({
-            eaSeasonId: season.id, eaLeagueId, weekType, weekNum, teamId, teamName,
-            offPassYds, offRushYds, offYds,
-            offTDs:      getN(t, "ptsFor","ptsScored","pointsFor"),
-            defPassYds, defRushYds,
-            defTDs:      getN(t, "ptsAgainst","pointsAgainst"),
-            teamSacks, teamInts, defFumblesRec, turnoverDiff, tOTakeaways, tOGiveaways,
-            rawJson: t, processedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [mcaTeamWeekStatsTable.eaSeasonId, mcaTeamWeekStatsTable.weekType, mcaTeamWeekStatsTable.weekNum, mcaTeamWeekStatsTable.teamId],
-            set: { offPassYds, offRushYds, offYds, defPassYds, defRushYds, teamSacks, teamInts, defFumblesRec, turnoverDiff, tOTakeaways, tOGiveaways, rawJson: t, processedAt: new Date() },
-          }),
-      );
-
+      weekRows.push({
+        eaSeasonId: season.id, eaLeagueId, weekType, weekNum, teamId, teamName,
+        offPassYds, offRushYds, offYds,
+        offTDs:      getN(t, "ptsFor","ptsScored","pointsFor"),
+        defPassYds, defRushYds,
+        defTDs:      getN(t, "ptsAgainst","pointsAgainst"),
+        teamSacks, teamInts, defFumblesRec, turnoverDiff, tOTakeaways, tOGiveaways,
+        rawJson: t, processedAt: new Date(),
+      });
       upserted++;
     }
-    await Promise.all(ops);
 
-    await db.insert(mcaWeekProcessedTable)
-      .values({ eaSeasonId: season.id, weekType, weekNum, statType: "team" })
-      .onConflictDoNothing();
+    await db.transaction(async (tx) => {
+      // 1. Upsert all week rows (idempotent replace on re-import)
+      await Promise.all(weekRows.map(row =>
+        tx.insert(mcaTeamWeekStatsTable)
+          .values(row)
+          .onConflictDoUpdate({
+            target: [mcaTeamWeekStatsTable.eaSeasonId, mcaTeamWeekStatsTable.weekType, mcaTeamWeekStatsTable.weekNum, mcaTeamWeekStatsTable.teamId],
+            set: { offPassYds: row.offPassYds, offRushYds: row.offRushYds, offYds: row.offYds, offTDs: row.offTDs, defPassYds: row.defPassYds, defRushYds: row.defRushYds, defTDs: row.defTDs, teamSacks: row.teamSacks, teamInts: row.teamInts, defFumblesRec: row.defFumblesRec, turnoverDiff: row.turnoverDiff, tOTakeaways: row.tOTakeaways, tOGiveaways: row.tOGiveaways, rawJson: row.rawJson, processedAt: row.processedAt },
+          })
+      ));
+
+      // 2. Re-aggregate season yardage/turnover stats from ALL week rows (fully idempotent)
+      const W = mcaTeamWeekStatsTable;
+      const teamSums = await tx
+        .select({
+          teamId:        W.teamId,
+          offPassYds:    sql<number>`CAST(SUM(${W.offPassYds}) AS INT)`,
+          offRushYds:    sql<number>`CAST(SUM(${W.offRushYds}) AS INT)`,
+          offYds:        sql<number>`CAST(SUM(${W.offYds}) AS INT)`,
+          offTDs:        sql<number>`CAST(SUM(${W.offTDs}) AS INT)`,
+          defPassYds:    sql<number>`CAST(SUM(${W.defPassYds}) AS INT)`,
+          defRushYds:    sql<number>`CAST(SUM(${W.defRushYds}) AS INT)`,
+          defTDs:        sql<number>`CAST(SUM(${W.defTDs}) AS INT)`,
+          teamSacks:     sql<number>`CAST(SUM(${W.teamSacks}) AS INT)`,
+          teamInts:      sql<number>`CAST(SUM(${W.teamInts}) AS INT)`,
+          defFumblesRec: sql<number>`CAST(SUM(${W.defFumblesRec}) AS INT)`,
+          tOTakeaways:   sql<number>`CAST(SUM(${W.tOTakeaways}) AS INT)`,
+          tOGiveaways:   sql<number>`CAST(SUM(${W.tOGiveaways}) AS INT)`,
+          turnoverDiff:  sql<number>`CAST(SUM(${W.turnoverDiff}) AS INT)`,
+        })
+        .from(W)
+        .where(and(eq(W.eaSeasonId, season.id), ne(W.weekType, "pre")))
+        .groupBy(W.teamId);
+
+      // 3. Upsert yardage/turnover columns only — wins/losses come from processV2Standings
+      await Promise.all(teamSums.map(ts => {
+        const tn = teamNameMap.get(ts.teamId) ?? "";
+        return tx.insert(mcaTeamStatsTable)
+          .values({
+            eaSeasonId: season.id, eaLeagueId, teamId: ts.teamId, teamName: tn,
+            wins: 0, losses: 0, ties: 0, ptsFor: 0, ptsAgainst: 0,
+            offYds: ts.offYds ?? 0, offPassYds: ts.offPassYds ?? 0, offRushYds: ts.offRushYds ?? 0,
+            offTDs: ts.offTDs ?? 0, offPtsPerGame: 0,
+            defPassYds: ts.defPassYds ?? 0, defRushYds: ts.defRushYds ?? 0, defTDs: ts.defTDs ?? 0,
+            teamSacks: ts.teamSacks ?? 0, teamInts: ts.teamInts ?? 0, defFumblesRec: ts.defFumblesRec ?? 0,
+            offRedZonePct: 0, defRedZonePct: 0,
+            tOTakeaways: ts.tOTakeaways ?? 0, tOGiveaways: ts.tOGiveaways ?? 0, turnoverDiff: ts.turnoverDiff ?? 0,
+            winPct: 0, netPts: 0, updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: [mcaTeamStatsTable.eaSeasonId, mcaTeamStatsTable.teamId],
+            set: {
+              offYds: ts.offYds ?? 0, offPassYds: ts.offPassYds ?? 0, offRushYds: ts.offRushYds ?? 0,
+              offTDs: ts.offTDs ?? 0,
+              defPassYds: ts.defPassYds ?? 0, defRushYds: ts.defRushYds ?? 0, defTDs: ts.defTDs ?? 0,
+              teamSacks: ts.teamSacks ?? 0, teamInts: ts.teamInts ?? 0, defFumblesRec: ts.defFumblesRec ?? 0,
+              tOTakeaways: ts.tOTakeaways ?? 0, tOGiveaways: ts.tOGiveaways ?? 0, turnoverDiff: ts.turnoverDiff ?? 0,
+              updatedAt: new Date(),
+            },
+          });
+      }));
+    });
 
     return { ok: true, message: `${upserted} team week stats recorded for week ${weekNum}` };
   } catch (err) {
@@ -788,20 +822,6 @@ export async function processV2PlayerWeekStats(
       return { ok: true, message: `Preseason Week ${weekNum} ${statType} — rejected (stageIndex=0)` };
     }
 
-    const alreadyDone = await db.select({ id: mcaWeekProcessedTable.id })
-      .from(mcaWeekProcessedTable)
-      .where(and(
-        eq(mcaWeekProcessedTable.eaSeasonId, season.id),
-        eq(mcaWeekProcessedTable.weekType,   weekType),
-        eq(mcaWeekProcessedTable.weekNum,    weekNum),
-        eq(mcaWeekProcessedTable.statType,   statType),
-      ))
-      .limit(1);
-
-    if (alreadyDone.length > 0) {
-      return { ok: true, message: `Week ${weekNum} ${statType} already recorded — skipped` };
-    }
-
     const [rosterRows, priorStatRows, mcaTeams] = await Promise.all([
       db.select({ playerId: mcaRostersTable.playerId, firstName: mcaRostersTable.firstName, lastName: mcaRostersTable.lastName, position: mcaRostersTable.position })
         .from(mcaRostersTable).where(eq(mcaRostersTable.eaSeasonId, season.id)),
@@ -815,7 +835,12 @@ export async function processV2PlayerWeekStats(
     const priorMap    = new Map(priorStatRows.map(r => [r.playerId, r]));
     const teamNameMap = new Map(mcaTeams.map(t => [t.teamId, t.fullName]));
 
-    const ops: Promise<unknown>[] = [];
+    type WeekRow   = typeof mcaPlayerWeekStatsTable.$inferInsert;
+    type SeasonRow = typeof mcaPlayerStatsTable.$inferInsert;
+
+    const weekRows: { row: WeekRow; conflictSet: Partial<WeekRow> }[] = [];
+    const seasonExtra = new Map<number, Partial<SeasonRow>>();
+    const playerMeta  = new Map<number, { teamId: number; teamName: string; firstName: string; lastName: string; position: string }>();
     let upserted = 0;
 
     for (const p of players) {
@@ -834,43 +859,156 @@ export async function processV2PlayerWeekStats(
         logger.warn(`[v2/week${weekNum}/${statType}] Player ${playerId} (team ${teamName}) not in roster`);
       }
 
-      const { weekFields, seasonInsert, seasonAccum } = buildStatFields(p, statType);
+      const { weekFields, seasonInsert } = buildStatFields(p, statType);
 
-      ops.push(
-        db.insert(mcaPlayerWeekStatsTable)
-          .values({
-            eaSeasonId: season.id, eaLeagueId, weekType, weekNum, statType,
-            playerId, teamId, teamName, firstName, lastName, position,
-            rawJson: p, processedAt: new Date(),
-            ...weekFields,
-          })
-          .onConflictDoUpdate({
-            target: [mcaPlayerWeekStatsTable.eaSeasonId, mcaPlayerWeekStatsTable.weekType, mcaPlayerWeekStatsTable.weekNum, mcaPlayerWeekStatsTable.statType, mcaPlayerWeekStatsTable.playerId],
-            set: { teamId, teamName, ...weekFields, rawJson: p, processedAt: new Date() },
-          }),
-      );
+      weekRows.push({
+        row: {
+          eaSeasonId: season.id, eaLeagueId, weekType, weekNum, statType,
+          playerId, teamId, teamName, firstName, lastName, position,
+          rawJson: p, processedAt: new Date(),
+          ...weekFields,
+        },
+        conflictSet: { teamId, teamName, ...weekFields, rawJson: p, processedAt: new Date() },
+      });
 
-      ops.push(
-        db.insert(mcaPlayerStatsTable)
-          .values({
-            eaSeasonId: season.id, eaLeagueId, playerId,
-            teamId: teamId || playerId,
-            teamName, firstName, lastName, position,
-            ...seasonInsert,
-            updatedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [mcaPlayerStatsTable.eaSeasonId, mcaPlayerStatsTable.playerId, mcaPlayerStatsTable.teamId],
-            set: { teamName, firstName, lastName, position, ...seasonAccum, updatedAt: new Date() },
-          }),
-      );
+      seasonExtra.set(playerId, { ...seasonInsert, teamName, firstName, lastName, position });
+      playerMeta.set(playerId, { teamId, teamName, firstName, lastName, position });
       upserted++;
     }
 
-    await Promise.all(ops);
-    await db.insert(mcaWeekProcessedTable)
-      .values({ eaSeasonId: season.id, weekType, weekNum, statType })
-      .onConflictDoNothing();
+    if (upserted === 0) {
+      return { ok: true, message: `No valid ${statType} rows for week ${weekNum}` };
+    }
+
+    const playerIds = [...playerMeta.keys()];
+
+    await db.transaction(async (tx) => {
+      // 1. Upsert all week rows (idempotent replace on re-import)
+      await Promise.all(weekRows.map(({ row, conflictSet }) =>
+        tx.insert(mcaPlayerWeekStatsTable)
+          .values(row)
+          .onConflictDoUpdate({
+            target: [mcaPlayerWeekStatsTable.eaSeasonId, mcaPlayerWeekStatsTable.weekType, mcaPlayerWeekStatsTable.weekNum, mcaPlayerWeekStatsTable.statType, mcaPlayerWeekStatsTable.playerId],
+            set: conflictSet,
+          })
+      ));
+
+      // 2. Re-aggregate season counting stats from ALL week rows for affected players
+      const W = mcaPlayerWeekStatsTable;
+      const agg = await tx
+        .select({
+          playerId:      W.playerId,
+          teamId:        W.teamId,
+          passYds:       sql<number>`CAST(SUM(${W.passYds}) AS INT)`,
+          passTDs:       sql<number>`CAST(SUM(${W.passTDs}) AS INT)`,
+          passAtt:       sql<number>`CAST(SUM(${W.passAtt}) AS INT)`,
+          passComp:      sql<number>`CAST(SUM(${W.passComp}) AS INT)`,
+          passInts:      sql<number>`CAST(SUM(${W.passInts}) AS INT)`,
+          timesSacked:   sql<number>`CAST(SUM(${W.timesSacked}) AS INT)`,
+          rushYds:       sql<number>`CAST(SUM(${W.rushYds}) AS INT)`,
+          rushTDs:       sql<number>`CAST(SUM(${W.rushTDs}) AS INT)`,
+          rushAtt:       sql<number>`CAST(SUM(${W.rushAtt}) AS INT)`,
+          fumbles:       sql<number>`CAST(SUM(${W.fumbles}) AS INT)`,
+          recYds:        sql<number>`CAST(SUM(${W.recYds}) AS INT)`,
+          recTDs:        sql<number>`CAST(SUM(${W.recTDs}) AS INT)`,
+          recRec:        sql<number>`CAST(SUM(${W.recRec}) AS INT)`,
+          recDrops:      sql<number>`CAST(SUM(${W.recDrops}) AS INT)`,
+          sacks:         sql<number>`SUM(${W.sacks})`,
+          defInts:       sql<number>`CAST(SUM(${W.defInts}) AS INT)`,
+          totalTackles:  sql<number>`CAST(SUM(${W.totalTackles}) AS INT)`,
+          forcedFumbles: sql<number>`CAST(SUM(${W.forcedFumbles}) AS INT)`,
+          defTDs:        sql<number>`CAST(SUM(${W.defTDs}) AS INT)`,
+          fgMade:        sql<number>`CAST(SUM(${W.fgMade}) AS INT)`,
+          fgAtt:         sql<number>`CAST(SUM(${W.fgAtt}) AS INT)`,
+          xpMade:        sql<number>`CAST(SUM(${W.xpMade}) AS INT)`,
+          xpAtt:         sql<number>`CAST(SUM(${W.xpAtt}) AS INT)`,
+          puntAtt:       sql<number>`CAST(SUM(${W.puntAtt}) AS INT)`,
+          puntYds:       sql<number>`CAST(SUM(${W.puntYds}) AS INT)`,
+          krYds:         sql<number>`CAST(SUM(${W.krYds}) AS INT)`,
+          krTDs:         sql<number>`CAST(SUM(${W.krTDs}) AS INT)`,
+          prYds:         sql<number>`CAST(SUM(${W.prYds}) AS INT)`,
+          prTDs:         sql<number>`CAST(SUM(${W.prTDs}) AS INT)`,
+        })
+        .from(W)
+        .where(and(
+          eq(W.eaSeasonId, season.id),
+          inArray(W.playerId, playerIds),
+          ne(W.weekType, "pre"),
+        ))
+        .groupBy(W.playerId, W.teamId);
+
+      // 3. Merge aggregated counts with latest rate/longest stats; upsert season totals
+      const P = mcaPlayerStatsTable;
+      await Promise.all(agg.map(a => {
+        const extra = seasonExtra.get(a.playerId) ?? {};
+        const row = {
+          eaSeasonId:    season.id,
+          eaLeagueId,
+          playerId:      a.playerId,
+          teamId:        a.teamId,
+          teamName:      "",
+          firstName:     "",
+          lastName:      "",
+          position:      "",
+          ...extra,
+          // Aggregated counting stats override any per-import values from extra
+          passYds:       a.passYds       ?? 0,
+          passTDs:       a.passTDs       ?? 0,
+          passAtt:       a.passAtt       ?? 0,
+          passComp:      a.passComp      ?? 0,
+          passInts:      a.passInts      ?? 0,
+          timesSacked:   a.timesSacked   ?? 0,
+          rushYds:       a.rushYds       ?? 0,
+          rushTDs:       a.rushTDs       ?? 0,
+          rushAtt:       a.rushAtt       ?? 0,
+          fumbles:       a.fumbles       ?? 0,
+          recYds:        a.recYds        ?? 0,
+          recTDs:        a.recTDs        ?? 0,
+          recRec:        a.recRec        ?? 0,
+          recDrops:      a.recDrops      ?? 0,
+          sacks:         a.sacks         ?? 0,
+          defInts:       a.defInts       ?? 0,
+          totalTackles:  a.totalTackles  ?? 0,
+          forcedFumbles: a.forcedFumbles ?? 0,
+          defTDs:        a.defTDs        ?? 0,
+          fgMade:        a.fgMade        ?? 0,
+          fgAtt:         a.fgAtt         ?? 0,
+          xpMade:        a.xpMade        ?? 0,
+          xpAtt:         a.xpAtt         ?? 0,
+          puntAtt:       a.puntAtt       ?? 0,
+          puntYds:       a.puntYds       ?? 0,
+          krYds:         a.krYds         ?? 0,
+          krTDs:         a.krTDs         ?? 0,
+          prYds:         a.prYds         ?? 0,
+          prTDs:         a.prTDs         ?? 0,
+          updatedAt: new Date(),
+        } as typeof P.$inferInsert;
+
+        return tx.insert(P).values(row)
+          .onConflictDoUpdate({
+            target: [P.eaSeasonId, P.playerId, P.teamId],
+            set: {
+              ...(extra as Record<string, unknown>),
+              passYds:       row.passYds,       passTDs:       row.passTDs,
+              passAtt:       row.passAtt,       passComp:      row.passComp,
+              passInts:      row.passInts,      timesSacked:   row.timesSacked,
+              rushYds:       row.rushYds,       rushTDs:       row.rushTDs,
+              rushAtt:       row.rushAtt,       fumbles:       row.fumbles,
+              recYds:        row.recYds,        recTDs:        row.recTDs,
+              recRec:        row.recRec,        recDrops:      row.recDrops,
+              sacks:         row.sacks,         defInts:       row.defInts,
+              totalTackles:  row.totalTackles,  forcedFumbles: row.forcedFumbles,
+              defTDs:        row.defTDs,
+              fgMade:        row.fgMade,        fgAtt:         row.fgAtt,
+              xpMade:        row.xpMade,        xpAtt:         row.xpAtt,
+              puntAtt:       row.puntAtt,       puntYds:       row.puntYds,
+              krYds:         row.krYds,         krTDs:         row.krTDs,
+              prYds:         row.prYds,         prTDs:         row.prTDs,
+              updatedAt: new Date(),
+            },
+          });
+      }));
+    });
 
     return { ok: true, message: `${upserted} ${statType} stats stored for week ${weekNum}` };
   } catch (err) {

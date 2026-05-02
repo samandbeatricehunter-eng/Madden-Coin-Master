@@ -2966,7 +2966,7 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     await db.insert(franchiseRostersTable).values(rowsWithPortraits);
 
-    invalidateRostersCache("v1", season.id);
+    invalidateRostersCache(season.id);
 
     return {
       ok: true,
@@ -3152,7 +3152,7 @@ export async function processFreeAgentRoster(body: unknown, eaLeagueId = 0, guil
     ));
     await db.insert(franchiseRostersTable).values(rows);
 
-    invalidateRostersCache("v1", season.id);
+    invalidateRostersCache(season.id);
 
     return { ok: true, message: `${rows.length} free agents imported` };
   } catch (err) {

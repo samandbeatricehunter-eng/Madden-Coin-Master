@@ -121,7 +121,7 @@ router.get("/v2/leagues/:eaLeagueId/rosters", requireApiKey, async (req: Request
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
 
-    const cached = getRosterCache("v2", season.id);
+    const cached = getRosterCache(season.id, "v2");
     if (cached !== null) {
       res.setHeader("X-Cache", "HIT");
       res.json(cached);
@@ -134,7 +134,7 @@ router.get("/v2/leagues/:eaLeagueId/rosters", requireApiKey, async (req: Request
     ]);
 
     const payload = { eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, currentWeek: season.currentWeek, playerCount: players.length, importedAt: latestRow?.importedAt ?? null, players };
-    setRosterCache("v2", season.id, payload);
+    setRosterCache(season.id, payload, "v2");
     res.setHeader("X-Cache", "MISS");
     res.json(payload);
   } catch (err) {
