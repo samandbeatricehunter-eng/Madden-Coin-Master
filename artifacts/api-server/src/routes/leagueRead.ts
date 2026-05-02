@@ -155,7 +155,7 @@ router.get("/v1/leagues/:guildId/rosters", requireApiKey, async (req: Request, r
       return;
     }
 
-    const cached = getRosterCache(season.id);
+    const cached = getRosterCache("v1", season.id);
     if (cached !== null) {
       res.setHeader("X-Cache", "HIT");
       res.json(cached);
@@ -185,7 +185,7 @@ router.get("/v1/leagues/:guildId/rosters", requireApiKey, async (req: Request, r
       players,
     };
 
-    setRosterCache(season.id, payload);
+    setRosterCache("v1", season.id, payload);
     res.setHeader("X-Cache", "MISS");
     res.json(payload);
   } catch (err) {

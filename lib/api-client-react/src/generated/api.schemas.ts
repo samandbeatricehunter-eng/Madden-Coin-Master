@@ -379,6 +379,281 @@ export interface GlobalUserProfile {
   eaIds: EaId[];
 }
 
+export interface McaV2Team {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  teamId: number;
+  fullName: string;
+  nickName: string;
+  abbrName?: string | null;
+  conference?: string | null;
+  divName?: string | null;
+  userName: string;
+  isHuman: boolean;
+  offScheme?: string | null;
+  defScheme?: string | null;
+  ovrRating?: number | null;
+  primaryColor?: number | null;
+  secondaryColor?: number | null;
+  logoId?: number | null;
+  updatedAt: string;
+  linkedGamertag?: string | null;
+  linkedDisplayName?: string | null;
+}
+
+export interface McaV2RosterPlayer {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  teamId: number;
+  teamName: string;
+  playerId: number;
+  firstName: string;
+  lastName: string;
+  position: string;
+  overall: number;
+  devTrait: number;
+  age?: number | null;
+  jerseyNum?: number | null;
+  contractYearsLeft?: number | null;
+  archetypeAbbrev?: string | null;
+  xpTotal?: number | null;
+  portraitUrl?: string | null;
+  importedAt: string;
+}
+
+export interface McaV2TeamStat {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  teamId: number;
+  teamName: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  ptsFor: number;
+  ptsAgainst: number;
+  offYds?: number;
+  offPassYds?: number;
+  offRushYds?: number;
+  offTDs?: number;
+  offPtsPerGame?: number;
+  defPassYds?: number;
+  defRushYds?: number;
+  defTDs?: number;
+  teamSacks?: number;
+  teamInts?: number;
+  defFumblesRec?: number;
+  offRedZonePct?: number;
+  defRedZonePct?: number;
+  tOTakeaways?: number;
+  tOGiveaways?: number;
+  turnoverDiff?: number;
+  homeWins?: number;
+  homeLosses?: number;
+  awayWins?: number;
+  awayLosses?: number;
+  confWins?: number;
+  confLosses?: number;
+  divWins?: number;
+  divLosses?: number;
+  seed?: number | null;
+  rank?: number | null;
+  playoffStatus?: string | null;
+  winPct: number;
+  netPts: number;
+  updatedAt: string;
+}
+
+export interface McaV2TeamWeekStat {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  weekType: string;
+  weekNum: number;
+  teamId: number;
+  teamName: string;
+  offPassYds?: number;
+  offRushYds?: number;
+  offYds?: number;
+  offTDs?: number;
+  defPassYds?: number;
+  defRushYds?: number;
+  defTDs?: number;
+  teamSacks?: number;
+  teamInts?: number;
+  defFumblesRec?: number;
+  turnoverDiff?: number;
+  tOTakeaways?: number;
+  tOGiveaways?: number;
+  processedAt: string;
+}
+
+export interface McaV2ScheduleGame {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  weekIndex: number;
+  weekType: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  status: number;
+}
+
+export interface McaV2PlayerStat {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  playerId: number;
+  teamId: number;
+  teamName: string;
+  firstName: string;
+  lastName: string;
+  position: string;
+  passYds?: number;
+  passTDs?: number;
+  passAtt?: number;
+  passComp?: number;
+  passInts?: number;
+  timesSacked?: number;
+  passLongest?: number;
+  passPts?: number;
+  passerRating?: number;
+  passCompPct?: number;
+  passYdsPerAtt?: number;
+  passYdsPerGame?: number;
+  rushYds?: number;
+  rushTDs?: number;
+  rushAtt?: number;
+  rushLongest?: number;
+  fumbles?: number;
+  rush20PlusYds?: number;
+  rushBrokenTackles?: number;
+  rushYdsAfterContact?: number;
+  rushPts?: number;
+  rushToPct?: number;
+  rushYdsPerAtt?: number;
+  rushYdsPerGame?: number;
+  recYds?: number;
+  recTDs?: number;
+  recRec?: number;
+  recDrops?: number;
+  recLongest?: number;
+  recPts?: number;
+  recYdsAfterCatch?: number;
+  recCatchPct?: number;
+  recToPct?: number;
+  recYacPerCatch?: number;
+  recYdsPerCatch?: number;
+  recYdsPerGame?: number;
+  sacks?: number;
+  defInts?: number;
+  totalTackles?: number;
+  tackleSolo?: number;
+  tackleAssist?: number;
+  defFumblesRec?: number;
+  forcedFumbles?: number;
+  tacklesForLoss?: number;
+  defTDs?: number;
+  defCatchAllowed?: number;
+  defDeflections?: number;
+  defIntReturnYds?: number;
+  defPts?: number;
+  defSafeties?: number;
+  fgMade?: number;
+  fgAtt?: number;
+  fgLong?: number;
+  xpMade?: number;
+  xpAtt?: number;
+  fg50PlusAtt?: number;
+  fg50PlusMade?: number;
+  kickPts?: number;
+  kickoffAtt?: number;
+  kickoffTBs?: number;
+  fgCompPct?: number;
+  xpCompPct?: number;
+  puntAtt?: number;
+  puntYds?: number;
+  puntLong?: number;
+  puntIn20?: number;
+  puntTouchbacks?: number;
+  puntNetYds?: number;
+  puntsBlocked?: number;
+  puntNetYdsPerAtt?: number;
+  krAtt?: number;
+  krYds?: number;
+  krTDs?: number;
+  prAtt?: number;
+  prYds?: number;
+  prTDs?: number;
+  updatedAt: string;
+}
+
+export interface McaV2PlayerWeekStat {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  weekType: string;
+  weekNum: number;
+  statType: string;
+  playerId: number;
+  teamId: number;
+  teamName: string;
+  firstName: string;
+  lastName: string;
+  position: string;
+  passYds?: number;
+  passTDs?: number;
+  passAtt?: number;
+  passComp?: number;
+  passInts?: number;
+  timesSacked?: number;
+  passerRating?: number;
+  rushYds?: number;
+  rushTDs?: number;
+  rushAtt?: number;
+  fumbles?: number;
+  recYds?: number;
+  recTDs?: number;
+  recRec?: number;
+  recDrops?: number;
+  sacks?: number;
+  defInts?: number;
+  totalTackles?: number;
+  forcedFumbles?: number;
+  defTDs?: number;
+  fgMade?: number;
+  fgAtt?: number;
+  xpMade?: number;
+  xpAtt?: number;
+  puntAtt?: number;
+  puntYds?: number;
+  krYds?: number;
+  krTDs?: number;
+  prYds?: number;
+  prTDs?: number;
+  processedAt: string;
+}
+
+export interface McaV2DraftPick {
+  id: number;
+  eaSeasonId: number;
+  eaLeagueId: number;
+  teamId: number;
+  teamName: string;
+  draftYear: number;
+  round: number;
+  pickNum: number;
+  originalTeamId?: number | null;
+  originalTeamName?: string | null;
+  importedAt: string;
+}
+
 export interface LeagueSummary {
   guildId: string;
   /** EA-reported league name from the connected franchise */
@@ -531,16 +806,12 @@ export type ListV2Leagues200 = {
   leagues: V2LeagueSummary[];
 };
 
-export type GetV2Teams200TeamsItem = { [key: string]: unknown };
-
 export type GetV2Teams200 = {
   eaLeagueId: number;
   seasonId: number;
   seasonNumber: number;
-  teams: GetV2Teams200TeamsItem[];
+  teams: McaV2Team[];
 };
-
-export type GetV2Rosters200PlayersItem = { [key: string]: unknown };
 
 export type GetV2Rosters200 = {
   eaLeagueId: number;
@@ -549,17 +820,15 @@ export type GetV2Rosters200 = {
   currentWeek: string;
   playerCount: number;
   importedAt?: string | null;
-  players: GetV2Rosters200PlayersItem[];
+  players: McaV2RosterPlayer[];
 };
-
-export type GetV2Standings200StandingsItem = { [key: string]: unknown };
 
 export type GetV2Standings200 = {
   eaLeagueId: number;
   seasonId: number;
   seasonNumber: number;
   currentWeek: string;
-  standings: GetV2Standings200StandingsItem[];
+  standings: McaV2TeamStat[];
 };
 
 export type GetV2ScheduleParams = {
@@ -569,14 +838,12 @@ export type GetV2ScheduleParams = {
   week?: number;
 };
 
-export type GetV2Schedule200GamesItem = { [key: string]: unknown };
-
 export type GetV2Schedule200 = {
   eaLeagueId: number;
   seasonId: number;
   seasonNumber: number;
   currentWeek: string;
-  games: GetV2Schedule200GamesItem[];
+  games: McaV2ScheduleGame[];
 };
 
 export type GetV2PlayerStatsParams = {
@@ -586,25 +853,19 @@ export type GetV2PlayerStatsParams = {
   position?: string;
 };
 
-export type GetV2PlayerStats200StatsItem = { [key: string]: unknown };
-
 export type GetV2PlayerStats200 = {
   eaLeagueId: number;
   seasonId: number;
   seasonNumber: number;
-  stats: GetV2PlayerStats200StatsItem[];
+  stats: McaV2PlayerStat[];
 };
-
-export type GetV2DraftPicks200PicksItem = { [key: string]: unknown };
 
 export type GetV2DraftPicks200 = {
   eaLeagueId: number;
   seasonId: number;
   seasonNumber: number;
-  picks: GetV2DraftPicks200PicksItem[];
+  picks: McaV2DraftPick[];
 };
-
-export type GetV2TeamRoster200PlayersItem = { [key: string]: unknown };
 
 export type GetV2TeamRoster200 = {
   eaLeagueId: number;
@@ -612,26 +873,29 @@ export type GetV2TeamRoster200 = {
   seasonNumber: number;
   teamId: number;
   playerCount: number;
-  players: GetV2TeamRoster200PlayersItem[];
+  players: McaV2RosterPlayer[];
 };
-
-export type GetV2TeamStats200TeamStatsItem = { [key: string]: unknown };
 
 export type GetV2TeamStats200 = {
   eaLeagueId: number;
   seasonId: number;
   seasonNumber: number;
-  teamStats: GetV2TeamStats200TeamStatsItem[];
+  teamStats: McaV2TeamStat[];
 };
-
-export type GetV2TeamWeekStats200TeamStatsItem = { [key: string]: unknown };
 
 export type GetV2TeamWeekStats200 = {
   eaLeagueId: number;
   seasonId: number;
   weekType: string;
   weekNum: number;
-  teamStats: GetV2TeamWeekStats200TeamStatsItem[];
+  teamStats: McaV2TeamWeekStat[];
+};
+
+export type GetV2TeamWeekStatsByIndex200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  weekNum: number;
+  teamStats: McaV2TeamWeekStat[];
 };
 
 export type GetV2PlayerWeekStatsParams = {
@@ -641,14 +905,26 @@ export type GetV2PlayerWeekStatsParams = {
   statType?: string;
 };
 
-export type GetV2PlayerWeekStats200StatsItem = { [key: string]: unknown };
-
 export type GetV2PlayerWeekStats200 = {
   eaLeagueId: number;
   seasonId: number;
   weekType: string;
   weekNum: number;
-  stats: GetV2PlayerWeekStats200StatsItem[];
+  stats: McaV2PlayerWeekStat[];
+};
+
+export type GetV2PlayerWeekStatsByIndexParams = {
+  /**
+   * Filter by stat type (passing, rushing, receiving, defense, kicking, punting, kickreturn, puntreturn)
+   */
+  statType?: string;
+};
+
+export type GetV2PlayerWeekStatsByIndex200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  weekNum: number;
+  stats: McaV2PlayerWeekStat[];
 };
 
 export type RegisterV2UserBodyPlatform =

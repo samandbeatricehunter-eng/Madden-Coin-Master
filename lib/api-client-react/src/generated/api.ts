@@ -39,6 +39,8 @@ import type {
   GetV2PlayerStats200,
   GetV2PlayerStatsParams,
   GetV2PlayerWeekStats200,
+  GetV2PlayerWeekStatsByIndex200,
+  GetV2PlayerWeekStatsByIndexParams,
   GetV2PlayerWeekStatsParams,
   GetV2Rosters200,
   GetV2Schedule200,
@@ -47,6 +49,7 @@ import type {
   GetV2TeamRoster200,
   GetV2TeamStats200,
   GetV2TeamWeekStats200,
+  GetV2TeamWeekStatsByIndex200,
   GetV2Teams200,
   GetV2User200,
   GetV2UserLeagues200,
@@ -2887,6 +2890,119 @@ export function useGetV2TeamWeekStats<
 }
 
 /**
+ * @summary Per-week team stats by week number (all week types)
+ */
+export const getGetV2TeamWeekStatsByIndexUrl = (
+  eaLeagueId: number,
+  weekIndex: number,
+) => {
+  return `/api/v2/leagues/${eaLeagueId}/team-stats/week/${weekIndex}`;
+};
+
+export const getV2TeamWeekStatsByIndex = async (
+  eaLeagueId: number,
+  weekIndex: number,
+  options?: RequestInit,
+): Promise<GetV2TeamWeekStatsByIndex200> => {
+  return customFetch<GetV2TeamWeekStatsByIndex200>(
+    getGetV2TeamWeekStatsByIndexUrl(eaLeagueId, weekIndex),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2TeamWeekStatsByIndexQueryKey = (
+  eaLeagueId: number,
+  weekIndex: number,
+) => {
+  return [
+    `/api/v2/leagues/${eaLeagueId}/team-stats/week/${weekIndex}`,
+  ] as const;
+};
+
+export const getGetV2TeamWeekStatsByIndexQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekIndex: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetV2TeamWeekStatsByIndexQueryKey(eaLeagueId, weekIndex);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>
+  > = ({ signal }) =>
+    getV2TeamWeekStatsByIndex(eaLeagueId, weekIndex, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(eaLeagueId && weekIndex),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2TeamWeekStatsByIndexQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>
+>;
+export type GetV2TeamWeekStatsByIndexQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Per-week team stats by week number (all week types)
+ */
+
+export function useGetV2TeamWeekStatsByIndex<
+  TData = Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekIndex: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamWeekStatsByIndex>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2TeamWeekStatsByIndexQueryOptions(
+    eaLeagueId,
+    weekIndex,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Per-week player stats
  */
 export const getGetV2PlayerWeekStatsUrl = (
@@ -3013,6 +3129,138 @@ export function useGetV2PlayerWeekStats<
     eaLeagueId,
     weekType,
     weekNum,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Per-week player stats by week number (all week types)
+ */
+export const getGetV2PlayerWeekStatsByIndexUrl = (
+  eaLeagueId: number,
+  weekIndex: number,
+  params?: GetV2PlayerWeekStatsByIndexParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v2/leagues/${eaLeagueId}/player-stats/week/${weekIndex}?${stringifiedParams}`
+    : `/api/v2/leagues/${eaLeagueId}/player-stats/week/${weekIndex}`;
+};
+
+export const getV2PlayerWeekStatsByIndex = async (
+  eaLeagueId: number,
+  weekIndex: number,
+  params?: GetV2PlayerWeekStatsByIndexParams,
+  options?: RequestInit,
+): Promise<GetV2PlayerWeekStatsByIndex200> => {
+  return customFetch<GetV2PlayerWeekStatsByIndex200>(
+    getGetV2PlayerWeekStatsByIndexUrl(eaLeagueId, weekIndex, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2PlayerWeekStatsByIndexQueryKey = (
+  eaLeagueId: number,
+  weekIndex: number,
+  params?: GetV2PlayerWeekStatsByIndexParams,
+) => {
+  return [
+    `/api/v2/leagues/${eaLeagueId}/player-stats/week/${weekIndex}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetV2PlayerWeekStatsByIndexQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekIndex: number,
+  params?: GetV2PlayerWeekStatsByIndexParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetV2PlayerWeekStatsByIndexQueryKey(eaLeagueId, weekIndex, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>
+  > = ({ signal }) =>
+    getV2PlayerWeekStatsByIndex(eaLeagueId, weekIndex, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(eaLeagueId && weekIndex),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2PlayerWeekStatsByIndexQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>
+>;
+export type GetV2PlayerWeekStatsByIndexQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Per-week player stats by week number (all week types)
+ */
+
+export function useGetV2PlayerWeekStatsByIndex<
+  TData = Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekIndex: number,
+  params?: GetV2PlayerWeekStatsByIndexParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2PlayerWeekStatsByIndex>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2PlayerWeekStatsByIndexQueryOptions(
+    eaLeagueId,
+    weekIndex,
     params,
     options,
   );

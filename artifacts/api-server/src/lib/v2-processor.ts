@@ -25,7 +25,7 @@ import {
   appUsersTable,
   appUserLeagueLinksTable,
 } from "@workspace/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { invalidateRostersCache } from "./rosterCache.js";
 import { logger } from "./logger.js";
 
@@ -472,7 +472,7 @@ export async function processV2Roster(
       rows.map(r => ({ ...r, portraitUrl: portraitMap.get(r.playerId!) ?? null })),
     );
 
-    invalidateRostersCache(season.id);
+    invalidateRostersCache("v2", season.id);
     return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (season ${season.seasonNumber})` };
   } catch (err) {
     logger.error({ err }, `[v2/roster/team/${mcaTeamId}]`);
@@ -499,7 +499,7 @@ export async function processV2FreeAgents(body: unknown, eaLeagueId: number): Pr
       and(eq(mcaRostersTable.eaSeasonId, season.id), eq(mcaRostersTable.teamId, V2_FA_TEAM_ID)),
     );
     await db.insert(mcaRostersTable).values(rows);
-    invalidateRostersCache(season.id);
+    invalidateRostersCache("v2", season.id);
     return { ok: true, message: `${rows.length} free agents imported (season ${season.seasonNumber})` };
   } catch (err) {
     logger.error({ err }, "[v2/freeagents]");
@@ -1205,7 +1205,7 @@ export async function getAppUserLeagues(gamertag: string) {
   const leagues   = await db
     .select()
     .from(mcaLeaguesTable)
-    .where(sql`${mcaLeaguesTable.eaLeagueId} = ANY(${leagueIds})`);
+    .where(inArray(mcaLeaguesTable.eaLeagueId, leagueIds));
   const leagueMap = new Map(leagues.map(l => [l.eaLeagueId, l]));
 
   // For each linked league, fetch the team's standings/stats

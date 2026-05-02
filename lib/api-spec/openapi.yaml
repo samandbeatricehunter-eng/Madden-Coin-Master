@@ -618,7 +618,8 @@ paths:
                   seasonNumber:  { type: integer }
                   teams:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2Team"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -650,7 +651,8 @@ paths:
                   importedAt:   { type: string, format: date-time, nullable: true }
                   players:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2RosterPlayer"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -680,7 +682,8 @@ paths:
                   currentWeek:  { type: string }
                   standings:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2TeamStat"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -715,7 +718,8 @@ paths:
                   currentWeek:  { type: string }
                   games:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2ScheduleGame"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -749,7 +753,8 @@ paths:
                   seasonNumber: { type: integer }
                   stats:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2PlayerStat"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -778,7 +783,8 @@ paths:
                   seasonNumber: { type: integer }
                   picks:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2DraftPick"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -810,7 +816,8 @@ paths:
                   playerCount:  { type: integer }
                   players:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2RosterPlayer"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -839,7 +846,8 @@ paths:
                   seasonNumber: { type: integer }
                   teamStats:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2TeamStat"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -871,7 +879,43 @@ paths:
                   weekNum:    { type: integer }
                   teamStats:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2TeamWeekStat"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/team-stats/week/{weekIndex}:
+    get:
+      operationId: getV2TeamWeekStatsByIndex
+      tags: [v2]
+      summary: Per-week team stats by week number (all week types)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - name: weekIndex
+          in: path
+          required: true
+          description: Week number (1-based)
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Team stats for the given week number across all week types
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, weekNum, teamStats]
+                properties:
+                  eaLeagueId: { type: integer }
+                  seasonId:   { type: integer }
+                  weekNum:    { type: integer }
+                  teamStats:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/McaV2TeamWeekStat"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -908,7 +952,48 @@ paths:
                   weekNum:    { type: integer }
                   stats:
                     type: array
-                    items: { type: object, additionalProperties: true }
+                    items:
+                      $ref: "#/components/schemas/McaV2PlayerWeekStat"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/player-stats/week/{weekIndex}:
+    get:
+      operationId: getV2PlayerWeekStatsByIndex
+      tags: [v2]
+      summary: Per-week player stats by week number (all week types)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - name: weekIndex
+          in: path
+          required: true
+          description: Week number (1-based)
+          schema: { type: integer }
+        - name: statType
+          in: query
+          required: false
+          description: Filter by stat type (passing, rushing, receiving, defense, kicking, punting, kickreturn, puntreturn)
+          schema: { type: string }
+      responses:
+        "200":
+          description: Player stats for the given week number, optionally filtered by stat type
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, weekNum, stats]
+                properties:
+                  eaLeagueId: { type: integer }
+                  seasonId:   { type: integer }
+                  weekNum:    { type: integer }
+                  stats:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/McaV2PlayerWeekStat"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1843,6 +1928,297 @@ components:
         slot:
           type: integer
       required: [eaId, console, slot]
+
+    McaV2Team:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, teamId, fullName, nickName, userName, isHuman, updatedAt]
+      properties:
+        id:             { type: integer }
+        eaSeasonId:     { type: integer }
+        eaLeagueId:     { type: integer }
+        teamId:         { type: integer }
+        fullName:       { type: string }
+        nickName:       { type: string }
+        abbrName:       { type: string, nullable: true }
+        conference:     { type: string, nullable: true }
+        divName:        { type: string, nullable: true }
+        userName:       { type: string }
+        isHuman:        { type: boolean }
+        offScheme:      { type: string, nullable: true }
+        defScheme:      { type: string, nullable: true }
+        ovrRating:      { type: integer, nullable: true }
+        primaryColor:   { type: integer, nullable: true }
+        secondaryColor: { type: integer, nullable: true }
+        logoId:         { type: integer, nullable: true }
+        updatedAt:      { type: string, format: date-time }
+        linkedGamertag:    { type: string, nullable: true }
+        linkedDisplayName: { type: string, nullable: true }
+
+    McaV2RosterPlayer:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, teamId, teamName, playerId, firstName, lastName, position, overall, devTrait, importedAt]
+      properties:
+        id:                { type: integer }
+        eaSeasonId:        { type: integer }
+        eaLeagueId:        { type: integer }
+        teamId:            { type: integer }
+        teamName:          { type: string }
+        playerId:          { type: integer }
+        firstName:         { type: string }
+        lastName:          { type: string }
+        position:          { type: string }
+        overall:           { type: integer }
+        devTrait:          { type: integer }
+        age:               { type: integer, nullable: true }
+        jerseyNum:         { type: integer, nullable: true }
+        contractYearsLeft: { type: integer, nullable: true }
+        archetypeAbbrev:   { type: string, nullable: true }
+        xpTotal:           { type: integer, nullable: true }
+        portraitUrl:       { type: string, nullable: true }
+        importedAt:        { type: string, format: date-time }
+
+    McaV2TeamStat:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, teamId, teamName, wins, losses, ties, ptsFor, ptsAgainst, winPct, netPts, updatedAt]
+      properties:
+        id:            { type: integer }
+        eaSeasonId:    { type: integer }
+        eaLeagueId:    { type: integer }
+        teamId:        { type: integer }
+        teamName:      { type: string }
+        wins:          { type: integer }
+        losses:        { type: integer }
+        ties:          { type: integer }
+        ptsFor:        { type: integer }
+        ptsAgainst:    { type: integer }
+        offYds:        { type: integer }
+        offPassYds:    { type: integer }
+        offRushYds:    { type: integer }
+        offTDs:        { type: integer }
+        offPtsPerGame: { type: number }
+        defPassYds:    { type: integer }
+        defRushYds:    { type: integer }
+        defTDs:        { type: integer }
+        teamSacks:     { type: integer }
+        teamInts:      { type: integer }
+        defFumblesRec: { type: integer }
+        offRedZonePct: { type: number }
+        defRedZonePct: { type: number }
+        tOTakeaways:   { type: integer }
+        tOGiveaways:   { type: integer }
+        turnoverDiff:  { type: integer }
+        homeWins:      { type: integer }
+        homeLosses:    { type: integer }
+        awayWins:      { type: integer }
+        awayLosses:    { type: integer }
+        confWins:      { type: integer }
+        confLosses:    { type: integer }
+        divWins:       { type: integer }
+        divLosses:     { type: integer }
+        seed:          { type: integer, nullable: true }
+        rank:          { type: integer, nullable: true }
+        playoffStatus: { type: string, nullable: true }
+        winPct:        { type: number }
+        netPts:        { type: integer }
+        updatedAt:     { type: string, format: date-time }
+
+    McaV2TeamWeekStat:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, weekType, weekNum, teamId, teamName, processedAt]
+      properties:
+        id:            { type: integer }
+        eaSeasonId:    { type: integer }
+        eaLeagueId:    { type: integer }
+        weekType:      { type: string }
+        weekNum:       { type: integer }
+        teamId:        { type: integer }
+        teamName:      { type: string }
+        offPassYds:    { type: integer }
+        offRushYds:    { type: integer }
+        offYds:        { type: integer }
+        offTDs:        { type: integer }
+        defPassYds:    { type: integer }
+        defRushYds:    { type: integer }
+        defTDs:        { type: integer }
+        teamSacks:     { type: integer }
+        teamInts:      { type: integer }
+        defFumblesRec: { type: integer }
+        turnoverDiff:  { type: integer }
+        tOTakeaways:   { type: integer }
+        tOGiveaways:   { type: integer }
+        processedAt:   { type: string, format: date-time }
+
+    McaV2ScheduleGame:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, weekIndex, weekType, homeTeamId, awayTeamId, homeTeamName, awayTeamName, status]
+      properties:
+        id:           { type: integer }
+        eaSeasonId:   { type: integer }
+        eaLeagueId:   { type: integer }
+        weekIndex:    { type: integer }
+        weekType:     { type: string }
+        homeTeamId:   { type: integer }
+        awayTeamId:   { type: integer }
+        homeTeamName: { type: string }
+        awayTeamName: { type: string }
+        homeScore:    { type: integer, nullable: true }
+        awayScore:    { type: integer, nullable: true }
+        status:       { type: integer }
+
+    McaV2PlayerStat:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, playerId, teamId, teamName, firstName, lastName, position, updatedAt]
+      properties:
+        id:                  { type: integer }
+        eaSeasonId:          { type: integer }
+        eaLeagueId:          { type: integer }
+        playerId:            { type: integer }
+        teamId:              { type: integer }
+        teamName:            { type: string }
+        firstName:           { type: string }
+        lastName:            { type: string }
+        position:            { type: string }
+        passYds:             { type: integer }
+        passTDs:             { type: integer }
+        passAtt:             { type: integer }
+        passComp:            { type: integer }
+        passInts:            { type: integer }
+        timesSacked:         { type: integer }
+        passLongest:         { type: integer }
+        passPts:             { type: number }
+        passerRating:        { type: number }
+        passCompPct:         { type: number }
+        passYdsPerAtt:       { type: number }
+        passYdsPerGame:      { type: number }
+        rushYds:             { type: integer }
+        rushTDs:             { type: integer }
+        rushAtt:             { type: integer }
+        rushLongest:         { type: integer }
+        fumbles:             { type: integer }
+        rush20PlusYds:       { type: integer }
+        rushBrokenTackles:   { type: integer }
+        rushYdsAfterContact: { type: integer }
+        rushPts:             { type: number }
+        rushToPct:           { type: number }
+        rushYdsPerAtt:       { type: number }
+        rushYdsPerGame:      { type: number }
+        recYds:              { type: integer }
+        recTDs:              { type: integer }
+        recRec:              { type: integer }
+        recDrops:            { type: integer }
+        recLongest:          { type: integer }
+        recPts:              { type: number }
+        recYdsAfterCatch:    { type: integer }
+        recCatchPct:         { type: number }
+        recToPct:            { type: number }
+        recYacPerCatch:      { type: number }
+        recYdsPerCatch:      { type: number }
+        recYdsPerGame:       { type: number }
+        sacks:               { type: number }
+        defInts:             { type: integer }
+        totalTackles:        { type: integer }
+        tackleSolo:          { type: integer }
+        tackleAssist:        { type: integer }
+        defFumblesRec:       { type: integer }
+        forcedFumbles:       { type: integer }
+        tacklesForLoss:      { type: integer }
+        defTDs:              { type: integer }
+        defCatchAllowed:     { type: integer }
+        defDeflections:      { type: integer }
+        defIntReturnYds:     { type: integer }
+        defPts:              { type: number }
+        defSafeties:         { type: integer }
+        fgMade:              { type: integer }
+        fgAtt:               { type: integer }
+        fgLong:              { type: integer }
+        xpMade:              { type: integer }
+        xpAtt:               { type: integer }
+        fg50PlusAtt:         { type: integer }
+        fg50PlusMade:        { type: integer }
+        kickPts:             { type: number }
+        kickoffAtt:          { type: integer }
+        kickoffTBs:          { type: integer }
+        fgCompPct:           { type: number }
+        xpCompPct:           { type: number }
+        puntAtt:             { type: integer }
+        puntYds:             { type: integer }
+        puntLong:            { type: integer }
+        puntIn20:            { type: integer }
+        puntTouchbacks:      { type: integer }
+        puntNetYds:          { type: integer }
+        puntsBlocked:        { type: integer }
+        puntNetYdsPerAtt:    { type: number }
+        krAtt:               { type: integer }
+        krYds:               { type: integer }
+        krTDs:               { type: integer }
+        prAtt:               { type: integer }
+        prYds:               { type: integer }
+        prTDs:               { type: integer }
+        updatedAt:           { type: string, format: date-time }
+
+    McaV2PlayerWeekStat:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, weekType, weekNum, statType, playerId, teamId, teamName, firstName, lastName, position, processedAt]
+      properties:
+        id:           { type: integer }
+        eaSeasonId:   { type: integer }
+        eaLeagueId:   { type: integer }
+        weekType:     { type: string }
+        weekNum:      { type: integer }
+        statType:     { type: string }
+        playerId:     { type: integer }
+        teamId:       { type: integer }
+        teamName:     { type: string }
+        firstName:    { type: string }
+        lastName:     { type: string }
+        position:     { type: string }
+        passYds:      { type: integer }
+        passTDs:      { type: integer }
+        passAtt:      { type: integer }
+        passComp:     { type: integer }
+        passInts:     { type: integer }
+        timesSacked:  { type: integer }
+        passerRating: { type: number }
+        rushYds:      { type: integer }
+        rushTDs:      { type: integer }
+        rushAtt:      { type: integer }
+        fumbles:      { type: integer }
+        recYds:       { type: integer }
+        recTDs:       { type: integer }
+        recRec:       { type: integer }
+        recDrops:     { type: integer }
+        sacks:        { type: number }
+        defInts:      { type: integer }
+        totalTackles: { type: integer }
+        forcedFumbles: { type: integer }
+        defTDs:       { type: integer }
+        fgMade:       { type: integer }
+        fgAtt:        { type: integer }
+        xpMade:       { type: integer }
+        xpAtt:        { type: integer }
+        puntAtt:      { type: integer }
+        puntYds:      { type: integer }
+        krYds:        { type: integer }
+        krTDs:        { type: integer }
+        prYds:        { type: integer }
+        prTDs:        { type: integer }
+        processedAt:  { type: string, format: date-time }
+
+    McaV2DraftPick:
+      type: object
+      required: [id, eaSeasonId, eaLeagueId, teamId, teamName, draftYear, round, pickNum, importedAt]
+      properties:
+        id:               { type: integer }
+        eaSeasonId:       { type: integer }
+        eaLeagueId:       { type: integer }
+        teamId:           { type: integer }
+        teamName:         { type: string }
+        draftYear:        { type: integer }
+        round:            { type: integer }
+        pickNum:          { type: integer }
+        originalTeamId:   { type: integer, nullable: true }
+        originalTeamName: { type: string, nullable: true }
+        importedAt:       { type: string, format: date-time }
 
     LeagueSummary:
       type: object
