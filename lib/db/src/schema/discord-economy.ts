@@ -493,6 +493,42 @@ export const teamSeasonStatsTable = pgTable("team_season_stats", {
   turnoverDiff:  integer("turnover_diff").notNull().default(0),   // season turnover differential (+/-)
   wins:       integer("wins").notNull().default(0),
   losses:     integer("losses").notNull().default(0),
+  // ── Additional standings data (from MCA /standings payload) ──────────────
+  ties:          integer("ties").notNull().default(0),
+  ptsFor:        integer("pts_for").notNull().default(0),        // total points scored
+  ptsAgainst:    integer("pts_against").notNull().default(0),    // total points allowed
+  homeWins:      integer("home_wins").notNull().default(0),
+  homeLosses:    integer("home_losses").notNull().default(0),
+  homeTies:      integer("home_ties").notNull().default(0),
+  awayWins:      integer("away_wins").notNull().default(0),
+  awayLosses:    integer("away_losses").notNull().default(0),
+  awayTies:      integer("away_ties").notNull().default(0),
+  confWins:      integer("conf_wins").notNull().default(0),
+  confLosses:    integer("conf_losses").notNull().default(0),
+  confTies:      integer("conf_ties").notNull().default(0),
+  divWins:       integer("div_wins").notNull().default(0),
+  divLosses:     integer("div_losses").notNull().default(0),
+  divTies:       integer("div_ties").notNull().default(0),
+  capRoom:       integer("cap_room").notNull().default(0),       // remaining cap space
+  capSpent:      integer("cap_spent").notNull().default(0),      // cap already spent
+  capAvailable:  integer("cap_available").notNull().default(0),  // total available cap
+  seed:          integer("seed"),                                // conference seed (1-7, null if not in playoffs)
+  rank:          integer("rank"),                                // overall league rank
+  prevRank:      integer("prev_rank"),                           // rank previous week
+  playoffStatus: text("playoff_status"),                         // e.g. "IN_THE_HUNT", "CLINCHED", "ELIMINATED"
+  winPct:        real("win_pct").notNull().default(0),
+  winLossStreak: integer("win_loss_streak").notNull().default(0), // positive=win streak, negative=loss streak
+  netPts:        integer("net_pts").notNull().default(0),        // ptsFor - ptsAgainst
+  offTotalYds:   integer("off_total_yds").notNull().default(0),  // total offensive yards from standings
+  defTotalYds:   integer("def_total_yds").notNull().default(0),  // total defensive yards allowed
+  offPassYdsRank:  integer("off_pass_yds_rank"),
+  offRushYdsRank:  integer("off_rush_yds_rank"),
+  offTotalYdsRank: integer("off_total_yds_rank"),
+  defPassYdsRank:  integer("def_pass_yds_rank"),
+  defRushYdsRank:  integer("def_rush_yds_rank"),
+  defTotalYdsRank: integer("def_total_yds_rank"),
+  ptsForRank:      integer("pts_for_rank"),
+  ptsAgainstRank:  integer("pts_against_rank"),
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueTeam: uniqueIndex("team_season_stats_unique_idx").on(t.seasonId, t.teamId),
@@ -550,6 +586,50 @@ export const playerSeasonStatsTable = pgTable("player_season_stats", {
   prAtt:          integer("pr_att").notNull().default(0),
   prYds:          integer("pr_yds").notNull().default(0),
   prTDs:          integer("pr_tds").notNull().default(0),
+  // ── Additional passing stats ───────────────────────────────────────────────
+  passLongest:    integer("pass_longest").notNull().default(0),
+  passPts:        real("pass_pts").notNull().default(0),
+  passYdsPerAtt:  real("pass_yds_per_att").notNull().default(0),
+  passYdsPerGame: real("pass_yds_per_game").notNull().default(0),
+  passerRating:   real("passer_rating").notNull().default(0),
+  passCompPct:    real("pass_comp_pct").notNull().default(0),
+  // ── Additional rushing stats ───────────────────────────────────────────────
+  rush20PlusYds:       integer("rush_20_plus_yds").notNull().default(0),
+  rushBrokenTackles:   integer("rush_broken_tackles").notNull().default(0),
+  rushLongest:         integer("rush_longest").notNull().default(0),
+  rushPts:             real("rush_pts").notNull().default(0),
+  rushToPct:           real("rush_to_pct").notNull().default(0),
+  rushYdsAfterContact: integer("rush_yds_after_contact").notNull().default(0),
+  rushYdsPerAtt:       real("rush_yds_per_att").notNull().default(0),
+  rushYdsPerGame:      real("rush_yds_per_game").notNull().default(0),
+  // ── Additional receiving stats ─────────────────────────────────────────────
+  recDrops:        integer("rec_drops").notNull().default(0),
+  recLongest:      integer("rec_longest").notNull().default(0),
+  recPts:          real("rec_pts").notNull().default(0),
+  recToPct:        real("rec_to_pct").notNull().default(0),
+  recYacPerCatch:  real("rec_yac_per_catch").notNull().default(0),
+  recYdsAfterCatch: integer("rec_yds_after_catch").notNull().default(0),
+  recYdsPerCatch:  real("rec_yds_per_catch").notNull().default(0),
+  recYdsPerGame:   real("rec_yds_per_game").notNull().default(0),
+  recCatchPct:     real("rec_catch_pct").notNull().default(0),
+  // ── Additional defensive stats ─────────────────────────────────────────────
+  defCatchAllowed:  integer("def_catch_allowed").notNull().default(0),
+  defDeflections:   integer("def_deflections").notNull().default(0),
+  defIntReturnYds:  integer("def_int_return_yds").notNull().default(0),
+  defPts:           real("def_pts").notNull().default(0),
+  defSafeties:      integer("def_safeties").notNull().default(0),
+  // ── Additional kicking stats ───────────────────────────────────────────────
+  fg50PlusAtt:  integer("fg_50_plus_att").notNull().default(0),
+  fg50PlusMade: integer("fg_50_plus_made").notNull().default(0),
+  fgCompPct:    real("fg_comp_pct").notNull().default(0),
+  kickPts:      real("kick_pts").notNull().default(0),
+  kickoffAtt:   integer("kickoff_att").notNull().default(0),
+  kickoffTBs:   integer("kickoff_tbs").notNull().default(0),
+  xpCompPct:    real("xp_comp_pct").notNull().default(0),
+  // ── Additional punting stats ───────────────────────────────────────────────
+  puntNetYds:       integer("punt_net_yds").notNull().default(0),
+  puntNetYdsPerAtt: real("punt_net_yds_per_att").notNull().default(0),
+  puntsBlocked:     integer("punts_blocked").notNull().default(0),
   updatedAt:      timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniquePlayer: uniqueIndex("player_season_stats_unique_idx").on(t.seasonId, t.playerId),
@@ -802,6 +882,15 @@ export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
   isHuman:    boolean("is_human").notNull().default(false),
   discordId:  text("discord_id"),               // null if CPU team or no match
   logoUrl:    text("logo_url"),                 // guild-specific team logo URL (overrides default)
+  // ── Additional MCA leagueteams fields ────────────────────────────────────
+  abbrName:      text("abbr_name"),             // e.g. "LV" — EA's short team abbreviation
+  divName:       text("div_name"),              // e.g. "AFC West"
+  offScheme:     text("off_scheme"),            // offensive scheme string from EA
+  defScheme:     text("def_scheme"),            // defensive scheme string from EA
+  ovrRating:     integer("ovr_rating"),         // team overall rating
+  primaryColor:  integer("primary_color"),      // primary color as integer
+  secondaryColor: integer("secondary_color"),   // secondary color as integer
+  logoId:        integer("logo_id"),            // EA's internal logo ID
   updatedAt:  timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),

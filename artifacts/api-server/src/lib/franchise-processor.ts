@@ -386,12 +386,29 @@ export async function processLeagueTeams(body: unknown, eaLeagueId = 0, guildId?
         else if (confId === 1) conference = "NFC";
       }
 
+      const abbrName      = t?.abbrName      ? String(t.abbrName).trim()      : null;
+      const divName       = t?.divName       ? String(t.divName).trim()       : null;
+      const offScheme     = t?.offScheme     ? String(t.offScheme).trim()     : null;
+      const defScheme     = t?.defScheme     ? String(t.defScheme).trim()     : null;
+      const ovrRating     = t?.ovrRating     != null ? Number(t.ovrRating)    : null;
+      const primaryColor  = t?.primaryColor  != null ? Number(t.primaryColor) : null;
+      const secondaryColor = t?.secondaryColor != null ? Number(t.secondaryColor) : null;
+      const logoId        = t?.logoId        != null ? Number(t.logoId)       : null;
+
       ops.push(
         db.insert(franchiseMcaTeamsTable)
-          .values({ seasonId: season.id, teamId, fullName, nickName: nick, conference, userName, isHuman, discordId, updatedAt: new Date() })
+          .values({
+            seasonId: season.id, teamId, fullName, nickName: nick, conference, userName, isHuman, discordId,
+            abbrName, divName, offScheme, defScheme, ovrRating, primaryColor, secondaryColor, logoId,
+            updatedAt: new Date(),
+          })
           .onConflictDoUpdate({
             target: [franchiseMcaTeamsTable.seasonId, franchiseMcaTeamsTable.teamId],
-            set: { fullName, nickName: nick, conference, userName, isHuman, discordId, updatedAt: new Date() },
+            set: {
+              fullName, nickName: nick, conference, userName, isHuman, discordId,
+              abbrName, divName, offScheme, defScheme, ovrRating, primaryColor, secondaryColor, logoId,
+              updatedAt: new Date(),
+            },
           })
       );
       upserted++;
@@ -904,36 +921,98 @@ export async function processStandingsSeedings(body: unknown, eaLeagueId = 0, gu
     const teamMap = new Map(mcaTeams.map(t => [t.teamId, t]));
 
     let applied = 0;
+    let standingsUpserted = 0;
     const ops: Promise<any>[] = [];
 
     for (const t of standings) {
       const teamId = Number(t?.teamId ?? -1);
       if (teamId < 0 || isNaN(teamId)) continue;
 
-      const confSeed = Number(t?.seed ?? 0);
-      if (confSeed < 1 || confSeed > 7) continue; // not a playoff team
-
-      const conferenceName: string | undefined = t?.conferenceName;
-      if (conferenceName !== "AFC" && conferenceName !== "NFC") {
-        console.warn(`[standings-seedings] Unknown conferenceName="${conferenceName}" for teamId=${teamId} — skipping`);
-        continue;
-      }
-
       const teamEntry = teamMap.get(teamId);
-      if (!teamEntry?.discordId) continue; // CPU team — no Discord user
+      const discordId = teamEntry?.discordId ?? null;
+      const teamName  = String(t?.teamName ?? teamEntry?.fullName ?? "").trim();
 
-      console.log(`[standings-seedings] → ${teamEntry.fullName} (discord ${teamEntry.discordId}): ${conferenceName} Seed ${confSeed}`);
+      // ── Persist full standings row into team_season_stats ─────────────────
+      const standingsSet = {
+        discordId,
+        wins:          Number(t?.totalWins    ?? 0),
+        losses:        Number(t?.totalLosses  ?? 0),
+        ties:          Number(t?.totalTies    ?? 0),
+        ptsFor:        Number(t?.ptsFor       ?? 0),
+        ptsAgainst:    Number(t?.ptsAgainst   ?? 0),
+        homeWins:      Number(t?.homeWins     ?? 0),
+        homeLosses:    Number(t?.homeLosses   ?? 0),
+        homeTies:      Number(t?.homeTies     ?? 0),
+        awayWins:      Number(t?.awayWins     ?? 0),
+        awayLosses:    Number(t?.awayLosses   ?? 0),
+        awayTies:      Number(t?.awayTies     ?? 0),
+        confWins:      Number(t?.confWins     ?? 0),
+        confLosses:    Number(t?.confLosses   ?? 0),
+        confTies:      Number(t?.confTies     ?? 0),
+        divWins:       Number(t?.divWins      ?? 0),
+        divLosses:     Number(t?.divLosses    ?? 0),
+        divTies:       Number(t?.divTies      ?? 0),
+        capRoom:       Number(t?.capRoom      ?? 0),
+        capSpent:      Number(t?.capSpent     ?? 0),
+        capAvailable:  Number(t?.capAvailable ?? 0),
+        seed:          t?.seed     != null ? Number(t.seed)     : null,
+        rank:          t?.rank     != null ? Number(t.rank)     : null,
+        prevRank:      t?.prevRank != null ? Number(t.prevRank) : null,
+        playoffStatus: t?.playoffStatus ? String(t.playoffStatus) : null,
+        winPct:        Number(t?.winPct       ?? 0),
+        winLossStreak: Number(t?.winLossStreak ?? 0),
+        netPts:        Number(t?.netPts       ?? 0),
+        offPassYds:    Number(t?.offPassYds   ?? 0),
+        offRushYds:    Number(t?.offRushYds   ?? 0),
+        offTotalYds:   Number(t?.offTotalYds  ?? 0),
+        defPassYds:    Number(t?.defPassYds   ?? 0),
+        defRushYds:    Number(t?.defRushYds   ?? 0),
+        defTotalYds:   Number(t?.defTotalYds  ?? 0),
+        turnoverDiff:  Number(t?.tODiff       ?? 0),
+        offPassYdsRank:  t?.offPassYdsRank  != null ? Number(t.offPassYdsRank)  : null,
+        offRushYdsRank:  t?.offRushYdsRank  != null ? Number(t.offRushYdsRank)  : null,
+        offTotalYdsRank: t?.offTotalYdsRank != null ? Number(t.offTotalYdsRank) : null,
+        defPassYdsRank:  t?.defPassYdsRank  != null ? Number(t.defPassYdsRank)  : null,
+        defRushYdsRank:  t?.defRushYdsRank  != null ? Number(t.defRushYdsRank)  : null,
+        defTotalYdsRank: t?.defTotalYdsRank != null ? Number(t.defTotalYdsRank) : null,
+        ptsForRank:      t?.ptsForRank      != null ? Number(t.ptsForRank)      : null,
+        ptsAgainstRank:  t?.ptsAgainstRank  != null ? Number(t.ptsAgainstRank)  : null,
+        updatedAt: new Date(),
+      };
+
       ops.push(
-        db.update(usersTable)
-          .set({ playoffSeed: confSeed, playoffConference: conferenceName, updatedAt: new Date() })
-          .where(and(eq(usersTable.discordId, teamEntry.discordId), eq(usersTable.guildId, season.guildId ?? ""))),
+        db.insert(teamSeasonStatsTable)
+          .values({ seasonId: season.id, teamId, teamName: teamName || "", ...standingsSet })
+          .onConflictDoUpdate({
+            target: [teamSeasonStatsTable.seasonId, teamSeasonStatsTable.teamId],
+            set: { teamName: teamName || undefined, ...standingsSet },
+          }),
       );
-      applied++;
+      standingsUpserted++;
+
+      // ── Write playoff seeds to usersTable for human playoff teams ─────────
+      const confSeed = Number(t?.seed ?? 0);
+      if (confSeed >= 1 && confSeed <= 7 && discordId) {
+        const conferenceName: string | undefined = t?.conferenceName;
+        if (conferenceName === "AFC" || conferenceName === "NFC") {
+          console.log(`[standings-seedings] → ${teamEntry?.fullName} (discord ${discordId}): ${conferenceName} Seed ${confSeed}`);
+          ops.push(
+            db.update(usersTable)
+              .set({ playoffSeed: confSeed, playoffConference: conferenceName, updatedAt: new Date() })
+              .where(and(eq(usersTable.discordId, discordId), eq(usersTable.guildId, season.guildId ?? ""))),
+          );
+          applied++;
+        }
+      }
     }
 
     await Promise.all(ops);
-    console.log(`[standings-seedings] Applied playoff seeds to ${applied} human teams`);
-    return { ok: true, message: `Playoff seeds applied to ${applied} human teams from standings`, details: { applied } };
+    console.log(`[standings-seedings] Upserted standings for ${standingsUpserted} teams; applied playoff seeds to ${applied} human teams`);
+    return {
+      ok: true,
+      message: `Standings stored for ${standingsUpserted} teams; playoff seeds applied to ${applied} human teams`,
+      details: { standingsUpserted, applied },
+    };
   } catch (err) {
     console.error("[standings-seedings] Error:", err);
     return { ok: false, message: String(err) };
@@ -1202,20 +1281,35 @@ export async function processPlayerWeekStats(
       let accumSet:     Record<string, any> = {};
 
       if (statType === "passing") {
-        const passYds    = getN(p, "passYds",     "passingYards",    "passyds");
-        const passTDs    = getN(p, "passTDs",     "passingTds",      "passtds");
-        const passAtt    = getN(p, "passAtt",     "passAttempts",    "passattempts",  "passatt",  "attempts");
-        const passComp   = getN(p, "passComp",    "passCompletions", "completions",   "passcomp", "completionAttempts");
-        const passInts   = getN(p, "passInts",    "passingInts",     "interceptions", "passInt",  "passingInterceptions", "intsThrown");
-        const timesSacked = getN(p, "passSacks", "sackYdsLost","timesSacked",     "sacksRec",      "sacksAllowed", "sacksReceived", "qbSacks");
-        insertFields = { passYds, passTDs, passAtt, passComp, passInts, timesSacked };
+        const passYds       = getN(p, "passYds",     "passingYards",    "passyds");
+        const passTDs       = getN(p, "passTDs",     "passingTds",      "passtds");
+        const passAtt       = getN(p, "passAtt",     "passAttempts",    "passattempts",  "passatt",  "attempts");
+        const passComp      = getN(p, "passComp",    "passCompletions", "completions",   "passcomp", "completionAttempts");
+        const passInts      = getN(p, "passInts",    "passingInts",     "interceptions", "passInt",  "passingInterceptions", "intsThrown");
+        const timesSacked   = getN(p, "passSacks",   "sackYdsLost",     "timesSacked",   "sacksRec", "sacksAllowed", "sacksReceived", "qbSacks");
+        // Derived / display stats — overwrite with latest value (not accumulated)
+        const passLongest   = getN(p, "passLongest", "passLng",         "passingLongest");
+        const passPts       = getN(p, "passPts",     "passingPts",      "passingPoints");
+        const passYdsPerAtt = getN(p, "passYdsPerAtt", "yardsPerAttempt", "passYPA");
+        const passYdsPerGame = getN(p, "passYdsPerGame", "passingYardsPerGame");
+        const passerRating  = getN(p, "passerRating", "qbRating",       "passRating",    "passer_rating");
+        const passCompPct   = getN(p, "passCompPct",  "completionPct",  "passCompletion");
+        insertFields = { passYds, passTDs, passAtt, passComp, passInts, timesSacked,
+                         passLongest, passPts, passYdsPerAtt, passYdsPerGame, passerRating, passCompPct };
         accumSet     = {
-          passYds:     sql`${playerSeasonStatsTable.passYds}     + ${passYds}`,
-          passTDs:     sql`${playerSeasonStatsTable.passTDs}     + ${passTDs}`,
-          passAtt:     sql`${playerSeasonStatsTable.passAtt}     + ${passAtt}`,
-          passComp:    sql`${playerSeasonStatsTable.passComp}    + ${passComp}`,
-          passInts:    sql`${playerSeasonStatsTable.passInts}    + ${passInts}`,
-          timesSacked: sql`${playerSeasonStatsTable.timesSacked} + ${timesSacked}`,
+          passYds:      sql`${playerSeasonStatsTable.passYds}      + ${passYds}`,
+          passTDs:      sql`${playerSeasonStatsTable.passTDs}      + ${passTDs}`,
+          passAtt:      sql`${playerSeasonStatsTable.passAtt}      + ${passAtt}`,
+          passComp:     sql`${playerSeasonStatsTable.passComp}     + ${passComp}`,
+          passInts:     sql`${playerSeasonStatsTable.passInts}     + ${passInts}`,
+          timesSacked:  sql`${playerSeasonStatsTable.timesSacked}  + ${timesSacked}`,
+          passLongest:  sql`GREATEST(${playerSeasonStatsTable.passLongest}, ${passLongest})`,
+          passPts:      sql`${playerSeasonStatsTable.passPts}      + ${passPts}`,
+          // Rate/derived stats: overwrite with the week's value (most recent wins)
+          passYdsPerAtt:  passYdsPerAtt,
+          passYdsPerGame: passYdsPerGame,
+          passerRating:   passerRating,
+          passCompPct:    passCompPct,
         };
         const pViolations = detectPlayerStatViolations(
           displayName, position, teamName,
@@ -1223,16 +1317,35 @@ export async function processPlayerWeekStats(
         );
         statViolations.push(...pViolations);
       } else if (statType === "rushing") {
-        const rushYds = getN(p, "rushYds", "rushingYards",    "rushyds");
-        const rushTDs = getN(p, "rushTDs", "rushingTds",      "rushtds");
-        const rushAtt = getN(p, "rushAtt", "rushAttempts",    "rushattempts", "rushatt", "carries", "rushCarries");
-        const fumbles = getN(p, "rushFum", "fumbles",         "fumLost",      "fumblesLost", "offFumbles", "fumTotal", "fum");
-        insertFields = { rushYds, rushTDs, rushAtt, fumbles };
+        const rushYds            = getN(p, "rushYds",            "rushingYards",    "rushyds");
+        const rushTDs            = getN(p, "rushTDs",            "rushingTds",      "rushtds");
+        const rushAtt            = getN(p, "rushAtt",            "rushAttempts",    "rushattempts", "rushatt", "carries", "rushCarries");
+        const fumbles            = getN(p, "rushFum",            "fumbles",         "fumLost",      "fumblesLost", "offFumbles", "fumTotal", "fum");
+        const rush20PlusYds      = getN(p, "rush20PlusYds",      "rushingTwentyPlusYards", "rush20Plus");
+        const rushBrokenTackles  = getN(p, "rushBrokenTackles",  "brokenTackles");
+        const rushLongest        = getN(p, "rushLongest",        "rushLng",         "rushingLongest");
+        const rushPts            = getN(p, "rushPts",            "rushingPts",      "rushingPoints");
+        const rushYdsAfterContact = getN(p, "rushYdsAfterContact", "yardsAfterContact");
+        // Rate/derived stats
+        const rushToPct          = getN(p, "rushToPct",          "rushTouchdownPct");
+        const rushYdsPerAtt      = getN(p, "rushYdsPerAtt",      "rushingYardsPerAtt", "yardsPerCarry");
+        const rushYdsPerGame     = getN(p, "rushYdsPerGame",     "rushingYardsPerGame");
+        insertFields = { rushYds, rushTDs, rushAtt, fumbles,
+                         rush20PlusYds, rushBrokenTackles, rushLongest, rushPts, rushYdsAfterContact,
+                         rushToPct, rushYdsPerAtt, rushYdsPerGame };
         accumSet     = {
-          rushYds: sql`${playerSeasonStatsTable.rushYds} + ${rushYds}`,
-          rushTDs: sql`${playerSeasonStatsTable.rushTDs} + ${rushTDs}`,
-          rushAtt: sql`${playerSeasonStatsTable.rushAtt} + ${rushAtt}`,
-          fumbles: sql`${playerSeasonStatsTable.fumbles} + ${fumbles}`,
+          rushYds:             sql`${playerSeasonStatsTable.rushYds}             + ${rushYds}`,
+          rushTDs:             sql`${playerSeasonStatsTable.rushTDs}             + ${rushTDs}`,
+          rushAtt:             sql`${playerSeasonStatsTable.rushAtt}             + ${rushAtt}`,
+          fumbles:             sql`${playerSeasonStatsTable.fumbles}             + ${fumbles}`,
+          rush20PlusYds:       sql`${playerSeasonStatsTable.rush20PlusYds}       + ${rush20PlusYds}`,
+          rushBrokenTackles:   sql`${playerSeasonStatsTable.rushBrokenTackles}   + ${rushBrokenTackles}`,
+          rushLongest:         sql`GREATEST(${playerSeasonStatsTable.rushLongest}, ${rushLongest})`,
+          rushPts:             sql`${playerSeasonStatsTable.rushPts}             + ${rushPts}`,
+          rushYdsAfterContact: sql`${playerSeasonStatsTable.rushYdsAfterContact} + ${rushYdsAfterContact}`,
+          rushToPct:           rushToPct,
+          rushYdsPerAtt:       rushYdsPerAtt,
+          rushYdsPerGame:      rushYdsPerGame,
         };
         const rViolations = detectPlayerStatViolations(
           displayName, position, teamName,
@@ -1240,14 +1353,35 @@ export async function processPlayerWeekStats(
         );
         statViolations.push(...rViolations);
       } else if (statType === "receiving") {
-        const recYds = getN(p, "recYds", "receivingYards", "recyds");
-        const recTDs = getN(p, "recTDs", "receivingTds",   "rectds");
-        const recRec = getN(p, "recRec", "receptions",     "catches", "receptionsTotal", "recCatches");
-        insertFields = { recYds, recTDs, recRec };
+        const recYds         = getN(p, "recYds",         "receivingYards", "recyds");
+        const recTDs         = getN(p, "recTDs",         "receivingTds",   "rectds");
+        const recRec         = getN(p, "recRec",         "receptions",     "catches", "receptionsTotal", "recCatches");
+        const recDrops       = getN(p, "recDrops",       "drops",          "receivingDrops");
+        const recLongest     = getN(p, "recLongest",     "recLng",         "receivingLongest");
+        const recPts         = getN(p, "recPts",         "receivingPts",   "receivingPoints");
+        const recYdsAfterCatch = getN(p, "recYdsAfterCatch");
+        // Rate/derived stats
+        const recCatchPct    = getN(p, "recCatchPct");
+        const recToPct       = getN(p, "recToPct",       "receivingTouchdownPct");
+        const recYacPerCatch = getN(p, "recYacPerCatch", "yacPerCatch");
+        const recYdsPerCatch = getN(p, "recYdsPerCatch", "yardsPerCatch",  "receivingYardsPerCatch");
+        const recYdsPerGame  = getN(p, "recYdsPerGame",  "receivingYardsPerGame");
+        insertFields = { recYds, recTDs, recRec,
+                         recDrops, recLongest, recPts, recYdsAfterCatch,
+                         recCatchPct, recToPct, recYacPerCatch, recYdsPerCatch, recYdsPerGame };
         accumSet     = {
-          recYds: sql`${playerSeasonStatsTable.recYds} + ${recYds}`,
-          recTDs: sql`${playerSeasonStatsTable.recTDs} + ${recTDs}`,
-          recRec: sql`${playerSeasonStatsTable.recRec} + ${recRec}`,
+          recYds:          sql`${playerSeasonStatsTable.recYds}          + ${recYds}`,
+          recTDs:          sql`${playerSeasonStatsTable.recTDs}          + ${recTDs}`,
+          recRec:          sql`${playerSeasonStatsTable.recRec}          + ${recRec}`,
+          recDrops:        sql`${playerSeasonStatsTable.recDrops}        + ${recDrops}`,
+          recLongest:      sql`GREATEST(${playerSeasonStatsTable.recLongest}, ${recLongest})`,
+          recPts:          sql`${playerSeasonStatsTable.recPts}          + ${recPts}`,
+          recYdsAfterCatch: sql`${playerSeasonStatsTable.recYdsAfterCatch} + ${recYdsAfterCatch}`,
+          recCatchPct:     recCatchPct,
+          recToPct:        recToPct,
+          recYacPerCatch:  recYacPerCatch,
+          recYdsPerCatch:  recYdsPerCatch,
+          recYdsPerGame:   recYdsPerGame,
         };
         const recViolations = detectPlayerStatViolations(
           `${firstName} ${lastName}`.trim(), position, teamName,
@@ -1255,54 +1389,89 @@ export async function processPlayerWeekStats(
         );
         statViolations.push(...recViolations);
       } else if (statType === "defense") {
-        const sacks          = getN(p, "defSacks",           "sacks",             "sack");
-        const defInts        = getN(p, "defInts",            "defInterceptions",  "interceptions", "ints");
-        const totalTackles   = getN(p, "defTotalTackles",    "totalTackles",      "tackleTotal", "tackles");
-        const tackleSolo     = getN(p, "defTackleSolo",      "tackleSolo",        "soloTackles");
-        const tackleAssist   = getN(p, "defTackleAssist",    "tackleAssist",      "assistTackles");
-        const defFumblesRec  = getN(p, "defFumblesRec",      "fumblesRecovered",  "fumRec", "fumbleRecoveries", "fumbleRec", "fumbRec");
-        const forcedFumbles  = getN(p, "defForcedFumbles",   "forcedFumbles",     "ffum", "fumForced", "defFF", "defForcedFum");
-        const tacklesForLoss = getN(p, "defTacklesForLoss",  "tacklesForLoss",    "tfl", "defTFL", "tackleForLoss", "defTackleForLoss");
-        const defTDs         = getN(p, "defTDs",             "defTouchdowns",     "defTD", "defensiveTDs", "defTdsTotal");
-        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist, defFumblesRec, forcedFumbles, tacklesForLoss, defTDs };
+        const sacks           = getN(p, "defSacks",          "sacks",            "sack");
+        const defInts         = getN(p, "defInts",           "defInterceptions", "interceptions", "ints");
+        const totalTackles    = getN(p, "defTotalTackles",   "totalTackles",     "tackleTotal", "tackles");
+        const tackleSolo      = getN(p, "defTackleSolo",     "tackleSolo",       "soloTackles");
+        const tackleAssist    = getN(p, "defTackleAssist",   "tackleAssist",     "assistTackles");
+        const defFumblesRec   = getN(p, "defFumblesRec",     "fumblesRecovered", "fumRec", "fumbleRecoveries", "fumbleRec", "fumbRec");
+        const forcedFumbles   = getN(p, "defForcedFumbles",  "forcedFumbles",    "ffum", "fumForced", "defFF", "defForcedFum");
+        const tacklesForLoss  = getN(p, "defTacklesForLoss", "tacklesForLoss",   "tfl", "defTFL", "tackleForLoss", "defTackleForLoss");
+        const defTDs          = getN(p, "defTDs",            "defTouchdowns",    "defTD", "defensiveTDs", "defTdsTotal");
+        const defCatchAllowed = getN(p, "defCatchAllowed");
+        const defDeflections  = getN(p, "defDeflections",   "passDeflections",  "pbu", "passesDefended");
+        const defIntReturnYds = getN(p, "defIntReturnYds",  "intReturnYards");
+        const defPts          = getN(p, "defPts",           "defensivePts");
+        const defSafeties     = getN(p, "defSafeties",      "safeties");
+        insertFields = { sacks, defInts, totalTackles, tackleSolo, tackleAssist, defFumblesRec, forcedFumbles, tacklesForLoss, defTDs,
+                         defCatchAllowed, defDeflections, defIntReturnYds, defPts, defSafeties };
         accumSet     = {
-          sacks:          sql`${playerSeasonStatsTable.sacks}          + ${sacks}`,
-          defInts:        sql`${playerSeasonStatsTable.defInts}        + ${defInts}`,
-          totalTackles:   sql`${playerSeasonStatsTable.totalTackles}   + ${totalTackles}`,
-          tackleSolo:     sql`${playerSeasonStatsTable.tackleSolo}     + ${tackleSolo}`,
-          tackleAssist:   sql`${playerSeasonStatsTable.tackleAssist}   + ${tackleAssist}`,
-          defFumblesRec:  sql`${playerSeasonStatsTable.defFumblesRec}  + ${defFumblesRec}`,
-          forcedFumbles:  sql`${playerSeasonStatsTable.forcedFumbles}  + ${forcedFumbles}`,
-          tacklesForLoss: sql`${playerSeasonStatsTable.tacklesForLoss} + ${tacklesForLoss}`,
-          defTDs:         sql`${playerSeasonStatsTable.defTDs}         + ${defTDs}`,
+          sacks:           sql`${playerSeasonStatsTable.sacks}           + ${sacks}`,
+          defInts:         sql`${playerSeasonStatsTable.defInts}         + ${defInts}`,
+          totalTackles:    sql`${playerSeasonStatsTable.totalTackles}    + ${totalTackles}`,
+          tackleSolo:      sql`${playerSeasonStatsTable.tackleSolo}      + ${tackleSolo}`,
+          tackleAssist:    sql`${playerSeasonStatsTable.tackleAssist}    + ${tackleAssist}`,
+          defFumblesRec:   sql`${playerSeasonStatsTable.defFumblesRec}   + ${defFumblesRec}`,
+          forcedFumbles:   sql`${playerSeasonStatsTable.forcedFumbles}   + ${forcedFumbles}`,
+          tacklesForLoss:  sql`${playerSeasonStatsTable.tacklesForLoss}  + ${tacklesForLoss}`,
+          defTDs:          sql`${playerSeasonStatsTable.defTDs}          + ${defTDs}`,
+          defCatchAllowed: sql`${playerSeasonStatsTable.defCatchAllowed} + ${defCatchAllowed}`,
+          defDeflections:  sql`${playerSeasonStatsTable.defDeflections}  + ${defDeflections}`,
+          defIntReturnYds: sql`${playerSeasonStatsTable.defIntReturnYds} + ${defIntReturnYds}`,
+          defPts:          sql`${playerSeasonStatsTable.defPts}          + ${defPts}`,
+          defSafeties:     sql`${playerSeasonStatsTable.defSafeties}     + ${defSafeties}`,
         };
       } else if (statType === "kicking") {
-        const fgMade = getN(p, "fgMade", "fgm",  "fieldGoalsMade",    "fg_made");
-        const fgAtt  = getN(p, "fgAtt",  "fga",  "fieldGoalAttempts", "fg_att", "fgAttempts");
-        const fgLong = getN(p, "fgLong", "fglg", "fgLng",             "fgLongestMade", "fg_long");
-        const xpMade = getN(p, "xpMade", "xpm",  "extraPointsMade",   "epMade", "xp_made");
-        const xpAtt  = getN(p, "xpAtt",  "xpa",  "extraPointAttempts","epAtt",  "xp_att", "xpAttempts");
-        insertFields = { fgMade, fgAtt, fgLong, xpMade, xpAtt };
+        // Note: MCA payload uses capital-G field names: fGMade, fGAtt, fGLongest, etc.
+        const fgMade      = getN(p, "fGMade",      "fgMade",  "fgm",  "fieldGoalsMade",    "fg_made");
+        const fgAtt       = getN(p, "fGAtt",       "fgAtt",   "fga",  "fieldGoalAttempts", "fg_att", "fgAttempts");
+        const fgLong      = getN(p, "fGLongest",   "fgLong",  "fglg", "fgLng",             "fgLongestMade", "fg_long");
+        const xpMade      = getN(p, "xPMade",      "xpMade",  "xpm",  "extraPointsMade",   "epMade", "xp_made");
+        const xpAtt       = getN(p, "xPAtt",       "xpAtt",   "xpa",  "extraPointAttempts","epAtt",  "xp_att", "xpAttempts");
+        const fg50PlusAtt  = getN(p, "fG50PlusAtt",  "fg50PlusAtt");
+        const fg50PlusMade = getN(p, "fG50PlusMade", "fg50PlusMade");
+        const fgCompPct    = getN(p, "fGCompPct",    "fgCompPct");
+        const kickPts      = getN(p, "kickPts");
+        const kickoffAtt   = getN(p, "kickoffAtt");
+        const kickoffTBs   = getN(p, "kickoffTBs");
+        const xpCompPct    = getN(p, "xPCompPct",    "xpCompPct");
+        insertFields = { fgMade, fgAtt, fgLong, xpMade, xpAtt,
+                         fg50PlusAtt, fg50PlusMade, kickPts, kickoffAtt, kickoffTBs,
+                         fgCompPct, xpCompPct };
         accumSet     = {
-          fgMade: sql`${playerSeasonStatsTable.fgMade} + ${fgMade}`,
-          fgAtt:  sql`${playerSeasonStatsTable.fgAtt}  + ${fgAtt}`,
-          fgLong: sql`GREATEST(${playerSeasonStatsTable.fgLong}, ${fgLong})`,
-          xpMade: sql`${playerSeasonStatsTable.xpMade} + ${xpMade}`,
-          xpAtt:  sql`${playerSeasonStatsTable.xpAtt}  + ${xpAtt}`,
+          fgMade:       sql`${playerSeasonStatsTable.fgMade}       + ${fgMade}`,
+          fgAtt:        sql`${playerSeasonStatsTable.fgAtt}        + ${fgAtt}`,
+          fgLong:       sql`GREATEST(${playerSeasonStatsTable.fgLong}, ${fgLong})`,
+          xpMade:       sql`${playerSeasonStatsTable.xpMade}       + ${xpMade}`,
+          xpAtt:        sql`${playerSeasonStatsTable.xpAtt}        + ${xpAtt}`,
+          fg50PlusAtt:  sql`${playerSeasonStatsTable.fg50PlusAtt}  + ${fg50PlusAtt}`,
+          fg50PlusMade: sql`${playerSeasonStatsTable.fg50PlusMade} + ${fg50PlusMade}`,
+          kickPts:      sql`${playerSeasonStatsTable.kickPts}      + ${kickPts}`,
+          kickoffAtt:   sql`${playerSeasonStatsTable.kickoffAtt}   + ${kickoffAtt}`,
+          kickoffTBs:   sql`${playerSeasonStatsTable.kickoffTBs}   + ${kickoffTBs}`,
+          fgCompPct:    fgCompPct,
+          xpCompPct:    xpCompPct,
         };
       } else if (statType === "punting") {
-        const puntAtt        = getN(p, "puntAtt",       "punts",       "puntCount",      "puntAttempts", "punt_att");
-        const puntYds        = getN(p, "puntYds",       "puntingYds",  "puntYdsTotal",   "punt_yds");
-        const puntLong       = getN(p, "puntLong",      "puntLng",     "puntLongest",    "punt_long");
-        const puntIn20       = getN(p, "puntIn20",      "puntsIn20",   "puntInsideTwenty","punt_in_20");
-        const puntTouchbacks = getN(p, "puntTouchbacks","puntTBs",     "puntTouchback",  "punt_touchbacks");
-        insertFields = { puntAtt, puntYds, puntLong, puntIn20, puntTouchbacks };
+        const puntAtt         = getN(p, "puntAtt",         "punts",       "puntCount",       "puntAttempts", "punt_att");
+        const puntYds         = getN(p, "puntYds",         "puntingYds",  "puntYdsTotal",    "punt_yds");
+        const puntLong        = getN(p, "puntLong",        "puntLng",     "puntLongest",     "punt_long");
+        const puntIn20        = getN(p, "puntIn20",        "puntsIn20",   "puntInsideTwenty","punt_in_20");
+        const puntTouchbacks  = getN(p, "puntTouchbacks",  "puntTBs",     "puntTouchback",   "punt_touchbacks");
+        const puntNetYds      = getN(p, "puntNetYds");
+        const puntsBlocked    = getN(p, "puntsBlocked");
+        const puntNetYdsPerAtt = getN(p, "puntNetYdsPerAtt");
+        insertFields = { puntAtt, puntYds, puntLong, puntIn20, puntTouchbacks,
+                         puntNetYds, puntsBlocked, puntNetYdsPerAtt };
         accumSet     = {
-          puntAtt:        sql`${playerSeasonStatsTable.puntAtt}        + ${puntAtt}`,
-          puntYds:        sql`${playerSeasonStatsTable.puntYds}        + ${puntYds}`,
-          puntLong:       sql`GREATEST(${playerSeasonStatsTable.puntLong}, ${puntLong})`,
-          puntIn20:       sql`${playerSeasonStatsTable.puntIn20}       + ${puntIn20}`,
-          puntTouchbacks: sql`${playerSeasonStatsTable.puntTouchbacks} + ${puntTouchbacks}`,
+          puntAtt:         sql`${playerSeasonStatsTable.puntAtt}         + ${puntAtt}`,
+          puntYds:         sql`${playerSeasonStatsTable.puntYds}         + ${puntYds}`,
+          puntLong:        sql`GREATEST(${playerSeasonStatsTable.puntLong}, ${puntLong})`,
+          puntIn20:        sql`${playerSeasonStatsTable.puntIn20}        + ${puntIn20}`,
+          puntTouchbacks:  sql`${playerSeasonStatsTable.puntTouchbacks}  + ${puntTouchbacks}`,
+          puntNetYds:      sql`${playerSeasonStatsTable.puntNetYds}      + ${puntNetYds}`,
+          puntsBlocked:    sql`${playerSeasonStatsTable.puntsBlocked}    + ${puntsBlocked}`,
+          puntNetYdsPerAtt: puntNetYdsPerAtt,
         };
       } else if (statType === "kickreturn" || statType === "kickreturning") {
         const krAtt = getN(p, "krAtt", "kickReturnAtt",  "krReturns",   "kickReturnAttempts", "kr_att");
@@ -2248,10 +2417,31 @@ const ROSTER_POS_NUM: Record<number, string> = {
   21: "KR", 22: "PR", 23: "LS",
 };
 
-const ROSTER_BIO_FIELDS = new Set([
-  "height", "heightInches", "weight",
-  "handedness", "throwingHand", "playerHandedness",
-  "college", "collegeName", "playerCollege",
+// Fields stored as dedicated DB columns — skip from the generic attributes JSON to avoid duplication
+const ROSTER_DEDICATED_COLUMNS = new Set([
+  "playerId", "rosterId", "playerIndex", "id",
+  "firstName", "lastName",
+  "position", "pos", "positionId",
+  "playerBestOvr", "overallRating", "overallRatings", "overall", "ovr", "bestOverall", "playerSkillRating",
+  "devTrait", "devTraitId", "playerDevTrait",
+  "age",
+  "jerseyNum", "jersey", "uniformNumber",
+  "experiencePoints",
+  "teamId",
+  // archetypeAbbrev aliases
+  "archetypeAbbrev", "primaryArchetypeAbbrev", "playerArchetypeAbbrev", "playerArchetype", "archetype", "archetypeId", "scheme",
+  // contractYearsLeft aliases
+  "contractYearsLeft", "yearsLeft", "contractLeft",
+]);
+
+// Array / object fields handled separately (abilities, goals) — skip from attributes
+const ROSTER_SKIP_ARRAYS = new Set([
+  "signatureSlotList", "activeAbilityList", "playerAbilityList", "abilitiesSlotList",
+  "abilitySlotList", "superstarAbilityList", "ssAbilityList", "playerAbilities",
+  "abilities", "packageAbility", "superstarAbility", "playerZoneAbility",
+  "zoneAbility", "signatureAbilityName", "signatureAbility", "playerSignatureAbility",
+  "xFactorZoneAbility", "xfactorZoneAbility", "zoneAbilityName",
+  "rosterGoalList",
 ]);
 
 // Try all known MCA payload shapes and return a flat array of player objects
@@ -2311,11 +2501,15 @@ function buildPlayerValues(p: any, seasonId: number, teamId: number, teamName: s
   const ovrRaw = p.playerBestOvr ?? p.overallRating ?? p.overallRatings ?? p.overall ?? p.ovr ?? p.bestOverall ?? p.playerSkillRating ?? null;
   const overall = ovrRaw != null ? Math.max(0, Math.min(99, Number(ovrRaw))) : 0;
 
+  // Capture ALL scalar (non-array, non-object) fields not already stored as dedicated columns.
+  // This includes all *Rating, all *Trait, bio, contract, cap, grades, injury, status flags, etc.
   const attributes: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
     if (v == null) continue;
-    if (typeof v === "number" && k.endsWith("Rating")) { attributes[k] = v; continue; }
-    if (ROSTER_BIO_FIELDS.has(k)) { attributes[k] = v; }
+    if (ROSTER_DEDICATED_COLUMNS.has(k)) continue;
+    if (ROSTER_SKIP_ARRAYS.has(k)) continue;
+    if (Array.isArray(v) || (typeof v === "object" && v !== null)) continue;
+    attributes[k] = v;
   }
 
   return {
