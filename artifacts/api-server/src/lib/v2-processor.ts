@@ -27,6 +27,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { invalidateRostersCache } from "./rosterCache.js";
+import { logger } from "./logger.js";
 
 export interface V2Result {
   ok: boolean;
@@ -270,7 +271,7 @@ export async function processV2LeagueTeams(
     const season = await getOrCreateV2Season(eaLeagueId, seasonIndex, leagueName, platform);
 
     if (rawTeams.length === 0) {
-      console.warn(`[v2/leagueteams/${eaLeagueId}] No teams found`);
+      logger.warn(`[v2/leagueteams/${eaLeagueId}] No teams found`);
       return { ok: true, message: "No teams in payload" };
     }
 
@@ -332,7 +333,7 @@ export async function processV2LeagueTeams(
     await Promise.allSettled(linkOps);
     return { ok: true, message: `${rawTeams.length} teams upserted for league ${eaLeagueId} (season ${season.seasonNumber})` };
   } catch (err) {
-    console.error("[v2/leagueteams]", err);
+    logger.error({ err }, "[v2/leagueteams]");
     return { ok: false, message: String(err) };
   }
 }
@@ -474,7 +475,7 @@ export async function processV2Roster(
     invalidateRostersCache(season.id);
     return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (season ${season.seasonNumber})` };
   } catch (err) {
-    console.error(`[v2/roster/team/${mcaTeamId}]`, err);
+    logger.error({ err }, `[v2/roster/team/${mcaTeamId}]`);
     return { ok: false, message: String(err) };
   }
 }
@@ -501,7 +502,7 @@ export async function processV2FreeAgents(body: unknown, eaLeagueId: number): Pr
     invalidateRostersCache(season.id);
     return { ok: true, message: `${rows.length} free agents imported (season ${season.seasonNumber})` };
   } catch (err) {
-    console.error("[v2/freeagents]", err);
+    logger.error({ err }, "[v2/freeagents]");
     return { ok: false, message: String(err) };
   }
 }
@@ -515,7 +516,7 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
     const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawTeams.length === 0) {
-      console.warn(`[v2/standings/${eaLeagueId}] No standings data found`);
+      logger.warn(`[v2/standings/${eaLeagueId}] No standings data found`);
       return { ok: true, message: "No standings data in payload" };
     }
 
@@ -592,7 +593,7 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
     await Promise.all(ops);
     return { ok: true, message: `Standings upserted for ${rawTeams.length} teams (season ${season.seasonNumber})` };
   } catch (err) {
-    console.error("[v2/standings]", err);
+    logger.error({ err }, "[v2/standings]");
     return { ok: false, message: String(err) };
   }
 }
@@ -614,7 +615,7 @@ export async function processV2TeamWeekStats(
     const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawStats.length === 0) {
-      console.warn(`[v2/week${weekNum}/team/${eaLeagueId}] No team stats in payload`);
+      logger.warn(`[v2/week${weekNum}/team/${eaLeagueId}] No team stats in payload`);
       return { ok: true, message: "No team stats in payload" };
     }
 
@@ -722,7 +723,7 @@ export async function processV2TeamWeekStats(
 
     return { ok: true, message: `${upserted} team week stats recorded for week ${weekNum}` };
   } catch (err) {
-    console.error(`[v2/week${weekNum}/team/${eaLeagueId}]`, err);
+    logger.error({ err }, `[v2/week${weekNum}/team/${eaLeagueId}]`);
     return { ok: false, message: String(err) };
   }
 }
@@ -741,7 +742,7 @@ export async function processV2Schedules(
     const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawGames.length === 0) {
-      console.warn(`[v2/schedules/${eaLeagueId}] No schedule data found`);
+      logger.warn(`[v2/schedules/${eaLeagueId}] No schedule data found`);
       return { ok: true, message: "No schedule data in payload" };
     }
 
@@ -786,7 +787,7 @@ export async function processV2Schedules(
     await Promise.all(ops);
     return { ok: true, message: `${upserted} schedule games upserted (season ${season.seasonNumber})` };
   } catch (err) {
-    console.error("[v2/schedules]", err);
+    logger.error({ err }, "[v2/schedules]");
     return { ok: false, message: String(err) };
   }
 }
@@ -811,7 +812,7 @@ export async function processV2PlayerWeekStats(
 
     if (players.length === 0) {
       const topKeys = body && typeof body === "object" ? Object.keys(body as object).join(", ") : "";
-      console.warn(`[v2/week${weekNum}/${statType}/${eaLeagueId}] No records. Tried: [${listKeys.join(",")}]. Keys: ${topKeys}`);
+      logger.warn(`[v2/week${weekNum}/${statType}/${eaLeagueId}] No records. Tried: [${listKeys.join(",")}]. Keys: ${topKeys}`);
       return { ok: true, message: `No ${statType} records — tried: ${listKeys.join(", ")}` };
     }
 
@@ -862,7 +863,7 @@ export async function processV2PlayerWeekStats(
       const position  = roster?.position  ?? prior?.position  ?? getStr(p, "position","pos","playerPosition");
 
       if (!firstName && !lastName) {
-        console.warn(`[v2/week${weekNum}/${statType}] Player ${playerId} (team ${teamName}) not in roster`);
+        logger.warn(`[v2/week${weekNum}/${statType}] Player ${playerId} (team ${teamName}) not in roster`);
       }
 
       const { weekFields, seasonInsert, seasonAccum } = buildStatFields(p, statType);
@@ -905,7 +906,7 @@ export async function processV2PlayerWeekStats(
 
     return { ok: true, message: `${upserted} ${statType} stats stored for week ${weekNum}` };
   } catch (err) {
-    console.error(`[v2/week${weekNum}/${statType}/${eaLeagueId}]`, err);
+    logger.error({ err }, `[v2/week${weekNum}/${statType}/${eaLeagueId}]`);
     return { ok: false, message: String(err) };
   }
 }
@@ -1110,7 +1111,7 @@ export async function processV2DraftPicks(body: unknown, eaLeagueId: number): Pr
     const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawPicks.length === 0) {
-      console.warn(`[v2/draftpicks/${eaLeagueId}] No picks found`);
+      logger.warn(`[v2/draftpicks/${eaLeagueId}] No picks found`);
       return { ok: true, message: "No draft picks in payload" };
     }
 
@@ -1152,7 +1153,7 @@ export async function processV2DraftPicks(body: unknown, eaLeagueId: number): Pr
 
     return { ok: true, message: `${rows.length} draft picks imported (season ${season.seasonNumber})` };
   } catch (err) {
-    console.error("[v2/draftpicks]", err);
+    logger.error({ err }, "[v2/draftpicks]");
     return { ok: false, message: String(err) };
   }
 }

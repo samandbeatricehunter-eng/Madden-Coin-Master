@@ -4,6 +4,8 @@
  * TTL: 10 minutes. Invalidated immediately after any roster import.
  */
 
+import { logger } from "./logger.js";
+
 const ROSTER_CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface RosterCacheEntry {
@@ -29,5 +31,5 @@ export function setRosterCache(seasonId: number, data: unknown): void {
 
 export function invalidateRostersCache(seasonId: number): void {
   _cache.delete(cacheKey(seasonId));
-  console.log(`[rostersCache] Invalidated cache for seasonId=${seasonId}`);
+  logger.info({ seasonId }, "[rostersCache] Cache invalidated");
 }

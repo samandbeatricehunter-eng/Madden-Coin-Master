@@ -19,6 +19,7 @@ import {
   type WeekStatType,
 } from "../lib/v2-processor.js";
 import { saveMcaPayload } from "../lib/mcaStorage.js";
+import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
@@ -50,9 +51,9 @@ function wType(req: Request): string {
 // Fire-and-forget helper — logs errors so they're never silently swallowed
 function bg(label: string, promise: Promise<{ ok: boolean; message: string }>) {
   promise.then(r => {
-    if (!r.ok) console.error(`[${label}] FAILED: ${r.message}`);
-    else       console.log(`[${label}] ${r.message}`);
-  }).catch(err => console.error(`[${label}] UNHANDLED:`, err));
+    if (!r.ok) logger.error({ label }, `[bg] FAILED: ${r.message}`);
+    else       logger.info( { label }, `[bg] ${r.message}`);
+  }).catch(err => logger.error({ err, label }, "[bg] UNHANDLED"));
 }
 
 // ── /leagueteams ──────────────────────────────────────────────────────────────
