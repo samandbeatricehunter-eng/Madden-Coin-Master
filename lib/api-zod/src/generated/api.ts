@@ -245,6 +245,76 @@ export const GetLeagueScheduleResponse = zod.object({
 });
 
 /**
+ * Returns every player across all 32 teams in one response. Cache TTL is 10 minutes; invalidated immediately on any roster import. Response header X-Cache is HIT or MISS. Filter players by teamId client-side — do not call 32 per-team endpoints.
+
+ * @summary All team rosters (aggregate, cached)
+ */
+export const GetAllRostersParams = zod.object({
+  guildId: zod.coerce.string().describe("Discord guild (server) ID"),
+});
+
+export const GetAllRostersResponse = zod
+  .object({
+    seasonId: zod.number(),
+    seasonNumber: zod.number(),
+    currentWeek: zod.string(),
+    playerCount: zod
+      .number()
+      .describe("Total number of players across all teams"),
+    importedAt: zod
+      .date()
+      .nullish()
+      .describe("Timestamp of the most recent roster import"),
+    players: zod.array(
+      zod.object({
+        id: zod.number(),
+        seasonId: zod.number(),
+        teamId: zod.number(),
+        teamName: zod.string(),
+        discordId: zod.string().nullish(),
+        playerId: zod.number(),
+        firstName: zod.string(),
+        lastName: zod.string(),
+        position: zod.string(),
+        overall: zod.number(),
+        devTrait: zod
+          .number()
+          .describe("0=Normal 1=Impact 2=Star 3=Superstar 4=X-Factor"),
+        age: zod.number().nullish(),
+        jerseyNum: zod.number().nullish(),
+        contractYearsLeft: zod
+          .number()
+          .nullish()
+          .describe("null=unknown; 1=final\/contract year"),
+        archetypeAbbrev: zod
+          .string()
+          .nullish()
+          .describe("EA archetype e.g. FIELD_GENERAL, SPEED_BACK"),
+        xpTotal: zod
+          .number()
+          .nullish()
+          .describe("Accumulated EA experiencePoints"),
+        attributes: zod
+          .record(zod.string(), zod.number())
+          .nullish()
+          .describe(
+            "All \*Rating fields from MCA export (speed, strength, throw power, etc.)",
+          ),
+        abilities: zod
+          .object({})
+          .passthrough()
+          .nullish()
+          .describe(
+            "Superstar\/X-Factor ability names: { zone?: string, superstar?: string[] }",
+          ),
+        portraitUrl: zod.string().nullish(),
+        importedAt: zod.date(),
+      }),
+    ),
+  })
+  .describe("All 32-team roster in one payload. Filter by teamId client-side.");
+
+/**
  * Returns all players on a team with attributes, sorted by overall rating
  * @summary Roster for a specific team
  */
@@ -269,12 +339,38 @@ export const GetTeamRosterResponse = zod.object({
       lastName: zod.string(),
       position: zod.string(),
       overall: zod.number(),
-      devTrait: zod.number(),
+      devTrait: zod
+        .number()
+        .describe("0=Normal 1=Impact 2=Star 3=Superstar 4=X-Factor"),
       age: zod.number().nullish(),
       jerseyNum: zod.number().nullish(),
-      contractYearsLeft: zod.number().nullish(),
-      archetypeAbbrev: zod.string().nullish(),
+      contractYearsLeft: zod
+        .number()
+        .nullish()
+        .describe("null=unknown; 1=final\/contract year"),
+      archetypeAbbrev: zod
+        .string()
+        .nullish()
+        .describe("EA archetype e.g. FIELD_GENERAL, SPEED_BACK"),
+      xpTotal: zod
+        .number()
+        .nullish()
+        .describe("Accumulated EA experiencePoints"),
+      attributes: zod
+        .record(zod.string(), zod.number())
+        .nullish()
+        .describe(
+          "All \*Rating fields from MCA export (speed, strength, throw power, etc.)",
+        ),
+      abilities: zod
+        .object({})
+        .passthrough()
+        .nullish()
+        .describe(
+          "Superstar\/X-Factor ability names: { zone?: string, superstar?: string[] }",
+        ),
       portraitUrl: zod.string().nullish(),
+      importedAt: zod.date(),
     }),
   ),
 });

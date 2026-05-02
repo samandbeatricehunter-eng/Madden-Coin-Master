@@ -73,6 +73,16 @@ export interface ScheduleGame {
   status: number;
 }
 
+/**
+ * All *Rating fields from MCA export (speed, strength, throw power, etc.)
+ */
+export type RosterPlayerAttributes = { [key: string]: number } | null;
+
+/**
+ * Superstar/X-Factor ability names: { zone?: string, superstar?: string[] }
+ */
+export type RosterPlayerAbilities = { [key: string]: unknown } | null;
+
 export interface RosterPlayer {
   id: number;
   seasonId: number;
@@ -84,12 +94,36 @@ export interface RosterPlayer {
   lastName: string;
   position: string;
   overall: number;
+  /** 0=Normal 1=Impact 2=Star 3=Superstar 4=X-Factor */
   devTrait: number;
   age?: number | null;
   jerseyNum?: number | null;
+  /** null=unknown; 1=final/contract year */
   contractYearsLeft?: number | null;
+  /** EA archetype e.g. FIELD_GENERAL, SPEED_BACK */
   archetypeAbbrev?: string | null;
+  /** Accumulated EA experiencePoints */
+  xpTotal?: number | null;
+  /** All *Rating fields from MCA export (speed, strength, throw power, etc.) */
+  attributes?: RosterPlayerAttributes;
+  /** Superstar/X-Factor ability names: { zone?: string, superstar?: string[] } */
+  abilities?: RosterPlayerAbilities;
   portraitUrl?: string | null;
+  importedAt: string;
+}
+
+/**
+ * All 32-team roster in one payload. Filter by teamId client-side.
+ */
+export interface AllRostersResponse {
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  /** Total number of players across all teams */
+  playerCount: number;
+  /** Timestamp of the most recent roster import */
+  importedAt?: string | null;
+  players: RosterPlayer[];
 }
 
 export interface PlayerSeasonStats {

@@ -28,6 +28,7 @@ import {
   detectPlayerStatViolations,
   type ViolationRecord,
 } from "./stat-padding-detector.js";
+import { invalidateRostersCache } from "./rosterCache.js";
 
 // ── Coin payouts ──────────────────────────────────────────────────────────────
 // No distinction between H2H and CPU games — all wins pay 25, all losses 0.
@@ -2965,6 +2966,8 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     await db.insert(franchiseRostersTable).values(rowsWithPortraits);
 
+    invalidateRostersCache(season.id);
+
     return {
       ok: true,
       message: `${rows.length} players imported for team ${mcaTeamId} (${teamEntry.fullName})`,
@@ -3148,6 +3151,8 @@ export async function processFreeAgentRoster(body: unknown, eaLeagueId = 0, guil
       eq(franchiseRostersTable.teamId,   FA_TEAM_ID),
     ));
     await db.insert(franchiseRostersTable).values(rows);
+
+    invalidateRostersCache(season.id);
 
     return { ok: true, message: `${rows.length} free agents imported` };
   } catch (err) {

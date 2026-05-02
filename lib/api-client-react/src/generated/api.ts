@@ -14,6 +14,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AllRostersResponse,
   GetDraftPicks200,
   GetGlobalRecords200,
   GetGlobalRecordsParams,
@@ -777,6 +778,97 @@ export function useGetLeagueSchedule<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns every player across all 32 teams in one response. Cache TTL is 10 minutes; invalidated immediately on any roster import. Response header X-Cache is HIT or MISS. Filter players by teamId client-side — do not call 32 per-team endpoints.
+
+ * @summary All team rosters (aggregate, cached)
+ */
+export const getGetAllRostersUrl = (guildId: string) => {
+  return `/api/v1/leagues/${guildId}/rosters`;
+};
+
+export const getAllRosters = async (
+  guildId: string,
+  options?: RequestInit,
+): Promise<AllRostersResponse> => {
+  return customFetch<AllRostersResponse>(getGetAllRostersUrl(guildId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAllRostersQueryKey = (guildId: string) => {
+  return [`/api/v1/leagues/${guildId}/rosters`] as const;
+};
+
+export const getGetAllRostersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAllRosters>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  guildId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAllRosters>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAllRostersQueryKey(guildId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAllRosters>>> = ({
+    signal,
+  }) => getAllRosters(guildId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!guildId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAllRosters>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAllRostersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAllRosters>>
+>;
+export type GetAllRostersQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary All team rosters (aggregate, cached)
+ */
+
+export function useGetAllRosters<
+  TData = Awaited<ReturnType<typeof getAllRosters>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  guildId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAllRosters>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAllRostersQueryOptions(guildId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

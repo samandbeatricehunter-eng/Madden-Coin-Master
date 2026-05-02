@@ -10,8 +10,9 @@ import {
   playerSeasonStatsTable,
   leagueNewsTable,
 } from "@workspace/db";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, max } from "drizzle-orm";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { getRosterCache, setRosterCache } from "../lib/rosterCache.js";
 
 const router: IRouter = Router();
 
@@ -28,6 +29,8 @@ async function getActiveSeason(guildId: string) {
     .limit(1);
   return season ?? null;
 }
+
+// ── Routes ────────────────────────────────────────────────────────────────────
 
 router.get("/v1/leagues/:guildId", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
@@ -137,6 +140,61 @@ router.get("/v1/leagues/:guildId/schedule", requireApiKey, async (req: Request, 
   }
 });
 
+// ── GET /v1/leagues/:guildId/rosters — aggregate all-team roster (cached) ────
+// Returns every player across all 32 teams in one response.
+// Clients should filter by teamId locally — never call 32 per-team endpoints.
+// Cache: 10 minutes TTL, invalidated immediately after any roster import.
+// Includes all stored fields: identity, physical, contract, dev, overall,
+// grades (attributes JSON), traits (attributes JSON), abilities JSON, portraitUrl.
+router.get("/v1/leagues/:guildId/rosters", requireApiKey, async (req: Request, res: Response) => {
+  const guildId = extractParam(req.params["guildId"]!);
+  try {
+    const season = await getActiveSeason(guildId);
+    if (!season) {
+      res.status(404).json({ error: "No active season found for this guild" });
+      return;
+    }
+
+    const cached = getRosterCache(season.id);
+    if (cached !== null) {
+      res.setHeader("X-Cache", "HIT");
+      res.json(cached);
+      return;
+    }
+
+    const [players, latestImport] = await Promise.all([
+      db
+        .select()
+        .from(franchiseRostersTable)
+        .where(eq(franchiseRostersTable.seasonId, season.id))
+        .orderBy(asc(franchiseRostersTable.teamId), desc(franchiseRostersTable.overall)),
+      db
+        .select({ importedAt: max(franchiseRostersTable.importedAt) })
+        .from(franchiseRostersTable)
+        .where(eq(franchiseRostersTable.seasonId, season.id)),
+    ]);
+
+    const importedAt = latestImport[0]?.importedAt ?? null;
+
+    const payload = {
+      seasonId:     season.id,
+      seasonNumber: season.seasonNumber,
+      currentWeek:  season.currentWeek,
+      playerCount:  players.length,
+      importedAt,
+      players,
+    };
+
+    setRosterCache(season.id, payload);
+    res.setHeader("X-Cache", "MISS");
+    res.json(payload);
+  } catch (err) {
+    req.log.error(err, "GET /rosters failed");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /v1/leagues/:guildId/roster/:teamId — single-team roster ─────────────
 router.get("/v1/leagues/:guildId/roster/:teamId", requireApiKey, async (req: Request, res: Response) => {
   const guildId = extractParam(req.params["guildId"]!);
   const teamId = extractParam(req.params["teamId"]!);
