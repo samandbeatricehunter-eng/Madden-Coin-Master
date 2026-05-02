@@ -9,6 +9,27 @@ export interface ErrorResponse {
   error: string;
 }
 
+export interface V2LeagueSummary {
+  eaLeagueId: number;
+  leagueName: string;
+  platform: string;
+  updatedAt: string;
+  seasonId?: number | null;
+  seasonNumber?: number | null;
+  currentWeek?: string | null;
+}
+
+export interface V2LeagueInfo {
+  eaLeagueId: number;
+  leagueName: string;
+  platform: string;
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  isActive: boolean;
+  startedAt: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -482,4 +503,81 @@ export const GetWagersStatus = {
 export type GetWagers200 = {
   guildId: string;
   wagers: Wager[];
+};
+
+export type ListV2Leagues200 = {
+  leagues: V2LeagueSummary[];
+};
+
+export type GetV2Teams200TeamsItem = { [key: string]: unknown };
+
+export type GetV2Teams200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  teams: GetV2Teams200TeamsItem[];
+};
+
+export type GetV2Rosters200PlayersItem = { [key: string]: unknown };
+
+export type GetV2Rosters200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  playerCount: number;
+  importedAt?: string | null;
+  players: GetV2Rosters200PlayersItem[];
+};
+
+export type GetV2Standings200StandingsItem = { [key: string]: unknown };
+
+export type GetV2Standings200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  standings: GetV2Standings200StandingsItem[];
+};
+
+export type GetV2ScheduleParams = {
+  /**
+   * Filter by weekIndex (0-based)
+   */
+  week?: number;
+};
+
+export type GetV2Schedule200GamesItem = { [key: string]: unknown };
+
+export type GetV2Schedule200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  currentWeek: string;
+  games: GetV2Schedule200GamesItem[];
+};
+
+export type GetV2PlayerStatsParams = {
+  /**
+   * Filter by position (e.g. QB, WR, CB)
+   */
+  position?: string;
+};
+
+export type GetV2PlayerStats200StatsItem = { [key: string]: unknown };
+
+export type GetV2PlayerStats200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  stats: GetV2PlayerStats200StatsItem[];
+};
+
+export type GetV2DraftPicks200PicksItem = { [key: string]: unknown };
+
+export type GetV2DraftPicks200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  picks: GetV2DraftPicks200PicksItem[];
 };

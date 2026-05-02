@@ -747,3 +747,155 @@ export const GetStoreResponse = zod.object({
     })
     .nullish(),
 });
+
+/**
+ * @summary List all Madden-native leagues
+ */
+export const ListV2LeaguesResponse = zod.object({
+  leagues: zod.array(
+    zod.object({
+      eaLeagueId: zod.number(),
+      leagueName: zod.string(),
+      platform: zod.string(),
+      updatedAt: zod.date(),
+      seasonId: zod.number().nullish(),
+      seasonNumber: zod.number().nullish(),
+      currentWeek: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get active season info for a league
+ */
+export const GetV2LeagueParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2LeagueResponse = zod.object({
+  eaLeagueId: zod.number(),
+  leagueName: zod.string(),
+  platform: zod.string(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  currentWeek: zod.string(),
+  isActive: zod.boolean(),
+  startedAt: zod.date(),
+});
+
+/**
+ * @summary All 32 teams for the active season
+ */
+export const GetV2TeamsParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2TeamsResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  teams: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Full aggregate roster for the active season (cached 10 min)
+ */
+export const GetV2RostersParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2RostersResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  currentWeek: zod.string(),
+  playerCount: zod.number(),
+  importedAt: zod.date().nullish(),
+  players: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Team standings for the active season
+ */
+export const GetV2StandingsParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2StandingsResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  currentWeek: zod.string(),
+  standings: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Game schedule for the active season
+ */
+export const GetV2ScheduleParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2ScheduleQueryParams = zod.object({
+  week: zod.coerce
+    .number()
+    .optional()
+    .describe("Filter by weekIndex (0-based)"),
+});
+
+export const GetV2ScheduleResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  currentWeek: zod.string(),
+  games: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Cumulative player season stats
+ */
+export const GetV2PlayerStatsParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2PlayerStatsQueryParams = zod.object({
+  position: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by position (e.g. QB, WR, CB)"),
+});
+
+export const GetV2PlayerStatsResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  stats: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Current draft pick ownership for the active season
+ */
+export const GetV2DraftPicksParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2DraftPicksResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  picks: zod.array(zod.record(zod.string(), zod.unknown())),
+});

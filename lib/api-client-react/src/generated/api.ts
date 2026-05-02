@@ -31,14 +31,24 @@ import type {
   GetPlayerStatsParams,
   GetTeamRoster200,
   GetUserTransactions200,
+  GetV2DraftPicks200,
+  GetV2PlayerStats200,
+  GetV2PlayerStatsParams,
+  GetV2Rosters200,
+  GetV2Schedule200,
+  GetV2ScheduleParams,
+  GetV2Standings200,
+  GetV2Teams200,
   GetWagers200,
   GetWagersParams,
   GlobalUserProfile,
   HealthStatus,
   LeagueUserDetail,
+  ListV2Leagues200,
   NotFoundResponse,
   StoreConfig,
   UnauthorizedResponse,
+  V2LeagueInfo,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1777,6 +1787,772 @@ export function useGetStore<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetStoreQueryOptions(guildId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List all Madden-native leagues
+ */
+export const getListV2LeaguesUrl = () => {
+  return `/api/v2/leagues`;
+};
+
+export const listV2Leagues = async (
+  options?: RequestInit,
+): Promise<ListV2Leagues200> => {
+  return customFetch<ListV2Leagues200>(getListV2LeaguesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListV2LeaguesQueryKey = () => {
+  return [`/api/v2/leagues`] as const;
+};
+
+export const getListV2LeaguesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listV2Leagues>>,
+  TError = ErrorType<UnauthorizedResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listV2Leagues>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListV2LeaguesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listV2Leagues>>> = ({
+    signal,
+  }) => listV2Leagues({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listV2Leagues>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListV2LeaguesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listV2Leagues>>
+>;
+export type ListV2LeaguesQueryError = ErrorType<UnauthorizedResponse>;
+
+/**
+ * @summary List all Madden-native leagues
+ */
+
+export function useListV2Leagues<
+  TData = Awaited<ReturnType<typeof listV2Leagues>>,
+  TError = ErrorType<UnauthorizedResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listV2Leagues>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListV2LeaguesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get active season info for a league
+ */
+export const getGetV2LeagueUrl = (eaLeagueId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}`;
+};
+
+export const getV2League = async (
+  eaLeagueId: number,
+  options?: RequestInit,
+): Promise<V2LeagueInfo> => {
+  return customFetch<V2LeagueInfo>(getGetV2LeagueUrl(eaLeagueId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2LeagueQueryKey = (eaLeagueId: number) => {
+  return [`/api/v2/leagues/${eaLeagueId}`] as const;
+};
+
+export const getGetV2LeagueQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2League>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2League>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV2LeagueQueryKey(eaLeagueId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2League>>> = ({
+    signal,
+  }) => getV2League(eaLeagueId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2League>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2LeagueQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2League>>
+>;
+export type GetV2LeagueQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Get active season info for a league
+ */
+
+export function useGetV2League<
+  TData = Awaited<ReturnType<typeof getV2League>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2League>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2LeagueQueryOptions(eaLeagueId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary All 32 teams for the active season
+ */
+export const getGetV2TeamsUrl = (eaLeagueId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}/teams`;
+};
+
+export const getV2Teams = async (
+  eaLeagueId: number,
+  options?: RequestInit,
+): Promise<GetV2Teams200> => {
+  return customFetch<GetV2Teams200>(getGetV2TeamsUrl(eaLeagueId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2TeamsQueryKey = (eaLeagueId: number) => {
+  return [`/api/v2/leagues/${eaLeagueId}/teams`] as const;
+};
+
+export const getGetV2TeamsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2Teams>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Teams>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV2TeamsQueryKey(eaLeagueId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2Teams>>> = ({
+    signal,
+  }) => getV2Teams(eaLeagueId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2Teams>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2TeamsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2Teams>>
+>;
+export type GetV2TeamsQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary All 32 teams for the active season
+ */
+
+export function useGetV2Teams<
+  TData = Awaited<ReturnType<typeof getV2Teams>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Teams>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2TeamsQueryOptions(eaLeagueId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Full aggregate roster for the active season (cached 10 min)
+ */
+export const getGetV2RostersUrl = (eaLeagueId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}/rosters`;
+};
+
+export const getV2Rosters = async (
+  eaLeagueId: number,
+  options?: RequestInit,
+): Promise<GetV2Rosters200> => {
+  return customFetch<GetV2Rosters200>(getGetV2RostersUrl(eaLeagueId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2RostersQueryKey = (eaLeagueId: number) => {
+  return [`/api/v2/leagues/${eaLeagueId}/rosters`] as const;
+};
+
+export const getGetV2RostersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2Rosters>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Rosters>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2RostersQueryKey(eaLeagueId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2Rosters>>> = ({
+    signal,
+  }) => getV2Rosters(eaLeagueId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2Rosters>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2RostersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2Rosters>>
+>;
+export type GetV2RostersQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Full aggregate roster for the active season (cached 10 min)
+ */
+
+export function useGetV2Rosters<
+  TData = Awaited<ReturnType<typeof getV2Rosters>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Rosters>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2RostersQueryOptions(eaLeagueId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Team standings for the active season
+ */
+export const getGetV2StandingsUrl = (eaLeagueId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}/standings`;
+};
+
+export const getV2Standings = async (
+  eaLeagueId: number,
+  options?: RequestInit,
+): Promise<GetV2Standings200> => {
+  return customFetch<GetV2Standings200>(getGetV2StandingsUrl(eaLeagueId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2StandingsQueryKey = (eaLeagueId: number) => {
+  return [`/api/v2/leagues/${eaLeagueId}/standings`] as const;
+};
+
+export const getGetV2StandingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2Standings>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Standings>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2StandingsQueryKey(eaLeagueId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2Standings>>> = ({
+    signal,
+  }) => getV2Standings(eaLeagueId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2Standings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2StandingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2Standings>>
+>;
+export type GetV2StandingsQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Team standings for the active season
+ */
+
+export function useGetV2Standings<
+  TData = Awaited<ReturnType<typeof getV2Standings>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Standings>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2StandingsQueryOptions(eaLeagueId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Game schedule for the active season
+ */
+export const getGetV2ScheduleUrl = (
+  eaLeagueId: number,
+  params?: GetV2ScheduleParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v2/leagues/${eaLeagueId}/schedule?${stringifiedParams}`
+    : `/api/v2/leagues/${eaLeagueId}/schedule`;
+};
+
+export const getV2Schedule = async (
+  eaLeagueId: number,
+  params?: GetV2ScheduleParams,
+  options?: RequestInit,
+): Promise<GetV2Schedule200> => {
+  return customFetch<GetV2Schedule200>(
+    getGetV2ScheduleUrl(eaLeagueId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2ScheduleQueryKey = (
+  eaLeagueId: number,
+  params?: GetV2ScheduleParams,
+) => {
+  return [
+    `/api/v2/leagues/${eaLeagueId}/schedule`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetV2ScheduleQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2Schedule>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  params?: GetV2ScheduleParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Schedule>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2ScheduleQueryKey(eaLeagueId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2Schedule>>> = ({
+    signal,
+  }) => getV2Schedule(eaLeagueId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2Schedule>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2ScheduleQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2Schedule>>
+>;
+export type GetV2ScheduleQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Game schedule for the active season
+ */
+
+export function useGetV2Schedule<
+  TData = Awaited<ReturnType<typeof getV2Schedule>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  params?: GetV2ScheduleParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2Schedule>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2ScheduleQueryOptions(
+    eaLeagueId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Cumulative player season stats
+ */
+export const getGetV2PlayerStatsUrl = (
+  eaLeagueId: number,
+  params?: GetV2PlayerStatsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v2/leagues/${eaLeagueId}/player-stats?${stringifiedParams}`
+    : `/api/v2/leagues/${eaLeagueId}/player-stats`;
+};
+
+export const getV2PlayerStats = async (
+  eaLeagueId: number,
+  params?: GetV2PlayerStatsParams,
+  options?: RequestInit,
+): Promise<GetV2PlayerStats200> => {
+  return customFetch<GetV2PlayerStats200>(
+    getGetV2PlayerStatsUrl(eaLeagueId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2PlayerStatsQueryKey = (
+  eaLeagueId: number,
+  params?: GetV2PlayerStatsParams,
+) => {
+  return [
+    `/api/v2/leagues/${eaLeagueId}/player-stats`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetV2PlayerStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2PlayerStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  params?: GetV2PlayerStatsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2PlayerStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2PlayerStatsQueryKey(eaLeagueId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV2PlayerStats>>
+  > = ({ signal }) =>
+    getV2PlayerStats(eaLeagueId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2PlayerStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2PlayerStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2PlayerStats>>
+>;
+export type GetV2PlayerStatsQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Cumulative player season stats
+ */
+
+export function useGetV2PlayerStats<
+  TData = Awaited<ReturnType<typeof getV2PlayerStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  params?: GetV2PlayerStatsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2PlayerStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2PlayerStatsQueryOptions(
+    eaLeagueId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Current draft pick ownership for the active season
+ */
+export const getGetV2DraftPicksUrl = (eaLeagueId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}/draft-picks`;
+};
+
+export const getV2DraftPicks = async (
+  eaLeagueId: number,
+  options?: RequestInit,
+): Promise<GetV2DraftPicks200> => {
+  return customFetch<GetV2DraftPicks200>(getGetV2DraftPicksUrl(eaLeagueId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2DraftPicksQueryKey = (eaLeagueId: number) => {
+  return [`/api/v2/leagues/${eaLeagueId}/draft-picks`] as const;
+};
+
+export const getGetV2DraftPicksQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2DraftPicks>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2DraftPicks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2DraftPicksQueryKey(eaLeagueId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2DraftPicks>>> = ({
+    signal,
+  }) => getV2DraftPicks(eaLeagueId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2DraftPicks>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2DraftPicksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2DraftPicks>>
+>;
+export type GetV2DraftPicksQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Current draft pick ownership for the active season
+ */
+
+export function useGetV2DraftPicks<
+  TData = Awaited<ReturnType<typeof getV2DraftPicks>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2DraftPicks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2DraftPicksQueryOptions(eaLeagueId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

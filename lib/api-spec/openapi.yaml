@@ -11,11 +11,13 @@ tags:
   - name: health
     description: Health operations
   - name: league
-    description: Franchise and league data (per guild)
+    description: Franchise and league data (v1, Discord guild scoped)
   - name: economy
     description: Economy and coin data (per guild)
   - name: global
     description: Cross-guild global data
+  - name: v2
+    description: Madden-native league data (EA league ID scoped, no Discord)
 paths:
   /healthz:
     get:
@@ -549,6 +551,239 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v2/leagues:
+    get:
+      operationId: listV2Leagues
+      tags: [v2]
+      summary: List all Madden-native leagues
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All registered EA leagues with active season info
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [leagues]
+                properties:
+                  leagues:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/V2LeagueSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v2/leagues/{eaLeagueId}:
+    get:
+      operationId: getV2League
+      tags: [v2]
+      summary: Get active season info for a league
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+      responses:
+        "200":
+          description: League and active season info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2LeagueInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/teams:
+    get:
+      operationId: getV2Teams
+      tags: [v2]
+      summary: All 32 teams for the active season
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+      responses:
+        "200":
+          description: Team list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, teams]
+                properties:
+                  eaLeagueId:    { type: integer }
+                  seasonId:      { type: integer }
+                  seasonNumber:  { type: integer }
+                  teams:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/rosters:
+    get:
+      operationId: getV2Rosters
+      tags: [v2]
+      summary: Full aggregate roster for the active season (cached 10 min)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+      responses:
+        "200":
+          description: All players across all teams
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, currentWeek, playerCount, players]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  currentWeek:  { type: string }
+                  playerCount:  { type: integer }
+                  importedAt:   { type: string, format: date-time, nullable: true }
+                  players:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/standings:
+    get:
+      operationId: getV2Standings
+      tags: [v2]
+      summary: Team standings for the active season
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+      responses:
+        "200":
+          description: Standings ordered by wins desc, ptsFor desc
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, currentWeek, standings]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  currentWeek:  { type: string }
+                  standings:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/schedule:
+    get:
+      operationId: getV2Schedule
+      tags: [v2]
+      summary: Game schedule for the active season
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - name: week
+          in: query
+          required: false
+          description: Filter by weekIndex (0-based)
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Schedule games, optionally filtered by week
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, currentWeek, games]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  currentWeek:  { type: string }
+                  games:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/player-stats:
+    get:
+      operationId: getV2PlayerStats
+      tags: [v2]
+      summary: Cumulative player season stats
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - name: position
+          in: query
+          required: false
+          description: Filter by position (e.g. QB, WR, CB)
+          schema: { type: string }
+      responses:
+        "200":
+          description: Player stats for the active season
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, stats]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  stats:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/draft-picks:
+    get:
+      operationId: getV2DraftPicks
+      tags: [v2]
+      summary: Current draft pick ownership for the active season
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+      responses:
+        "200":
+          description: Draft picks ordered by year, round, pick number
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, picks]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  picks:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -579,6 +814,13 @@ components:
         type: integer
         default: 50
         maximum: 200
+    eaLeagueId:
+      name: eaLeagueId
+      in: path
+      required: true
+      description: EA / Madden league ID (no Discord involvement)
+      schema:
+        type: integer
 
   responses:
     Unauthorized:
@@ -601,6 +843,31 @@ components:
         error:
           type: string
       required: [error]
+
+    V2LeagueSummary:
+      type: object
+      required: [eaLeagueId, leagueName, platform, updatedAt]
+      properties:
+        eaLeagueId:   { type: integer }
+        leagueName:   { type: string }
+        platform:     { type: string }
+        updatedAt:    { type: string, format: date-time }
+        seasonId:     { type: integer, nullable: true }
+        seasonNumber: { type: integer, nullable: true }
+        currentWeek:  { type: string, nullable: true }
+
+    V2LeagueInfo:
+      type: object
+      required: [eaLeagueId, leagueName, platform, seasonId, seasonNumber, currentWeek, isActive, startedAt]
+      properties:
+        eaLeagueId:   { type: integer }
+        leagueName:   { type: string }
+        platform:     { type: string }
+        seasonId:     { type: integer }
+        seasonNumber: { type: integer }
+        currentWeek:  { type: string }
+        isActive:     { type: boolean }
+        startedAt:    { type: string, format: date-time }
 
     HealthStatus:
       type: object
