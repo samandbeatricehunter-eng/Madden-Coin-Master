@@ -151,6 +151,35 @@ Swap `calcPRScore()` in `artifacts/discord-bot/src/commands/records.ts` when the
 - `player_season_stats` — Per-season stat accumulation per player: passing, rushing, receiving, defense, **kicking** (FG/XP), **punting**, **kick/punt returns**; new columns fgMade/fgAtt/fgLong/xpMade/xpAtt/puntAtt/puntYds/puntLong/puntIn20/puntTouchbacks/krAtt/krYds/krTDs/prAtt/prYds/prTDs
 - `roster_transactions` — Detected roster changes (team moves, OVR upgrades/downgrades, dev trait changes) written during each MCA roster import; posted to the DISCORD_TRANSACTIONS_CHANNEL_ID channel
 
+## Mobile App — EA Registration Flow
+
+New API endpoints for the Expo mobile app user registration + EA account verification.
+
+**Auth approach**: Firebase Auth (handled by the mobile app). API calls use `Authorization: Bearer recleague001` for now; Firebase ID token verification to be added as middleware.
+
+**User registration flow:**
+1. User enters their gamertag (PSN ID / Xbox GT / Origin username) in the app
+2. App calls `GET /api/v2/ea/login-url` → gets the EA OAuth URL
+3. App opens the URL in an in-app WebView
+4. User logs into EA — WebView intercepts the redirect to `http://127.0.0.1/success?code=...`
+5. App extracts the code and calls `POST /api/v2/ea/connect` with `{ gamertag, code }`
+6. Server verifies the EA persona name matches the supplied gamertag (rejects mismatch)
+7. Server auto-links the user to any `mca_leagues` entries their EA account belongs to
+8. Returns `{ verified, eaPersonaName, platform, userId, linkedLeagues, allEaLeagues }`
+
+**New endpoints:**
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `GET /api/v2/ea/login-url` | None | Returns `{ url }` — the EA OAuth URL for the WebView |
+| `POST /api/v2/ea/connect` | Bearer | Verify gamertag via EA OAuth, create/update `app_users` + `app_ea_connections`, auto-link leagues |
+
+**New DB table:** `app_ea_connections` — stores EA OAuth tokens per gamertag (one row per app user). FK to `app_users.gamertag`. Tokens refreshable on demand.
+
+**New files:**
+- `artifacts/api-server/src/lib/ea-client.ts` — EA HTTP client (OAuth + Blaze), API server edition. Same logic as discord-bot's ea-client but stateless and also returns `personaName` from `detectPersonas`.
+- `artifacts/api-server/src/routes/v2Auth.ts` — EA auth routes
+
 ## EA Direct Connect (Direct Madden API Integration)
 
 Replaces manual MCA exports by fetching franchise data directly from EA's Madden 26 Blaze API.

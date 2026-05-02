@@ -369,6 +369,21 @@ export const mcaWeekProcessedTable = pgTable("mca_week_processed", {
   uniq: uniqueIndex("mca_week_processed_idx").on(t.eaSeasonId, t.weekType, t.weekNum, t.statType),
 }));
 
+// ── App EA connections (per gamertag — mobile app only) ───────────────────────
+// Stores the commissioner's EA OAuth tokens scoped to their gamertag.
+// One row per user. Tokens are refreshed on demand.
+export const appEaConnectionsTable = pgTable("app_ea_connections", {
+  gamertag:      text("gamertag").primaryKey().references(() => appUsersTable.gamertag),
+  eaPersonaName: text("ea_persona_name").notNull(),   // verified EA display name
+  platform:      text("platform").notNull(),           // ps5 | xbsx | pc | etc.
+  blazeId:       text("blaze_id").notNull(),
+  accessToken:   text("access_token").notNull(),
+  refreshToken:  text("refresh_token").notNull().default(""),
+  expiry:        timestamp("expiry").notNull(),
+  connectedAt:   timestamp("connected_at").notNull().defaultNow(),
+  updatedAt:     timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ── Draft picks ───────────────────────────────────────────────────────────────
 export const mcaDraftPicksTable = pgTable("mca_draft_picks", {
   id:               serial("id").primaryKey(),
