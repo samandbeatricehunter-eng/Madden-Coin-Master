@@ -50,21 +50,11 @@ router.get("/v2/leagues", requireApiKey, async (req: Request, res: Response) => 
       db.select().from(mcaLeaguesTable).orderBy(asc(mcaLeaguesTable.leagueName)),
       db.select().from(mcaSeasonsTable).where(eq(mcaSeasonsTable.isActive, true)).orderBy(desc(mcaSeasonsTable.seasonNumber)),
     ]);
-
     const seasonByLeague = new Map(seasons.map(s => [s.eaLeagueId, s]));
-
     res.json({
       leagues: leagues.map(l => {
         const s = seasonByLeague.get(l.eaLeagueId);
-        return {
-          eaLeagueId:   l.eaLeagueId,
-          leagueName:   l.leagueName,
-          platform:     l.platform,
-          updatedAt:    l.updatedAt,
-          seasonId:     s?.id            ?? null,
-          seasonNumber: s?.seasonNumber  ?? null,
-          currentWeek:  s?.currentWeek   ?? null,
-        };
+        return { eaLeagueId: l.eaLeagueId, leagueName: l.leagueName, platform: l.platform, updatedAt: l.updatedAt, seasonId: s?.id ?? null, seasonNumber: s?.seasonNumber ?? null, currentWeek: s?.currentWeek ?? null };
       }),
     });
   } catch (err) {
@@ -83,35 +73,40 @@ router.get("/v2/leagues/:eaLeagueId", requireApiKey, async (req: Request, res: R
       getActiveSeason(lid),
     ]);
     if (!league || !season) { res.status(404).json({ error: "League not found or no active season" }); return; }
-    res.json({
-      eaLeagueId:   league.eaLeagueId,
-      leagueName:   league.leagueName,
-      platform:     league.platform,
-      seasonId:     season.id,
-      seasonNumber: season.seasonNumber,
-      currentWeek:  season.currentWeek,
-      isActive:     season.isActive,
-      startedAt:    season.startedAt,
-    });
+    res.json({ eaLeagueId: league.eaLeagueId, leagueName: league.leagueName, platform: league.platform, seasonId: season.id, seasonNumber: season.seasonNumber, currentWeek: season.currentWeek, isActive: season.isActive, startedAt: season.startedAt });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId");
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// ── GET /v2/leagues/:eaLeagueId/teams ─────────────────────────────────────────
+// ── GET /v2/leagues/:eaLeagueId/teams — includes linked app user info ─────────
 router.get("/v2/leagues/:eaLeagueId/teams", requireApiKey, async (req: Request, res: Response) => {
   const lid = parseLeagueId(req.params["eaLeagueId"]);
   if (!lid) { res.status(400).json({ error: "Invalid eaLeagueId" }); return; }
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-    const teams = await db
-      .select()
-      .from(mcaTeamsTable)
-      .where(eq(mcaTeamsTable.eaSeasonId, season.id))
-      .orderBy(asc(mcaTeamsTable.fullName));
-    res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, teams });
+
+    const [teams, links, appUsers] = await Promise.all([
+      db.select().from(mcaTeamsTable).where(eq(mcaTeamsTable.eaSeasonId, season.id)).orderBy(asc(mcaTeamsTable.fullName)),
+      db.select().from(appUserLeagueLinksTable).where(eq(appUserLeagueLinksTable.eaLeagueId, lid)),
+      db.select({ gamertag: appUsersTable.gamertag, displayName: appUsersTable.displayName }).from(appUsersTable),
+    ]);
+
+    const linkByTeam    = new Map(links.map(l => [l.teamId, l]));
+    const userByGamertag = new Map(appUsers.map(u => [u.gamertag, u.displayName]));
+
+    const enrichedTeams = teams.map(t => {
+      const link = linkByTeam.get(t.teamId);
+      return {
+        ...t,
+        linkedGamertag:    link?.gamertag    ?? null,
+        linkedDisplayName: link ? (userByGamertag.get(link.gamertag) ?? link.gamertag) : null,
+      };
+    });
+
+    res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, teams: enrichedTeams });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/teams");
     res.status(500).json({ error: "Internal server error" });
@@ -134,24 +129,11 @@ router.get("/v2/leagues/:eaLeagueId/rosters", requireApiKey, async (req: Request
     }
 
     const [players, [latestRow]] = await Promise.all([
-      db.select().from(mcaRostersTable)
-        .where(eq(mcaRostersTable.eaSeasonId, season.id))
-        .orderBy(asc(mcaRostersTable.teamId), desc(mcaRostersTable.overall)),
-      db.select({ importedAt: max(mcaRostersTable.importedAt) })
-        .from(mcaRostersTable)
-        .where(eq(mcaRostersTable.eaSeasonId, season.id)),
+      db.select().from(mcaRostersTable).where(eq(mcaRostersTable.eaSeasonId, season.id)).orderBy(asc(mcaRostersTable.teamId), desc(mcaRostersTable.overall)),
+      db.select({ importedAt: max(mcaRostersTable.importedAt) }).from(mcaRostersTable).where(eq(mcaRostersTable.eaSeasonId, season.id)),
     ]);
 
-    const payload = {
-      eaLeagueId: lid,
-      seasonId:     season.id,
-      seasonNumber: season.seasonNumber,
-      currentWeek:  season.currentWeek,
-      playerCount:  players.length,
-      importedAt:   latestRow?.importedAt ?? null,
-      players,
-    };
-
+    const payload = { eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, currentWeek: season.currentWeek, playerCount: players.length, importedAt: latestRow?.importedAt ?? null, players };
     setRosterCache(season.id, payload);
     res.setHeader("X-Cache", "MISS");
     res.json(payload);
@@ -169,21 +151,8 @@ router.get("/v2/leagues/:eaLeagueId/roster/:teamId", requireApiKey, async (req: 
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-
-    const players = await db
-      .select()
-      .from(mcaRostersTable)
-      .where(and(eq(mcaRostersTable.eaSeasonId, season.id), eq(mcaRostersTable.teamId, teamId)))
-      .orderBy(asc(mcaRostersTable.position), desc(mcaRostersTable.overall));
-
-    res.json({
-      eaLeagueId: lid,
-      seasonId:     season.id,
-      seasonNumber: season.seasonNumber,
-      teamId,
-      playerCount:  players.length,
-      players,
-    });
+    const players = await db.select().from(mcaRostersTable).where(and(eq(mcaRostersTable.eaSeasonId, season.id), eq(mcaRostersTable.teamId, teamId))).orderBy(asc(mcaRostersTable.position), desc(mcaRostersTable.overall));
+    res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, teamId, playerCount: players.length, players });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/roster/:teamId");
     res.status(500).json({ error: "Internal server error" });
@@ -197,11 +166,7 @@ router.get("/v2/leagues/:eaLeagueId/standings", requireApiKey, async (req: Reque
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-    const standings = await db
-      .select()
-      .from(mcaTeamStatsTable)
-      .where(eq(mcaTeamStatsTable.eaSeasonId, season.id))
-      .orderBy(desc(mcaTeamStatsTable.wins), desc(mcaTeamStatsTable.ptsFor));
+    const standings = await db.select().from(mcaTeamStatsTable).where(eq(mcaTeamStatsTable.eaSeasonId, season.id)).orderBy(desc(mcaTeamStatsTable.wins), desc(mcaTeamStatsTable.ptsFor));
     res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, currentWeek: season.currentWeek, standings });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/standings");
@@ -216,11 +181,7 @@ router.get("/v2/leagues/:eaLeagueId/team-stats", requireApiKey, async (req: Requ
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-    const teamStats = await db
-      .select()
-      .from(mcaTeamStatsTable)
-      .where(eq(mcaTeamStatsTable.eaSeasonId, season.id))
-      .orderBy(desc(mcaTeamStatsTable.offYds));
+    const teamStats = await db.select().from(mcaTeamStatsTable).where(eq(mcaTeamStatsTable.eaSeasonId, season.id)).orderBy(desc(mcaTeamStatsTable.offYds));
     res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, teamStats });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/team-stats");
@@ -230,22 +191,14 @@ router.get("/v2/leagues/:eaLeagueId/team-stats", requireApiKey, async (req: Requ
 
 // ── GET /v2/leagues/:eaLeagueId/team-stats/week/:weekType/:weekNum ────────────
 router.get("/v2/leagues/:eaLeagueId/team-stats/week/:weekType/:weekNum", requireApiKey, async (req: Request, res: Response) => {
-  const lid     = parseLeagueId(req.params["eaLeagueId"]);
-  const weekNum = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
+  const lid      = parseLeagueId(req.params["eaLeagueId"]);
+  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   if (!lid || !weekNum) { res.status(400).json({ error: "Invalid params" }); return; }
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-    const teamStats = await db
-      .select()
-      .from(mcaTeamWeekStatsTable)
-      .where(and(
-        eq(mcaTeamWeekStatsTable.eaSeasonId, season.id),
-        eq(mcaTeamWeekStatsTable.weekType,   weekType),
-        eq(mcaTeamWeekStatsTable.weekNum,    weekNum),
-      ))
-      .orderBy(desc(mcaTeamWeekStatsTable.offYds));
+    const teamStats = await db.select().from(mcaTeamWeekStatsTable).where(and(eq(mcaTeamWeekStatsTable.eaSeasonId, season.id), eq(mcaTeamWeekStatsTable.weekType, weekType), eq(mcaTeamWeekStatsTable.weekNum, weekNum))).orderBy(desc(mcaTeamWeekStatsTable.offYds));
     res.json({ eaLeagueId: lid, seasonId: season.id, weekType, weekNum, teamStats });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/team-stats/week");
@@ -261,18 +214,9 @@ router.get("/v2/leagues/:eaLeagueId/schedule", requireApiKey, async (req: Reques
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-
     const conditions = [eq(mcaSchedulesTable.eaSeasonId, season.id)];
-    if (weekIndex !== undefined && !isNaN(weekIndex)) {
-      conditions.push(eq(mcaSchedulesTable.weekIndex, weekIndex));
-    }
-
-    const games = await db
-      .select()
-      .from(mcaSchedulesTable)
-      .where(and(...conditions))
-      .orderBy(asc(mcaSchedulesTable.weekIndex), asc(mcaSchedulesTable.id));
-
+    if (weekIndex !== undefined && !isNaN(weekIndex)) conditions.push(eq(mcaSchedulesTable.weekIndex, weekIndex));
+    const games = await db.select().from(mcaSchedulesTable).where(and(...conditions)).orderBy(asc(mcaSchedulesTable.weekIndex), asc(mcaSchedulesTable.id));
     res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, currentWeek: season.currentWeek, games });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/schedule");
@@ -288,13 +232,8 @@ router.get("/v2/leagues/:eaLeagueId/player-stats", requireApiKey, async (req: Re
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-    const allStats = await db
-      .select()
-      .from(mcaPlayerStatsTable)
-      .where(eq(mcaPlayerStatsTable.eaSeasonId, season.id))
-      .orderBy(asc(mcaPlayerStatsTable.teamName), asc(mcaPlayerStatsTable.lastName));
-    const stats = position ? allStats.filter(p => p.position === position) : allStats;
-    res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, stats });
+    const all = await db.select().from(mcaPlayerStatsTable).where(eq(mcaPlayerStatsTable.eaSeasonId, season.id)).orderBy(asc(mcaPlayerStatsTable.teamName), asc(mcaPlayerStatsTable.lastName));
+    res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, stats: position ? all.filter(p => p.position === position) : all });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/player-stats");
     res.status(500).json({ error: "Internal server error" });
@@ -311,20 +250,9 @@ router.get("/v2/leagues/:eaLeagueId/player-stats/week/:weekType/:weekNum", requi
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-
-    const conditions = [
-      eq(mcaPlayerWeekStatsTable.eaSeasonId, season.id),
-      eq(mcaPlayerWeekStatsTable.weekType,   weekType),
-      eq(mcaPlayerWeekStatsTable.weekNum,    weekNum),
-    ];
+    const conditions = [eq(mcaPlayerWeekStatsTable.eaSeasonId, season.id), eq(mcaPlayerWeekStatsTable.weekType, weekType), eq(mcaPlayerWeekStatsTable.weekNum, weekNum)];
     if (statType) conditions.push(eq(mcaPlayerWeekStatsTable.statType, statType));
-
-    const stats = await db
-      .select()
-      .from(mcaPlayerWeekStatsTable)
-      .where(and(...conditions))
-      .orderBy(asc(mcaPlayerWeekStatsTable.statType), asc(mcaPlayerWeekStatsTable.teamName), asc(mcaPlayerWeekStatsTable.lastName));
-
+    const stats = await db.select().from(mcaPlayerWeekStatsTable).where(and(...conditions)).orderBy(asc(mcaPlayerWeekStatsTable.statType), asc(mcaPlayerWeekStatsTable.teamName), asc(mcaPlayerWeekStatsTable.lastName));
     res.json({ eaLeagueId: lid, seasonId: season.id, weekType, weekNum, stats });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/player-stats/week");
@@ -339,11 +267,7 @@ router.get("/v2/leagues/:eaLeagueId/draft-picks", requireApiKey, async (req: Req
   try {
     const season = await getActiveSeason(lid);
     if (!season) { res.status(404).json({ error: "No active season" }); return; }
-    const picks = await db
-      .select()
-      .from(mcaDraftPicksTable)
-      .where(eq(mcaDraftPicksTable.eaSeasonId, season.id))
-      .orderBy(asc(mcaDraftPicksTable.draftYear), asc(mcaDraftPicksTable.round), asc(mcaDraftPicksTable.pickNum));
+    const picks = await db.select().from(mcaDraftPicksTable).where(eq(mcaDraftPicksTable.eaSeasonId, season.id)).orderBy(asc(mcaDraftPicksTable.draftYear), asc(mcaDraftPicksTable.round), asc(mcaDraftPicksTable.pickNum));
     res.json({ eaLeagueId: lid, seasonId: season.id, seasonNumber: season.seasonNumber, picks });
   } catch (err) {
     req.log.error(err, "GET /v2/leagues/:eaLeagueId/draft-picks");
@@ -352,7 +276,7 @@ router.get("/v2/leagues/:eaLeagueId/draft-picks", requireApiKey, async (req: Req
 });
 
 // ── POST /v2/users — register / upsert a gamertag ────────────────────────────
-router.post("/v2/users", async (req: Request, res: Response) => {
+router.post("/v2/users", requireApiKey, async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
   const gt   = String(body["gamertag"] ?? "").trim();
   if (!gt) { res.status(400).json({ ok: false, error: "gamertag is required" }); return; }
@@ -360,6 +284,7 @@ router.post("/v2/users", async (req: Request, res: Response) => {
     gt,
     String(body["displayName"] ?? ""),
     String(body["platform"]    ?? ""),
+    body["email"] ? String(body["email"]) : undefined,
   ).catch(err => ({ ok: false, message: String(err) }));
   res.status(result.ok ? 200 : 500).json(result);
 });
@@ -369,14 +294,10 @@ router.get("/v2/users/:gamertag", requireApiKey, async (req: Request, res: Respo
   const gt = String(req.params["gamertag"] ?? "").toLowerCase().trim();
   if (!gt) { res.status(400).json({ error: "gamertag is required" }); return; }
   try {
-    const [user] = await db
-      .select()
-      .from(appUsersTable)
-      .where(eq(appUsersTable.gamertag, gt))
-      .limit(1);
+    const [user] = await db.select().from(appUsersTable).where(eq(appUsersTable.gamertag, gt)).limit(1);
     if (!user) { res.status(404).json({ error: "User not found" }); return; }
     const leagues = await getAppUserLeagues(gt);
-    res.json({ gamertag: user.gamertag, displayName: user.displayName, platform: user.platform, leagues });
+    res.json({ id: user.id, gamertag: user.gamertag, displayName: user.displayName, platform: user.platform, email: user.email, createdAt: user.createdAt, leagues });
   } catch (err) {
     req.log.error(err, "GET /v2/users/:gamertag");
     res.status(500).json({ error: "Internal server error" });

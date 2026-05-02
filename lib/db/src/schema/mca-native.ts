@@ -3,14 +3,16 @@
  * No Discord guild IDs anywhere. Used by the mobile app.
  */
 import {
-  pgTable, text, integer, boolean, timestamp, serial, json, uniqueIndex, real,
+  pgTable, text, integer, boolean, timestamp, serial, json, uniqueIndex, real, uuid,
 } from "drizzle-orm/pg-core";
 
 // ── App users (mobile app only, no Discord) ───────────────────────────────────
 export const appUsersTable = pgTable("app_users", {
-  gamertag:    text("gamertag").primaryKey(),         // lowercase, canonical
+  id:          uuid("id").defaultRandom().primaryKey(),
+  gamertag:    text("gamertag").notNull().unique(),  // lowercase, canonical
+  email:       text("email").unique(),
   displayName: text("display_name").notNull().default(""),
-  platform:    text("platform").notNull().default(""), // ps5 | xbs | pc
+  platform:    text("platform").notNull().default(""),  // ps5 | xbs | pc
   createdAt:   timestamp("created_at").notNull().defaultNow(),
   updatedAt:   timestamp("updated_at").notNull().defaultNow(),
 });
@@ -18,9 +20,10 @@ export const appUsersTable = pgTable("app_users", {
 // ── App user ↔ league links ───────────────────────────────────────────────────
 export const appUserLeagueLinksTable = pgTable("app_user_league_links", {
   id:          serial("id").primaryKey(),
-  gamertag:    text("gamertag").notNull(),
+  gamertag:    text("gamertag").notNull().references(() => appUsersTable.gamertag),
   eaLeagueId:  integer("ea_league_id").notNull(),
-  teamId:      integer("team_id"),                    // null until leagueteams import resolves it
+  teamId:      integer("team_id"),
+  teamName:    text("team_name"),
   linkedAt:    timestamp("linked_at").notNull().defaultNow(),
   updatedAt:   timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
@@ -40,7 +43,7 @@ export const mcaLeaguesTable = pgTable("mca_leagues", {
 export const mcaSeasonsTable = pgTable("mca_seasons", {
   id:           serial("id").primaryKey(),
   eaLeagueId:   integer("ea_league_id").notNull(),
-  seasonNumber: integer("season_number").notNull(),
+  seasonNumber: integer("season_number").notNull(),   // 1-based (EA seasonIndex + 1)
   isActive:     boolean("is_active").notNull().default(true),
   currentWeek:  text("current_week").notNull().default("1"),
   startedAt:    timestamp("started_at").notNull().defaultNow(),
@@ -68,6 +71,7 @@ export const mcaTeamsTable = pgTable("mca_teams", {
   primaryColor:   integer("primary_color"),
   secondaryColor: integer("secondary_color"),
   logoId:         integer("logo_id"),
+  rawJson:        json("raw_json"),          // full EA leagueTeamInfoList item
   updatedAt:      timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniq: uniqueIndex("mca_teams_season_team_idx").on(t.eaSeasonId, t.teamId),
@@ -94,6 +98,7 @@ export const mcaRostersTable = pgTable("mca_rosters", {
   attributes:        json("attributes"),
   abilities:         json("abilities"),
   portraitUrl:       text("portrait_url"),
+  rawJson:           json("raw_json"),       // full EA rosterInfoList item
   importedAt:        timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniq: uniqueIndex("mca_rosters_player_season_idx").on(t.eaSeasonId, t.teamId, t.playerId),
@@ -140,6 +145,7 @@ export const mcaTeamStatsTable = pgTable("mca_team_stats", {
   playoffStatus:  text("playoff_status"),
   winPct:         real("win_pct").notNull().default(0),
   netPts:         integer("net_pts").notNull().default(0),
+  rawJson:        json("raw_json"),          // full EA teamStandingInfoList item
   updatedAt:      timestamp("updated_at").notNull().defaultNow(),
 }, (t) => ({
   uniq: uniqueIndex("mca_team_stats_season_team_idx").on(t.eaSeasonId, t.teamId),
@@ -187,6 +193,7 @@ export const mcaSchedulesTable = pgTable("mca_schedules", {
   homeScore:    integer("home_score"),
   awayScore:    integer("away_score"),
   status:       integer("status").notNull().default(0),
+  rawJson:      json("raw_json"),            // full EA scheduleInfoList item
 }, (t) => ({
   uniq: uniqueIndex("mca_schedules_idx").on(t.eaSeasonId, t.weekIndex, t.homeTeamId, t.awayTeamId),
 }));
@@ -374,6 +381,7 @@ export const mcaDraftPicksTable = pgTable("mca_draft_picks", {
   pickNum:          integer("pick_num").notNull().default(0),
   originalTeamId:   integer("original_team_id"),
   originalTeamName: text("original_team_name"),
+  rawJson:          json("raw_json"),          // full EA draftPickInfoList item
   importedAt:       timestamp("imported_at").notNull().defaultNow(),
 }, (t) => ({
   uniq: uniqueIndex("mca_draft_picks_idx").on(t.eaSeasonId, t.teamId, t.draftYear, t.round, t.pickNum),

@@ -3,8 +3,11 @@
  * Reads MCA webhook payloads and writes into mca_* tables.
  * Zero Discord/guild references — everything keyed by eaLeagueId.
  *
- * Typed approach: all raw EA objects are Record<string,unknown>.
- * The getN / getStr / extractList helpers extract values safely.
+ * Season handling: EA embeds `seasonIndex` (0-based) in every payload item.
+ * We extract it and use `seasonNumber = seasonIndex + 1` to find or create
+ * the correct season, preventing different franchise years from mixing.
+ *
+ * Every record is stored with its full `rawJson` so no MCA field is ever lost.
  */
 import { db } from "@workspace/db";
 import {
@@ -63,6 +66,29 @@ function extractList(body: unknown, ...keys: string[]): Record<string, unknown>[
   return [];
 }
 
+/**
+ * Extract seasonIndex (0-based) from an MCA payload.
+ * EA embeds it at the payload level or on each item.
+ */
+function extractSeasonIndex(
+  body: unknown,
+  items: Record<string, unknown>[],
+): number | undefined {
+  if (body && typeof body === "object") {
+    const b = body as Record<string, unknown>;
+    for (const k of ["seasonIndex","leagueSeasonIndex","cfmSeasonIndex","season","seasonNum"]) {
+      if (b[k] != null) return Number(b[k]);
+    }
+  }
+  if (items.length > 0) {
+    const first = items[0];
+    for (const k of ["seasonIndex","leagueSeasonIndex","cfmSeasonIndex"]) {
+      if (first[k] != null) return Number(first[k]);
+    }
+  }
+  return undefined;
+}
+
 // ── Roster position lookup (numeric → string) ─────────────────────────────────
 const POS_NUM: Record<number, string> = {
   0:"QB",1:"HB",2:"FB",3:"WR",4:"TE",5:"LT",6:"LG",7:"C",8:"RG",9:"RT",
@@ -103,8 +129,14 @@ const STAT_LIST_KEYS: Record<string, string[]> = {
 
 // ── Season management ─────────────────────────────────────────────────────────
 
+/**
+ * Find or create the season matching the given seasonIndex (0-based from EA).
+ * If no seasonIndex is provided, falls back to the active season for the league.
+ * Activates the target season and deactivates others when switching years.
+ */
 export async function getOrCreateV2Season(
   eaLeagueId: number,
+  seasonIndex?: number,
   leagueName?: string,
   platform?: string,
 ): Promise<typeof mcaSeasonsTable.$inferSelect> {
@@ -125,6 +157,45 @@ export async function getOrCreateV2Season(
       },
     });
 
+  if (seasonIndex !== undefined) {
+    const targetNumber = seasonIndex + 1;         // convert EA 0-based → 1-based
+
+    const [existing] = await db
+      .select()
+      .from(mcaSeasonsTable)
+      .where(and(
+        eq(mcaSeasonsTable.eaLeagueId,   eaLeagueId),
+        eq(mcaSeasonsTable.seasonNumber, targetNumber),
+      ))
+      .limit(1);
+
+    if (existing) {
+      if (!existing.isActive) {
+        await db.update(mcaSeasonsTable)
+          .set({ isActive: false })
+          .where(and(eq(mcaSeasonsTable.eaLeagueId, eaLeagueId), eq(mcaSeasonsTable.isActive, true)));
+        const [updated] = await db.update(mcaSeasonsTable)
+          .set({ isActive: true, updatedAt: new Date() })
+          .where(eq(mcaSeasonsTable.id, existing.id))
+          .returning();
+        return updated!;
+      }
+      return existing;
+    }
+
+    // Create the season for this index, deactivate others first
+    await db.update(mcaSeasonsTable)
+      .set({ isActive: false })
+      .where(and(eq(mcaSeasonsTable.eaLeagueId, eaLeagueId), eq(mcaSeasonsTable.isActive, true)));
+
+    const [created] = await db
+      .insert(mcaSeasonsTable)
+      .values({ eaLeagueId, seasonNumber: targetNumber, isActive: true, currentWeek: "1" })
+      .returning();
+    return created!;
+  }
+
+  // No seasonIndex — use active season or create the first one
   const [active] = await db
     .select()
     .from(mcaSeasonsTable)
@@ -140,12 +211,10 @@ export async function getOrCreateV2Season(
     .where(eq(mcaSeasonsTable.eaLeagueId, eaLeagueId));
 
   const nextNum = (maxRow?.maxNum ?? 0) + 1;
-
   const [created] = await db
     .insert(mcaSeasonsTable)
     .values({ eaLeagueId, seasonNumber: nextNum, isActive: true, currentWeek: "1" })
     .returning();
-
   return created!;
 }
 
@@ -162,27 +231,28 @@ export async function setV2CurrentWeek(eaLeagueId: number, currentWeek: string):
   }
 }
 
-// ── Gamertag auto-link helper ─────────────────────────────────────────────────
+// ── Gamertag auto-link ────────────────────────────────────────────────────────
 
 async function autoLinkGamertag(
   userName: string,
   eaLeagueId: number,
   teamId: number,
+  teamName: string,
 ): Promise<void> {
   if (!userName || userName === "CPU") return;
   const gt = userName.toLowerCase().trim();
   const user = await db
-    .select()
+    .select({ gamertag: appUsersTable.gamertag })
     .from(appUsersTable)
     .where(eq(appUsersTable.gamertag, gt))
     .limit(1);
   if (user.length === 0) return;
   await db
     .insert(appUserLeagueLinksTable)
-    .values({ gamertag: gt, eaLeagueId, teamId, updatedAt: new Date() })
+    .values({ gamertag: gt, eaLeagueId, teamId, teamName, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: [appUserLeagueLinksTable.gamertag, appUserLeagueLinksTable.eaLeagueId],
-      set: { teamId, updatedAt: new Date() },
+      set: { teamId, teamName, updatedAt: new Date() },
     });
 }
 
@@ -195,11 +265,12 @@ export async function processV2LeagueTeams(
   platform?: string,
 ): Promise<V2Result> {
   try {
-    const season = await getOrCreateV2Season(eaLeagueId, leagueName, platform);
-
     const rawTeams = extractList(body, "leagueTeamInfoList", "teamInfoList", "teams", "leagueTeams");
+    const seasonIndex = extractSeasonIndex(body, rawTeams);
+    const season = await getOrCreateV2Season(eaLeagueId, seasonIndex, leagueName, platform);
+
     if (rawTeams.length === 0) {
-      console.warn(`[v2/leagueteams/${eaLeagueId}] No teams found — expected leagueTeamInfoList`);
+      console.warn(`[v2/leagueteams/${eaLeagueId}] No teams found`);
       return { ok: true, message: "No teams in payload" };
     }
 
@@ -209,11 +280,11 @@ export async function processV2LeagueTeams(
       const teamId = getN(t, "teamId", "id", "rosterId");
       if (!teamId) continue;
 
-      const cityName  = getStr(t, "cityName");
-      const nickName  = getStr(t, "nickName", "teamName");
-      const fullName  = cityName && nickName ? `${cityName} ${nickName}` : nickName || cityName || `Team ${teamId}`;
-      const userName  = getStr(t, "userName", "user");
-      const isHuman   = Boolean(t["isUserControlled"] ?? t["isHuman"] ?? false);
+      const cityName = getStr(t, "cityName");
+      const nickName = getStr(t, "nickName", "teamName");
+      const fullName = cityName && nickName ? `${cityName} ${nickName}` : nickName || cityName || `Team ${teamId}`;
+      const userName = getStr(t, "userName", "user");
+      const isHuman  = Boolean(t["isUserControlled"] ?? t["isHuman"] ?? false);
 
       await db
         .insert(mcaTeamsTable)
@@ -230,10 +301,11 @@ export async function processV2LeagueTeams(
           isHuman,
           offScheme:      getStr(t, "offensiveScheme", "offScheme") || null,
           defScheme:      getStr(t, "defensiveScheme",  "defScheme") || null,
-          ovrRating:      getN(t,  "ovrRating", "teamOvr") || null,
-          primaryColor:   (t["primaryColor"]   != null ? getN(t, "primaryColor")   : null),
-          secondaryColor: (t["secondaryColor"] != null ? getN(t, "secondaryColor") : null),
+          ovrRating:      t["ovrRating"]   != null ? getN(t, "ovrRating", "teamOvr")   : null,
+          primaryColor:   t["primaryColor"]   != null ? getN(t, "primaryColor")   : null,
+          secondaryColor: t["secondaryColor"] != null ? getN(t, "secondaryColor") : null,
           logoId:         (t["logoId"] ?? t["teamLogoId"]) != null ? getN(t, "logoId", "teamLogoId") : null,
+          rawJson:        t,
           updatedAt:      new Date(),
         })
         .onConflictDoUpdate({
@@ -246,18 +318,19 @@ export async function processV2LeagueTeams(
             userName, isHuman,
             offScheme:      getStr(t, "offensiveScheme", "offScheme") || null,
             defScheme:      getStr(t, "defensiveScheme",  "defScheme") || null,
-            ovrRating:      getN(t, "ovrRating", "teamOvr") || null,
+            ovrRating:      t["ovrRating"] != null ? getN(t, "ovrRating", "teamOvr") : null,
+            rawJson:        t,
             updatedAt:      new Date(),
           },
         });
 
       if (isHuman && userName) {
-        linkOps.push(autoLinkGamertag(userName, eaLeagueId, teamId));
+        linkOps.push(autoLinkGamertag(userName, eaLeagueId, teamId, fullName));
       }
     }
 
     await Promise.allSettled(linkOps);
-    return { ok: true, message: `${rawTeams.length} teams upserted for league ${eaLeagueId}` };
+    return { ok: true, message: `${rawTeams.length} teams upserted for league ${eaLeagueId} (season ${season.seasonNumber})` };
   } catch (err) {
     console.error("[v2/leagueteams]", err);
     return { ok: false, message: String(err) };
@@ -291,12 +364,23 @@ function resolveAbilities(p: Record<string, unknown>): PlayerAbilities | null {
     const zone       = slots.find(s => s["isZoneAbility"] === true);
     const superstars = slots.filter(s => s["isZoneAbility"] !== true);
     const result: PlayerAbilities = {};
-    if (zone)      result.zone      = getStr(zone, "signatureTitle", "title", "name");
+    if (zone)               result.zone      = getStr(zone, "signatureTitle", "title", "name");
     if (superstars.length > 0) result.superstar = superstars.map(s => getStr(s, "signatureTitle", "title", "name")).filter(Boolean);
     return Object.keys(result).length > 0 ? result : null;
   }
   return null;
 }
+
+const SKIP_ATTRS = new Set([
+  "playerId","rosterId","playerIndex","id","firstName","lastName",
+  "position","pos","positionId","playerBestOvr","overallRating","overallRatings",
+  "overall","ovr","bestOverall","playerSkillRating","devTrait","devTraitId",
+  "playerDevTrait","age","jerseyNum","jersey","uniformNumber",
+  "contractYearsLeft","yearsLeft","contractLeft","contractLength","contractLen",
+  "contractYear","contractYr","archetype","archetypeAbbrev","playerArchetype",
+  "experiencePoints","xpTotal","xp","teamId","teamName","signatureSlotList",
+  "abilities","seasonIndex","leagueSeasonIndex","stageIndex",
+]);
 
 function buildRosterRow(
   p: Record<string, unknown>,
@@ -308,17 +392,6 @@ function buildRosterRow(
   const playerId = getN(p, "playerId", "rosterId", "playerIndex", "id");
   if (!playerId) return null;
 
-  // Capture all scalar non-dedicated fields as attributes (all *Rating, *Trait, bio, etc.)
-  const SKIP_ATTRS = new Set([
-    "playerId","rosterId","playerIndex","id","firstName","lastName",
-    "position","pos","positionId","playerBestOvr","overallRating","overallRatings",
-    "overall","ovr","bestOverall","playerSkillRating","devTrait","devTraitId",
-    "playerDevTrait","age","jerseyNum","jersey","uniformNumber",
-    "contractYearsLeft","yearsLeft","contractLeft","contractLength","contractLen",
-    "contractYear","contractYr","archetype","archetypeAbbrev","playerArchetype",
-    "experiencePoints","xpTotal","xp","teamId","teamName","signatureSlotList",
-    "abilities","isOnPracticeSquad","isOnIR","rosType","rosterType","rostStatus",
-  ]);
   const attributes: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(p)) {
     if (v == null || SKIP_ATTRS.has(k)) continue;
@@ -344,6 +417,7 @@ function buildRosterRow(
     xpTotal:           p["experiencePoints"] != null ? getN(p, "experiencePoints","xpTotal","xp") : null,
     attributes:        Object.keys(attributes).length > 0 ? attributes : null,
     abilities:         resolveAbilities(p),
+    rawJson:           p,
     portraitUrl:       null,
     importedAt:        new Date(),
   };
@@ -359,8 +433,10 @@ export async function processV2Roster(
   eaLeagueId: number,
 ): Promise<V2Result> {
   try {
-    const season     = await getOrCreateV2Season(eaLeagueId);
     const rawPlayers = extractList(body, ...ROSTER_LIST_KEYS);
+    const seasonIndex = extractSeasonIndex(body, rawPlayers);
+    const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
+
     if (rawPlayers.length === 0) {
       return { ok: true, message: `No players in payload for team ${mcaTeamId}` };
     }
@@ -372,16 +448,13 @@ export async function processV2Roster(
       .limit(1);
     const teamName = teamRow?.fullName ?? `Team ${mcaTeamId}`;
 
+    // Store ALL players — including practice squad and IR
     const rows: (typeof mcaRostersTable.$inferInsert)[] = [];
     for (const p of rawPlayers) {
-      if (p["isOnPracticeSquad"] === true || p["isOnIR"] === true) continue;
-      const rosType = p["rosType"] ?? p["rosterType"] ?? p["rostStatus"] ?? null;
-      if (rosType != null && Number(rosType) !== 0) continue;
       const row = buildRosterRow(p, season.id, eaLeagueId, mcaTeamId, teamName);
       if (row) rows.push(row);
     }
-
-    if (rows.length === 0) return { ok: true, message: `No active players for team ${mcaTeamId}` };
+    if (rows.length === 0) return { ok: true, message: `No valid players for team ${mcaTeamId}` };
 
     const existing = await db
       .select({ playerId: mcaRostersTable.playerId, portraitUrl: mcaRostersTable.portraitUrl })
@@ -399,7 +472,7 @@ export async function processV2Roster(
     );
 
     invalidateRostersCache(season.id);
-    return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId}` };
+    return { ok: true, message: `${rows.length} players imported for team ${mcaTeamId} (season ${season.seasonNumber})` };
   } catch (err) {
     console.error(`[v2/roster/team/${mcaTeamId}]`, err);
     return { ok: false, message: String(err) };
@@ -408,8 +481,10 @@ export async function processV2Roster(
 
 export async function processV2FreeAgents(body: unknown, eaLeagueId: number): Promise<V2Result> {
   try {
-    const season = await getOrCreateV2Season(eaLeagueId);
     const rawPlayers = extractList(body, ...ROSTER_LIST_KEYS);
+    const seasonIndex = extractSeasonIndex(body, rawPlayers);
+    const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
+
     if (rawPlayers.length === 0) return { ok: true, message: "Free agent payload empty" };
 
     const rows: (typeof mcaRostersTable.$inferInsert)[] = [];
@@ -424,7 +499,7 @@ export async function processV2FreeAgents(body: unknown, eaLeagueId: number): Pr
     );
     await db.insert(mcaRostersTable).values(rows);
     invalidateRostersCache(season.id);
-    return { ok: true, message: `${rows.length} free agents imported` };
+    return { ok: true, message: `${rows.length} free agents imported (season ${season.seasonNumber})` };
   } catch (err) {
     console.error("[v2/freeagents]", err);
     return { ok: false, message: String(err) };
@@ -435,8 +510,9 @@ export async function processV2FreeAgents(body: unknown, eaLeagueId: number): Pr
 
 export async function processV2Standings(body: unknown, eaLeagueId: number): Promise<V2Result> {
   try {
-    const season   = await getOrCreateV2Season(eaLeagueId);
     const rawTeams = extractList(body, "teamStandingInfoList","standings","teamStandings","standingInfoList");
+    const seasonIndex = extractSeasonIndex(body, rawTeams);
+    const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawTeams.length === 0) {
       console.warn(`[v2/standings/${eaLeagueId}] No standings data found`);
@@ -448,26 +524,23 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
       const teamId = getN(t, "teamId", "rosterId");
       if (!teamId) continue;
 
-      const wins    = getN(t, "wins",   "totalWins",   "seasonWins");
-      const losses  = getN(t, "losses", "totalLosses", "seasonLosses");
-      const ties    = getN(t, "ties",   "totalTies",   "seasonTies");
-      const total   = wins + losses + ties;
-      const ptsFor  = getN(t, "ptsFor",    "pointsFor",     "pts");
-      const ptsAgainst = getN(t, "ptsAgainst","pointsAgainst","ptsA");
-
-      const offPassYds = getN(t, "offPassYds","offensivePassYards","passYds","passingYards");
-      const offRushYds = getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards");
-      const offYds     = offPassYds + offRushYds > 0
-        ? offPassYds + offRushYds
-        : getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
-      const defPassYds = getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
-      const defRushYds = getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
-      const teamSacks  = getN(t, "defSacks","totalSacks","sacks","teamSacks");
-      const teamInts   = getN(t, "defInterceptions","totalInts","ints","teamInts");
+      const wins         = getN(t, "wins",   "totalWins",   "seasonWins");
+      const losses       = getN(t, "losses", "totalLosses", "seasonLosses");
+      const ties         = getN(t, "ties",   "totalTies",   "seasonTies");
+      const total        = wins + losses + ties;
+      const ptsFor       = getN(t, "ptsFor",     "pointsFor",     "pts");
+      const ptsAgainst   = getN(t, "ptsAgainst", "pointsAgainst", "ptsA");
+      const offPassYds   = getN(t, "offPassYds","offensivePassYards","passYds","passingYards");
+      const offRushYds   = getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards");
+      const offYds       = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getN(t, "offTotalYds","totalOffYards","offYards","totalOffensiveYards");
+      const defPassYds   = getN(t, "defPassYds","defPassYards","passingYardsAllowed","defPassingYards");
+      const defRushYds   = getN(t, "defRushYds","defRushYards","rushingYardsAllowed","defRushingYards");
+      const teamSacks    = getN(t, "defSacks","totalSacks","sacks","teamSacks");
+      const teamInts     = getN(t, "defInterceptions","totalInts","ints","teamInts");
       const defFumblesRec = getN(t, "defFumblesRec","fumblesRecovered","fumRec");
-      const tOTakeaways   = getN(t, "tOTakeaways","defTurnovers","takeaways");
-      const tOGiveaways   = getN(t, "tOGiveaways","offTurnovers","giveaways");
-      const turnoverDiff  = (() => {
+      const tOTakeaways  = getN(t, "tOTakeaways","defTurnovers","takeaways");
+      const tOGiveaways  = getN(t, "tOGiveaways","offTurnovers","giveaways");
+      const turnoverDiff = (() => {
         const d = getN(t, "tODiff","turnOverDiff","turnoverDiff","toDiff","tOMargin");
         if (d !== 0) return d;
         if (tOTakeaways !== 0 || tOGiveaways !== 0) return tOTakeaways - tOGiveaways;
@@ -475,17 +548,17 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
       })();
       const offRedZonePct = getN(t, "offRedZonePct","offensiveRedZonePct","redZonePct","offRZPct");
       const defRedZonePct = getN(t, "defRedZonePct","defensiveRedZonePct","defRedZoneAllowedPct","defRZPct");
-      const seed          = t["seed"]          != null ? getN(t, "seed","conferenceRank") : null;
-      const rank          = t["rank"]          != null ? getN(t, "rank","overallRank")    : null;
+      const seed          = t["seed"] != null ? getN(t, "seed","conferenceRank") : null;
+      const rank          = t["rank"] != null ? getN(t, "rank","overallRank")    : null;
       const playoffStatus = getStr(t, "playoffStatus","clinchStatus") || null;
       const winPct        = total > 0 ? (wins + ties * 0.5) / total : 0;
       const netPts        = ptsFor - ptsAgainst;
+      const teamName      = getStr(t, "teamName","cityName","nickName");
 
       ops.push(
         db.insert(mcaTeamStatsTable)
           .values({
-            eaSeasonId: season.id, eaLeagueId, teamId,
-            teamName: getStr(t, "teamName","cityName","nickName"),
+            eaSeasonId: season.id, eaLeagueId, teamId, teamName,
             wins, losses, ties, ptsFor, ptsAgainst,
             offYds, offPassYds, offRushYds,
             offTDs:     getN(t, "offTDs","tds"),
@@ -498,8 +571,7 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
             awayWins:   getN(t, "awayWins"),   awayLosses: getN(t, "awayLosses"),
             confWins:   getN(t, "confWins","divisionWins"),   confLosses: getN(t, "confLosses","divisionLosses"),
             divWins:    getN(t, "divWins"),    divLosses:  getN(t, "divLosses"),
-            seed, rank, playoffStatus, winPct, netPts,
-            updatedAt: new Date(),
+            seed, rank, playoffStatus, winPct, netPts, rawJson: t, updatedAt: new Date(),
           })
           .onConflictDoUpdate({
             target: [mcaTeamStatsTable.eaSeasonId, mcaTeamStatsTable.teamId],
@@ -512,14 +584,13 @@ export async function processV2Standings(body: unknown, eaLeagueId: number): Pro
               awayWins: getN(t, "awayWins"), awayLosses: getN(t, "awayLosses"),
               confWins: getN(t, "confWins","divisionWins"), confLosses: getN(t, "confLosses","divisionLosses"),
               divWins:  getN(t, "divWins"), divLosses:  getN(t, "divLosses"),
-              seed, rank, playoffStatus, winPct, netPts,
-              updatedAt: new Date(),
+              seed, rank, playoffStatus, winPct, netPts, rawJson: t, updatedAt: new Date(),
             },
           }),
       );
     }
     await Promise.all(ops);
-    return { ok: true, message: `Standings upserted for ${rawTeams.length} teams` };
+    return { ok: true, message: `Standings upserted for ${rawTeams.length} teams (season ${season.seasonNumber})` };
   } catch (err) {
     console.error("[v2/standings]", err);
     return { ok: false, message: String(err) };
@@ -538,8 +609,9 @@ export async function processV2TeamWeekStats(
     return { ok: true, message: `Preseason Week ${weekNum} team stats — skipped` };
   }
   try {
-    const season   = await getOrCreateV2Season(eaLeagueId);
     const rawStats = extractList(body, "teamStatInfoList","teamStatsInfoList","teamStats");
+    const seasonIndex = extractSeasonIndex(body, rawStats);
+    const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawStats.length === 0) {
       console.warn(`[v2/week${weekNum}/team/${eaLeagueId}] No team stats in payload`);
@@ -570,14 +642,12 @@ export async function processV2TeamWeekStats(
     let upserted = 0;
 
     for (const t of rawStats) {
-      const teamId = getN(t, "teamId", "teamIndex");
+      const teamId     = getN(t, "teamId", "teamIndex");
       if (!teamId) continue;
 
       const offPassYds    = getN(t, "offPassYds","offensivePassYards","passYds","passingYards");
       const offRushYds    = getN(t, "offRushYds","offensiveRushYards","rushYds","rushingYards");
-      const offYds        = offPassYds + offRushYds > 0
-        ? offPassYds + offRushYds
-        : getN(t, "offTotalYds","totalOffYards","offYards");
+      const offYds        = offPassYds + offRushYds > 0 ? offPassYds + offRushYds : getN(t, "offTotalYds","totalOffYards","offYards");
       const defPassYds    = getN(t, "defPassYds","defPassYards","passingYardsAllowed");
       const defRushYds    = getN(t, "defRushYds","defRushYards","rushingYardsAllowed");
       const teamSacks     = getN(t, "defSacks","totalSacks","sacks","teamSacks");
@@ -591,19 +661,18 @@ export async function processV2TeamWeekStats(
         if (tOTakeaways !== 0 || tOGiveaways !== 0) return tOTakeaways - tOGiveaways;
         return 0;
       })();
+      const teamName = teamNameMap.get(teamId) ?? getStr(t, "teamName","cityName");
 
       ops.push(
         db.insert(mcaTeamWeekStatsTable)
           .values({
-            eaSeasonId: season.id, eaLeagueId, weekType, weekNum, teamId,
-            teamName:    teamNameMap.get(teamId) ?? getStr(t, "teamName","cityName"),
+            eaSeasonId: season.id, eaLeagueId, weekType, weekNum, teamId, teamName,
             offPassYds, offRushYds, offYds,
             offTDs:      getN(t, "ptsFor","ptsScored","pointsFor"),
             defPassYds, defRushYds,
             defTDs:      getN(t, "ptsAgainst","pointsAgainst"),
             teamSacks, teamInts, defFumblesRec, turnoverDiff, tOTakeaways, tOGiveaways,
-            rawJson:     t,
-            processedAt: new Date(),
+            rawJson: t, processedAt: new Date(),
           })
           .onConflictDoUpdate({
             target: [mcaTeamWeekStatsTable.eaSeasonId, mcaTeamWeekStatsTable.weekType, mcaTeamWeekStatsTable.weekNum, mcaTeamWeekStatsTable.teamId],
@@ -611,18 +680,17 @@ export async function processV2TeamWeekStats(
           }),
       );
 
-      // Accumulate into season totals
+      const offTDsWeek = getN(t, "ptsFor","ptsScored","pointsFor");
+      const defTDsWeek = getN(t, "ptsAgainst","pointsAgainst");
       ops.push(
         db.insert(mcaTeamStatsTable)
           .values({
-            eaSeasonId: season.id, eaLeagueId, teamId,
-            teamName:    teamNameMap.get(teamId) ?? getStr(t, "teamName","cityName"),
+            eaSeasonId: season.id, eaLeagueId, teamId, teamName,
             wins: 0, losses: 0, ties: 0, ptsFor: 0, ptsAgainst: 0,
-            offYds, offPassYds, offRushYds, offTDs: getN(t, "ptsFor","ptsScored"),
-            offPtsPerGame: 0, defPassYds, defRushYds, defTDs: getN(t, "ptsAgainst"),
+            offYds, offPassYds, offRushYds, offTDs: offTDsWeek, offPtsPerGame: 0,
+            defPassYds, defRushYds, defTDs: defTDsWeek,
             teamSacks, teamInts, defFumblesRec, offRedZonePct: 0, defRedZonePct: 0,
-            tOTakeaways, tOGiveaways, turnoverDiff,
-            winPct: 0, netPts: 0, updatedAt: new Date(),
+            tOTakeaways, tOGiveaways, turnoverDiff, winPct: 0, netPts: 0, updatedAt: new Date(),
           })
           .onConflictDoUpdate({
             target: [mcaTeamStatsTable.eaSeasonId, mcaTeamStatsTable.teamId],
@@ -630,10 +698,10 @@ export async function processV2TeamWeekStats(
               offPassYds:    sql`${mcaTeamStatsTable.offPassYds}    + ${offPassYds}`,
               offRushYds:    sql`${mcaTeamStatsTable.offRushYds}    + ${offRushYds}`,
               offYds:        sql`${mcaTeamStatsTable.offYds}        + ${offYds}`,
-              offTDs:        sql`${mcaTeamStatsTable.offTDs}        + ${getN(t, "ptsFor","ptsScored")}`,
+              offTDs:        sql`${mcaTeamStatsTable.offTDs}        + ${offTDsWeek}`,
               defPassYds:    sql`${mcaTeamStatsTable.defPassYds}    + ${defPassYds}`,
               defRushYds:    sql`${mcaTeamStatsTable.defRushYds}    + ${defRushYds}`,
-              defTDs:        sql`${mcaTeamStatsTable.defTDs}        + ${getN(t, "ptsAgainst")}`,
+              defTDs:        sql`${mcaTeamStatsTable.defTDs}        + ${defTDsWeek}`,
               teamSacks:     sql`${mcaTeamStatsTable.teamSacks}     + ${teamSacks}`,
               teamInts:      sql`${mcaTeamStatsTable.teamInts}      + ${teamInts}`,
               defFumblesRec: sql`${mcaTeamStatsTable.defFumblesRec} + ${defFumblesRec}`,
@@ -668,8 +736,9 @@ export async function processV2Schedules(
   weekType = "reg",
 ): Promise<V2Result> {
   try {
-    const season   = await getOrCreateV2Season(eaLeagueId);
     const rawGames = extractList(body, "scheduleInfoList","gameScheduleInfoList","games","weeklyScheduleInfoList","schedules");
+    const seasonIndex = extractSeasonIndex(body, rawGames);
+    const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawGames.length === 0) {
       console.warn(`[v2/schedules/${eaLeagueId}] No schedule data found`);
@@ -705,17 +774,17 @@ export async function processV2Schedules(
             homeTeamId, awayTeamId,
             homeTeamName: teamNameMap.get(homeTeamId) ?? getStr(g, "homeTeamName"),
             awayTeamName: teamNameMap.get(awayTeamId) ?? getStr(g, "awayTeamName"),
-            homeScore, awayScore, status,
+            homeScore, awayScore, status, rawJson: g,
           })
           .onConflictDoUpdate({
             target: [mcaSchedulesTable.eaSeasonId, mcaSchedulesTable.weekIndex, mcaSchedulesTable.homeTeamId, mcaSchedulesTable.awayTeamId],
-            set: { homeScore, awayScore, status },
+            set: { homeScore, awayScore, status, rawJson: g },
           }),
       );
       upserted++;
     }
     await Promise.all(ops);
-    return { ok: true, message: `${upserted} schedule games upserted` };
+    return { ok: true, message: `${upserted} schedule games upserted (season ${season.seasonNumber})` };
   } catch (err) {
     console.error("[v2/schedules]", err);
     return { ok: false, message: String(err) };
@@ -735,22 +804,19 @@ export async function processV2PlayerWeekStats(
     return { ok: true, message: `Preseason Week ${weekNum} ${statType} — skipped` };
   }
   try {
-    const season   = await getOrCreateV2Season(eaLeagueId);
     const listKeys = STAT_LIST_KEYS[statType] ?? ["playerStatInfoList"];
     const players  = extractList(body, ...listKeys);
+    const seasonIndex = extractSeasonIndex(body, players);
+    const season   = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (players.length === 0) {
       const topKeys = body && typeof body === "object" ? Object.keys(body as object).join(", ") : "";
-      console.warn(`[v2/week${weekNum}/${statType}/${eaLeagueId}] No records found. Tried: [${listKeys.join(",")}]. Actual keys: ${topKeys}`);
-      return { ok: true, message: `No ${statType} records in payload — tried keys: ${listKeys.join(", ")}` };
+      console.warn(`[v2/week${weekNum}/${statType}/${eaLeagueId}] No records. Tried: [${listKeys.join(",")}]. Keys: ${topKeys}`);
+      return { ok: true, message: `No ${statType} records — tried: ${listKeys.join(", ")}` };
     }
 
-    // Preseason guard via stageIndex
-    if (players.length > 0) {
-      const firstStage = Number((players[0] as Record<string, unknown>)["stageIndex"] ?? -1);
-      if (firstStage === 0) {
-        return { ok: true, message: `Preseason Week ${weekNum} ${statType} — rejected (stageIndex=0)` };
-      }
+    if (Number((players[0] as Record<string, unknown>)["stageIndex"] ?? -1) === 0) {
+      return { ok: true, message: `Preseason Week ${weekNum} ${statType} — rejected (stageIndex=0)` };
     }
 
     const alreadyDone = await db.select({ id: mcaWeekProcessedTable.id })
@@ -769,52 +835,44 @@ export async function processV2PlayerWeekStats(
 
     const [rosterRows, priorStatRows, mcaTeams] = await Promise.all([
       db.select({ playerId: mcaRostersTable.playerId, firstName: mcaRostersTable.firstName, lastName: mcaRostersTable.lastName, position: mcaRostersTable.position })
-        .from(mcaRostersTable)
-        .where(eq(mcaRostersTable.eaSeasonId, season.id)),
+        .from(mcaRostersTable).where(eq(mcaRostersTable.eaSeasonId, season.id)),
       db.select({ playerId: mcaPlayerStatsTable.playerId, firstName: mcaPlayerStatsTable.firstName, lastName: mcaPlayerStatsTable.lastName, position: mcaPlayerStatsTable.position })
-        .from(mcaPlayerStatsTable)
-        .where(eq(mcaPlayerStatsTable.eaSeasonId, season.id)),
+        .from(mcaPlayerStatsTable).where(eq(mcaPlayerStatsTable.eaSeasonId, season.id)),
       db.select({ teamId: mcaTeamsTable.teamId, fullName: mcaTeamsTable.fullName })
-        .from(mcaTeamsTable)
-        .where(eq(mcaTeamsTable.eaSeasonId, season.id)),
+        .from(mcaTeamsTable).where(eq(mcaTeamsTable.eaSeasonId, season.id)),
     ]);
 
-    const rosterMap    = new Map(rosterRows.map(r => [r.playerId, r]));
-    const priorStatMap = new Map(priorStatRows.map(r => [r.playerId, r]));
-    const teamNameMap  = new Map(mcaTeams.map(t => [t.teamId, t.fullName]));
+    const rosterMap   = new Map(rosterRows.map(r => [r.playerId, r]));
+    const priorMap    = new Map(priorStatRows.map(r => [r.playerId, r]));
+    const teamNameMap = new Map(mcaTeams.map(t => [t.teamId, t.fullName]));
 
     const ops: Promise<unknown>[] = [];
     let upserted = 0;
 
     for (const p of players) {
-      const playerId = getN(p, "rosterId","playerId","rosterid","playerid");
+      const playerId  = getN(p, "rosterId","playerId","rosterid","playerid");
       if (!playerId) continue;
 
       const teamId   = getN(p, "teamId","teamid");
       const teamName = teamNameMap.get(teamId) ?? getStr(p, "teamName","teamname");
       const roster   = rosterMap.get(playerId);
-      const prior    = !roster ? priorStatMap.get(playerId) : undefined;
-      const firstName = roster?.firstName ?? prior?.firstName
-        ?? getStr(p, "firstName","firstname","first_name","playerFirstName");
-      const lastName  = roster?.lastName  ?? prior?.lastName
-        ?? getStr(p, "lastName","lastname","last_name","playerLastName");
-      const position  = roster?.position  ?? prior?.position
-        ?? getStr(p, "position","pos","playerPosition");
+      const prior    = !roster ? priorMap.get(playerId) : undefined;
+      const firstName = roster?.firstName ?? prior?.firstName ?? getStr(p, "firstName","firstname","first_name","playerFirstName");
+      const lastName  = roster?.lastName  ?? prior?.lastName  ?? getStr(p, "lastName","lastname","last_name","playerLastName");
+      const position  = roster?.position  ?? prior?.position  ?? getStr(p, "position","pos","playerPosition");
 
       if (!firstName && !lastName) {
-        console.warn(`[v2/week${weekNum}/${statType}] Player ${playerId} (team ${teamName}) not in roster — run leagueteams/roster exports first`);
+        console.warn(`[v2/week${weekNum}/${statType}] Player ${playerId} (team ${teamName}) not in roster`);
       }
 
-      const { weekFields, seasonInsert, seasonAccum } = buildStatFields(p, statType, season.id, playerId, teamId);
+      const { weekFields, seasonInsert, seasonAccum } = buildStatFields(p, statType);
 
-      // Store per-week row
       ops.push(
         db.insert(mcaPlayerWeekStatsTable)
           .values({
             eaSeasonId: season.id, eaLeagueId, weekType, weekNum, statType,
             playerId, teamId, teamName, firstName, lastName, position,
-            rawJson: p,
-            processedAt: new Date(),
+            rawJson: p, processedAt: new Date(),
             ...weekFields,
           })
           .onConflictDoUpdate({
@@ -823,7 +881,6 @@ export async function processV2PlayerWeekStats(
           }),
       );
 
-      // Accumulate into season totals
       ops.push(
         db.insert(mcaPlayerStatsTable)
           .values({
@@ -842,7 +899,6 @@ export async function processV2PlayerWeekStats(
     }
 
     await Promise.all(ops);
-
     await db.insert(mcaWeekProcessedTable)
       .values({ eaSeasonId: season.id, weekType, weekNum, statType })
       .onConflictDoNothing();
@@ -857,222 +913,187 @@ export async function processV2PlayerWeekStats(
 // ── Stat field builders ───────────────────────────────────────────────────────
 
 type StatFields = {
-  weekFields:    Partial<typeof mcaPlayerWeekStatsTable.$inferInsert>;
-  seasonInsert:  Partial<typeof mcaPlayerStatsTable.$inferInsert>;
-  seasonAccum:   Record<string, unknown>;
+  weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert>;
+  seasonInsert: Partial<typeof mcaPlayerStatsTable.$inferInsert>;
+  seasonAccum:  Record<string, unknown>;
 };
 
-function buildStatFields(
-  p: Record<string, unknown>,
-  statType: string,
-  _seasonId: number,
-  _playerId: number,
-  _teamId: number,
-): StatFields {
+function buildStatFields(p: Record<string, unknown>, statType: string): StatFields {
   const T = mcaPlayerStatsTable;
 
   if (statType === "passing") {
-    const passYds       = getN(p, "passYds","passingYards","passyds");
-    const passTDs       = getN(p, "passTDs","passingTds","passtds");
-    const passAtt       = getN(p, "passAtt","passAttempts","passattempts","passatt","attempts");
-    const passComp      = getN(p, "passComp","passCompletions","completions","passcomp","completionAttempts");
-    const passInts      = getN(p, "passInts","passingInts","interceptions","passInt","passingInterceptions","intsThrown");
-    const timesSacked   = getN(p, "passSacks","sackYdsLost","timesSacked","sacksRec","sacksAllowed","sacksReceived","qbSacks");
-    const passLongest   = getN(p, "passLongest","passLng","passingLongest");
-    const passPts       = getN(p, "passPts","passingPts","passingPoints");
-    const passerRating  = getN(p, "passerRating","qbRating","passRating","passer_rating");
-    const passCompPct   = getN(p, "passCompPct","completionPct","passCompletion");
-    const passYdsPerAtt = getN(p, "passYdsPerAtt","yardsPerAttempt","passYPA");
-    const passYdsPerGame = getN(p, "passYdsPerGame","passingYardsPerGame");
-    const weekFields:  Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { passYds, passTDs, passAtt, passComp, passInts, timesSacked, passerRating };
+    const passYds = getN(p,"passYds","passingYards","passyds");
+    const passTDs = getN(p,"passTDs","passingTds","passtds");
+    const passAtt = getN(p,"passAtt","passAttempts","passattempts","passatt","attempts");
+    const passComp = getN(p,"passComp","passCompletions","completions","passcomp","completionAttempts");
+    const passInts = getN(p,"passInts","passingInts","interceptions","passInt","passingInterceptions","intsThrown");
+    const timesSacked = getN(p,"passSacks","sackYdsLost","timesSacked","sacksRec","sacksAllowed","sacksReceived","qbSacks");
+    const passLongest = getN(p,"passLongest","passLng","passingLongest");
+    const passPts = getN(p,"passPts","passingPts","passingPoints");
+    const passerRating = getN(p,"passerRating","qbRating","passRating","passer_rating");
+    const passCompPct = getN(p,"passCompPct","completionPct","passCompletion");
+    const passYdsPerAtt = getN(p,"passYdsPerAtt","yardsPerAttempt","passYPA");
+    const passYdsPerGame = getN(p,"passYdsPerGame","passingYardsPerGame");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { passYds, passTDs, passAtt, passComp, passInts, timesSacked, passerRating };
     const seasonInsert: Partial<typeof T.$inferInsert> = { passYds, passTDs, passAtt, passComp, passInts, timesSacked, passLongest, passPts, passerRating, passCompPct, passYdsPerAtt, passYdsPerGame };
     const seasonAccum: Record<string, unknown> = {
-      passYds:      sql`${T.passYds}      + ${passYds}`,
-      passTDs:      sql`${T.passTDs}      + ${passTDs}`,
-      passAtt:      sql`${T.passAtt}      + ${passAtt}`,
-      passComp:     sql`${T.passComp}     + ${passComp}`,
-      passInts:     sql`${T.passInts}     + ${passInts}`,
-      timesSacked:  sql`${T.timesSacked}  + ${timesSacked}`,
-      passLongest:  sql`GREATEST(${T.passLongest}, ${passLongest})`,
-      passPts:      sql`${T.passPts}      + ${passPts}`,
+      passYds: sql`${T.passYds}+${passYds}`, passTDs: sql`${T.passTDs}+${passTDs}`,
+      passAtt: sql`${T.passAtt}+${passAtt}`, passComp: sql`${T.passComp}+${passComp}`,
+      passInts: sql`${T.passInts}+${passInts}`, timesSacked: sql`${T.timesSacked}+${timesSacked}`,
+      passLongest: sql`GREATEST(${T.passLongest},${passLongest})`, passPts: sql`${T.passPts}+${passPts}`,
       passerRating, passCompPct, passYdsPerAtt, passYdsPerGame,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "rushing") {
-    const rushYds             = getN(p, "rushYds","rushingYards","rushyds");
-    const rushTDs             = getN(p, "rushTDs","rushingTds","rushtds");
-    const rushAtt             = getN(p, "rushAtt","rushAttempts","rushatt","carries","rushCarries");
-    const fumbles             = getN(p, "rushFum","fumbles","fumLost","fumblesLost","offFumbles","fumTotal","fum");
-    const rush20PlusYds       = getN(p, "rush20PlusYds","rushingTwentyPlusYards","rush20Plus");
-    const rushBrokenTackles   = getN(p, "rushBrokenTackles","brokenTackles");
-    const rushLongest         = getN(p, "rushLongest","rushLng","rushingLongest");
-    const rushPts             = getN(p, "rushPts","rushingPts","rushingPoints");
-    const rushYdsAfterContact = getN(p, "rushYdsAfterContact","yardsAfterContact");
-    const rushToPct           = getN(p, "rushToPct","rushTouchdownPct");
-    const rushYdsPerAtt       = getN(p, "rushYdsPerAtt","rushingYardsPerAtt","yardsPerCarry");
-    const rushYdsPerGame      = getN(p, "rushYdsPerGame","rushingYardsPerGame");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { rushYds, rushTDs, rushAtt, fumbles };
+    const rushYds = getN(p,"rushYds","rushingYards","rushyds");
+    const rushTDs = getN(p,"rushTDs","rushingTds","rushtds");
+    const rushAtt = getN(p,"rushAtt","rushAttempts","rushatt","carries","rushCarries");
+    const fumbles = getN(p,"rushFum","fumbles","fumLost","fumblesLost","offFumbles","fumTotal","fum");
+    const rush20PlusYds = getN(p,"rush20PlusYds","rushingTwentyPlusYards","rush20Plus");
+    const rushBrokenTackles = getN(p,"rushBrokenTackles","brokenTackles");
+    const rushLongest = getN(p,"rushLongest","rushLng","rushingLongest");
+    const rushPts = getN(p,"rushPts","rushingPts","rushingPoints");
+    const rushYdsAfterContact = getN(p,"rushYdsAfterContact","yardsAfterContact");
+    const rushToPct = getN(p,"rushToPct","rushTouchdownPct");
+    const rushYdsPerAtt = getN(p,"rushYdsPerAtt","rushingYardsPerAtt","yardsPerCarry");
+    const rushYdsPerGame = getN(p,"rushYdsPerGame","rushingYardsPerGame");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { rushYds, rushTDs, rushAtt, fumbles };
     const seasonInsert: Partial<typeof T.$inferInsert> = { rushYds, rushTDs, rushAtt, fumbles, rush20PlusYds, rushBrokenTackles, rushLongest, rushPts, rushYdsAfterContact, rushToPct, rushYdsPerAtt, rushYdsPerGame };
     const seasonAccum: Record<string, unknown> = {
-      rushYds:             sql`${T.rushYds}             + ${rushYds}`,
-      rushTDs:             sql`${T.rushTDs}             + ${rushTDs}`,
-      rushAtt:             sql`${T.rushAtt}             + ${rushAtt}`,
-      fumbles:             sql`${T.fumbles}             + ${fumbles}`,
-      rush20PlusYds:       sql`${T.rush20PlusYds}       + ${rush20PlusYds}`,
-      rushBrokenTackles:   sql`${T.rushBrokenTackles}   + ${rushBrokenTackles}`,
-      rushLongest:         sql`GREATEST(${T.rushLongest}, ${rushLongest})`,
-      rushPts:             sql`${T.rushPts}             + ${rushPts}`,
-      rushYdsAfterContact: sql`${T.rushYdsAfterContact} + ${rushYdsAfterContact}`,
+      rushYds: sql`${T.rushYds}+${rushYds}`, rushTDs: sql`${T.rushTDs}+${rushTDs}`,
+      rushAtt: sql`${T.rushAtt}+${rushAtt}`, fumbles: sql`${T.fumbles}+${fumbles}`,
+      rush20PlusYds: sql`${T.rush20PlusYds}+${rush20PlusYds}`,
+      rushBrokenTackles: sql`${T.rushBrokenTackles}+${rushBrokenTackles}`,
+      rushLongest: sql`GREATEST(${T.rushLongest},${rushLongest})`,
+      rushPts: sql`${T.rushPts}+${rushPts}`,
+      rushYdsAfterContact: sql`${T.rushYdsAfterContact}+${rushYdsAfterContact}`,
       rushToPct, rushYdsPerAtt, rushYdsPerGame,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "receiving") {
-    const recYds          = getN(p, "recYds","receivingYards","recyds");
-    const recTDs          = getN(p, "recTDs","receivingTds","rectds");
-    const recRec          = getN(p, "recRec","receptions","catches","receptionsTotal","recCatches");
-    const recDrops        = getN(p, "recDrops","drops","receivingDrops");
-    const recLongest      = getN(p, "recLongest","recLng","receivingLongest");
-    const recPts          = getN(p, "recPts","receivingPts","receivingPoints");
-    const recYdsAfterCatch = getN(p, "recYdsAfterCatch");
-    const recCatchPct     = getN(p, "recCatchPct");
-    const recToPct        = getN(p, "recToPct","receivingTouchdownPct");
-    const recYacPerCatch  = getN(p, "recYacPerCatch","yacPerCatch");
-    const recYdsPerCatch  = getN(p, "recYdsPerCatch","yardsPerCatch","receivingYardsPerCatch");
-    const recYdsPerGame   = getN(p, "recYdsPerGame","receivingYardsPerGame");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { recYds, recTDs, recRec, recDrops };
+    const recYds = getN(p,"recYds","receivingYards","recyds");
+    const recTDs = getN(p,"recTDs","receivingTds","rectds");
+    const recRec = getN(p,"recRec","receptions","catches","receptionsTotal","recCatches");
+    const recDrops = getN(p,"recDrops","drops","receivingDrops");
+    const recLongest = getN(p,"recLongest","recLng","receivingLongest");
+    const recPts = getN(p,"recPts","receivingPts","receivingPoints");
+    const recYdsAfterCatch = getN(p,"recYdsAfterCatch");
+    const recCatchPct = getN(p,"recCatchPct");
+    const recToPct = getN(p,"recToPct","receivingTouchdownPct");
+    const recYacPerCatch = getN(p,"recYacPerCatch","yacPerCatch");
+    const recYdsPerCatch = getN(p,"recYdsPerCatch","yardsPerCatch","receivingYardsPerCatch");
+    const recYdsPerGame = getN(p,"recYdsPerGame","receivingYardsPerGame");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { recYds, recTDs, recRec, recDrops };
     const seasonInsert: Partial<typeof T.$inferInsert> = { recYds, recTDs, recRec, recDrops, recLongest, recPts, recYdsAfterCatch, recCatchPct, recToPct, recYacPerCatch, recYdsPerCatch, recYdsPerGame };
     const seasonAccum: Record<string, unknown> = {
-      recYds:           sql`${T.recYds}           + ${recYds}`,
-      recTDs:           sql`${T.recTDs}           + ${recTDs}`,
-      recRec:           sql`${T.recRec}           + ${recRec}`,
-      recDrops:         sql`${T.recDrops}         + ${recDrops}`,
-      recLongest:       sql`GREATEST(${T.recLongest}, ${recLongest})`,
-      recPts:           sql`${T.recPts}           + ${recPts}`,
-      recYdsAfterCatch: sql`${T.recYdsAfterCatch} + ${recYdsAfterCatch}`,
+      recYds: sql`${T.recYds}+${recYds}`, recTDs: sql`${T.recTDs}+${recTDs}`,
+      recRec: sql`${T.recRec}+${recRec}`, recDrops: sql`${T.recDrops}+${recDrops}`,
+      recLongest: sql`GREATEST(${T.recLongest},${recLongest})`, recPts: sql`${T.recPts}+${recPts}`,
+      recYdsAfterCatch: sql`${T.recYdsAfterCatch}+${recYdsAfterCatch}`,
       recCatchPct, recToPct, recYacPerCatch, recYdsPerCatch, recYdsPerGame,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "defense") {
-    const sacks          = getN(p, "defSacks","sacks","sack");
-    const defInts        = getN(p, "defInts","defInterceptions","interceptions","ints");
-    const totalTackles   = getN(p, "defTotalTackles","totalTackles","tackleTotal","tackles");
-    const tackleSolo     = getN(p, "defTackleSolo","tackleSolo","soloTackles");
-    const tackleAssist   = getN(p, "defTackleAssist","tackleAssist","assistTackles");
-    const defFumblesRec  = getN(p, "defFumblesRec","fumblesRecovered","fumRec","fumbleRecoveries","fumbRec");
-    const forcedFumbles  = getN(p, "defForcedFumbles","forcedFumbles","ffum","fumForced","defFF","defForcedFum");
-    const tacklesForLoss = getN(p, "defTacklesForLoss","tacklesForLoss","tfl","defTFL","tackleForLoss");
-    const defTDs         = getN(p, "defTDs","defTouchdowns","defTD","defensiveTDs","defTdsTotal");
-    const defCatchAllowed = getN(p, "defCatchAllowed");
-    const defDeflections = getN(p, "defDeflections","passDeflections","pbu","passesDefended");
-    const defIntReturnYds = getN(p, "defIntReturnYds","intReturnYards");
-    const defPts         = getN(p, "defPts","defensivePts");
-    const defSafeties    = getN(p, "defSafeties","safeties");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { sacks, defInts, totalTackles, forcedFumbles, defTDs };
+    const sacks = getN(p,"defSacks","sacks","sack");
+    const defInts = getN(p,"defInts","defInterceptions","interceptions","ints");
+    const totalTackles = getN(p,"defTotalTackles","totalTackles","tackleTotal","tackles");
+    const tackleSolo = getN(p,"defTackleSolo","tackleSolo","soloTackles");
+    const tackleAssist = getN(p,"defTackleAssist","tackleAssist","assistTackles");
+    const defFumblesRec = getN(p,"defFumblesRec","fumblesRecovered","fumRec","fumbleRecoveries","fumbRec");
+    const forcedFumbles = getN(p,"defForcedFumbles","forcedFumbles","ffum","fumForced","defFF","defForcedFum");
+    const tacklesForLoss = getN(p,"defTacklesForLoss","tacklesForLoss","tfl","defTFL","tackleForLoss");
+    const defTDs = getN(p,"defTDs","defTouchdowns","defTD","defensiveTDs","defTdsTotal");
+    const defCatchAllowed = getN(p,"defCatchAllowed");
+    const defDeflections = getN(p,"defDeflections","passDeflections","pbu","passesDefended");
+    const defIntReturnYds = getN(p,"defIntReturnYds","intReturnYards");
+    const defPts = getN(p,"defPts","defensivePts");
+    const defSafeties = getN(p,"defSafeties","safeties");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { sacks, defInts, totalTackles, forcedFumbles, defTDs };
     const seasonInsert: Partial<typeof T.$inferInsert> = { sacks, defInts, totalTackles, tackleSolo, tackleAssist, defFumblesRec, forcedFumbles, tacklesForLoss, defTDs, defCatchAllowed, defDeflections, defIntReturnYds, defPts, defSafeties };
     const seasonAccum: Record<string, unknown> = {
-      sacks:            sql`${T.sacks}            + ${sacks}`,
-      defInts:          sql`${T.defInts}          + ${defInts}`,
-      totalTackles:     sql`${T.totalTackles}     + ${totalTackles}`,
-      tackleSolo:       sql`${T.tackleSolo}       + ${tackleSolo}`,
-      tackleAssist:     sql`${T.tackleAssist}     + ${tackleAssist}`,
-      defFumblesRec:    sql`${T.defFumblesRec}    + ${defFumblesRec}`,
-      forcedFumbles:    sql`${T.forcedFumbles}    + ${forcedFumbles}`,
-      tacklesForLoss:   sql`${T.tacklesForLoss}   + ${tacklesForLoss}`,
-      defTDs:           sql`${T.defTDs}           + ${defTDs}`,
-      defCatchAllowed:  sql`${T.defCatchAllowed}  + ${defCatchAllowed}`,
-      defDeflections:   sql`${T.defDeflections}   + ${defDeflections}`,
-      defIntReturnYds:  sql`${T.defIntReturnYds}  + ${defIntReturnYds}`,
-      defPts:           sql`${T.defPts}           + ${defPts}`,
-      defSafeties:      sql`${T.defSafeties}      + ${defSafeties}`,
+      sacks: sql`${T.sacks}+${sacks}`, defInts: sql`${T.defInts}+${defInts}`,
+      totalTackles: sql`${T.totalTackles}+${totalTackles}`, tackleSolo: sql`${T.tackleSolo}+${tackleSolo}`,
+      tackleAssist: sql`${T.tackleAssist}+${tackleAssist}`, defFumblesRec: sql`${T.defFumblesRec}+${defFumblesRec}`,
+      forcedFumbles: sql`${T.forcedFumbles}+${forcedFumbles}`, tacklesForLoss: sql`${T.tacklesForLoss}+${tacklesForLoss}`,
+      defTDs: sql`${T.defTDs}+${defTDs}`, defCatchAllowed: sql`${T.defCatchAllowed}+${defCatchAllowed}`,
+      defDeflections: sql`${T.defDeflections}+${defDeflections}`, defIntReturnYds: sql`${T.defIntReturnYds}+${defIntReturnYds}`,
+      defPts: sql`${T.defPts}+${defPts}`, defSafeties: sql`${T.defSafeties}+${defSafeties}`,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "kicking") {
-    const fgMade       = getN(p, "fGMade","fgMade","fgm","fieldGoalsMade","fg_made");
-    const fgAtt        = getN(p, "fGAtt","fgAtt","fga","fieldGoalAttempts","fg_att","fgAttempts");
-    const fgLong       = getN(p, "fGLongest","fgLong","fglg","fgLng","fgLongestMade","fg_long");
-    const xpMade       = getN(p, "xPMade","xpMade","xpm","extraPointsMade","epMade","xp_made");
-    const xpAtt        = getN(p, "xPAtt","xpAtt","xpa","extraPointAttempts","epAtt","xp_att","xpAttempts");
-    const fg50PlusAtt  = getN(p, "fG50PlusAtt","fg50PlusAtt");
-    const fg50PlusMade = getN(p, "fG50PlusMade","fg50PlusMade");
-    const kickPts      = getN(p, "kickPts");
-    const kickoffAtt   = getN(p, "kickoffAtt");
-    const kickoffTBs   = getN(p, "kickoffTBs");
-    const fgCompPct    = getN(p, "fGCompPct","fgCompPct");
-    const xpCompPct    = getN(p, "xPCompPct","xpCompPct");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { fgMade, fgAtt, xpMade, xpAtt };
+    const fgMade = getN(p,"fGMade","fgMade","fgm","fieldGoalsMade","fg_made");
+    const fgAtt = getN(p,"fGAtt","fgAtt","fga","fieldGoalAttempts","fg_att","fgAttempts");
+    const fgLong = getN(p,"fGLongest","fgLong","fglg","fgLng","fgLongestMade","fg_long");
+    const xpMade = getN(p,"xPMade","xpMade","xpm","extraPointsMade","epMade","xp_made");
+    const xpAtt = getN(p,"xPAtt","xpAtt","xpa","extraPointAttempts","epAtt","xp_att","xpAttempts");
+    const fg50PlusAtt = getN(p,"fG50PlusAtt","fg50PlusAtt");
+    const fg50PlusMade = getN(p,"fG50PlusMade","fg50PlusMade");
+    const kickPts = getN(p,"kickPts");
+    const kickoffAtt = getN(p,"kickoffAtt");
+    const kickoffTBs = getN(p,"kickoffTBs");
+    const fgCompPct = getN(p,"fGCompPct","fgCompPct");
+    const xpCompPct = getN(p,"xPCompPct","xpCompPct");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { fgMade, fgAtt, xpMade, xpAtt };
     const seasonInsert: Partial<typeof T.$inferInsert> = { fgMade, fgAtt, fgLong, xpMade, xpAtt, fg50PlusAtt, fg50PlusMade, kickPts, kickoffAtt, kickoffTBs, fgCompPct, xpCompPct };
     const seasonAccum: Record<string, unknown> = {
-      fgMade:       sql`${T.fgMade}       + ${fgMade}`,
-      fgAtt:        sql`${T.fgAtt}        + ${fgAtt}`,
-      fgLong:       sql`GREATEST(${T.fgLong}, ${fgLong})`,
-      xpMade:       sql`${T.xpMade}       + ${xpMade}`,
-      xpAtt:        sql`${T.xpAtt}        + ${xpAtt}`,
-      fg50PlusAtt:  sql`${T.fg50PlusAtt}  + ${fg50PlusAtt}`,
-      fg50PlusMade: sql`${T.fg50PlusMade} + ${fg50PlusMade}`,
-      kickPts:      sql`${T.kickPts}      + ${kickPts}`,
-      kickoffAtt:   sql`${T.kickoffAtt}   + ${kickoffAtt}`,
-      kickoffTBs:   sql`${T.kickoffTBs}   + ${kickoffTBs}`,
+      fgMade: sql`${T.fgMade}+${fgMade}`, fgAtt: sql`${T.fgAtt}+${fgAtt}`,
+      fgLong: sql`GREATEST(${T.fgLong},${fgLong})`, xpMade: sql`${T.xpMade}+${xpMade}`,
+      xpAtt: sql`${T.xpAtt}+${xpAtt}`, fg50PlusAtt: sql`${T.fg50PlusAtt}+${fg50PlusAtt}`,
+      fg50PlusMade: sql`${T.fg50PlusMade}+${fg50PlusMade}`, kickPts: sql`${T.kickPts}+${kickPts}`,
+      kickoffAtt: sql`${T.kickoffAtt}+${kickoffAtt}`, kickoffTBs: sql`${T.kickoffTBs}+${kickoffTBs}`,
       fgCompPct, xpCompPct,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "punting") {
-    const puntAtt          = getN(p, "puntAtt","punts","puntCount","puntAttempts","punt_att");
-    const puntYds          = getN(p, "puntYds","puntingYds","puntYdsTotal","punt_yds");
-    const puntLong         = getN(p, "puntLong","puntLng","puntLongest","punt_long");
-    const puntIn20         = getN(p, "puntIn20","puntsIn20","puntInsideTwenty","punt_in_20");
-    const puntTouchbacks   = getN(p, "puntTouchbacks","puntTBs","puntTouchback","punt_touchbacks");
-    const puntNetYds       = getN(p, "puntNetYds");
-    const puntsBlocked     = getN(p, "puntsBlocked");
-    const puntNetYdsPerAtt = getN(p, "puntNetYdsPerAtt");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { puntAtt, puntYds };
+    const puntAtt = getN(p,"puntAtt","punts","puntCount","puntAttempts","punt_att");
+    const puntYds = getN(p,"puntYds","puntingYds","puntYdsTotal","punt_yds");
+    const puntLong = getN(p,"puntLong","puntLng","puntLongest","punt_long");
+    const puntIn20 = getN(p,"puntIn20","puntsIn20","puntInsideTwenty","punt_in_20");
+    const puntTouchbacks = getN(p,"puntTouchbacks","puntTBs","puntTouchback","punt_touchbacks");
+    const puntNetYds = getN(p,"puntNetYds");
+    const puntsBlocked = getN(p,"puntsBlocked");
+    const puntNetYdsPerAtt = getN(p,"puntNetYdsPerAtt");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { puntAtt, puntYds };
     const seasonInsert: Partial<typeof T.$inferInsert> = { puntAtt, puntYds, puntLong, puntIn20, puntTouchbacks, puntNetYds, puntsBlocked, puntNetYdsPerAtt };
     const seasonAccum: Record<string, unknown> = {
-      puntAtt:         sql`${T.puntAtt}         + ${puntAtt}`,
-      puntYds:         sql`${T.puntYds}         + ${puntYds}`,
-      puntLong:        sql`GREATEST(${T.puntLong}, ${puntLong})`,
-      puntIn20:        sql`${T.puntIn20}        + ${puntIn20}`,
-      puntTouchbacks:  sql`${T.puntTouchbacks}  + ${puntTouchbacks}`,
-      puntNetYds:      sql`${T.puntNetYds}      + ${puntNetYds}`,
-      puntsBlocked:    sql`${T.puntsBlocked}    + ${puntsBlocked}`,
-      puntNetYdsPerAtt,
+      puntAtt: sql`${T.puntAtt}+${puntAtt}`, puntYds: sql`${T.puntYds}+${puntYds}`,
+      puntLong: sql`GREATEST(${T.puntLong},${puntLong})`, puntIn20: sql`${T.puntIn20}+${puntIn20}`,
+      puntTouchbacks: sql`${T.puntTouchbacks}+${puntTouchbacks}`, puntNetYds: sql`${T.puntNetYds}+${puntNetYds}`,
+      puntsBlocked: sql`${T.puntsBlocked}+${puntsBlocked}`, puntNetYdsPerAtt,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "kickreturn" || statType === "kickreturning") {
-    const krAtt = getN(p, "krAtt","kickReturnAtt","krReturns","kickReturnAttempts","kr_att");
-    const krYds = getN(p, "krYds","kickReturnYds","kickRetYds","kr_yds");
-    const krTDs = getN(p, "krTDs","kickReturnTDs","kickRetTDs","krTouchdowns","kr_tds");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { krYds, krTDs };
+    const krAtt = getN(p,"krAtt","kickReturnAtt","krReturns","kickReturnAttempts","kr_att");
+    const krYds = getN(p,"krYds","kickReturnYds","kickRetYds","kr_yds");
+    const krTDs = getN(p,"krTDs","kickReturnTDs","kickRetTDs","krTouchdowns","kr_tds");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { krYds, krTDs };
     const seasonInsert: Partial<typeof T.$inferInsert> = { krAtt, krYds, krTDs };
     const seasonAccum: Record<string, unknown> = {
-      krAtt: sql`${T.krAtt} + ${krAtt}`,
-      krYds: sql`${T.krYds} + ${krYds}`,
-      krTDs: sql`${T.krTDs} + ${krTDs}`,
+      krAtt: sql`${T.krAtt}+${krAtt}`, krYds: sql`${T.krYds}+${krYds}`, krTDs: sql`${T.krTDs}+${krTDs}`,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
 
   if (statType === "puntreturn" || statType === "puntreturning") {
-    const prAtt = getN(p, "prAtt","puntReturnAtt","prReturns","puntReturnAttempts","pr_att");
-    const prYds = getN(p, "prYds","puntReturnYds","puntRetYds","pr_yds");
-    const prTDs = getN(p, "prTDs","puntReturnTDs","puntRetTDs","prTouchdowns","pr_tds");
-    const weekFields:   Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { prYds, prTDs };
+    const prAtt = getN(p,"prAtt","puntReturnAtt","prReturns","puntReturnAttempts","pr_att");
+    const prYds = getN(p,"prYds","puntReturnYds","puntRetYds","pr_yds");
+    const prTDs = getN(p,"prTDs","puntReturnTDs","puntRetTDs","prTouchdowns","pr_tds");
+    const weekFields: Partial<typeof mcaPlayerWeekStatsTable.$inferInsert> = { prYds, prTDs };
     const seasonInsert: Partial<typeof T.$inferInsert> = { prAtt, prYds, prTDs };
     const seasonAccum: Record<string, unknown> = {
-      prAtt: sql`${T.prAtt} + ${prAtt}`,
-      prYds: sql`${T.prYds} + ${prYds}`,
-      prTDs: sql`${T.prTDs} + ${prTDs}`,
+      prAtt: sql`${T.prAtt}+${prAtt}`, prYds: sql`${T.prYds}+${prYds}`, prTDs: sql`${T.prTDs}+${prTDs}`,
     };
     return { weekFields, seasonInsert, seasonAccum };
   }
@@ -1084,8 +1105,9 @@ function buildStatFields(
 
 export async function processV2DraftPicks(body: unknown, eaLeagueId: number): Promise<V2Result> {
   try {
-    const season   = await getOrCreateV2Season(eaLeagueId);
     const rawPicks = extractList(body, "draftPickInfoList","draftPicks","picks","leagueDraftPickList");
+    const seasonIndex = extractSeasonIndex(body, rawPicks);
+    const season      = await getOrCreateV2Season(eaLeagueId, seasonIndex);
 
     if (rawPicks.length === 0) {
       console.warn(`[v2/draftpicks/${eaLeagueId}] No picks found`);
@@ -1105,8 +1127,8 @@ export async function processV2DraftPicks(body: unknown, eaLeagueId: number): Pr
       const round     = getN(p, "round","roundNum");
       if (!teamId || !draftYear || !round) continue;
 
-      const originalTeamId   = getN(p, "originalTeamId","origTeamId") || null;
-      const effectiveOrigId  = originalTeamId && originalTeamId !== teamId ? originalTeamId : null;
+      const originalTeamId  = getN(p, "originalTeamId","origTeamId") || null;
+      const effectiveOrigId = originalTeamId && originalTeamId !== teamId ? originalTeamId : null;
 
       rows.push({
         eaSeasonId:       season.id,
@@ -1118,6 +1140,7 @@ export async function processV2DraftPicks(body: unknown, eaLeagueId: number): Pr
         pickNum:          getN(p, "pickNum","normalizedPickNumber"),
         originalTeamId:   effectiveOrigId,
         originalTeamName: effectiveOrigId ? (teamNameMap.get(effectiveOrigId) ?? null) : null,
+        rawJson:          p,
         importedAt:       new Date(),
       });
     }
@@ -1127,7 +1150,7 @@ export async function processV2DraftPicks(body: unknown, eaLeagueId: number): Pr
     await db.delete(mcaDraftPicksTable).where(eq(mcaDraftPicksTable.eaSeasonId, season.id));
     await db.insert(mcaDraftPicksTable).values(rows);
 
-    return { ok: true, message: `${rows.length} draft picks imported` };
+    return { ok: true, message: `${rows.length} draft picks imported (season ${season.seasonNumber})` };
   } catch (err) {
     console.error("[v2/draftpicks]", err);
     return { ok: false, message: String(err) };
@@ -1140,17 +1163,25 @@ export async function registerAppUser(
   gamertag: string,
   displayName?: string,
   platform?: string,
+  email?: string,
 ): Promise<V2Result> {
   try {
     const gt = gamertag.toLowerCase().trim();
     if (!gt) return { ok: false, message: "Gamertag is required" };
     await db.insert(appUsersTable)
-      .values({ gamertag: gt, displayName: displayName ?? gt, platform: platform ?? "", updatedAt: new Date() })
+      .values({
+        gamertag: gt,
+        displayName: displayName ?? gt,
+        platform: platform ?? "",
+        email: email ?? null,
+        updatedAt: new Date(),
+      })
       .onConflictDoUpdate({
         target: appUsersTable.gamertag,
         set: {
           ...(displayName ? { displayName } : {}),
           ...(platform    ? { platform }    : {}),
+          ...(email       ? { email }       : {}),
           updatedAt: new Date(),
         },
       });
@@ -1161,7 +1192,7 @@ export async function registerAppUser(
 }
 
 export async function getAppUserLeagues(gamertag: string) {
-  const gt = gamertag.toLowerCase().trim();
+  const gt    = gamertag.toLowerCase().trim();
   const links = await db
     .select()
     .from(appUserLeagueLinksTable)
@@ -1176,11 +1207,51 @@ export async function getAppUserLeagues(gamertag: string) {
     .where(sql`${mcaLeaguesTable.eaLeagueId} = ANY(${leagueIds})`);
   const leagueMap = new Map(leagues.map(l => [l.eaLeagueId, l]));
 
-  return links.map(link => ({
-    eaLeagueId:  link.eaLeagueId,
-    leagueName:  leagueMap.get(link.eaLeagueId)?.leagueName ?? "",
-    platform:    leagueMap.get(link.eaLeagueId)?.platform   ?? "",
-    teamId:      link.teamId,
-    linkedAt:    link.linkedAt,
-  }));
+  // For each linked league, fetch the team's standings/stats
+  const teamInfoResults = await Promise.allSettled(
+    links.map(async (link) => {
+      if (!link.teamId) return null;
+      const season = await db
+        .select()
+        .from(mcaSeasonsTable)
+        .where(and(eq(mcaSeasonsTable.eaLeagueId, link.eaLeagueId), eq(mcaSeasonsTable.isActive, true)))
+        .orderBy(desc(mcaSeasonsTable.seasonNumber))
+        .limit(1)
+        .then(r => r[0] ?? null);
+      if (!season) return null;
+
+      const [teamInfo, teamStats] = await Promise.all([
+        db.select().from(mcaTeamsTable)
+          .where(and(eq(mcaTeamsTable.eaSeasonId, season.id), eq(mcaTeamsTable.teamId, link.teamId!)))
+          .limit(1)
+          .then(r => r[0] ?? null),
+        db.select().from(mcaTeamStatsTable)
+          .where(and(eq(mcaTeamStatsTable.eaSeasonId, season.id), eq(mcaTeamStatsTable.teamId, link.teamId!)))
+          .limit(1)
+          .then(r => r[0] ?? null),
+      ]);
+      return { teamInfo, teamStats };
+    }),
+  );
+
+  return links.map((link, i) => {
+    const league   = leagueMap.get(link.eaLeagueId);
+    const teamData = teamInfoResults[i]?.status === "fulfilled" ? teamInfoResults[i].value : null;
+    return {
+      eaLeagueId:   link.eaLeagueId,
+      leagueName:   league?.leagueName ?? "",
+      platform:     league?.platform   ?? "",
+      teamId:       link.teamId,
+      teamName:     link.teamName ?? teamData?.teamInfo?.fullName ?? "",
+      conference:   teamData?.teamInfo?.conference ?? null,
+      divName:      teamData?.teamInfo?.divName    ?? null,
+      ovrRating:    teamData?.teamInfo?.ovrRating  ?? null,
+      wins:         teamData?.teamStats?.wins      ?? null,
+      losses:       teamData?.teamStats?.losses    ?? null,
+      ties:         teamData?.teamStats?.ties      ?? null,
+      ptsFor:       teamData?.teamStats?.ptsFor    ?? null,
+      ptsAgainst:   teamData?.teamStats?.ptsAgainst ?? null,
+      linkedAt:     link.linkedAt,
+    };
+  });
 }

@@ -784,6 +784,230 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v2/leagues/{eaLeagueId}/roster/{teamId}:
+    get:
+      operationId: getV2TeamRoster
+      tags: [v2]
+      summary: Roster for a single team in the active season
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - $ref: "#/components/parameters/teamId"
+      responses:
+        "200":
+          description: All players on the team
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, teamId, playerCount, players]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  teamId:       { type: integer }
+                  playerCount:  { type: integer }
+                  players:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/team-stats:
+    get:
+      operationId: getV2TeamStats
+      tags: [v2]
+      summary: Cumulative team stats for the active season
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+      responses:
+        "200":
+          description: Team stats ordered by offensive yards desc
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, seasonNumber, teamStats]
+                properties:
+                  eaLeagueId:   { type: integer }
+                  seasonId:     { type: integer }
+                  seasonNumber: { type: integer }
+                  teamStats:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/team-stats/week/{weekType}/{weekNum}:
+    get:
+      operationId: getV2TeamWeekStats
+      tags: [v2]
+      summary: Per-week team stats (raw game data)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - $ref: "#/components/parameters/weekType"
+        - $ref: "#/components/parameters/weekNum"
+      responses:
+        "200":
+          description: Team stats for the given week
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, weekType, weekNum, teamStats]
+                properties:
+                  eaLeagueId: { type: integer }
+                  seasonId:   { type: integer }
+                  weekType:   { type: string }
+                  weekNum:    { type: integer }
+                  teamStats:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/leagues/{eaLeagueId}/player-stats/week/{weekType}/{weekNum}:
+    get:
+      operationId: getV2PlayerWeekStats
+      tags: [v2]
+      summary: Per-week player stats
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/eaLeagueId"
+        - $ref: "#/components/parameters/weekType"
+        - $ref: "#/components/parameters/weekNum"
+        - name: statType
+          in: query
+          required: false
+          description: Filter by stat type (passing, rushing, receiving, defense, kicking, punting, kickreturn, puntreturn)
+          schema: { type: string }
+      responses:
+        "200":
+          description: Player stats for the given week, optionally filtered by stat type
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eaLeagueId, seasonId, weekType, weekNum, stats]
+                properties:
+                  eaLeagueId: { type: integer }
+                  seasonId:   { type: integer }
+                  weekType:   { type: string }
+                  weekNum:    { type: integer }
+                  stats:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/users:
+    post:
+      operationId: registerV2User
+      tags: [v2]
+      summary: Register or update a mobile app user by gamertag
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gamertag]
+              properties:
+                gamertag:    { type: string, description: "Lowercase gamertag (canonical identifier)" }
+                displayName: { type: string }
+                platform:    { type: string, enum: [ps5, xbs, pc, ""] }
+                email:       { type: string, format: email }
+      responses:
+        "200":
+          description: User registered or updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, message]
+                properties:
+                  ok:      { type: boolean }
+                  message: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v2/users/{gamertag}:
+    get:
+      operationId: getV2User
+      tags: [v2]
+      summary: Get app user profile and linked leagues
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/gamertag"
+      responses:
+        "200":
+          description: User profile with linked league and team info
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [gamertag, displayName, platform, leagues]
+                properties:
+                  id:          { type: string, format: uuid }
+                  gamertag:    { type: string }
+                  displayName: { type: string }
+                  platform:    { type: string }
+                  email:       { type: string, nullable: true }
+                  createdAt:   { type: string, format: date-time }
+                  leagues:
+                    type: array
+                    items: { $ref: "#/components/schemas/V2UserLeague" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/users/{gamertag}/leagues:
+    get:
+      operationId: getV2UserLeagues
+      tags: [v2]
+      summary: Leagues linked to a gamertag with team details
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/gamertag"
+      responses:
+        "200":
+          description: Linked leagues with team and standings info
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [gamertag, leagues]
+                properties:
+                  gamertag: { type: string }
+                  leagues:
+                    type: array
+                    items: { $ref: "#/components/schemas/V2UserLeague" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -821,6 +1045,36 @@ components:
       description: EA / Madden league ID (no Discord involvement)
       schema:
         type: integer
+    teamId:
+      name: teamId
+      in: path
+      required: true
+      description: Madden team ID within the league
+      schema:
+        type: integer
+    weekType:
+      name: weekType
+      in: path
+      required: true
+      description: Week type — pre (preseason), reg (regular), post (playoffs)
+      schema:
+        type: string
+        enum: [pre, reg, post]
+    weekNum:
+      name: weekNum
+      in: path
+      required: true
+      description: Week number (1-based)
+      schema:
+        type: integer
+        minimum: 1
+    gamertag:
+      name: gamertag
+      in: path
+      required: true
+      description: Lowercase gamertag (canonical app user identifier)
+      schema:
+        type: string
 
   responses:
     Unauthorized:
@@ -831,6 +1085,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadRequest:
+      description: Invalid request body or parameters
       content:
         application/json:
           schema:
@@ -868,6 +1128,25 @@ components:
         currentWeek:  { type: string }
         isActive:     { type: boolean }
         startedAt:    { type: string, format: date-time }
+
+    V2UserLeague:
+      type: object
+      required: [eaLeagueId, leagueName, platform]
+      properties:
+        eaLeagueId:   { type: integer }
+        leagueName:   { type: string }
+        platform:     { type: string }
+        teamId:       { type: integer, nullable: true }
+        teamName:     { type: string, nullable: true }
+        conference:   { type: string, nullable: true }
+        divName:      { type: string, nullable: true }
+        ovrRating:    { type: integer, nullable: true }
+        wins:         { type: integer, nullable: true }
+        losses:       { type: integer, nullable: true }
+        ties:         { type: integer, nullable: true }
+        ptsFor:       { type: integer, nullable: true }
+        ptsAgainst:   { type: integer, nullable: true }
+        linkedAt:     { type: string, format: date-time }
 
     HealthStatus:
       type: object

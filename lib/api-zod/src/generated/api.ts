@@ -899,3 +899,173 @@ export const GetV2DraftPicksResponse = zod.object({
   seasonNumber: zod.number(),
   picks: zod.array(zod.record(zod.string(), zod.unknown())),
 });
+
+/**
+ * @summary Roster for a single team in the active season
+ */
+export const GetV2TeamRosterParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+  teamId: zod.coerce.number().describe("Madden team ID within the league"),
+});
+
+export const GetV2TeamRosterResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  teamId: zod.number(),
+  playerCount: zod.number(),
+  players: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Cumulative team stats for the active season
+ */
+export const GetV2TeamStatsParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+});
+
+export const GetV2TeamStatsResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  seasonNumber: zod.number(),
+  teamStats: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Per-week team stats (raw game data)
+ */
+
+export const GetV2TeamWeekStatsParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+  weekType: zod
+    .enum(["pre", "reg", "post"])
+    .describe("Week type — pre (preseason), reg (regular), post (playoffs)"),
+  weekNum: zod.coerce.number().min(1).describe("Week number (1-based)"),
+});
+
+export const GetV2TeamWeekStatsResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  weekType: zod.string(),
+  weekNum: zod.number(),
+  teamStats: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Per-week player stats
+ */
+
+export const GetV2PlayerWeekStatsParams = zod.object({
+  eaLeagueId: zod.coerce
+    .number()
+    .describe("EA \/ Madden league ID (no Discord involvement)"),
+  weekType: zod
+    .enum(["pre", "reg", "post"])
+    .describe("Week type — pre (preseason), reg (regular), post (playoffs)"),
+  weekNum: zod.coerce.number().min(1).describe("Week number (1-based)"),
+});
+
+export const GetV2PlayerWeekStatsQueryParams = zod.object({
+  statType: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter by stat type (passing, rushing, receiving, defense, kicking, punting, kickreturn, puntreturn)",
+    ),
+});
+
+export const GetV2PlayerWeekStatsResponse = zod.object({
+  eaLeagueId: zod.number(),
+  seasonId: zod.number(),
+  weekType: zod.string(),
+  weekNum: zod.number(),
+  stats: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
+/**
+ * @summary Register or update a mobile app user by gamertag
+ */
+export const RegisterV2UserBody = zod.object({
+  gamertag: zod.string().describe("Lowercase gamertag (canonical identifier)"),
+  displayName: zod.string().optional(),
+  platform: zod.enum(["ps5", "xbs", "pc", ""]).optional(),
+  email: zod.string().email().optional(),
+});
+
+export const RegisterV2UserResponse = zod.object({
+  ok: zod.boolean(),
+  message: zod.string(),
+});
+
+/**
+ * @summary Get app user profile and linked leagues
+ */
+export const GetV2UserParams = zod.object({
+  gamertag: zod.coerce
+    .string()
+    .describe("Lowercase gamertag (canonical app user identifier)"),
+});
+
+export const GetV2UserResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  gamertag: zod.string(),
+  displayName: zod.string(),
+  platform: zod.string(),
+  email: zod.string().nullish(),
+  createdAt: zod.date().optional(),
+  leagues: zod.array(
+    zod.object({
+      eaLeagueId: zod.number(),
+      leagueName: zod.string(),
+      platform: zod.string(),
+      teamId: zod.number().nullish(),
+      teamName: zod.string().nullish(),
+      conference: zod.string().nullish(),
+      divName: zod.string().nullish(),
+      ovrRating: zod.number().nullish(),
+      wins: zod.number().nullish(),
+      losses: zod.number().nullish(),
+      ties: zod.number().nullish(),
+      ptsFor: zod.number().nullish(),
+      ptsAgainst: zod.number().nullish(),
+      linkedAt: zod.date().optional(),
+    }),
+  ),
+});
+
+/**
+ * @summary Leagues linked to a gamertag with team details
+ */
+export const GetV2UserLeaguesParams = zod.object({
+  gamertag: zod.coerce
+    .string()
+    .describe("Lowercase gamertag (canonical app user identifier)"),
+});
+
+export const GetV2UserLeaguesResponse = zod.object({
+  gamertag: zod.string(),
+  leagues: zod.array(
+    zod.object({
+      eaLeagueId: zod.number(),
+      leagueName: zod.string(),
+      platform: zod.string(),
+      teamId: zod.number().nullish(),
+      teamName: zod.string().nullish(),
+      conference: zod.string().nullish(),
+      divName: zod.string().nullish(),
+      ovrRating: zod.number().nullish(),
+      wins: zod.number().nullish(),
+      losses: zod.number().nullish(),
+      ties: zod.number().nullish(),
+      ptsFor: zod.number().nullish(),
+      ptsAgainst: zod.number().nullish(),
+      linkedAt: zod.date().optional(),
+    }),
+  ),
+});

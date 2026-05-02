@@ -5,16 +5,20 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
 import type {
   AllRostersResponse,
+  BadRequestResponse,
   GetDraftPicks200,
   GetGlobalRecords200,
   GetGlobalRecordsParams,
@@ -34,11 +38,18 @@ import type {
   GetV2DraftPicks200,
   GetV2PlayerStats200,
   GetV2PlayerStatsParams,
+  GetV2PlayerWeekStats200,
+  GetV2PlayerWeekStatsParams,
   GetV2Rosters200,
   GetV2Schedule200,
   GetV2ScheduleParams,
   GetV2Standings200,
+  GetV2TeamRoster200,
+  GetV2TeamStats200,
+  GetV2TeamWeekStats200,
   GetV2Teams200,
+  GetV2User200,
+  GetV2UserLeagues200,
   GetWagers200,
   GetWagersParams,
   GlobalUserProfile,
@@ -46,13 +57,15 @@ import type {
   LeagueUserDetail,
   ListV2Leagues200,
   NotFoundResponse,
+  RegisterV2User200,
+  RegisterV2UserBody,
   StoreConfig,
   UnauthorizedResponse,
   V2LeagueInfo,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -2553,6 +2566,721 @@ export function useGetV2DraftPicks<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetV2DraftPicksQueryOptions(eaLeagueId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Roster for a single team in the active season
+ */
+export const getGetV2TeamRosterUrl = (eaLeagueId: number, teamId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}/roster/${teamId}`;
+};
+
+export const getV2TeamRoster = async (
+  eaLeagueId: number,
+  teamId: number,
+  options?: RequestInit,
+): Promise<GetV2TeamRoster200> => {
+  return customFetch<GetV2TeamRoster200>(
+    getGetV2TeamRosterUrl(eaLeagueId, teamId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2TeamRosterQueryKey = (
+  eaLeagueId: number,
+  teamId: number,
+) => {
+  return [`/api/v2/leagues/${eaLeagueId}/roster/${teamId}`] as const;
+};
+
+export const getGetV2TeamRosterQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2TeamRoster>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  teamId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamRoster>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2TeamRosterQueryKey(eaLeagueId, teamId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2TeamRoster>>> = ({
+    signal,
+  }) => getV2TeamRoster(eaLeagueId, teamId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(eaLeagueId && teamId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2TeamRoster>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2TeamRosterQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2TeamRoster>>
+>;
+export type GetV2TeamRosterQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Roster for a single team in the active season
+ */
+
+export function useGetV2TeamRoster<
+  TData = Awaited<ReturnType<typeof getV2TeamRoster>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  teamId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamRoster>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2TeamRosterQueryOptions(
+    eaLeagueId,
+    teamId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Cumulative team stats for the active season
+ */
+export const getGetV2TeamStatsUrl = (eaLeagueId: number) => {
+  return `/api/v2/leagues/${eaLeagueId}/team-stats`;
+};
+
+export const getV2TeamStats = async (
+  eaLeagueId: number,
+  options?: RequestInit,
+): Promise<GetV2TeamStats200> => {
+  return customFetch<GetV2TeamStats200>(getGetV2TeamStatsUrl(eaLeagueId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2TeamStatsQueryKey = (eaLeagueId: number) => {
+  return [`/api/v2/leagues/${eaLeagueId}/team-stats`] as const;
+};
+
+export const getGetV2TeamStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2TeamStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2TeamStatsQueryKey(eaLeagueId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2TeamStats>>> = ({
+    signal,
+  }) => getV2TeamStats(eaLeagueId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!eaLeagueId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2TeamStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2TeamStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2TeamStats>>
+>;
+export type GetV2TeamStatsQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Cumulative team stats for the active season
+ */
+
+export function useGetV2TeamStats<
+  TData = Awaited<ReturnType<typeof getV2TeamStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2TeamStatsQueryOptions(eaLeagueId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Per-week team stats (raw game data)
+ */
+export const getGetV2TeamWeekStatsUrl = (
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+) => {
+  return `/api/v2/leagues/${eaLeagueId}/team-stats/week/${weekType}/${weekNum}`;
+};
+
+export const getV2TeamWeekStats = async (
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  options?: RequestInit,
+): Promise<GetV2TeamWeekStats200> => {
+  return customFetch<GetV2TeamWeekStats200>(
+    getGetV2TeamWeekStatsUrl(eaLeagueId, weekType, weekNum),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2TeamWeekStatsQueryKey = (
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+) => {
+  return [
+    `/api/v2/leagues/${eaLeagueId}/team-stats/week/${weekType}/${weekNum}`,
+  ] as const;
+};
+
+export const getGetV2TeamWeekStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2TeamWeekStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamWeekStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetV2TeamWeekStatsQueryKey(eaLeagueId, weekType, weekNum);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV2TeamWeekStats>>
+  > = ({ signal }) =>
+    getV2TeamWeekStats(eaLeagueId, weekType, weekNum, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(eaLeagueId && weekType && weekNum),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2TeamWeekStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2TeamWeekStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2TeamWeekStats>>
+>;
+export type GetV2TeamWeekStatsQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Per-week team stats (raw game data)
+ */
+
+export function useGetV2TeamWeekStats<
+  TData = Awaited<ReturnType<typeof getV2TeamWeekStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2TeamWeekStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2TeamWeekStatsQueryOptions(
+    eaLeagueId,
+    weekType,
+    weekNum,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Per-week player stats
+ */
+export const getGetV2PlayerWeekStatsUrl = (
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  params?: GetV2PlayerWeekStatsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v2/leagues/${eaLeagueId}/player-stats/week/${weekType}/${weekNum}?${stringifiedParams}`
+    : `/api/v2/leagues/${eaLeagueId}/player-stats/week/${weekType}/${weekNum}`;
+};
+
+export const getV2PlayerWeekStats = async (
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  params?: GetV2PlayerWeekStatsParams,
+  options?: RequestInit,
+): Promise<GetV2PlayerWeekStats200> => {
+  return customFetch<GetV2PlayerWeekStats200>(
+    getGetV2PlayerWeekStatsUrl(eaLeagueId, weekType, weekNum, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetV2PlayerWeekStatsQueryKey = (
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  params?: GetV2PlayerWeekStatsParams,
+) => {
+  return [
+    `/api/v2/leagues/${eaLeagueId}/player-stats/week/${weekType}/${weekNum}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetV2PlayerWeekStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2PlayerWeekStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  params?: GetV2PlayerWeekStatsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2PlayerWeekStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetV2PlayerWeekStatsQueryKey(eaLeagueId, weekType, weekNum, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV2PlayerWeekStats>>
+  > = ({ signal }) =>
+    getV2PlayerWeekStats(eaLeagueId, weekType, weekNum, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(eaLeagueId && weekType && weekNum),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2PlayerWeekStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2PlayerWeekStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2PlayerWeekStats>>
+>;
+export type GetV2PlayerWeekStatsQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Per-week player stats
+ */
+
+export function useGetV2PlayerWeekStats<
+  TData = Awaited<ReturnType<typeof getV2PlayerWeekStats>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  eaLeagueId: number,
+  weekType: "pre" | "reg" | "post",
+  weekNum: number,
+  params?: GetV2PlayerWeekStatsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2PlayerWeekStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2PlayerWeekStatsQueryOptions(
+    eaLeagueId,
+    weekType,
+    weekNum,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Register or update a mobile app user by gamertag
+ */
+export const getRegisterV2UserUrl = () => {
+  return `/api/v2/users`;
+};
+
+export const registerV2User = async (
+  registerV2UserBody: RegisterV2UserBody,
+  options?: RequestInit,
+): Promise<RegisterV2User200> => {
+  return customFetch<RegisterV2User200>(getRegisterV2UserUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(registerV2UserBody),
+  });
+};
+
+export const getRegisterV2UserMutationOptions = <
+  TError = ErrorType<BadRequestResponse | UnauthorizedResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof registerV2User>>,
+    TError,
+    { data: BodyType<RegisterV2UserBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof registerV2User>>,
+  TError,
+  { data: BodyType<RegisterV2UserBody> },
+  TContext
+> => {
+  const mutationKey = ["registerV2User"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof registerV2User>>,
+    { data: BodyType<RegisterV2UserBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return registerV2User(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RegisterV2UserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof registerV2User>>
+>;
+export type RegisterV2UserMutationBody = BodyType<RegisterV2UserBody>;
+export type RegisterV2UserMutationError = ErrorType<
+  BadRequestResponse | UnauthorizedResponse
+>;
+
+/**
+ * @summary Register or update a mobile app user by gamertag
+ */
+export const useRegisterV2User = <
+  TError = ErrorType<BadRequestResponse | UnauthorizedResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof registerV2User>>,
+    TError,
+    { data: BodyType<RegisterV2UserBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof registerV2User>>,
+  TError,
+  { data: BodyType<RegisterV2UserBody> },
+  TContext
+> => {
+  return useMutation(getRegisterV2UserMutationOptions(options));
+};
+
+/**
+ * @summary Get app user profile and linked leagues
+ */
+export const getGetV2UserUrl = (gamertag: string) => {
+  return `/api/v2/users/${gamertag}`;
+};
+
+export const getV2User = async (
+  gamertag: string,
+  options?: RequestInit,
+): Promise<GetV2User200> => {
+  return customFetch<GetV2User200>(getGetV2UserUrl(gamertag), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2UserQueryKey = (gamertag: string) => {
+  return [`/api/v2/users/${gamertag}`] as const;
+};
+
+export const getGetV2UserQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2User>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  gamertag: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2User>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetV2UserQueryKey(gamertag);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getV2User>>> = ({
+    signal,
+  }) => getV2User(gamertag, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!gamertag,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getV2User>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetV2UserQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2User>>
+>;
+export type GetV2UserQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Get app user profile and linked leagues
+ */
+
+export function useGetV2User<
+  TData = Awaited<ReturnType<typeof getV2User>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  gamertag: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2User>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2UserQueryOptions(gamertag, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Leagues linked to a gamertag with team details
+ */
+export const getGetV2UserLeaguesUrl = (gamertag: string) => {
+  return `/api/v2/users/${gamertag}/leagues`;
+};
+
+export const getV2UserLeagues = async (
+  gamertag: string,
+  options?: RequestInit,
+): Promise<GetV2UserLeagues200> => {
+  return customFetch<GetV2UserLeagues200>(getGetV2UserLeaguesUrl(gamertag), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetV2UserLeaguesQueryKey = (gamertag: string) => {
+  return [`/api/v2/users/${gamertag}/leagues`] as const;
+};
+
+export const getGetV2UserLeaguesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getV2UserLeagues>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  gamertag: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2UserLeagues>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetV2UserLeaguesQueryKey(gamertag);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getV2UserLeagues>>
+  > = ({ signal }) => getV2UserLeagues(gamertag, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!gamertag,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getV2UserLeagues>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetV2UserLeaguesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getV2UserLeagues>>
+>;
+export type GetV2UserLeaguesQueryError = ErrorType<
+  UnauthorizedResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Leagues linked to a gamertag with team details
+ */
+
+export function useGetV2UserLeagues<
+  TData = Awaited<ReturnType<typeof getV2UserLeagues>>,
+  TError = ErrorType<UnauthorizedResponse | NotFoundResponse>,
+>(
+  gamertag: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getV2UserLeagues>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetV2UserLeaguesQueryOptions(gamertag, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

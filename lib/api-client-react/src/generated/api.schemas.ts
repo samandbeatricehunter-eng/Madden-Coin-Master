@@ -30,6 +30,23 @@ export interface V2LeagueInfo {
   startedAt: string;
 }
 
+export interface V2UserLeague {
+  eaLeagueId: number;
+  leagueName: string;
+  platform: string;
+  teamId?: number | null;
+  teamName?: string | null;
+  conference?: string | null;
+  divName?: string | null;
+  ovrRating?: number | null;
+  wins?: number | null;
+  losses?: number | null;
+  ties?: number | null;
+  ptsFor?: number | null;
+  ptsAgainst?: number | null;
+  linkedAt?: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -382,6 +399,11 @@ export type UnauthorizedResponse = ErrorResponse;
 export type NotFoundResponse = ErrorResponse;
 
 /**
+ * Invalid request body or parameters
+ */
+export type BadRequestResponse = ErrorResponse;
+
+/**
  * Maximum number of results to return (max 200)
  */
 export type LimitParameter = number;
@@ -580,4 +602,89 @@ export type GetV2DraftPicks200 = {
   seasonId: number;
   seasonNumber: number;
   picks: GetV2DraftPicks200PicksItem[];
+};
+
+export type GetV2TeamRoster200PlayersItem = { [key: string]: unknown };
+
+export type GetV2TeamRoster200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  teamId: number;
+  playerCount: number;
+  players: GetV2TeamRoster200PlayersItem[];
+};
+
+export type GetV2TeamStats200TeamStatsItem = { [key: string]: unknown };
+
+export type GetV2TeamStats200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  seasonNumber: number;
+  teamStats: GetV2TeamStats200TeamStatsItem[];
+};
+
+export type GetV2TeamWeekStats200TeamStatsItem = { [key: string]: unknown };
+
+export type GetV2TeamWeekStats200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  weekType: string;
+  weekNum: number;
+  teamStats: GetV2TeamWeekStats200TeamStatsItem[];
+};
+
+export type GetV2PlayerWeekStatsParams = {
+  /**
+   * Filter by stat type (passing, rushing, receiving, defense, kicking, punting, kickreturn, puntreturn)
+   */
+  statType?: string;
+};
+
+export type GetV2PlayerWeekStats200StatsItem = { [key: string]: unknown };
+
+export type GetV2PlayerWeekStats200 = {
+  eaLeagueId: number;
+  seasonId: number;
+  weekType: string;
+  weekNum: number;
+  stats: GetV2PlayerWeekStats200StatsItem[];
+};
+
+export type RegisterV2UserBodyPlatform =
+  (typeof RegisterV2UserBodyPlatform)[keyof typeof RegisterV2UserBodyPlatform];
+
+export const RegisterV2UserBodyPlatform = {
+  ps5: "ps5",
+  xbs: "xbs",
+  pc: "pc",
+  "": "",
+} as const;
+
+export type RegisterV2UserBody = {
+  /** Lowercase gamertag (canonical identifier) */
+  gamertag: string;
+  displayName?: string;
+  platform?: RegisterV2UserBodyPlatform;
+  email?: string;
+};
+
+export type RegisterV2User200 = {
+  ok: boolean;
+  message: string;
+};
+
+export type GetV2User200 = {
+  id?: string;
+  gamertag: string;
+  displayName: string;
+  platform: string;
+  email?: string | null;
+  createdAt?: string;
+  leagues: V2UserLeague[];
+};
+
+export type GetV2UserLeagues200 = {
+  gamertag: string;
+  leagues: V2UserLeague[];
 };
