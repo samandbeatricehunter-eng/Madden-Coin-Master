@@ -2,8 +2,7 @@
  * v2 MCA Webhook Routes — Madden-native, no Discord.
  * MCA sends data here; the processor stores it in mca_* tables keyed by eaLeagueId.
  *
- * URL pattern: /madden/v2/:leagueKey/:platform/:eaLeagueId/<endpoint>
- * Same leagueKey auth as v1 (MADDEN_WEBHOOK_KEY env var).
+ * URL pattern: /mca/v2/:leagueKey/:platform/:eaLeagueId/<endpoint>
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
@@ -11,11 +10,13 @@ import {
   processV2Roster,
   processV2FreeAgents,
   processV2Standings,
+  processV2TeamWeekStats,
   processV2Schedules,
   processV2PlayerWeekStats,
   processV2DraftPicks,
   getOrCreateV2Season,
   setV2CurrentWeek,
+  type WeekStatType,
 } from "../lib/v2-processor.js";
 import { saveMcaPayload } from "../lib/mcaStorage.js";
 
@@ -34,120 +35,131 @@ function validateKey(req: Request, res: Response, next: () => void) {
   next();
 }
 
-function leagueId(req: Request): number {
+function eid(req: Request): number {
   return parseInt(String(req.params["eaLeagueId"] ?? "0"), 10);
 }
 
+function wNum(req: Request): number {
+  return parseInt(String(req.params["weekNum"] ?? "0"), 10);
+}
+
+function wType(req: Request): string {
+  return String(req.params["weekType"] ?? "reg").toLowerCase();
+}
+
+// Fire-and-forget helper — logs errors so they're never silently swallowed
+function bg(label: string, promise: Promise<{ ok: boolean; message: string }>) {
+  promise.then(r => {
+    if (!r.ok) console.error(`[${label}] FAILED: ${r.message}`);
+    else       console.log(`[${label}] ${r.message}`);
+  }).catch(err => console.error(`[${label}] UNHANDLED:`, err));
+}
+
 // ── /leagueteams ──────────────────────────────────────────────────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/leagueteams", validateKey, async (req, res) => {
-  const eid = leagueId(req);
-  saveMcaPayload(`mca/v2/${eid}/leagueteams.json`, req.body);
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/leagueteams", validateKey, (req, res) => {
+  const id = eid(req);
+  saveMcaPayload(`mca/v2/${id}/leagueteams.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2LeagueTeams(
-    req.body, eid,
+  bg(`v2/leagueteams/${id}`, processV2LeagueTeams(
+    req.body, id,
     String(req.query["leagueName"] ?? ""),
-    String(req.params["platform"] ?? "pc"),
-  ).catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/leagueteams/${eid}] ${result.message}`);
+    String(req.params["platform"]  ?? "pc"),
+  ));
 });
 
 // ── /teams/:teamId/roster ─────────────────────────────────────────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/teams/:teamId/roster", validateKey, async (req, res) => {
-  const eid    = leagueId(req);
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/teams/:teamId/roster", validateKey, (req, res) => {
+  const id     = eid(req);
   const teamId = parseInt(String(req.params["teamId"] ?? "0"), 10);
-  saveMcaPayload(`mca/v2/${eid}/roster-${teamId}.json`, req.body);
+  saveMcaPayload(`mca/v2/${id}/roster-${teamId}.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2Roster(req.body, teamId, eid)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/roster/${eid}/team${teamId}] ${result.message}`);
+  bg(`v2/roster/${id}/team${teamId}`, processV2Roster(req.body, teamId, id));
 });
 
 // ── /freeagents/roster ────────────────────────────────────────────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/freeagents/roster", validateKey, async (req, res) => {
-  const eid = leagueId(req);
-  saveMcaPayload(`mca/v2/${eid}/freeagents.json`, req.body);
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/freeagents/roster", validateKey, (req, res) => {
+  const id = eid(req);
+  saveMcaPayload(`mca/v2/${id}/freeagents.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2FreeAgents(req.body, eid)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/freeagents/${eid}] ${result.message}`);
+  bg(`v2/freeagents/${id}`, processV2FreeAgents(req.body, id));
 });
 
 // ── /standings ────────────────────────────────────────────────────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/standings", validateKey, async (req, res) => {
-  const eid = leagueId(req);
-  saveMcaPayload(`mca/v2/${eid}/standings.json`, req.body);
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/standings", validateKey, (req, res) => {
+  const id = eid(req);
+  saveMcaPayload(`mca/v2/${id}/standings.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2Standings(req.body, eid)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/standings/${eid}] ${result.message}`);
+  bg(`v2/standings/${id}`, processV2Standings(req.body, id));
 });
 
-// ── /schedules ────────────────────────────────────────────────────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/schedules", validateKey, async (req, res) => {
-  const eid = leagueId(req);
-  saveMcaPayload(`mca/v2/${eid}/schedules.json`, req.body);
+// ── /schedules (full season) ──────────────────────────────────────────────────
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/schedules", validateKey, (req, res) => {
+  const id = eid(req);
+  saveMcaPayload(`mca/v2/${id}/schedules.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2Schedules(req.body, eid)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/schedules/${eid}] ${result.message}`);
+  bg(`v2/schedules/${id}`, processV2Schedules(req.body, id));
 });
 
 // ── /week/:weekType/:weekNum/schedules — per-week game results ─────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/week/:weekType/:weekNum/schedules", validateKey, async (req, res) => {
-  const eid      = leagueId(req);
-  const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
-  const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
-  saveMcaPayload(`mca/v2/${eid}/week-${weekType}-${weekNum}-schedules.json`, req.body);
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/week/:weekType/:weekNum/schedules", validateKey, (req, res) => {
+  const id = eid(req);
+  const wn = wNum(req); const wt = wType(req);
+  saveMcaPayload(`mca/v2/${id}/week-${wt}-${wn}-schedules.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2Schedules(req.body, eid, weekNum, weekType)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/week${weekNum}/schedules/${eid}] ${result.message}`);
+  bg(`v2/week${wn}/schedules/${id}`, processV2Schedules(req.body, id, wn, wt));
+});
+
+// ── /week/:weekType/:weekNum/team — per-week team stats ───────────────────────
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/week/:weekType/:weekNum/team", validateKey, (req, res) => {
+  const id = eid(req);
+  const wn = wNum(req); const wt = wType(req);
+  saveMcaPayload(`mca/v2/${id}/week-${wt}-${wn}-team.json`, req.body);
+  res.status(200).json({ status: "received" });
+  bg(`v2/week${wn}/team/${id}`, processV2TeamWeekStats(req.body, wt, wn, id));
 });
 
 // ── /week/:weekType/:weekNum/:statType — per-week player stats ─────────────────
-for (const statType of ["passing", "rushing", "receiving", "defense", "kicking", "punting", "kickreturn", "puntreturn"] as const) {
+const PLAYER_STAT_TYPES: WeekStatType[] = [
+  "passing","rushing","receiving","defense",
+  "kicking","punting","kickreturn","kickreturning","puntreturn","puntreturning",
+];
+for (const statType of PLAYER_STAT_TYPES) {
   router.post(
-    `/madden/v2/:leagueKey/:platform/:eaLeagueId/week/:weekType/:weekNum/${statType}`,
+    `/mca/v2/:leagueKey/:platform/:eaLeagueId/week/:weekType/:weekNum/${statType}`,
     validateKey,
-    async (req, res) => {
-      const eid      = leagueId(req);
-      const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
-      const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
-      saveMcaPayload(`mca/v2/${eid}/week-${weekType}-${weekNum}-${statType}.json`, req.body);
+    (req, res) => {
+      const id = eid(req);
+      const wn = wNum(req); const wt = wType(req);
+      saveMcaPayload(`mca/v2/${id}/week-${wt}-${wn}-${statType}.json`, req.body);
       res.status(200).json({ status: "received" });
-      const result = await processV2PlayerWeekStats(req.body, statType, weekType, weekNum, eid)
-        .catch(err => ({ ok: false, message: String(err) }));
-      console.log(`[v2/week${weekNum}/${statType}/${eid}] ${result.message}`);
+      bg(`v2/week${wn}/${statType}/${id}`, processV2PlayerWeekStats(req.body, statType, wt, wn, id));
     },
   );
 }
 
 // ── /draftpicks ───────────────────────────────────────────────────────────────
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/draftpicks", validateKey, async (req, res) => {
-  const eid = leagueId(req);
-  saveMcaPayload(`mca/v2/${eid}/draftpicks.json`, req.body);
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/draftpicks", validateKey, (req, res) => {
+  const id = eid(req);
+  saveMcaPayload(`mca/v2/${id}/draftpicks.json`, req.body);
   res.status(200).json({ status: "received" });
-  const result = await processV2DraftPicks(req.body, eid)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log(`[v2/draftpicks/${eid}] ${result.message}`);
+  bg(`v2/draftpicks/${id}`, processV2DraftPicks(req.body, id));
 });
 
-// ── /season/week — update current week label ──────────────────────────────────
-// Called by the companion app or admin tool when advancing to a new week.
-router.post("/madden/v2/:leagueKey/:platform/:eaLeagueId/season/week", validateKey, async (req, res) => {
-  const eid  = leagueId(req);
-  const week = String((req.body as any)?.week ?? req.query["week"] ?? "");
+// ── /season/week — update current week ────────────────────────────────────────
+router.post("/mca/v2/:leagueKey/:platform/:eaLeagueId/season/week", validateKey, async (req, res) => {
+  const id   = eid(req);
+  const body = req.body as Record<string, unknown>;
+  const week = String(body["week"] ?? req.query["week"] ?? "");
   if (!week) { res.status(400).json({ ok: false, error: "week is required" }); return; }
-  const result = await setV2CurrentWeek(eid, week)
-    .catch(err => ({ ok: false, message: String(err) }));
+  const result = await setV2CurrentWeek(id, week).catch(err => ({ ok: false, message: String(err) }));
   res.status(result.ok ? 200 : 500).json(result);
 });
 
-// ── /ping — confirm league is connected and has an active season ───────────────
-router.get("/madden/v2/:leagueKey/:platform/:eaLeagueId/ping", validateKey, async (req, res) => {
-  const eid = leagueId(req);
-  const season = await getOrCreateV2Season(eid).catch(() => null);
-  res.json({ ok: true, eaLeagueId: eid, seasonId: season?.id ?? null });
+// ── /ping ─────────────────────────────────────────────────────────────────────
+router.get("/mca/v2/:leagueKey/:platform/:eaLeagueId/ping", validateKey, async (req, res) => {
+  const id = eid(req);
+  const season = await getOrCreateV2Season(id).catch(() => null);
+  res.json({ ok: true, eaLeagueId: id, seasonId: season?.id ?? null });
 });
 
 export default router;
