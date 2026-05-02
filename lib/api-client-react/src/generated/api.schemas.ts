@@ -379,6 +379,8 @@ export interface GlobalUserProfile {
   eaIds: EaId[];
 }
 
+export type McaV2TeamRawJson = { [key: string]: unknown } | null;
+
 export interface McaV2Team {
   id: number;
   eaSeasonId: number;
@@ -397,10 +399,17 @@ export interface McaV2Team {
   primaryColor?: number | null;
   secondaryColor?: number | null;
   logoId?: number | null;
+  rawJson?: McaV2TeamRawJson;
   updatedAt: string;
   linkedGamertag?: string | null;
   linkedDisplayName?: string | null;
 }
+
+export type McaV2RosterPlayerAttributes = { [key: string]: unknown } | null;
+
+export type McaV2RosterPlayerAbilities = { [key: string]: unknown } | null;
+
+export type McaV2RosterPlayerRawJson = { [key: string]: unknown } | null;
 
 export interface McaV2RosterPlayer {
   id: number;
@@ -419,9 +428,14 @@ export interface McaV2RosterPlayer {
   contractYearsLeft?: number | null;
   archetypeAbbrev?: string | null;
   xpTotal?: number | null;
+  attributes?: McaV2RosterPlayerAttributes;
+  abilities?: McaV2RosterPlayerAbilities;
   portraitUrl?: string | null;
+  rawJson?: McaV2RosterPlayerRawJson;
   importedAt: string;
 }
+
+export type McaV2TeamStatRawJson = { [key: string]: unknown } | null;
 
 export interface McaV2TeamStat {
   id: number;
@@ -463,8 +477,11 @@ export interface McaV2TeamStat {
   playoffStatus?: string | null;
   winPct: number;
   netPts: number;
+  rawJson?: McaV2TeamStatRawJson;
   updatedAt: string;
 }
+
+export type McaV2TeamWeekStatRawJson = { [key: string]: unknown } | null;
 
 export interface McaV2TeamWeekStat {
   id: number;
@@ -487,8 +504,11 @@ export interface McaV2TeamWeekStat {
   turnoverDiff?: number;
   tOTakeaways?: number;
   tOGiveaways?: number;
+  rawJson?: McaV2TeamWeekStatRawJson;
   processedAt: string;
 }
+
+export type McaV2ScheduleGameRawJson = { [key: string]: unknown } | null;
 
 export interface McaV2ScheduleGame {
   id: number;
@@ -503,6 +523,7 @@ export interface McaV2ScheduleGame {
   homeScore?: number | null;
   awayScore?: number | null;
   status: number;
+  rawJson?: McaV2ScheduleGameRawJson;
 }
 
 export interface McaV2PlayerStat {
@@ -594,6 +615,8 @@ export interface McaV2PlayerStat {
   updatedAt: string;
 }
 
+export type McaV2PlayerWeekStatRawJson = { [key: string]: unknown } | null;
+
 export interface McaV2PlayerWeekStat {
   id: number;
   eaSeasonId: number;
@@ -637,8 +660,11 @@ export interface McaV2PlayerWeekStat {
   krTDs?: number;
   prYds?: number;
   prTDs?: number;
+  rawJson?: McaV2PlayerWeekStatRawJson;
   processedAt: string;
 }
+
+export type McaV2DraftPickRawJson = { [key: string]: unknown } | null;
 
 export interface McaV2DraftPick {
   id: number;
@@ -651,6 +677,7 @@ export interface McaV2DraftPick {
   pickNum: number;
   originalTeamId?: number | null;
   originalTeamName?: string | null;
+  rawJson?: McaV2DraftPickRawJson;
   importedAt: string;
 }
 

@@ -1950,6 +1950,7 @@ components:
         primaryColor:   { type: integer, nullable: true }
         secondaryColor: { type: integer, nullable: true }
         logoId:         { type: integer, nullable: true }
+        rawJson:        { type: object, additionalProperties: true, nullable: true }
         updatedAt:      { type: string, format: date-time }
         linkedGamertag:    { type: string, nullable: true }
         linkedDisplayName: { type: string, nullable: true }
@@ -1974,7 +1975,10 @@ components:
         contractYearsLeft: { type: integer, nullable: true }
         archetypeAbbrev:   { type: string, nullable: true }
         xpTotal:           { type: integer, nullable: true }
+        attributes:        { type: object, additionalProperties: true, nullable: true }
+        abilities:         { type: object, additionalProperties: true, nullable: true }
         portraitUrl:       { type: string, nullable: true }
+        rawJson:           { type: object, additionalProperties: true, nullable: true }
         importedAt:        { type: string, format: date-time }
 
     McaV2TeamStat:
@@ -2020,6 +2024,7 @@ components:
         playoffStatus: { type: string, nullable: true }
         winPct:        { type: number }
         netPts:        { type: integer }
+        rawJson:       { type: object, additionalProperties: true, nullable: true }
         updatedAt:     { type: string, format: date-time }
 
     McaV2TeamWeekStat:
@@ -2046,6 +2051,7 @@ components:
         turnoverDiff:  { type: integer }
         tOTakeaways:   { type: integer }
         tOGiveaways:   { type: integer }
+        rawJson:       { type: object, additionalProperties: true, nullable: true }
         processedAt:   { type: string, format: date-time }
 
     McaV2ScheduleGame:
@@ -2064,6 +2070,7 @@ components:
         homeScore:    { type: integer, nullable: true }
         awayScore:    { type: integer, nullable: true }
         status:       { type: integer }
+        rawJson:      { type: object, additionalProperties: true, nullable: true }
 
     McaV2PlayerStat:
       type: object
@@ -2202,6 +2209,7 @@ components:
         krTDs:        { type: integer }
         prYds:        { type: integer }
         prTDs:        { type: integer }
+        rawJson:      { type: object, additionalProperties: true, nullable: true }
         processedAt:  { type: string, format: date-time }
 
     McaV2DraftPick:
@@ -2218,6 +2226,7 @@ components:
         pickNum:          { type: integer }
         originalTeamId:   { type: integer, nullable: true }
         originalTeamName: { type: string, nullable: true }
+        rawJson:          { type: object, additionalProperties: true, nullable: true }
         importedAt:       { type: string, format: date-time }
 
     LeagueSummary:

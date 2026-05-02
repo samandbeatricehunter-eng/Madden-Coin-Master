@@ -325,7 +325,7 @@ export async function processV2LeagueTeams(
           },
         });
 
-      if (isHuman && userName) {
+      if (userName && userName !== "CPU") {
         linkOps.push(autoLinkGamertag(userName, eaLeagueId, teamId, fullName));
       }
     }
@@ -681,38 +681,6 @@ export async function processV2TeamWeekStats(
           }),
       );
 
-      const offTDsWeek = getN(t, "ptsFor","ptsScored","pointsFor");
-      const defTDsWeek = getN(t, "ptsAgainst","pointsAgainst");
-      ops.push(
-        db.insert(mcaTeamStatsTable)
-          .values({
-            eaSeasonId: season.id, eaLeagueId, teamId, teamName,
-            wins: 0, losses: 0, ties: 0, ptsFor: 0, ptsAgainst: 0,
-            offYds, offPassYds, offRushYds, offTDs: offTDsWeek, offPtsPerGame: 0,
-            defPassYds, defRushYds, defTDs: defTDsWeek,
-            teamSacks, teamInts, defFumblesRec, offRedZonePct: 0, defRedZonePct: 0,
-            tOTakeaways, tOGiveaways, turnoverDiff, winPct: 0, netPts: 0, updatedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [mcaTeamStatsTable.eaSeasonId, mcaTeamStatsTable.teamId],
-            set: {
-              offPassYds:    sql`${mcaTeamStatsTable.offPassYds}    + ${offPassYds}`,
-              offRushYds:    sql`${mcaTeamStatsTable.offRushYds}    + ${offRushYds}`,
-              offYds:        sql`${mcaTeamStatsTable.offYds}        + ${offYds}`,
-              offTDs:        sql`${mcaTeamStatsTable.offTDs}        + ${offTDsWeek}`,
-              defPassYds:    sql`${mcaTeamStatsTable.defPassYds}    + ${defPassYds}`,
-              defRushYds:    sql`${mcaTeamStatsTable.defRushYds}    + ${defRushYds}`,
-              defTDs:        sql`${mcaTeamStatsTable.defTDs}        + ${defTDsWeek}`,
-              teamSacks:     sql`${mcaTeamStatsTable.teamSacks}     + ${teamSacks}`,
-              teamInts:      sql`${mcaTeamStatsTable.teamInts}      + ${teamInts}`,
-              defFumblesRec: sql`${mcaTeamStatsTable.defFumblesRec} + ${defFumblesRec}`,
-              tOTakeaways:   sql`${mcaTeamStatsTable.tOTakeaways}   + ${tOTakeaways}`,
-              tOGiveaways:   sql`${mcaTeamStatsTable.tOGiveaways}   + ${tOGiveaways}`,
-              turnoverDiff:  sql`${mcaTeamStatsTable.turnoverDiff}  + ${turnoverDiff}`,
-              updatedAt:     new Date(),
-            },
-          }),
-      );
       upserted++;
     }
     await Promise.all(ops);
