@@ -4,7 +4,8 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { legendsTable, inventoryTable, usersTable } from "@workspace/db";
-import { eq, and, asc, inArray } from "drizzle-orm";
+import { eq, and, asc, inArray, sql } from "drizzle-orm";
+import { DEFAULT_LEGENDS } from "../lib/default-legends.js";
 
 export const data = new SlashCommandBuilder()
   .setName("legend")
@@ -34,6 +35,10 @@ export const data = new SlashCommandBuilder()
     sub.setName("remove")
       .setDescription("Remove a legend from the store")
       .addIntegerOption(opt => opt.setName("id").setDescription("Legend ID to remove").setRequired(true))
+  )
+  .addSubcommand(sub =>
+    sub.setName("seed-defaults")
+      .setDescription("Add any missing default legends to the store without overwriting existing ones")
   );
 
 // Split long line arrays into multiple embed fields to stay under Discord's 1024-char limit
@@ -258,6 +263,39 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           .setColor(Colors.Orange)
           .setTitle("🗑️ Legend Removed")
           .setDescription(`**${updated.name}** has been removed from the store.`)
+          .setTimestamp(),
+      ],
+    });
+  }
+
+  // ── SEED DEFAULTS ──────────────────────────────────────────────────────────
+  if (sub === "seed-defaults") {
+    const result = await db.execute(sql`
+      INSERT INTO legends (name, position, cost, is_available)
+      SELECT v.name, v.position, 1000, true
+      FROM (VALUES ${sql.raw(
+        DEFAULT_LEGENDS.map(l => `('${l.name.replace(/'/g, "''")}','${l.position}')`).join(",")
+      )}) AS v(name, position)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM legends ex WHERE lower(ex.name) = lower(v.name)
+      )
+    `);
+    const added = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    const total = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(legendsTable)
+      .then(r => Number(r[0]?.count ?? 0));
+
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(added > 0 ? Colors.Green : Colors.Blue)
+          .setTitle(added > 0 ? `✅ Seeded ${added} Legend(s)` : "✅ Already Up to Date")
+          .setDescription(
+            added > 0
+              ? `Added **${added}** missing legend(s) from the default catalog.\nStore now contains **${total}** legends total.`
+              : `All **${DEFAULT_LEGENDS.length}** default legends are already in the store (**${total}** total).`,
+          )
           .setTimestamp(),
       ],
     });

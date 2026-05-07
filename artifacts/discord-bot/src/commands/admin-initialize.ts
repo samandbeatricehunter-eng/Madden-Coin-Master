@@ -14,12 +14,13 @@ import {
   Guild, Role, CategoryChannel, TextChannel,
 } from "discord.js";
 import { db } from "@workspace/db";
-import { seasonsTable, usersTable, serverSettingsTable } from "@workspace/db";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { seasonsTable, usersTable, serverSettingsTable, legendsTable } from "@workspace/db";
+import { eq, and, isNotNull, sql } from "drizzle-orm";
 import { isAdminUser, setGuildChannel, CHANNEL_KEYS, DEFAULT_RULES, SECTION_META } from "../lib/db-helpers.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import { registerCommandsForGuild } from "../lib/register-commands.js";
 import { NFL_TEAMS } from "../lib/constants.js";
+import { DEFAULT_LEGENDS } from "../lib/default-legends.js";
 
 // ── Channel name → DB key mapping ─────────────────────────────────────────────
 const CHANNEL_KEY_MAP: Record<string, string> = {
@@ -392,7 +393,36 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       log.push(`🏈 Seeded ${teamsToSeed.length} open team slot(s) (${NFL_TEAMS.length - teamsToSeed.length} already claimed)`);
     }
 
-    // ── Step 9: Post admin setup guide to #welcome ─────────────────────────────
+    // ── Step 9: Seed default legend catalog ────────────────────────────────────
+    const legendCount = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(legendsTable)
+      .then(r => Number(r[0]?.count ?? 0));
+
+    if (legendCount === 0) {
+      await db.insert(legendsTable).values(
+        DEFAULT_LEGENDS.map(l => ({ name: l.name, position: l.position, cost: 1000, isAvailable: true })),
+      );
+      log.push(`🏆 Seeded ${DEFAULT_LEGENDS.length} default legends into the store`);
+    } else {
+      // Insert any missing legends (by name) without touching existing ones
+      const inserted = await db.execute(sql`
+        INSERT INTO legends (name, position, cost, is_available)
+        SELECT v.name, v.position, 1000, true
+        FROM (VALUES ${sql.raw(
+          DEFAULT_LEGENDS.map(l => `('${l.name.replace(/'/g, "''")}','${l.position}')`).join(",")
+        )}) AS v(name, position)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM legends ex WHERE lower(ex.name) = lower(v.name)
+        )
+      `);
+      const addedCount = (inserted as unknown as { rowCount?: number }).rowCount ?? 0;
+      log.push(addedCount > 0
+        ? `🏆 Added ${addedCount} missing legend(s) to the store (${legendCount} already existed)`
+        : `🏆 Legend store already populated (${legendCount} legends)`);
+    }
+
+    // ── Step 10: Post admin setup guide to #welcome ─────────────────────────────
     const welcomeId = channelIds["welcome"];
     if (welcomeId) {
       try {
