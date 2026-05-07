@@ -1640,15 +1640,17 @@ const LEGEND_POSITION_LABELS: Record<string, string> = {
   P:    "P — Punter",
 };
 
+// Canonical position display order for the legend picker
+const LEGEND_POSITION_ORDER = ["QB", "HB", "FB", "WR", "TE", "OL", "DL", "LB", "DB"];
+
 // Step 1 — position picker
 async function handleBuyLegendPick(interaction: ButtonInteraction, sess: ActionsSession) {
-  const positions = await db
+  const rows = await db
     .selectDistinct({ position: legendsTable.position })
     .from(legendsTable)
-    .where(eq(legendsTable.isAvailable, true))
-    .orderBy(legendsTable.position);
+    .where(eq(legendsTable.isAvailable, true));
 
-  if (!positions.length) {
+  if (!rows.length) {
     await interaction.update({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No legends are currently available in the store.")],
       components: [backToHubRow()],
@@ -1656,14 +1658,21 @@ async function handleBuyLegendPick(interaction: ButtonInteraction, sess: Actions
     return;
   }
 
+  // Sort by explicit canonical order; unknown positions fall to end alphabetically
+  const positionSet = new Set(rows.map(r => r.position));
+  const positions = [
+    ...LEGEND_POSITION_ORDER.filter(p => positionSet.has(p)),
+    ...[...positionSet].filter(p => !LEGEND_POSITION_ORDER.includes(p)).sort(),
+  ];
+
   const menu = new StringSelectMenuBuilder()
     .setCustomId("ac_buy_legendpos:")
     .setPlaceholder("Select a position…")
     .addOptions(
       positions.map(p =>
         new StringSelectMenuOptionBuilder()
-          .setLabel(LEGEND_POSITION_LABELS[p.position] ?? p.position)
-          .setValue(p.position),
+          .setLabel(LEGEND_POSITION_LABELS[p] ?? p)
+          .setValue(p),
       ),
     );
 

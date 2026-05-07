@@ -270,31 +270,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   // ── SEED DEFAULTS ──────────────────────────────────────────────────────────
   if (sub === "seed-defaults") {
-    const result = await db.execute(sql`
-      INSERT INTO legends (name, position, cost, is_available)
-      SELECT v.name, v.position, 1000, true
-      FROM (VALUES ${sql.raw(
-        DEFAULT_LEGENDS.map(l => `('${l.name.replace(/'/g, "''")}','${l.position}')`).join(",")
-      )}) AS v(name, position)
-      WHERE NOT EXISTS (
-        SELECT 1 FROM legends ex WHERE lower(ex.name) = lower(v.name)
-      )
-    `);
-    const added = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-    const total = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(legendsTable)
-      .then(r => Number(r[0]?.count ?? 0));
+    // Step 1: hide everything currently in the store
+    await db.update(legendsTable).set({ isAvailable: false });
+
+    // Step 2: upsert each default legend — restore if name already exists, insert if not
+    let restored = 0;
+    let inserted = 0;
+    for (const legend of DEFAULT_LEGENDS) {
+      const existing = await db
+        .select({ id: legendsTable.id })
+        .from(legendsTable)
+        .where(sql`lower(${legendsTable.name}) = lower(${legend.name})`)
+        .limit(1);
+
+      if (existing.length > 0) {
+        await db.update(legendsTable)
+          .set({ isAvailable: true, position: legend.position, cost: 1000 })
+          .where(eq(legendsTable.id, existing[0]!.id));
+        restored++;
+      } else {
+        await db.insert(legendsTable).values({
+          name: legend.name, position: legend.position, cost: 1000, isAvailable: true,
+        });
+        inserted++;
+      }
+    }
 
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
-          .setColor(added > 0 ? Colors.Green : Colors.Blue)
-          .setTitle(added > 0 ? `✅ Seeded ${added} Legend(s)` : "✅ Already Up to Date")
+          .setColor(Colors.Green)
+          .setTitle("✅ Legend Store Reset")
           .setDescription(
-            added > 0
-              ? `Added **${added}** missing legend(s) from the default catalog.\nStore now contains **${total}** legends total.`
-              : `All **${DEFAULT_LEGENDS.length}** default legends are already in the store (**${total}** total).`,
+            `Store cleared and repopulated with the **${DEFAULT_LEGENDS.length}** default legends.\n\n` +
+            `• **${restored}** restored from existing records\n` +
+            `• **${inserted}** newly inserted\n\n` +
+            `Any legends not in the default catalog are now hidden from the store.`,
           )
           .setTimestamp(),
       ],

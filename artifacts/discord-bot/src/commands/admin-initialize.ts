@@ -394,33 +394,23 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
 
     // ── Step 9: Seed default legend catalog ────────────────────────────────────
-    const legendCount = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(legendsTable)
-      .then(r => Number(r[0]?.count ?? 0));
-
-    if (legendCount === 0) {
-      await db.insert(legendsTable).values(
-        DEFAULT_LEGENDS.map(l => ({ name: l.name, position: l.position, cost: 1000, isAvailable: true })),
-      );
-      log.push(`🏆 Seeded ${DEFAULT_LEGENDS.length} default legends into the store`);
-    } else {
-      // Insert any missing legends (by name) without touching existing ones
-      const inserted = await db.execute(sql`
-        INSERT INTO legends (name, position, cost, is_available)
-        SELECT v.name, v.position, 1000, true
-        FROM (VALUES ${sql.raw(
-          DEFAULT_LEGENDS.map(l => `('${l.name.replace(/'/g, "''")}','${l.position}')`).join(",")
-        )}) AS v(name, position)
-        WHERE NOT EXISTS (
-          SELECT 1 FROM legends ex WHERE lower(ex.name) = lower(v.name)
-        )
-      `);
-      const addedCount = (inserted as unknown as { rowCount?: number }).rowCount ?? 0;
-      log.push(addedCount > 0
-        ? `🏆 Added ${addedCount} missing legend(s) to the store (${legendCount} already existed)`
-        : `🏆 Legend store already populated (${legendCount} legends)`);
+    // Always do a clean seed: hide everything, then upsert all defaults
+    await db.update(legendsTable).set({ isAvailable: false });
+    let lgRestored = 0; let lgInserted = 0;
+    for (const legend of DEFAULT_LEGENDS) {
+      const existing = await db.select({ id: legendsTable.id }).from(legendsTable)
+        .where(sql`lower(${legendsTable.name}) = lower(${legend.name})`).limit(1);
+      if (existing.length > 0) {
+        await db.update(legendsTable)
+          .set({ isAvailable: true, position: legend.position, cost: 1000 })
+          .where(eq(legendsTable.id, existing[0]!.id));
+        lgRestored++;
+      } else {
+        await db.insert(legendsTable).values({ name: legend.name, position: legend.position, cost: 1000, isAvailable: true });
+        lgInserted++;
+      }
     }
+    log.push(`🏆 Legend store seeded: ${lgRestored} restored, ${lgInserted} inserted (${DEFAULT_LEGENDS.length} total)`);
 
     // ── Step 10: Post admin setup guide to #welcome ─────────────────────────────
     const welcomeId = channelIds["welcome"];
