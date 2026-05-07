@@ -964,8 +964,8 @@ type SeasonRulesShape = {
 
 function buildPricingBlock(rules: SeasonRulesShape): string {
   return [
-    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Weeks 1–9 (closes at Week 10)`,
-    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · max ${LIMITS.customPlayersPerDraft}/season · purchase window: Weeks 1–9 (closes at Week 10)`,
+    `Legends: ${COSTS.legend.toLocaleString()} coins · max ${LIMITS.legendsPerTeam} per team · purchase window: Weeks 1–18 (closes at Wildcard week)`,
+    `Custom Players: Gold ${COSTS.custom_player_gold} / Silver ${COSTS.custom_player_silver} / Bronze ${COSTS.custom_player_bronze} coins · max ${LIMITS.customPlayersPerDraft}/season · purchase window: Weeks 1–18 (closes at Wildcard week)`,
     `Training Packages: Bronze ${COSTS.training_bronze} / Silver ${COSTS.training_silver} / Gold ${COSTS.training_gold} coins · multi-attribute boosts · available all season (subject to purchase cap)`,
     `Dev Upgrade: ${rules.devUpsCost} coins · max ${rules.devUpsCap}/season`,
     `Age Reset: ${rules.ageResetCost} coins · max ${rules.ageResetsCap}/season`,

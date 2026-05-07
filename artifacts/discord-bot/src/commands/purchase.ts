@@ -362,10 +362,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const rules  = await getSeasonRules(season);
     const cost   = rules.legendCost;
 
-    // Purchase window: legends available through Week 9; closes once Week 10 is reached
+    // Purchase window: legends available through Week 18; closes once Wildcard week is reached
     if (!LEGEND_CUSTOM_PURCHASE_WEEKS.has(season.currentWeek ?? "")) {
       return interaction.editReply({
-        embeds: [errorEmbed("Purchase Window Closed", `Legend purchases are available through **Week 9** only. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
+        embeds: [errorEmbed("Purchase Window Closed", `Legend purchases must be submitted before the league advances to Wildcard week. Current week: **Week ${season.currentWeek ?? "?"}**.`)],
       });
     }
 
