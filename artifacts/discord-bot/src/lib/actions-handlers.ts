@@ -212,7 +212,60 @@ const ATTR_PAGE_SKIP = new Set([
   "handedness", "throwingHand", "playerHandedness",
   "college", "collegeName", "playerCollege",
   "conf", "confidence", "confRating", "confidenceRating", // shown on page 1 bio section
+  // contract / financial — shown separately if non-zero, not in raw attr dump
+  "desiredBonus", "contractBonus", "signingBonus", "contractSalary", "capHit",
 ]);
+
+// ── Player trait system ────────────────────────────────────────────────────────
+// Boolean traits: value 1 = Yes, value 0 = No (skip the 0s).
+// Scale traits: map each numeric value to a label.
+const BOOL_TRAIT_LABELS: Record<string, string> = {
+  clutchTrait:        "Clutch",
+  highMotorTrait:     "High Motor",
+  dropOpenPassTrait:  "Drops Open Passes",
+  yacTrait:           "YAC Em Up",
+  sensePressTrait:    "Sense Pressure",
+  bigGameTrait:       "Big Game",
+  playBallTrait:      "Play Ball",
+  tightSpiralTrait:   "Tight Spiral",
+  coverBallTrait:     "Covers Ball",
+  fightForYardsTrait: "Fight for Yards",
+  heavyBallTrait:     "Heavy Ball",
+  posFeetTrait:       "Positive Feet",
+  catcherTrait:       "Possession Receiver",
+  stripBallTrait:     "Strip Ball",
+  fakeOutTrait:       "Fake Out",
+  hunchbackTrait:     "Hunchback",
+  dlBullRushTrait:    "DL Bull Rush",
+  dlSpinTrait:        "DL Spin Move",
+  dlSwimTrait:        "DL Swim Move",
+};
+
+const SCALE_TRAIT_LABELS: Record<string, string[]> = {
+  penaltyTrait:   ["Disciplined", "Normal", "Penalty"],
+  forcePassTrait: ["Paranoid",    "Ideal",  "Aggressive"],
+  lBStyleTrait:   ["Balanced",    "Run Stop","Pass Rush"],
+  qBStyleTrait:   ["Pocket",      "Scrambler","Balanced"],
+};
+
+function renderTraitSection(attrs: Record<string, number | string>): string | null {
+  const active: string[] = [];
+  for (const [k, v] of Object.entries(attrs)) {
+    const num = Number(v);
+    if (isNaN(num)) continue;
+
+    if (BOOL_TRAIT_LABELS[k]) {
+      if (num === 1) active.push(`✅ ${BOOL_TRAIT_LABELS[k]}`);
+    } else if (SCALE_TRAIT_LABELS[k]) {
+      const label = SCALE_TRAIT_LABELS[k]![num];
+      if (label) active.push(`${SCALE_TRAIT_LABELS[k]!.join("/")} → **${label}**`);
+    } else if (k.endsWith("Trait") || k.endsWith("trait")) {
+      // Unknown trait — show label + value only when non-zero
+      if (num !== 0) active.push(`${k.replace(/Trait$/, "").replace(/([A-Z])/g, " $1").trim()} **${num}**`);
+    }
+  }
+  return active.length > 0 ? active.join("\n") : null;
+}
 
 const ATTR_ABBR: Record<string, string> = {
   // ── Full Rating-suffixed keys ────────────────────────────────────────────────
@@ -407,6 +460,9 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   const rawConf = attrs["conf"] ?? attrs["confidence"];
   const confVal = rawConf != null ? Number(rawConf) : NaN;
   if (!isNaN(confVal) && confVal > 0) p1.addFields({ name: "🧠 Confidence", value: String(confVal), inline: true });
+  const rawBonus = attrs["desiredBonus"] ?? attrs["contractBonus"] ?? attrs["signingBonus"];
+  const bonusVal = rawBonus != null ? Number(rawBonus) : NaN;
+  if (!isNaN(bonusVal) && bonusVal > 0) p1.addFields({ name: "💰 Desired Bonus", value: `$${bonusVal.toLocaleString()}`, inline: true });
 
   // Stats section on page 1
   if (statLines.length) {
@@ -436,6 +492,8 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   } else {
     p2.addFields({ name: "💥 Abilities", value: "*No active abilities.*", inline: false });
   }
+  const traitText = renderTraitSection(attrs);
+  p2.addFields({ name: "🧠 Traits", value: traitText ?? "*No active traits.*", inline: false });
   p2.setFooter({ text: `Page 2/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
   // ── Page 3: In-Game Attributes ────────────────────────────────────────────
@@ -447,9 +505,12 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   // ── Step 1: Build abbr→value map from raw attributes ─────────────────────
   // Convert every raw DB key to its abbreviation first, dedup by abbr.
   // This works regardless of whether the DB stores "speedRating", "speed", etc.
+  // Skip trait fields — they are rendered on Page 2 instead.
+  const isTraitKey = (k: string) => k.endsWith("Trait") || k.endsWith("trait");
   const abbrValMap = new Map<string, number>();
   for (const [rawKey, rawVal] of Object.entries(attrs)) {
     if (ATTR_PAGE_SKIP.has(rawKey)) continue;
+    if (isTraitKey(rawKey)) continue;
     if (typeof rawVal !== "number") continue;
     const abbr = ATTR_ABBR[rawKey];
     if (abbr && !abbrValMap.has(abbr)) {
@@ -481,9 +542,12 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
     if (!renderedAbbrs.has(abbr)) otherPairs.push(`${abbr} **${val}**`);
   }
   // Also show raw keys that had NO abbreviation entry (truly unknown attrs)
+  // Skip trait keys (shown on Page 2) and zero-value entries (meaningless for unknown fields)
   for (const [rawKey, rawVal] of Object.entries(attrs)) {
     if (ATTR_PAGE_SKIP.has(rawKey)) continue;
+    if (isTraitKey(rawKey)) continue;
     if (typeof rawVal !== "number") continue;
+    if (rawVal === 0) continue;
     if (!ATTR_ABBR[rawKey]) otherPairs.push(`${rawKey.replace(/Rating$/, "")} **${rawVal}**`);
   }
   if (otherPairs.length) {
