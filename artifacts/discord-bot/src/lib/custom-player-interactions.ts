@@ -347,7 +347,7 @@ async function showBalanceCheck(
   // Check balance
   const [uRow] = await db.select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, session.userId))
+    .where(and(eq(usersTable.discordId, session.userId), eq(usersTable.guildId, session.guildId)))
     .limit(1);
   const balance = uRow?.balance ?? 0;
 
@@ -706,7 +706,7 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
   // Final balance check
   const [uRow] = await db.select({ balance: usersTable.balance })
     .from(usersTable)
-    .where(eq(usersTable.discordId, session.userId))
+    .where(and(eq(usersTable.discordId, session.userId), eq(usersTable.guildId, session.guildId)))
     .limit(1);
   const balance = uRow?.balance ?? 0;
 
