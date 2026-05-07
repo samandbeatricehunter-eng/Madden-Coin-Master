@@ -4,6 +4,7 @@ import * as help                    from "../commands/help.js";
 import * as actions                  from "../commands/actions.js";
 import * as adminOperations          from "../commands/admin-operations.js";
 import * as draftPresence            from "../commands/draft-presence.js";
+import * as adminLegend              from "../commands/admin-legend.js";
 import * as adminLegendVault         from "../commands/admin-legendvault.js";
 import * as adminCustomArcetypes     from "../commands/admin-customarchetypes.js";
 import * as adminCustomPlayerSettings from "../commands/admin-customplayersettings.js";
@@ -31,6 +32,7 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [adminServer,               true],
     [adminTeamLogo,             true],
     [lottery,                   true],
+    [adminLegend,               legends],
     [adminLegendVault,          legends],
     [adminCustomArcetypes,      custom],
     [adminCustomPlayerSettings, custom],
