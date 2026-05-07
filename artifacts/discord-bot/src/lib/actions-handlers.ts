@@ -699,6 +699,7 @@ export async function handleActionsInteraction(
   if (id.startsWith("ac_buy_duplayer:"))    { await handleBuyDUConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_ar_confirm")           { await handleBuyAgeResetExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_du_confirm")           { await handleBuyDevUpExecute(interaction as ButtonInteraction, sess); return true; }
+  if (id.startsWith("ac_buy_legendpos:"))   { await handleBuyLegendPositionPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_legendsel:"))   { await handleBuyLegendConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_legend_confirm")       { await handleBuyLegendExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_training")               { await handleBuyTrainingPosPick(interaction as ButtonInteraction, sess); return true; }
@@ -1611,35 +1612,117 @@ async function handleBuyCustomInfo(interaction: ButtonInteraction) {
 
 // ── Buy Legend ─────────────────────────────────────────────────────────────────
 
+const LEGEND_POSITION_LABELS: Record<string, string> = {
+  QB:   "QB — Quarterback",
+  HB:   "HB — Halfback",
+  FB:   "FB — Fullback",
+  WR:   "WR — Wide Receiver",
+  TE:   "TE — Tight End",
+  LT:   "LT — Left Tackle",
+  LG:   "LG — Left Guard",
+  C:    "C — Center",
+  RG:   "RG — Right Guard",
+  RT:   "RT — Right Tackle",
+  LE:   "LE — Left Defensive End",
+  RE:   "RE — Right Defensive End",
+  DT:   "DT — Defensive Tackle",
+  LOLB: "LOLB — Left Outside LB",
+  MLB:  "MLB — Middle Linebacker",
+  ROLB: "ROLB — Right Outside LB",
+  CB:   "CB — Cornerback",
+  FS:   "FS — Free Safety",
+  SS:   "SS — Strong Safety",
+  K:    "K — Kicker",
+  P:    "P — Punter",
+};
+
+// Step 1 — position picker
 async function handleBuyLegendPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  const positions = await db
+    .selectDistinct({ position: legendsTable.position })
+    .from(legendsTable)
+    .where(eq(legendsTable.isAvailable, true))
+    .orderBy(legendsTable.position);
+
+  if (!positions.length) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No legends are currently available in the store.")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_buy_legendpos:")
+    .setPlaceholder("Select a position…")
+    .addOptions(
+      positions.map(p =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(LEGEND_POSITION_LABELS[p.position] ?? p.position)
+          .setValue(p.position),
+      ),
+    );
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle("🏆 Buy a Legend — Step 1: Choose a Position")
+        .setDescription(
+          "Select a position to see available legends.\n\n" +
+          "Max **2 legends per team** · Purchase window: **through Week 9**\n" +
+          "Legends stay with the team if ownership changes.",
+        ),
+    ],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+// Step 2 — legend picker for the chosen position
+async function handleBuyLegendPositionPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const position = interaction.values[0]!;
+
   const rows = await db.select({
     id:       legendsTable.id,
     name:     legendsTable.name,
     position: legendsTable.position,
     cost:     legendsTable.cost,
   }).from(legendsTable)
-    .where(eq(legendsTable.isAvailable, true))
-    .orderBy(legendsTable.position, legendsTable.name);
+    .where(and(eq(legendsTable.isAvailable, true), eq(legendsTable.position, position)))
+    .orderBy(legendsTable.name);
 
   if (!rows.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No legends are currently available in the store.")], components: [backToHubRow()] });
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No **${position}** legends are currently available.`)],
+      components: [backToHubRow()],
+    });
     return;
   }
 
-  const menu = new StringSelectMenuBuilder()
+  const legendMenu = new StringSelectMenuBuilder()
     .setCustomId("ac_buy_legendsel:")
-    .setPlaceholder("Select a legend…")
+    .setPlaceholder(`Select a ${position} legend…`)
     .addOptions(
       rows.slice(0, 25).map(l =>
         new StringSelectMenuOptionBuilder()
-          .setLabel(`${l.name} — ${l.position} (${(l.cost ?? 0).toLocaleString()} coins)`)
+          .setLabel(`${l.name} (${(l.cost ?? 0).toLocaleString()} coins)`)
           .setValue(String(l.id)),
       ),
     );
 
+  const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("← Back to Positions").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Cancel").setStyle(ButtonStyle.Secondary),
+  );
+
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 Buy a Legend — Select").setDescription("Choose a legend from the available options below.\n\nMax **2 legends per team** (purchase window: through Week 9). Legends follow the team if ownership changes.")],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle(`🏆 Buy a Legend — ${LEGEND_POSITION_LABELS[position] ?? position}`)
+        .setDescription(`**${rows.length}** legend${rows.length === 1 ? "" : "s"} available at this position. Select one to continue.`),
+    ],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(legendMenu), backRow],
   });
 }
 
