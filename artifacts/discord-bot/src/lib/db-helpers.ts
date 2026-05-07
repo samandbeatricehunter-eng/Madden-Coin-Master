@@ -6,7 +6,7 @@ import {
   globalUserRecordsTable, guildChannelsTable, franchiseScheduleTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
-import { eq, and, sql, desc, ne } from "drizzle-orm";
+import { eq, and, sql, desc, ne, isNotNull, notInArray } from "drizzle-orm";
 
 // ── Primary guild ID for the original server (legacy / default) ──────────────
 export const PRIMARY_GUILD_ID = "1476251181524189438";
@@ -501,6 +501,24 @@ export async function getSeasonRules(_season: Season) {
  *  - purchasesTable pending legend rows for this user in this season (not yet approved)
  *  - customPlayersTable rows for this user this season (not refunded)
  */
+/**
+ * Returns legend IDs that have a non-refunded purchase for the given guild.
+ * Used to exclude already-purchased legends from store dropdowns/autocomplete.
+ */
+export async function getPurchasedLegendIds(guildId: string): Promise<number[]> {
+  const rows = await db
+    .selectDistinct({ legendId: purchasesTable.legendId })
+    .from(purchasesTable)
+    .innerJoin(seasonsTable, eq(purchasesTable.seasonId, seasonsTable.id))
+    .where(and(
+      eq(seasonsTable.guildId, guildId),
+      eq(purchasesTable.purchaseType, "legend"),
+      ne(purchasesTable.status, "refunded"),
+      isNotNull(purchasesTable.legendId),
+    ));
+  return rows.map(r => r.legendId).filter((id): id is number => id != null);
+}
+
 export async function getTeamLegendCount(
   teamName: string | null | undefined,
   discordId: string,

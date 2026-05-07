@@ -8,11 +8,11 @@ import {
   legendsTable, purchasesTable, inventoryTable, usersTable, seasonStatsTable,
   franchiseRostersTable, franchiseMcaTeamsTable, seasonsTable,
 } from "@workspace/db";
-import { eq, and, sql, asc, ilike, or, inArray, ne } from "drizzle-orm";
+import { eq, and, sql, asc, ilike, or, inArray, ne, notInArray, isNotNull } from "drizzle-orm";
 import {
   getOrCreateUser, getOrCreateActiveSeason, getSeasonStats,
   deductBalance, getInventoryCount, logTransaction, getSeasonRules,
-  getRosterSeasonId, getGuildChannel, CHANNEL_KEYS, getTeamLegendCount,
+  getRosterSeasonId, getGuildChannel, CHANNEL_KEYS, getTeamLegendCount, getPurchasedLegendIds,
 } from "../lib/db-helpers.js";
 import { successEmbed, errorEmbed, pendingEmbed } from "../lib/embeds.js";
 import { COSTS, LIMITS, NFL_POSITIONS, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../lib/constants.js";
@@ -182,11 +182,16 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
     const focused = interaction.options.getFocused(true);
 
     if (sub === "legend") {
+      const purchasedIds = await getPurchasedLegendIds(interaction.guildId!);
+      const availableWhere = and(
+        eq(legendsTable.isAvailable, true),
+        ...(purchasedIds.length > 0 ? [notInArray(legendsTable.id, purchasedIds)] : []),
+      );
       if (focused.name === "position") {
-        // Return unique positions from available legends
+        // Return unique positions from available (non-purchased) legends
         const available = await db.select({ position: legendsTable.position })
           .from(legendsTable)
-          .where(eq(legendsTable.isAvailable, true));
+          .where(availableWhere);
         const positions = [...new Set(available.map(l => l.position).filter(Boolean))].sort();
         const q = focused.value.toLowerCase();
         const choices = positions
@@ -199,7 +204,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
       if (focused.name === "legend_name") {
         const posFilter = interaction.options.getString("position");
         const available = await db.select().from(legendsTable)
-          .where(eq(legendsTable.isAvailable, true))
+          .where(availableWhere)
           .orderBy(asc(legendsTable.position), asc(legendsTable.name));
         const q = focused.value.toLowerCase();
         const matches = available
@@ -381,7 +386,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    const legends = await db.select().from(legendsTable).where(eq(legendsTable.isAvailable, true));
+    const purchasedIds = await getPurchasedLegendIds(interaction.guildId!);
+    const legends = await db.select().from(legendsTable).where(and(
+      eq(legendsTable.isAvailable, true),
+      ...(purchasedIds.length > 0 ? [notInArray(legendsTable.id, purchasedIds)] : []),
+    ));
     const legend  = legends.find(l => l.name.toLowerCase() === legendName.toLowerCase());
     if (!legend) {
       const names = legends.map(l => l.name).join(", ");

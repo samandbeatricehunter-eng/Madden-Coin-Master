@@ -22,10 +22,10 @@ import {
   playerSeasonStatsTable, waitlistTable, payoutConfigTable,
   seasonStatTierConfigsTable,
 } from "@workspace/db";
-import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray, notInArray } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
-  getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId, getScheduleSeasonId,
+  getOrCreateUser, getOrCreateActiveSeason, getRosterSeasonId, getScheduleSeasonId, getPurchasedLegendIds,
   deductBalance, logTransaction, addBalance, getGuildChannel, CHANNEL_KEYS,
   getSeasonStats, getSeasonRules, getInventoryCount,
   getOrSeedRules, getAllSections, isAdminUser, getTeamLegendCount,
@@ -1758,6 +1758,7 @@ async function handleBuyLegendPick(interaction: ButtonInteraction, sess: Actions
 // Step 2 — legend picker for the chosen position
 async function handleBuyLegendPositionPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
   const position = interaction.values[0]!;
+  const purchasedIds = await getPurchasedLegendIds(interaction.guildId!);
 
   const rows = await db.select({
     id:       legendsTable.id,
@@ -1765,7 +1766,11 @@ async function handleBuyLegendPositionPick(interaction: StringSelectMenuInteract
     position: legendsTable.position,
     cost:     legendsTable.cost,
   }).from(legendsTable)
-    .where(and(eq(legendsTable.isAvailable, true), eq(legendsTable.position, position)))
+    .where(and(
+      eq(legendsTable.isAvailable, true),
+      eq(legendsTable.position, position),
+      ...(purchasedIds.length > 0 ? [notInArray(legendsTable.id, purchasedIds)] : []),
+    ))
     .orderBy(legendsTable.name);
 
   if (!rows.length) {
