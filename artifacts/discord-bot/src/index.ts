@@ -23,6 +23,7 @@ import * as adminResetSeasonStats    from "./commands/admin-reset-season-stats.j
 import * as endofseasonpayout        from "./commands/endofseasonpayout.js";
 import * as adminSetStatTiers        from "./commands/admin-set-stat-tiers.js";
 import * as adminStatTiers           from "./commands/admin-stat-tiers.js";
+import * as adminLegend              from "./commands/admin-legend.js";
 import * as adminLegendVault         from "./commands/admin-legendvault.js";
 import * as adminRepairTeamLinks     from "./commands/admin-repair-teamlinks.js";
 import * as adminMilestoneAudit      from "./commands/admin-milestone-audit.js";
@@ -109,6 +110,7 @@ if (!isProduction && !devBotEnabled) {
     endofseasonpayout,
     adminSetStatTiers,
     adminStatTiers,
+    adminLegend,
     adminLegendVault,
     adminRepairTeamLinks,
     adminMilestoneAudit,
