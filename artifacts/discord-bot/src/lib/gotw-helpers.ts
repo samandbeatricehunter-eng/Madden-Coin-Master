@@ -505,21 +505,28 @@ export async function autoPayoutGotwVoters(
   let loserTeamName:   string;
   let winningAnswerId: number;  // 1 or 2
 
-  const gameAwayName = gotwGame.awayTeamName.toLowerCase().trim();
-  if (nameMatch(gameAwayName, t1)) {
-    // teamName1 was the away team
+  // Identify which GOTW team was the away team using discordId first (most reliable),
+  // falling back to fuzzy name match when MCA team data is sparse.
+  const gameAwayName      = gotwGame.awayTeamName.toLowerCase().trim();
+  const gameAwayDiscordId = nameToDiscordId.get(gameAwayName);
+  const team1IsAway       = gameAwayDiscordId
+    ? gameAwayDiscordId === row.discordId1
+    : nameMatch(gameAwayName, t1);
+
+  if (team1IsAway) {
+    // teamName1 (poll answer 1) was the away team in the schedule
     winningAnswerId = awayWon ? 1 : 2;
     winnerDiscordId = awayWon ? row.discordId1 : row.discordId2;
     loserDiscordId  = awayWon ? row.discordId2 : row.discordId1;
     winnerTeamName  = awayWon ? row.teamName1  : row.teamName2;
     loserTeamName   = awayWon ? row.teamName2  : row.teamName1;
   } else {
-    // teamName1 was the home team
-    winningAnswerId = homeWon ? 1 : 2;
-    winnerDiscordId = homeWon ? row.discordId1 : row.discordId2;
-    loserDiscordId  = homeWon ? row.discordId2 : row.discordId1;
-    winnerTeamName  = homeWon ? row.teamName1  : row.teamName2;
-    loserTeamName   = homeWon ? row.teamName2  : row.teamName1;
+    // teamName1 (poll answer 1) was the home team — away team won → answer 2 wins
+    winningAnswerId = awayWon ? 2 : 1;
+    winnerDiscordId = awayWon ? row.discordId2 : row.discordId1;
+    loserDiscordId  = awayWon ? row.discordId1 : row.discordId2;
+    winnerTeamName  = awayWon ? row.teamName2  : row.teamName1;
+    loserTeamName   = awayWon ? row.teamName1  : row.teamName2;
   }
 
   // Voters who picked the winner / loser (already fetched above)

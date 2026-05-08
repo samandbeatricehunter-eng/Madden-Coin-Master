@@ -20,6 +20,7 @@ import {
   teamWeekStatsDeltaTable,
   rosterTransactionsTable,
   leagueNewsTable,
+  globalUserRecordsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, isNotNull, desc, gte } from "drizzle-orm";
 import {
@@ -74,6 +75,29 @@ async function logTransaction(
     guildId,
     relatedUserId: null,
   });
+}
+
+// Updates the cross-server all-time W/L record. Only H2H games should call this.
+async function upsertGlobalRecord(
+  discordId:   string,
+  result:      "win" | "loss" | "tie",
+  pointSpread = 0,
+): Promise<void> {
+  const incWins   = result === "win"  ? 1 : 0;
+  const incLosses = result === "loss" ? 1 : 0;
+  const incTies   = result === "tie"  ? 1 : 0;
+  await db.insert(globalUserRecordsTable)
+    .values({ discordId, wins: incWins, losses: incLosses, ties: incTies, pointDifferential: pointSpread, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: globalUserRecordsTable.discordId,
+      set: {
+        wins:              sql`${globalUserRecordsTable.wins}              + ${incWins}`,
+        losses:            sql`${globalUserRecordsTable.losses}            + ${incLosses}`,
+        ties:              sql`${globalUserRecordsTable.ties}              + ${incTies}`,
+        pointDifferential: sql`${globalUserRecordsTable.pointDifferential} + ${pointSpread}`,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 async function upsertH2HRecord(
@@ -2239,6 +2263,8 @@ export async function processWeekScores(
 
           await upsertH2HRecord(winnerId, season.id, true,    spread, guildId);
           await upsertH2HRecord(loserId,  season.id, false, -spread, guildId);
+          await upsertGlobalRecord(winnerId, "win",   spread);
+          await upsertGlobalRecord(loserId,  "loss", -spread);
           await appendGameLog(winnerId, season.id, "win",  spread,  loserTeam,   loserId,   guildId);
           await appendGameLog(loserId,  season.id, "loss", -spread, winnerTeam,  winnerId,  guildId);
 
@@ -2309,6 +2335,8 @@ export async function processWeekScores(
         } else {
           await appendGameLog(hData.discordId!, season.id, "loss", 0, aData.fullName, undefined, season.guildId ?? "");
           await appendGameLog(aData.discordId!, season.id, "loss", 0, hData.fullName, undefined, season.guildId ?? "");
+          await upsertGlobalRecord(hData.discordId!, "tie");
+          await upsertGlobalRecord(aData.discordId!, "tie");
           payoutLines.push(`🤝 **${hData.fullName}** vs **${aData.fullName}** — Tie *(no payout)*`);
           resultLines.push(`🤝 **${hData.fullName}** ${homeScore} — ${awayScore} **${aData.fullName}** *(tie)*`);
         }
