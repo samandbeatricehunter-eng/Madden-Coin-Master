@@ -1709,10 +1709,14 @@ const LEGEND_POSITION_ORDER = ["QB", "HB", "FB", "WR", "TE", "OL", "DL", "LB", "
 
 // Step 1 — position picker
 async function handleBuyLegendPick(interaction: ButtonInteraction, sess: ActionsSession) {
+  const purchasedIds = await getPurchasedLegendIds(interaction.guildId!);
   const rows = await db
     .selectDistinct({ position: legendsTable.position })
     .from(legendsTable)
-    .where(eq(legendsTable.isAvailable, true));
+    .where(and(
+      eq(legendsTable.isAvailable, true),
+      ...(purchasedIds.length > 0 ? [notInArray(legendsTable.id, purchasedIds)] : []),
+    ));
 
   if (!rows.length) {
     await interaction.update({
