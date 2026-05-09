@@ -1886,6 +1886,7 @@ async function handleBuyLegendExecute(interaction: ButtonInteraction, sess: Acti
     discordId: interaction.user.id,
     seasonId: season.id,
     purchaseType: "legend",
+    legendId: legend.id,
     playerName: legend.name,
     playerPosition: legend.position ?? "",
     cost,
