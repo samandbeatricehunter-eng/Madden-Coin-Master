@@ -6,7 +6,7 @@ import {
   globalUserRecordsTable, guildChannelsTable, franchiseScheduleTable,
   type User, type Season, type SeasonStats,
 } from "@workspace/db";
-import { eq, and, sql, desc, ne, isNotNull, notInArray } from "drizzle-orm";
+import { eq, and, sql, desc, ne, isNotNull, notInArray, or } from "drizzle-orm";
 
 // ── Primary guild ID for the original server (legacy / default) ──────────────
 export const PRIMARY_GUILD_ID = "1476251181524189438";
@@ -506,17 +506,25 @@ export async function getSeasonRules(_season: Season) {
  * Used to exclude already-purchased legends from store dropdowns/autocomplete.
  */
 export async function getPurchasedLegendIds(guildId: string): Promise<number[]> {
+  // LEFT JOIN legends so rows where legendId was not stored (legacy purchases)
+  // can still be resolved by matching playerName → legends.name.
   const rows = await db
-    .selectDistinct({ legendId: purchasesTable.legendId })
+    .selectDistinct({
+      legendId:        purchasesTable.legendId,
+      resolvedLegendId: legendsTable.id,
+    })
     .from(purchasesTable)
     .innerJoin(seasonsTable, eq(purchasesTable.seasonId, seasonsTable.id))
+    .leftJoin(legendsTable, eq(purchasesTable.playerName, legendsTable.name))
     .where(and(
       eq(seasonsTable.guildId, guildId),
       eq(purchasesTable.purchaseType, "legend"),
       ne(purchasesTable.status, "refunded"),
-      isNotNull(purchasesTable.legendId),
+      or(isNotNull(purchasesTable.legendId), isNotNull(legendsTable.id)),
     ));
-  return rows.map(r => r.legendId).filter((id): id is number => id != null);
+  return rows
+    .map(r => r.legendId ?? r.resolvedLegendId)
+    .filter((id): id is number => id != null);
 }
 
 export async function getTeamLegendCount(
