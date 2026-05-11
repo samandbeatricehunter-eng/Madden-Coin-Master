@@ -38,7 +38,6 @@ import { runWeeklyMatchupsFlow } from "./weekly-matchups-runner.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults, autoDivisionBonus } from "./playoff-matchups-runner.js";
 import axios from "axios";
 import { autoPayoutPlayoffGotw, purgeChannel } from "./gotw-helpers.js";
-import { triggerWeekAdvanceTweets } from "./league-twitter.js";
 import { checkAndNotifyWaitlist } from "../commands/waitlist.js";
 import { buildMatchupBanner, resolveLogoBuf } from "./matchup-image.js";
 import { generateMatchupBreakdown } from "./matchup-ai-breakdown.js";
@@ -989,8 +988,6 @@ async function handleRerunMedia(interaction: ButtonInteraction) {
   });
 
   try {
-    triggerWeekAdvanceTweets(interaction.client, guildId);
-
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
@@ -3137,9 +3134,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   ) as ActionRowBuilder<any>;
 
   await interaction.editReply({ embeds: [embed], components: [backRow] });
-
-  // ── League Twitter burst ───────────────────────────────────────────────────
-  triggerWeekAdvanceTweets(interaction.client, guildId);
 
   // ── Franchise articles ────────────────────────────────────────────────────
   if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && newWeek !== "1" && guild) {
