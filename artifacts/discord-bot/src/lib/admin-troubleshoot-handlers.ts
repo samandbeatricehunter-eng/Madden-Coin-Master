@@ -92,8 +92,8 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "Retroactively checks and pays any owed win-milestone bonuses for every registered " +
       "user on this server. Safe to run multiple times — duplicate detection is built in.\n\n" +
       "**📅 Import Schedule Only**\n" +
-      "Connects to EA and fetches the full regular season schedule (all 18 weeks) without " +
-      "importing any stats, rosters, or awarding payouts. Use this to load schedule data " +
+      "Connects to EA and fetches the schedule for the **current week** (regular season or playoffs) without " +
+      "importing any stats, rosters, or awarding payouts. Use this to load matchup data " +
       "after advancing a week early, or any time the schedule is missing or incomplete.",
     )
     .setFooter({ text: "All operations are scoped to this server only" })
@@ -1052,7 +1052,7 @@ export async function handleTsImportSchedule(interaction: ButtonInteraction): Pr
       new EmbedBuilder()
         .setColor(Colors.Blurple)
         .setTitle("📅 Importing Schedule…")
-        .setDescription("Connecting to EA and fetching all 18 weeks of regular season schedule data.\nThis may take 10–20 seconds.")
+        .setDescription("Connecting to EA and fetching the current week's schedule data.\nThis may take a few seconds.")
         .setTimestamp(),
     ],
   });
@@ -1081,12 +1081,11 @@ export async function handleTsImportSchedule(interaction: ButtonInteraction): Pr
     .setColor(Colors.Green)
     .setTitle("📅 Schedule Import Complete")
     .addFields(
-      { name: "Weeks Synced",  value: result.synced.toString(),                       inline: true },
-      { name: "Total Weeks",   value: result.total.toString(),                         inline: true },
-      { name: "Coverage",      value: `${Math.round((result.synced / result.total) * 100)}%`, inline: true },
+      { name: "Week",         value: result.weekLabel,                                              inline: true },
+      { name: "Games Synced", value: `${result.synced} / ${result.total}`,                          inline: true },
     )
     .setDescription(
-      "The full regular season schedule has been imported from EA.\n" +
+      `Schedule for **${result.weekLabel}** has been imported from EA.\n` +
       "No stats, rosters, or payouts were changed.",
     )
     .setFooter({ text: "Only schedule data was touched — run a full import to get scores and stats" })

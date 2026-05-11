@@ -1029,13 +1029,29 @@ async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; 
 
 // ── Schedule-only import (used by Troubleshoot panel) ─────────────────────────
 export async function runScheduleOnlyImport(guildId: string): Promise<{
-  ok:     boolean;
-  synced: number;
-  total:  number;
+  ok:        boolean;
+  synced:    number;
+  total:     number;
+  weekLabel: string;
   error?: "no_connection" | "token_refresh_failed" | "fetch_failed";
 }> {
+  // Determine the current week so we fetch only that week's schedule.
+  const [seasonRow] = await db
+    .select({ currentWeek: seasonsTable.currentWeek })
+    .from(seasonsTable)
+    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
+    .limit(1);
+
+  const currentWeekNum = seasonRow ? weekStringToNum(seasonRow.currentWeek) : 1;
+
+  // Human-readable label for result messaging
+  const PLAYOFF_LABEL_MAP: Record<number, string> = { 19: "Wild Card", 20: "Divisional", 21: "Conference Championship", 23: "Super Bowl" };
+  const wkLabel = currentWeekNum > 18
+    ? (PLAYOFF_LABEL_MAP[currentWeekNum] ?? `Week ${currentWeekNum}`)
+    : `Week ${currentWeekNum}`;
+
   const conn = await loadEAConnection(guildId);
-  if (!conn) return { ok: false, synced: 0, total: 0, error: "no_connection" };
+  if (!conn) return { ok: false, synced: 0, total: 0, weekLabel: wkLabel, error: "no_connection" };
 
   let { token, eaLeagueId } = conn;
   try {
@@ -1045,7 +1061,7 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
       token = refreshed;
     }
   } catch {
-    return { ok: false, synced: 0, total: 0, error: "token_refresh_failed" };
+    return { ok: false, synced: 0, total: 0, weekLabel: wkLabel, error: "token_refresh_failed" };
   }
 
   const platform   = token.platform;
@@ -1054,12 +1070,13 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
   const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
   const guildQs    = `?guildId=${encodeURIComponent(guildId)}`;
 
+  // Fetch only the current week — startWeek = totalWeeks = currentWeekNum
   let weekResults: { weekNum: number; data: unknown }[];
   try {
-    const result = await fetchAllWeekSchedules(token, eaLeagueId);
+    const result = await fetchAllWeekSchedules(token, eaLeagueId, currentWeekNum, 1, currentWeekNum);
     weekResults = result.weekResults;
   } catch {
-    return { ok: false, synced: 0, total: 0, error: "fetch_failed" };
+    return { ok: false, synced: 0, total: 0, weekLabel: wkLabel, error: "fetch_failed" };
   }
 
   let synced = 0;
@@ -1070,7 +1087,7 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
     if (r.ok) synced++;
   }
 
-  return { ok: synced === total, synced, total };
+  return { ok: synced === total, synced, total, weekLabel: wkLabel };
 }
 
 async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild | null, guildId?: string): Promise<{ summaryLine: string; allOk: boolean }> {
