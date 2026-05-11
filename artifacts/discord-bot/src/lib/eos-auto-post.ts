@@ -35,13 +35,14 @@ export async function runEosAutoPost(
   guildId: string = PRIMARY_GUILD_ID,
 ): Promise<{ posted: number; skipped: number; errors: number }> {
 
-  // ── 1. Load all registered users ──────────────────────────────────────────────
+  // ── 1. Load all registered users for this guild only ─────────────────────────
   const allUsers = await db.select({
     discordId:         usersTable.discordId,
     team:              usersTable.team,
     playoffSeed:       usersTable.playoffSeed,
     playoffConference: usersTable.playoffConference,
-  }).from(usersTable);
+  }).from(usersTable)
+    .where(eq(usersTable.guildId, guildId));
 
   if (allUsers.length === 0) {
     return { posted: 0, skipped: 0, errors: 0 };

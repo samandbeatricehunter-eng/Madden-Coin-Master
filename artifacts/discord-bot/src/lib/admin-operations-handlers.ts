@@ -3267,7 +3267,7 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   if (newWeek === "wildcard") {
     (async () => {
       try {
-        const result = await runEosAutoPost(interaction.client, season.id);
+        const result = await runEosAutoPost(interaction.client, season.id, guildId);
         const lines = [
           `📋 **End-of-Season Payout Summaries Posted** to the commissioner log.`,
           `• **${result.posted}** user payout${result.posted !== 1 ? "s" : ""} queued for approval`,

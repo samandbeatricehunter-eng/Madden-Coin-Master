@@ -40,7 +40,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   });
 
   try {
-    const result = await runEosAutoPost(interaction.client, season.id);
+    const result = await runEosAutoPost(interaction.client, season.id, interaction.guildId!);
 
     await interaction.editReply({
       content:
