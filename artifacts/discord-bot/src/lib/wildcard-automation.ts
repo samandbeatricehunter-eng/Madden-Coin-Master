@@ -24,7 +24,7 @@ import {
   franchiseMcaTeamsTable,
   pendingPollsTable, seasonHistoricalChannelsTable, seasonsTable,
 } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
@@ -255,7 +255,7 @@ export async function runWildcardAutomation(
 
     // ── 4. Issue season PR bonuses ─────────────────────────────────────────────
     try {
-      await issueSeasonPrBonuses(client, historicalChannel, seasonId);
+      await issueSeasonPrBonuses(client, historicalChannel, seasonId, resolvedGuild.id);
     } catch (err) {
       console.error("[wildcard] Season PR section failed:", err);
     }
@@ -450,53 +450,43 @@ async function issueSeasonPrBonuses(
   client: Client,
   channel: TextChannel,
   seasonId: number,
+  guildId: string,
 ): Promise<void> {
-  const raw = await readMcaJson("mca/standings.json");
-  if (!raw || typeof raw !== "object") {
-    await channel.send({ content: "*Season PR data not available — standings not yet exported.*" });
+  // Compute PR rankings from the bot's own user_records using the same formula
+  // as /seasonpr: PR = 0.6 × (W - L) + 0.4 × PointDiff
+  // This ensures the ranking here always matches what users see in /seasonpr.
+  const records = await db.select({
+    discordId:         userRecordsTable.discordId,
+    team:              userRecordsTable.team,
+    wins:              userRecordsTable.wins,
+    losses:            userRecordsTable.losses,
+    pointDifferential: userRecordsTable.pointDifferential,
+  }).from(userRecordsTable)
+    .innerJoin(usersTable, and(
+      eq(userRecordsTable.discordId, usersTable.discordId),
+      eq(usersTable.guildId, guildId),
+    ))
+    .where(eq(userRecordsTable.seasonId, seasonId));
+
+  if (records.length === 0) {
+    await channel.send({ content: "*Season PR data not available — no user records found for this season.*" });
     return;
   }
 
-  const body = raw as Record<string, unknown>;
-  const listKey = Object.keys(body).find(k =>
-    k.toLowerCase().includes("standing") && Array.isArray(body[k])
-  );
-  if (!listKey) return;
-
-  interface StandingEntry {
-    teamId:       number;
-    rank:         number;
-    wins:         number;
-    losses:       number;
-    teamName?:    string;
-  }
-
-  const rawStandings = body[listKey] as Record<string, unknown>[];
-  const standings: StandingEntry[] = rawStandings.map(s => ({
-    teamId:  Number(s["teamId"] ?? 0),
-    rank:    Number(s["rank"]   ?? s["overallRank"] ?? s["stPRank"] ?? 999),
-    wins:    Number(s["wins"]   ?? s["totalWins"]   ?? 0),
-    losses:  Number(s["losses"] ?? s["totalLosses"] ?? 0),
-    teamName: String(s["teamName"] ?? s["teamNickName"] ?? ""),
-  }));
-
-  standings.sort((a, b) => a.rank - b.rank);
-  const top10 = standings.slice(0, 10);
-
-  // Resolve discordId via franchiseMcaTeamsTable
-  const mcaTeams = await db.select({
-    teamId: franchiseMcaTeamsTable.teamId,
-    nickName: franchiseMcaTeamsTable.nickName,
-    discordId: franchiseMcaTeamsTable.discordId,
-  }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, seasonId));
-  const teamIdToMca = new Map(mcaTeams.map(t => [t.teamId, t]));
+  const ranked = records
+    .map(r => ({
+      ...r,
+      prScore: 0.6 * (r.wins - r.losses) + 0.4 * r.pointDifferential,
+    }))
+    .sort((a, b) => b.prScore - a.prScore)
+    .slice(0, 10);
 
   const payouts = [
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_1),   // rank 1
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_2),   // rank 2
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_3_6), // rank 3-6
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_7_8), // rank 7-8
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_9_10),// rank 9-10
+    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_1),    // rank 1
+    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_2),    // rank 2
+    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_3_6),  // rank 3–6
+    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_7_8),  // rank 7–8
+    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_9_10), // rank 9–10
   ];
 
   function rankToPayout(rank: number): number {
@@ -509,26 +499,25 @@ async function issueSeasonPrBonuses(
 
   const prLines: string[] = [];
 
-  for (const entry of top10) {
-    const mca = teamIdToMca.get(entry.teamId);
-    const teamDisplay = mca?.nickName || entry.teamName || `Team #${entry.teamId}`;
-    const bonus = rankToPayout(entry.rank);
+  for (let i = 0; i < ranked.length; i++) {
+    const entry = ranked[i]!;
+    const rank  = i + 1;
+    const teamDisplay = entry.team || `<@${entry.discordId}>`;
+    const bonus = rankToPayout(rank);
 
-    if (mca?.discordId) {
-      await addBalance(mca.discordId, bonus, PRIMARY_GUILD_ID);
-      await logTransaction(mca.discordId, bonus, "addcoins",
-        `Season PR ranking bonus — #${entry.rank} (${teamDisplay})`, PRIMARY_GUILD_ID, "system");
-      try {
-        const u = await client.users.fetch(mca.discordId);
-        await u.send(
-          `📊 **Season PR Bonus!** You finished **#${entry.rank}** in the Season Power Rankings — ` +
-          `**+${bonus} 🪙** added to your balance!`
-        ).catch(() => {});
-      } catch (_) {}
-    }
+    await addBalance(entry.discordId, bonus, guildId);
+    await logTransaction(entry.discordId, bonus, "addcoins",
+      `Season PR ranking bonus — #${rank} (${teamDisplay})`, guildId, "system");
+    try {
+      const u = await client.users.fetch(entry.discordId);
+      await u.send(
+        `📊 **Season PR Bonus!** You finished **#${rank}** in the Season Power Rankings — ` +
+        `**+${bonus} 🪙** added to your balance!`
+      ).catch(() => {});
+    } catch (_) {}
 
-    const medal = entry.rank === 1 ? "🥇" : entry.rank === 2 ? "🥈" : entry.rank === 3 ? "🥉" : "📊";
-    prLines.push(`${medal} **#${entry.rank}** ${teamDisplay} (${entry.wins}–${entry.losses}) — **+${bonus} 🪙**`);
+    const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : "📊";
+    prLines.push(`${medal} **#${rank}** ${teamDisplay} (${entry.wins}–${entry.losses}, PR: ${entry.prScore.toFixed(1)}) — **+${bonus} 🪙**`);
   }
 
   await channel.send({
@@ -536,7 +525,7 @@ async function issueSeasonPrBonuses(
       .setTitle("📊 Season Power Rankings — Bonus Payouts")
       .setColor(Colors.Blurple)
       .setDescription(prLines.join("\n") || "*No standings data available*")
-      .setFooter({ text: "Top 10 PR finishers awarded coins based on final season ranking" })
+      .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff) · Top 10 awarded coins" })
       .setTimestamp()],
   });
 }
