@@ -276,7 +276,7 @@ export async function runWildcardAutomation(
 
     // ── 6. Post divisional winners + seeds ─────────────────────────────────────
     try {
-      await postPlayoffSection(historicalChannel, seasonId, seasonNumber);
+      await postPlayoffSection(historicalChannel, seasonId, seasonNumber, resolvedGuild.id);
     } catch (err) {
       console.error("[wildcard] Playoff section failed:", err);
     }
@@ -680,15 +680,19 @@ async function postPlayoffSection(
   channel: TextChannel,
   seasonId: number,
   seasonNumber: number,
+  guildId: string,
 ): Promise<void> {
-  // Pull seeded users + their season records
+  // Pull seeded users + their season records — scoped to this guild only
   const seededUsers = await db.select({
     discordId:         usersTable.discordId,
     team:              usersTable.team,
     playoffSeed:       usersTable.playoffSeed,
     playoffConference: usersTable.playoffConference,
   }).from(usersTable)
-    .where(sql`${usersTable.playoffSeed} IS NOT NULL`);
+    .where(and(
+      eq(usersTable.guildId, guildId),
+      isNotNull(usersTable.playoffSeed),
+    ));
 
   const records = await db.select({
     discordId:         userRecordsTable.discordId,
@@ -959,7 +963,7 @@ export async function rebuildHistoricalChannel(
 
   // ── Playoff picture ───────────────────────────────────────────────────────────
   try {
-    await postPlayoffSection(newChannel, seasonId, seasonNumber);
+    await postPlayoffSection(newChannel, seasonId, seasonNumber, guild.id);
   } catch (err) {
     console.error("[rebuild] Playoff section failed:", err);
   }
