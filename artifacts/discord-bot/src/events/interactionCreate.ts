@@ -1965,6 +1965,45 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── EOS payout: commissioner rejects / deletes a pending payout ─────────────
+  if (action === "eos_reject") {
+    const payoutId = parseInt(secondPart ?? "0", 10);
+    await interaction.deferUpdate();
+
+    const [payout] = await db.select().from(pendingEosPayoutsTable)
+      .where(eq(pendingEosPayoutsTable.id, payoutId)).limit(1);
+
+    if (!payout) { await interaction.followUp({ content: "❌ Payout not found.", ephemeral: true }); return; }
+    if (payout.status !== "pending") {
+      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}** and can't be rejected.`, ephemeral: true });
+      return;
+    }
+
+    await db.update(pendingEosPayoutsTable)
+      .set({ status: "rejected", approvedBy: interaction.user.id, approvedAt: new Date() })
+      .where(eq(pendingEosPayoutsTable.id, payoutId));
+
+    const teamLabel = payout.teamName ? ` (${payout.teamName})` : "";
+    const rejectedEmbed = new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle("🗑️ EOS Payout Rejected")
+      .setDescription(
+        `**Team:** <@${payout.discordId}>${teamLabel}\n` +
+        `**Season:** ${payout.seasonId}\n\n` +
+        `❌ Rejected by ${interaction.user.toString()} — no coins awarded.`,
+      )
+      .setFooter({ text: `EOS Payout #${payoutId} • Season ${payout.seasonId}` })
+      .setTimestamp();
+
+    await interaction.editReply({
+      embeds:     [rejectedEmbed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("eos_rejected_done").setLabel("🗑️ Rejected").setStyle(ButtonStyle.Danger).setDisabled(true),
+      )],
+    });
+    return;
+  }
+
   // ── GOTY: commissioner opens winner selection ─────────────────────────────────
   if (action === "goty_select") {
     const seasonId = parseInt(secondPart ?? "0", 10);
@@ -2834,6 +2873,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
                 .setCustomId(`eos_edit:${payoutId}`)
                 .setLabel("✏️ Edit Amount")
                 .setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder()
+                .setCustomId(`eos_reject:${payoutId}`)
+                .setLabel("🗑️ Reject")
+                .setStyle(ButtonStyle.Danger),
             );
             await msg.edit({ components: [updatedRow] });
           }

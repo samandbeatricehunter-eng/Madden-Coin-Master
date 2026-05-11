@@ -27,7 +27,7 @@ import {
   franchiseScheduleTable,
   playerStatWeekProcessedTable,
 } from "@workspace/db";
-import { eq, and, ne, desc, isNotNull } from "drizzle-orm";
+import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { STAT_CATEGORIES, evaluateTier } from "../lib/stat-categories.js";
 import { getPayoutValue, getAllPayoutConfig, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -118,6 +118,7 @@ export async function runEosTestRun(ctx: EosRunContext): Promise<void> {
     eq(usersTable.guildId, ctx.guildId),
     isNotNull(usersTable.team),
     ne(usersTable.team, ""),
+    notLike(usersTable.discordId, "unlinked_%"),
   ));
 
   if (allUsers.length === 0) {

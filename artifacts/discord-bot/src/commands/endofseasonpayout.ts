@@ -252,6 +252,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setCustomId(`eos_edit:${pending.id}`)
       .setLabel("✏️ Edit Amount")
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`eos_reject:${pending.id}`)
+      .setLabel("🗑️ Reject")
+      .setStyle(ButtonStyle.Danger),
   );
 
   // ── Post to commissioner channel ──────────────────────────────────────────────

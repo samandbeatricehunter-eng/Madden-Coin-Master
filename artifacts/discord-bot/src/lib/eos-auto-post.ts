@@ -8,7 +8,7 @@ import {
   seasonStatTierConfigsTable, pendingEosPayoutsTable,
   playerSeasonStatsTable, franchiseScheduleTable,
 } from "@workspace/db";
-import { eq, and, ne, desc, isNotNull } from "drizzle-orm";
+import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
@@ -46,6 +46,7 @@ export async function runEosAutoPost(
       eq(usersTable.guildId, guildId),
       isNotNull(usersTable.team),
       ne(usersTable.team, ""),
+      notLike(usersTable.discordId, "unlinked_%"),
     ));
 
   if (allUsers.length === 0) {
@@ -402,6 +403,10 @@ export async function runEosAutoPost(
           .setCustomId(`eos_edit:${pending.id}`)
           .setLabel("✏️ Edit Amount")
           .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`eos_reject:${pending.id}`)
+          .setLabel("🗑️ Reject")
+          .setStyle(ButtonStyle.Danger),
       );
 
       // ── Post to commissioner channel ───────────────────────────────────────────

@@ -24,7 +24,7 @@ import {
   franchiseMcaTeamsTable,
   pendingPollsTable, seasonHistoricalChannelsTable, seasonsTable,
 } from "@workspace/db";
-import { eq, and, ne, sql, isNotNull } from "drizzle-orm";
+import { eq, and, ne, notLike, sql, isNotNull } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
@@ -470,6 +470,7 @@ async function issueSeasonPrBonuses(
       eq(userRecordsTable.seasonId, seasonId),
       isNotNull(usersTable.team),
       ne(usersTable.team, ""),
+      notLike(usersTable.discordId, "unlinked_%"),
     ));
 
   if (records.length === 0) {
