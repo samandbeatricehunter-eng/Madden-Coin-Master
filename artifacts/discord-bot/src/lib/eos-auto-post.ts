@@ -12,6 +12,8 @@ import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
+import { getArticleStandings } from "./gcs-fallback.js";
+import { computePlayoffSeeds } from "./playoff-seeding.js";
 
 // Positions considered QB or RB for YPA / YPC calculations
 const QB_POSITIONS = new Set(["QB"]);
@@ -38,9 +40,8 @@ export async function runEosAutoPost(
   // ── 1. Load all registered users for this guild only ─────────────────────────
   const allUsers = await db.select({
     discordId:         usersTable.discordId,
+    discordUsername:   usersTable.discordUsername,
     team:              usersTable.team,
-    playoffSeed:       usersTable.playoffSeed,
-    playoffConference: usersTable.playoffConference,
   }).from(usersTable)
     .where(and(
       eq(usersTable.guildId, guildId),
@@ -143,6 +144,34 @@ export async function runEosAutoPost(
     .from(pendingEosPayoutsTable)
     .where(eq(pendingEosPayoutsTable.seasonId, seasonId));
   const alreadyPosted = new Set(existingPayouts.map(r => r.discordId));
+
+  // ── 6b. Derive playoff picture (same source as test run + /standings) ─────────
+  // Uses standings data rather than usersTable.playoffSeed, which may not be set.
+  const allStandings = await getArticleStandings(seasonId, 18);
+  const playoffDiscordIds = new Set<string>();
+  let standingsDataAvailable = false;
+
+  if (allStandings.length > 0) {
+    standingsDataAvailable = true;
+    const usernameToId = new Map(allUsers.map(u => [u.discordUsername, u.discordId]));
+
+    for (const conf of ["AFC", "NFC"] as const) {
+      const confTeams = allStandings.filter(t => t.conference === conf);
+      const seeds     = computePlayoffSeeds(confTeams);
+
+      for (const seed of seeds) {
+        if (seed.discordUsername) {
+          const did = usernameToId.get(seed.discordUsername);
+          if (did) playoffDiscordIds.add(did);
+        }
+        // Fallback: match by team name if discordUsername not populated
+        if (seed.teamName) {
+          const matched = allUsers.find(u => u.team?.toLowerCase() === seed.teamName.toLowerCase());
+          if (matched) playoffDiscordIds.add(matched.discordId);
+        }
+      }
+    }
+  }
 
   // ── 7. Process each user ──────────────────────────────────────────────────────
   let posted  = 0;
@@ -324,15 +353,12 @@ export async function runEosAutoPost(
       }
 
       // ── Missed-playoffs welfare bonus ─────────────────────────────────────────
-      // A user "missed the playoffs" when playoffSeed is 0 or null.
-      // Seed is auto-set from standings when advancing Week 18 → Wildcard.
-      // If seeds have not been set at all
-      // (every user is 0/null), we skip the bonus entirely to avoid giving
-      // everyone consolation coins by mistake — this guards against running EOS
-      // before seeds are entered.
-      const anySeeded = allUsers.some(u => (u.playoffSeed ?? 0) > 0);
-      if (anySeeded && missedPlayoffsAmt > 0) {
-        const madePlayoffs = (user.playoffSeed ?? 0) > 0;
+      // Derives playoff picture from standings data (same source as /standings
+      // and the EOS test run) rather than usersTable.playoffSeed, which may not
+      // be written yet. standingsDataAvailable / playoffDiscordIds are built
+      // before this loop from getArticleStandings() + computePlayoffSeeds().
+      if (standingsDataAvailable && missedPlayoffsAmt > 0) {
+        const madePlayoffs = playoffDiscordIds.has(user.discordId);
         if (!madePlayoffs) {
           displayLines.push(
             `• **Missed Playoffs Consolation**: Did not qualify → +${missedPlayoffsAmt.toLocaleString()} coins`,
@@ -347,13 +373,11 @@ export async function runEosAutoPost(
           totalCoins += missedPlayoffsAmt;
           hasStats = true;
         } else {
-          displayLines.push(
-            `• **Missed Playoffs Consolation**: Made playoffs (${user.playoffConference ?? "?"} Seed ${user.playoffSeed}) → N/A`,
-          );
+          displayLines.push(`• **Missed Playoffs Consolation**: Made playoffs → N/A`);
         }
-      } else if (!anySeeded) {
+      } else if (!standingsDataAvailable) {
         displayLines.push(
-          `• **Missed Playoffs Consolation**: ⚠️ No playoff seeds set — run \`/admin_ea_export standings\` or \`/admin-playoffs set*seeds\` first`,
+          `• **Missed Playoffs Consolation**: ⚠️ No standings data found — import Week 18 schedule first`,
         );
       }
 
