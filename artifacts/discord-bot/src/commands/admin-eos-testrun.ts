@@ -27,7 +27,7 @@ import {
   franchiseScheduleTable,
   playerStatWeekProcessedTable,
 } from "@workspace/db";
-import { eq, and, desc, isNotNull } from "drizzle-orm";
+import { eq, and, ne, desc, isNotNull } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { STAT_CATEGORIES, evaluateTier } from "../lib/stat-categories.js";
 import { getPayoutValue, getAllPayoutConfig, PAYOUT_KEYS } from "../lib/payout-config.js";
@@ -114,7 +114,11 @@ export async function runEosTestRun(ctx: EosRunContext): Promise<void> {
     discordId:       usersTable.discordId,
     discordUsername: usersTable.discordUsername,
     team:            usersTable.team,
-  }).from(usersTable).where(eq(usersTable.guildId, ctx.guildId));
+  }).from(usersTable).where(and(
+    eq(usersTable.guildId, ctx.guildId),
+    isNotNull(usersTable.team),
+    ne(usersTable.team, ""),
+  ));
 
   if (allUsers.length === 0) {
     await ctx.editReply({ content: "❌ No registered users found." });
