@@ -120,6 +120,9 @@ import {
   handleTsEosManual,
   handleTsEosManualConfirm,
   handleTsEosManualCancel,
+  handleTsEosReset,
+  handleTsEosResetConfirm,
+  handleTsEosResetCancel,
   handleTsRepairSchedules,
   handleTsSchedReviewWeek,
   handleTsSchedWeekModal,
@@ -241,6 +244,9 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ts_eos_manual")        { await handleTsEosManual(interaction);        return; }
   if (action === "ts_eos_manual_confirm"){ await handleTsEosManualConfirm(interaction); return; }
   if (action === "ts_eos_manual_cancel") { await handleTsEosManualCancel(interaction);  return; }
+  if (action === "ts_eos_reset")         { await handleTsEosReset(interaction);         return; }
+  if (action === "ts_eos_reset_confirm") { await handleTsEosResetConfirm(interaction);  return; }
+  if (action === "ts_eos_reset_cancel")  { await handleTsEosResetCancel(interaction);   return; }
   if (action === "ts_repair_schedules")  { await handleTsRepairSchedules(interaction);  return; }
   if (action === "ts_sched_review_week") { await handleTsSchedReviewWeek(interaction);  return; }
   if (action === "ts_sched_delete")      { await handleTsSchedDelete(interaction);      return; }

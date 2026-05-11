@@ -6,6 +6,7 @@
  *   ts_repair_records | ts_resync_data | ts_eos_testrun
  *   ts_repair_playoff | ts_playoff_proceed | ts_playoff_confirm | ts_playoff_cancel
  *   ts_eos_manual     | ts_eos_manual_confirm | ts_eos_manual_cancel
+ *   ts_eos_reset      | ts_eos_reset_confirm  | ts_eos_reset_cancel
  *   ao_milestone_audit
  *   ts_repair_schedules | ts_sched_review_week | ts_sched_sel | ts_sched_delete:<id>
  *   ts_modal_sched_week (modal)
@@ -23,9 +24,9 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, userRecordsTable, coinTransactionsTable,
-  franchiseScheduleTable,
+  franchiseScheduleTable, pendingEosPayoutsTable,
 } from "@workspace/db";
-import { eq, and, sql, isNotNull, desc, asc } from "drizzle-orm";
+import { eq, and, sql, isNotNull, desc, asc, inArray } from "drizzle-orm";
 
 import {
   isAdminUser, getOrCreateActiveSeason, getScheduleSeasonId,
@@ -83,6 +84,10 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "Triggers the actual end-of-season payout process for the active season. " +
       "Posts commissioner approval embeds to the commish channel for every user. " +
       "⚠️ Only run this once — duplicate runs will create duplicate payout requests.\n\n" +
+      "**🗑️ Clear & Rerun EOS**\n" +
+      "Deletes all **pending** (not yet approved) EOS payout records for the active season, " +
+      "then immediately reruns the full EOS calculation with only this server's members. " +
+      "Use this to fix payouts that were posted to wrong users. Already-approved payouts are not affected.\n\n" +
       "**🎯 Milestone Audit**\n" +
       "Retroactively checks and pays any owed win-milestone bonuses for every registered " +
       "user on this server. Safe to run multiple times — duplicate detection is built in.\n\n" +
@@ -105,12 +110,15 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
   );
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_eos_manual").setLabel("⚡ EOS Manual Run").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ts_eos_reset").setLabel("🗑️ Clear & Rerun EOS").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ao_milestone_audit").setLabel("🎯 Milestone Audit").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ts_import_schedule").setLabel("📅 Import Schedule Only").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+  );
+  const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
-  return [row1, row2];
+  return [row1, row2, row3];
 }
 
 // ── Shared admin guard ─────────────────────────────────────────────────────────
@@ -1151,5 +1159,110 @@ export async function handleTsSchedDelete(interaction: ButtonInteraction): Promi
         new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
       ) as ActionRowBuilder<any>,
     ],
+  });
+}
+
+// ── Clear & Rerun EOS — Step 1: confirmation ──────────────────────────────────
+export async function handleTsEosReset(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+  await interaction.deferUpdate();
+
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+
+  const pending = await db.select({ id: pendingEosPayoutsTable.id })
+    .from(pendingEosPayoutsTable)
+    .where(and(
+      eq(pendingEosPayoutsTable.seasonId, season.id),
+      inArray(pendingEosPayoutsTable.status, ["pending"]),
+    ));
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("🗑️ Clear & Rerun EOS — Confirmation Required")
+        .setDescription(
+          `**Season ${season.seasonNumber}**\n\n` +
+          `This will:\n` +
+          `• Delete **${pending.length}** pending EOS payout record(s) for this season\n` +
+          `• Immediately rerun the EOS calculation scoped to **this server only**\n` +
+          `• Repost fresh approval embeds to the commissioner channel\n\n` +
+          `⚠️ Already-approved payouts are **not** deleted or reversed.\n\n` +
+          `Are you sure?`,
+        )
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ts_eos_reset_confirm").setLabel("🗑️ Yes — Clear & Rerun").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("ts_eos_reset_cancel").setLabel("← Cancel").setStyle(ButtonStyle.Secondary),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+// ── Clear & Rerun EOS — Step 2: execute ───────────────────────────────────────
+export async function handleTsEosResetConfirm(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+  await interaction.deferUpdate();
+
+  const guildId = interaction.guildId!;
+  const season  = await getOrCreateActiveSeason(guildId);
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setTitle("⏳ Clearing & Rerunning EOS…").setDescription("Deleting pending records and recalculating…")],
+    components: [],
+  });
+
+  // Delete only pending records (not approved ones)
+  const deleted = await db.delete(pendingEosPayoutsTable)
+    .where(and(
+      eq(pendingEosPayoutsTable.seasonId, season.id),
+      inArray(pendingEosPayoutsTable.status, ["pending"]),
+    ))
+    .returning({ id: pendingEosPayoutsTable.id });
+
+  let result: { posted: number; skipped: number; errors: number };
+  try {
+    result = await runEosAutoPost(interaction.client, season.id, guildId);
+  } catch (err) {
+    console.error("[ts_eos_reset_confirm]", err);
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ EOS Rerun Failed")
+        .setDescription(`Deleted **${deleted.length}** pending record(s), but the rerun failed: \`${(err as Error).message}\``)],
+    });
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ EOS Reset Complete")
+        .setDescription(
+          `• 🗑️ **${deleted.length}** pending record(s) cleared\n` +
+          `• 📋 **${result.posted}** fresh payout embed(s) posted to the commissioner channel\n` +
+          `• ⏭ **${result.skipped}** skipped (already have approved payouts)\n` +
+          (result.errors > 0 ? `• ⚠️ **${result.errors}** error(s) — check bot logs` : ""),
+        )
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+// ── Clear & Rerun EOS — Cancel ─────────────────────────────────────────────────
+export async function handleTsEosResetCancel(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+  await interaction.deferUpdate();
+  await interaction.editReply({
+    embeds: [buildTroubleshootEmbed()],
+    components: buildTroubleshootRows() as ActionRowBuilder<any>[],
   });
 }
