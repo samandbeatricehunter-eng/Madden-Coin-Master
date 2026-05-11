@@ -253,13 +253,6 @@ export async function runWildcardAutomation(
       console.error("[wildcard] Awards section failed:", err);
     }
 
-    // ── 4. Issue season PR bonuses ─────────────────────────────────────────────
-    try {
-      await issueSeasonPrBonuses(client, historicalChannel, seasonId, resolvedGuild.id);
-    } catch (err) {
-      console.error("[wildcard] Season PR section failed:", err);
-    }
-
     // ── 4. Create GOTY poll ─────────────────────────────────────────────────────
     try {
       await createGotyPoll(client, historicalChannel, seasonId, resolvedGuild.id);
@@ -438,99 +431,6 @@ async function postAwards(
       .setTitle(`🏆 Season ${seasonNumber} — Regular Season Awards`)
       .setColor(Colors.Gold)
       .setDescription((leagueSec + afcSec + nfcSec + bonusNote).slice(0, 4000))
-      .setTimestamp()],
-  });
-}
-
-// ────────────────────────────────────────────────────────────────────────────────
-// SECTION 3: Season PR Bonuses
-// ────────────────────────────────────────────────────────────────────────────────
-
-async function issueSeasonPrBonuses(
-  client: Client,
-  channel: TextChannel,
-  seasonId: number,
-  guildId: string,
-): Promise<void> {
-  // Compute PR rankings from the bot's own user_records using the same formula
-  // as /seasonpr: PR = 0.6 × (W - L) + 0.4 × PointDiff
-  // This ensures the ranking here always matches what users see in /seasonpr.
-  const records = await db.select({
-    discordId:         userRecordsTable.discordId,
-    team:              userRecordsTable.team,
-    wins:              userRecordsTable.wins,
-    losses:            userRecordsTable.losses,
-    pointDifferential: userRecordsTable.pointDifferential,
-  }).from(userRecordsTable)
-    .innerJoin(usersTable, and(
-      eq(userRecordsTable.discordId, usersTable.discordId),
-      eq(usersTable.guildId, guildId),
-    ))
-    .where(and(
-      eq(userRecordsTable.seasonId, seasonId),
-      isNotNull(usersTable.team),
-      ne(usersTable.team, ""),
-      notLike(usersTable.discordId, "unlinked_%"),
-    ));
-
-  if (records.length === 0) {
-    await channel.send({ content: "*Season PR data not available — no user records found for this season.*" });
-    return;
-  }
-
-  const ranked = records
-    .map(r => ({
-      ...r,
-      prScore: 0.6 * (r.wins - r.losses) + 0.4 * r.pointDifferential,
-    }))
-    .sort((a, b) => b.prScore - a.prScore)
-    .slice(0, 10);
-
-  const payouts = [
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_1),    // rank 1
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_2),    // rank 2
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_3_6),  // rank 3–6
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_7_8),  // rank 7–8
-    await getPayoutValue(PAYOUT_KEYS.SEASON_PR_9_10), // rank 9–10
-  ];
-
-  function rankToPayout(rank: number): number {
-    if (rank === 1)            return payouts[0]!;
-    if (rank === 2)            return payouts[1]!;
-    if (rank >= 3 && rank <=6) return payouts[2]!;
-    if (rank >= 7 && rank <=8) return payouts[3]!;
-    return payouts[4]!;
-  }
-
-  const prLines: string[] = [];
-
-  for (let i = 0; i < ranked.length; i++) {
-    const entry = ranked[i]!;
-    const rank  = i + 1;
-    const teamDisplay = entry.team || `<@${entry.discordId}>`;
-    const bonus = rankToPayout(rank);
-
-    await addBalance(entry.discordId, bonus, guildId);
-    await logTransaction(entry.discordId, bonus, "addcoins",
-      `Season PR ranking bonus — #${rank} (${teamDisplay})`, guildId, "system");
-    try {
-      const u = await client.users.fetch(entry.discordId);
-      await u.send(
-        `📊 **Season PR Bonus!** You finished **#${rank}** in the Season Power Rankings — ` +
-        `**+${bonus} 🪙** added to your balance!`
-      ).catch(() => {});
-    } catch (_) {}
-
-    const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : "📊";
-    prLines.push(`${medal} **#${rank}** ${teamDisplay} (${entry.wins}–${entry.losses}, PR: ${entry.prScore.toFixed(1)}) — **+${bonus} 🪙**`);
-  }
-
-  await channel.send({
-    embeds: [new EmbedBuilder()
-      .setTitle("📊 Season Power Rankings — Bonus Payouts")
-      .setColor(Colors.Blurple)
-      .setDescription(prLines.join("\n") || "*No standings data available*")
-      .setFooter({ text: "PR Score = 60% × (W-L Diff) + 40% × (Point Diff) · Top 10 awarded coins" })
       .setTimestamp()],
   });
 }
