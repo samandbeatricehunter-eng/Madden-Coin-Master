@@ -239,6 +239,26 @@ const PLAYOFF_ROUNDS: { weekNum: number; label: string; desc: string }[] = [
   { weekNum: 23, label: "🏆 Super Bowl",                 desc: "Playoff Week 23 — Super Bowl (stageIndex 1, weekIndex 22)" },
 ];
 
+/**
+ * Converts a season.currentWeek string (e.g. "18", "wildcard", "divisional")
+ * to a numeric week number so it can be compared against PLAYOFF_ROUNDS.
+ * Non-numeric playoff strings map to their EA weekNum equivalents.
+ */
+function weekStringToNum(w: string | null | undefined): number {
+  if (!w) return 1;
+  const n = parseInt(w, 10);
+  if (!isNaN(n)) return n;
+  const map: Record<string, number> = {
+    wildcard:      19,
+    divisional:    20,
+    conference:    21,
+    superbowl:     23,
+    offseason:     24,
+    training_camp: 25,
+  };
+  return map[w] ?? 1;
+}
+
 /** Human-readable label for any week/stage combination. */
 function getWeekLabel(weekType: "reg" | "pre", weekNum: number): string {
   if (weekType === "pre") return `Preseason Week ${weekNum}`;
@@ -287,7 +307,7 @@ async function buildWeekSelectContent(guildId: string, connInfo?: { leagueName: 
     .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
     .limit(1);
 
-  const currentWeekNum = season ? (parseInt(season.currentWeek ?? "1", 10) || 1) : 1;
+  const currentWeekNum = season ? weekStringToNum(season.currentWeek) : 1;
   const maxWeek = currentWeekNum; // include current week and all previous weeks
 
   const conn = connInfo ?? await loadEAConnection(guildId);
@@ -914,7 +934,7 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
       .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
       .limit(1);
 
-    const currentWeekNum = season ? (parseInt(season.currentWeek ?? "1", 10) || 1) : 1;
+    const currentWeekNum = season ? weekStringToNum(season.currentWeek) : 1;
     const maxWeek = currentWeekNum;
 
     const modeNote = skipPayouts ? "\n\n⚠️ **Reimport mode — No Payouts:** Coins will not be awarded and W/L records will not be updated." : "";
