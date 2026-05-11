@@ -546,36 +546,59 @@ async function handlePostMatchupsConfirm(interaction: ButtonInteraction) {
   });
 
   try {
-    const season = await getOrCreateActiveSeason(guildId);
-    const weekNum = parseInt(season.currentWeek ?? "1", 10);
-    const displayWeekNum = isNaN(weekNum) ? 1 : weekNum;
+    const season      = await getOrCreateActiveSeason(guildId);
+    const currentWeek = season.currentWeek ?? "1";
+    const backRow     = [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+      ) as ActionRowBuilder<any>,
+    ];
 
-    await runWeeklyMatchupsFlow({
-      client:         interaction.client,
-      guild:          interaction.guild,
-      season,
-      displayWeekNum,
-      payoutWeekIndex: null,
-      guildId,
-      replyFn: async ({ content, components }) => {
-        await interaction.followUp({ content, components: components ?? [], ephemeral: true }).catch(() => {});
-      },
-    });
+    if (PLAYOFF_WEEK_META[currentWeek]) {
+      // ── Playoff week — use the playoff matchups / GOTW flow ──────────────────
+      const summary = await runPlayoffMatchupsFlow(
+        interaction.client,
+        season,
+        currentWeek as keyof typeof PLAYOFF_WEEK_META,
+        guildId,
+      );
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Green)
+            .setTitle("✅ Playoff Matchups Posted")
+            .setDescription(summary || `Playoff matchup flow completed for **${weekLabel(currentWeek)}**.`),
+        ],
+        components: backRow,
+      });
+    } else {
+      // ── Regular season week ───────────────────────────────────────────────────
+      const weekNum        = parseInt(currentWeek, 10);
+      const displayWeekNum = isNaN(weekNum) ? 1 : weekNum;
 
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Matchups Posted")
-          .setDescription(`Matchup flow completed for **${weekLabel(season.currentWeek ?? "1")}**.`),
-      ],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
-        ) as ActionRowBuilder<any>,
-      ],
-    });
+      await runWeeklyMatchupsFlow({
+        client:          interaction.client,
+        guild:           interaction.guild,
+        season,
+        displayWeekNum,
+        payoutWeekIndex: null,
+        guildId,
+        replyFn: async ({ content, components }) => {
+          await interaction.followUp({ content, components: components ?? [], ephemeral: true }).catch(() => {});
+        },
+      });
+
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Green)
+            .setTitle("✅ Matchups Posted")
+            .setDescription(`Matchup flow completed for **${weekLabel(currentWeek)}**.`),
+        ],
+        components: backRow,
+      });
+    }
   } catch (err) {
     console.error("[admin-operations] Post Matchups error:", err);
     await interaction.editReply({
