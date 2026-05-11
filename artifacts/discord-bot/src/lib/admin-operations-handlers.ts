@@ -3267,14 +3267,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   if (newWeek === "wildcard") {
     (async () => {
       try {
-        const safeModeActive = (await getPayoutValue(PAYOUT_KEYS.STAT_SAFE_MODE)) > 0;
-        if (safeModeActive) {
-          await interaction.followUp({
-            content: "⚠️ **EOS payouts are blocked** — stat reimport safe mode is currently active. Disable it before advancing to Wildcard week to run EOS payouts.",
-            ephemeral: true,
-          }).catch(() => {});
-          return;
-        }
         const result = await runEosAutoPost(interaction.client, season.id);
         const lines = [
           `📋 **End-of-Season Payout Summaries Posted** to the commissioner log.`,

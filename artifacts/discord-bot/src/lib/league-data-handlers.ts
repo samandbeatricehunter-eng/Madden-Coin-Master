@@ -1239,19 +1239,24 @@ export async function runWeekImport(ctx: {
     }
   } catch { /* non-fatal */ }
 
-  // ── Full season schedule sync (all 18 weeks) ─────────────────────────────────
+  // ── Full season schedule sync (all 18 weeks + playoffs when importing wk 18) ──
   // Each week import only fetches the current week's schedule data. Fetch all
   // 18 weeks using a single Blaze session and store them idempotently so the
   // /schedule button can show the full season immediately.
+  // When importing week 18 (the last regular-season week), also fetch weeks
+  // 19-23 so that playoff matchups are in franchise_schedule before the
+  // commissioner advances to Wildcard week.
+  const syncTotalWeeks = weekType !== "pre" && weekNum >= 18 ? 23 : 18;
+  const schedSyncLabel = weekType === "pre" ? "preseason" : weekNum >= 18 ? "18 + playoffs" : "18";
   await editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing full season schedule (all ${weekType === "pre" ? "preseason" : "18"} weeks)…`)],
+    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing full season schedule (${schedSyncLabel} weeks)…`)],
     components: [],
   });
 
   let schedulesSynced = 0;
   if (weekType !== "pre") {
     try {
-      const { weekResults: allWeekSchedules } = await fetchAllWeekSchedules(token, eaLeagueId);
+      const { weekResults: allWeekSchedules } = await fetchAllWeekSchedules(token, eaLeagueId, syncTotalWeeks);
       for (const { weekNum: wk, data } of allWeekSchedules) {
         const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
         const r = await postToApi(url, data);
