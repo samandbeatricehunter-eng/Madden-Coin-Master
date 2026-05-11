@@ -12,12 +12,34 @@ import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
-import { getArticleStandings } from "./gcs-fallback.js";
+import { getArticleStandings, getSeasonRecords } from "./gcs-fallback.js";
 import { computePlayoffSeeds } from "./playoff-seeding.js";
 
 // Positions considered QB or RB for YPA / YPC calculations
 const QB_POSITIONS = new Set(["QB"]);
 const RB_POSITIONS = new Set(["HB", "RB", "FB"]);
+
+// ── PR helpers (mirrors admin-eos-testrun.ts) ──────────────────────────────────
+const PR_PAYOUT_KEYS = [
+  PAYOUT_KEYS.SEASON_PR_1,
+  PAYOUT_KEYS.SEASON_PR_2,
+  PAYOUT_KEYS.SEASON_PR_3_6,
+  PAYOUT_KEYS.SEASON_PR_7_8,
+  PAYOUT_KEYS.SEASON_PR_9_10,
+] as const;
+
+function calcPRScore(wins: number, losses: number, pointDiff: number): number {
+  return 0.6 * (wins - losses) + 0.4 * pointDiff;
+}
+
+function rankToPrBonus(rank: number, payouts: number[]): number {
+  if (rank === 1)              return payouts[0]!;
+  if (rank === 2)              return payouts[1]!;
+  if (rank >= 3 && rank <= 6)  return payouts[2]!;
+  if (rank >= 7 && rank <= 8)  return payouts[3]!;
+  if (rank >= 9 && rank <= 10) return payouts[4]!;
+  return 0;
+}
 
 type BreakdownRow = { label: string; statValue: number; unit: string; tier: number; coins: number };
 
@@ -111,7 +133,7 @@ export async function runEosAutoPost(
   }
 
   // ── 4. Load admin-configurable attempt minimums and bonus thresholds ──────────
-  const [minQbAtt, minRbAtt, minQbYpa, minRbYpc, minDbInts, qbBonusAmt, rbBonusAmt, dbBonusAmt, missedPlayoffsAmt] = await Promise.all([
+  const [minQbAtt, minRbAtt, minQbYpa, minRbYpc, minDbInts, qbBonusAmt, rbBonusAmt, dbBonusAmt, missedPlayoffsAmt, ...prPayouts] = await Promise.all([
     getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_ATT),
     getPayoutValue(PAYOUT_KEYS.EOS_RB_MIN_ATT),
     getPayoutValue(PAYOUT_KEYS.EOS_QB_MIN_YPA),
@@ -121,6 +143,7 @@ export async function runEosAutoPost(
     getPayoutValue(PAYOUT_KEYS.EOS_RB_YPC_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_DB_INT_BONUS),
     getPayoutValue(PAYOUT_KEYS.EOS_MISSED_PLAYOFFS),
+    ...PR_PAYOUT_KEYS.map(k => getPayoutValue(k)),
   ]);
 
   // ── 5. Get commissioner channel ───────────────────────────────────────────────
@@ -170,6 +193,25 @@ export async function runEosAutoPost(
           if (matched) playoffDiscordIds.add(matched.discordId);
         }
       }
+    }
+  }
+
+  // ── 6c. Compute PR rankings (same source as /seasonpr and test run) ───────────
+  const { records: prRecords } = await getSeasonRecords(seasonId);
+  const prRankMap = new Map<string, { rank: number; score: number; bonus: number }>();
+  let prDataAvailable = false;
+
+  if (prRecords.length > 0) {
+    prDataAvailable = true;
+    const ranked = prRecords
+      .map(r => ({ ...r, score: calcPRScore(r.wins, r.losses, r.pointDifferential) }))
+      .sort((a, b) => b.score - a.score);
+
+    for (let i = 0; i < ranked.length; i++) {
+      const r     = ranked[i]!;
+      const rank  = i + 1;
+      const bonus = rankToPrBonus(rank, prPayouts);
+      prRankMap.set(r.discordId, { rank, score: r.score, bonus });
     }
   }
 
@@ -350,6 +392,27 @@ export async function runEosAutoPost(
           totalCoins += dbBonusAmt;
         }
         hasStats = true;
+      }
+
+      // ── Season PR Bonus ───────────────────────────────────────────────────────
+      if (prDataAvailable) {
+        const prInfo = prRankMap.get(user.discordId);
+        if (prInfo) {
+          if (prInfo.bonus > 0) {
+            displayLines.push(
+              `• **Season PR Bonus**: #${prInfo.rank} ranked (PR: ${prInfo.score.toFixed(1)}) → +${prInfo.bonus.toLocaleString()} coins`,
+            );
+            breakdown.push({ label: `Season PR Bonus (#${prInfo.rank})`, statValue: prInfo.rank, unit: "rank", tier: prInfo.rank, coins: prInfo.bonus });
+            totalCoins += prInfo.bonus;
+            hasStats = true;
+          } else {
+            displayLines.push(`• **Season PR Bonus**: #${prInfo.rank} ranked — outside top 10, no bonus`);
+          }
+        } else {
+          displayLines.push("• **Season PR Bonus**: No season record found — no bonus");
+        }
+      } else {
+        displayLines.push("• **Season PR Bonus**: ⚠️ No PR records available — import W/L data first");
       }
 
       // ── Missed-playoffs welfare bonus ─────────────────────────────────────────
