@@ -24,7 +24,7 @@ import {
   franchiseMcaTeamsTable,
   pendingPollsTable, seasonHistoricalChannelsTable, seasonsTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, ne, sql, isNotNull } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
@@ -466,7 +466,11 @@ async function issueSeasonPrBonuses(
       eq(userRecordsTable.discordId, usersTable.discordId),
       eq(usersTable.guildId, guildId),
     ))
-    .where(eq(userRecordsTable.seasonId, seasonId));
+    .where(and(
+      eq(userRecordsTable.seasonId, seasonId),
+      isNotNull(usersTable.team),
+      ne(usersTable.team, ""),
+    ));
 
   if (records.length === 0) {
     await channel.send({ content: "*Season PR data not available — no user records found for this season.*" });

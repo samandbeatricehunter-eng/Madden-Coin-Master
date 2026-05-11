@@ -8,7 +8,7 @@ import {
   seasonStatTierConfigsTable, pendingEosPayoutsTable,
   playerSeasonStatsTable, franchiseScheduleTable,
 } from "@workspace/db";
-import { eq, and, desc, isNotNull } from "drizzle-orm";
+import { eq, and, ne, desc, isNotNull } from "drizzle-orm";
 import { STAT_CATEGORIES, evaluateTier } from "./stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "./payout-config.js";
 import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "./db-helpers.js";
@@ -42,7 +42,11 @@ export async function runEosAutoPost(
     playoffSeed:       usersTable.playoffSeed,
     playoffConference: usersTable.playoffConference,
   }).from(usersTable)
-    .where(eq(usersTable.guildId, guildId));
+    .where(and(
+      eq(usersTable.guildId, guildId),
+      isNotNull(usersTable.team),
+      ne(usersTable.team, ""),
+    ));
 
   if (allUsers.length === 0) {
     return { posted: 0, skipped: 0, errors: 0 };
