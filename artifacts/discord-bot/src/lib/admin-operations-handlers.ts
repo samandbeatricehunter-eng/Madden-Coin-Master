@@ -3250,7 +3250,7 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
 
       // 4. Playoff matchup embeds + GOTW polls
       try {
-        const matchupSummary = await runPlayoffMatchupsFlow(interaction.client, season, "wildcard");
+        const matchupSummary = await runPlayoffMatchupsFlow(interaction.client, season, "wildcard", guildId);
         console.log("[admin-operations] Wildcard matchups:", matchupSummary);
       } catch (err) {
         console.error("[admin-operations] Wildcard matchups flow error:", err);
@@ -3267,7 +3267,7 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     (async () => {
       try {
         const matchupSummary = await runPlayoffMatchupsFlow(
-          interaction.client, season, newWeek as keyof typeof PLAYOFF_WEEK_META,
+          interaction.client, season, newWeek as keyof typeof PLAYOFF_WEEK_META, guildId,
         );
         console.log(`[admin-operations] ${newWeek} matchups:`, matchupSummary);
       } catch (err) {
