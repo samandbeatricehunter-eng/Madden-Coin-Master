@@ -1276,31 +1276,62 @@ export async function runWeekImport(ctx: {
     }
   } catch { /* non-fatal */ }
 
-  // ── Full season schedule sync (all 18 weeks + playoffs when importing wk 18) ──
-  // Each week import only fetches the current week's schedule data. Fetch all
-  // 18 weeks using a single Blaze session and store them idempotently so the
-  // /schedule button can show the full season immediately.
-  // When importing week 18 (the last regular-season week), also fetch weeks
-  // 19-23 so that playoff matchups are in franchise_schedule before the
-  // commissioner advances to Wildcard week.
-  const syncTotalWeeks = weekType !== "pre" && weekNum >= 18 ? 23 : 18;
-  const schedSyncLabel = weekType === "pre" ? "preseason" : weekNum >= 18 ? "18 + playoffs" : "18";
+  // ── Schedule sync ─────────────────────────────────────────────────────────────
+  // Regular season (weeks 1-17): fetch all 18 reg-season weeks so /seasonschedule
+  // can show the full schedule immediately.
+  // Weeks 18-21: only fetch the NEXT playoff round — prior weeks already stored.
+  //   week 18 → fetch week 19 (Wild Card matchups)
+  //   week 19 → fetch week 20 (Divisional matchups)
+  //   week 20 → fetch week 21 (Conf Championship matchups)
+  //   week 21 → fetch week 23 (Super Bowl matchup)
+  // Week 23 (Super Bowl): no next round — skip.
+  const NEXT_PLAYOFF_WEEK: Record<number, number> = { 18: 19, 19: 20, 20: 21, 21: 23 };
+  const nextPlayoffWeek = NEXT_PLAYOFF_WEEK[weekNum];
+  const isPlayoffOrWk18 = weekType !== "pre" && weekNum >= 18;
+
+  let schedSyncLabel: string;
+  if (weekType === "pre") {
+    schedSyncLabel = "preseason";
+  } else if (weekNum < 18) {
+    schedSyncLabel = "reg season (weeks 1-18)";
+  } else if (nextPlayoffWeek) {
+    const ROUND_LABEL: Record<number, string> = { 19: "Wild Card", 20: "Divisional", 21: "Conf. Championship", 23: "Super Bowl" };
+    schedSyncLabel = `next round (${ROUND_LABEL[nextPlayoffWeek] ?? `week ${nextPlayoffWeek}`})`;
+  } else {
+    schedSyncLabel = "none (Super Bowl — no next round)";
+  }
+
   await editReply({
-    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing full season schedule (${schedSyncLabel} weeks)…`)],
+    embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing schedule: ${schedSyncLabel}…`)],
     components: [],
   });
 
   let schedulesSynced = 0;
+  let schedSkipped    = false;
   if (weekType !== "pre") {
     try {
-      const { weekResults: allWeekSchedules } = await fetchAllWeekSchedules(token, eaLeagueId, syncTotalWeeks);
-      for (const { weekNum: wk, data } of allWeekSchedules) {
-        const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
-        const r = await postToApi(url, data);
-        if (r.ok) schedulesSynced++;
+      if (!isPlayoffOrWk18) {
+        // Regular season weeks 1-17: fetch all 18 weeks
+        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, 18);
+        for (const { weekNum: wk, data } of weekResults) {
+          const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
+          const r = await postToApi(url, data);
+          if (r.ok) schedulesSynced++;
+        }
+      } else if (nextPlayoffWeek) {
+        // Week 18-21: fetch only the next playoff round's schedule
+        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, nextPlayoffWeek, 1, nextPlayoffWeek);
+        for (const { weekNum: wk, data } of weekResults) {
+          const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
+          const r = await postToApi(url, data);
+          if (r.ok) schedulesSynced++;
+        }
+      } else {
+        // Super Bowl — no next round to pre-fetch
+        schedSkipped = true;
       }
     } catch (err) {
-      console.warn("[ld/import] Full schedule sync failed (non-fatal):", err);
+      console.warn("[ld/import] Schedule sync failed (non-fatal):", err);
     }
   }
 
@@ -1329,7 +1360,7 @@ export async function runWeekImport(ctx: {
     .addFields(
       { name: "📊 Player & Team Stats", value: statsLines.join("\n") || "none" },
       { name: "🏈 Roster Sync",         value: rosterSummary },
-      { name: "📅 Season Schedule",      value: weekType === "pre" ? "⏭ Skipped (preseason)" : schedulesSynced > 0 ? `✅ ${schedulesSynced}/18 weeks stored` : "⚠️ Schedule sync failed (non-fatal)" },
+      { name: "📅 Season Schedule",      value: weekType === "pre" ? "⏭ Skipped (preseason)" : schedSkipped ? "⏭ Skipped (Super Bowl — no next round)" : schedulesSynced > 0 ? `✅ Next round schedule stored (${schedSyncLabel})` : "⚠️ Schedule sync failed (non-fatal)" },
       { name: "Result",                  value: overallOk
         ? "✅ All data imported successfully"
         : `⚠️ ${successCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "roster errors"}`,
