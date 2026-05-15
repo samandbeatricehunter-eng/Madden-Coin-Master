@@ -45,6 +45,7 @@ import { buildActionsHubEmbed, buildActionsHubRows, buildUnlinkedHubEmbed, build
 import { buildUserProfilePages, buildProfileNavRow, buildProfileBackRow } from "./user-stats-embed.js";
 import { getSavingsInterestRateBps } from "./savings-interest.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
+import { buildRulesPages } from "./admin-operations-handlers.js";
 import {
   insufficientFunds, sendCommissionerNotification, getRosterRows, DEV_LABEL,
 } from "./purchase-shared.js";
@@ -108,6 +109,7 @@ interface ActionsSession {
   standingsConf?: "AFC" | "NFC" | "ALL";
   // rules view flow
   acRulesSection?: string;
+  acRulesPage?: number;
   // team request / waitlist flow
   pendingTeamRequest?: string;
   // free agent player-card flow
@@ -878,6 +880,7 @@ export async function handleActionsInteraction(
   if (id === "ac_autopilot")    { await handleAutoPilotModal(interaction as ButtonInteraction); return true; }
   if (id === "ac_rules")        { await handleRulesStart(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rules_section")         { await handleRulesSection(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_rules_page:"))   { await handleRulesPage(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rules_goback")          { await handleRulesStart(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rules_display")         { await handleRulesDisplayChoice(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_rules_display_full")    { await handleRulesDisplayFull(interaction as ButtonInteraction, sess); return true; }
@@ -6349,10 +6352,45 @@ async function handleRulesStart(interaction: ButtonInteraction, sess: ActionsSes
   });
 }
 
+function buildRulesSectionEmbed(
+  section: string,
+  meta: { title: string; color: number },
+  rules: string[],
+  page: number,
+): EmbedBuilder {
+  const pages    = buildRulesPages(rules);
+  const maxPage  = Math.max(0, pages.length - 1);
+  const safePage = Math.min(Math.max(0, page), maxPage);
+  const content  = pages[safePage] ?? "_No rules in this section yet._";
+  const footer   = pages.length > 1
+    ? `${rules.length} rule${rules.length !== 1 ? "s" : ""} · Page ${safePage + 1}/${pages.length}`
+    : `${rules.length} rule${rules.length !== 1 ? "s" : ""}`;
+  return new EmbedBuilder()
+    .setColor(meta.color)
+    .setTitle(meta.title)
+    .setDescription(content)
+    .setFooter({ text: footer });
+}
+
+function buildRulesSectionButtons(rules: string[], page: number, totalPages: number): ActionRowBuilder<ButtonBuilder>[] {
+  const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_rules_display").setLabel("📢 Display Publicly").setStyle(ButtonStyle.Primary).setDisabled(rules.length === 0),
+    new ButtonBuilder().setCustomId("ac_rules_goback").setLabel("← Sections").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_rules_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
+  );
+  if (totalPages <= 1) return [navRow];
+  const pageRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`ac_rules_page:${page - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+    new ButtonBuilder().setCustomId(`ac_rules_page:${page + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+  );
+  return [navRow, pageRow];
+}
+
 async function handleRulesSection(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
   const guildId = interaction.guildId!;
   const section = interaction.values[0]!;
   sess.acRulesSection = section;
+  sess.acRulesPage    = 0;
 
   const sections = await getAllSections(guildId);
   const meta     = sections[section];
@@ -6361,24 +6399,37 @@ async function handleRulesSection(interaction: StringSelectMenuInteraction, sess
     return;
   }
 
-  const rules = await getOrSeedRules(section, guildId);
-  const lines = rules.length > 0
-    ? rules.map((r, i) => `**${i + 1}.** ${r}`)
-    : ["_No rules in this section yet._"];
+  const rules      = await getOrSeedRules(section, guildId);
+  const totalPages = buildRulesPages(rules).length;
+  const embed      = buildRulesSectionEmbed(section, meta, rules, 0);
 
-  const embed = new EmbedBuilder()
-    .setColor(meta.color)
-    .setTitle(meta.title)
-    .setDescription(lines.join("\n\n"))
-    .setFooter({ text: `${rules.length} rule${rules.length !== 1 ? "s" : ""}` });
+  await interaction.update({ embeds: [embed], components: buildRulesSectionButtons(rules, 0, totalPages) });
+}
 
-  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_rules_display").setLabel("📢 Display Publicly").setStyle(ButtonStyle.Primary).setDisabled(rules.length === 0),
-    new ButtonBuilder().setCustomId("ac_rules_goback").setLabel("← Sections").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ac_rules_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
-  );
+async function handleRulesPage(interaction: ButtonInteraction, sess: ActionsSession) {
+  const guildId  = interaction.guildId!;
+  const page     = parseInt(interaction.customId.split(":")[1] ?? "0", 10);
+  const section  = sess.acRulesSection;
 
-  await interaction.update({ embeds: [embed], components: [btnRow] });
+  if (!section) {
+    await interaction.reply({ content: "❌ Session expired — open /menu again.", ephemeral: true });
+    return;
+  }
+
+  const sections = await getAllSections(guildId);
+  const meta     = sections[section];
+  if (!meta) {
+    await interaction.update({ content: "❌ Section not found.", components: [] });
+    return;
+  }
+
+  const rules      = await getOrSeedRules(section, guildId);
+  const totalPages = buildRulesPages(rules).length;
+  const safePage   = Math.min(Math.max(0, page), Math.max(0, totalPages - 1));
+  sess.acRulesPage = safePage;
+  const embed      = buildRulesSectionEmbed(section, meta, rules, safePage);
+
+  await interaction.update({ embeds: [embed], components: buildRulesSectionButtons(rules, safePage, totalPages) });
 }
 
 async function handleRulesDisplayChoice(interaction: ButtonInteraction, sess: ActionsSession) {

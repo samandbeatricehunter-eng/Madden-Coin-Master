@@ -95,7 +95,7 @@ function getAoSession(guildId: string, userId: string): AoSession {
 
 const RULES_PAGE_CHAR_LIMIT = 3800;
 
-function buildRulesPages(rules: string[]): string[] {
+export function buildRulesPages(rules: string[]): string[] {
   if (rules.length === 0) return ["_No rules in this section yet._"];
   const pages: string[] = [];
   let current = "";
