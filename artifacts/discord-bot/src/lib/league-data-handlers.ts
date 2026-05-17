@@ -61,12 +61,14 @@ import {
   getLeaguesFromToken,
   saveEAConnection,
   loadEAConnection,
+  createBlazeSession,
   fetchWeeklyStats,
   fetchNewsData,
   fetchLeagueTeamsAndRosters,
   fetchAllWeekSchedules,
   updateStoredToken,
   refreshTokenIfNeeded,
+  type BlazeSession,
   type EALeague,
   type TokenInfo,
 } from "./ea-client.js";
@@ -1090,7 +1092,7 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
   return { ok: synced === total, synced, total, weekLabel: wkLabel };
 }
 
-async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild | null, guildId?: string): Promise<{ summaryLine: string; allOk: boolean }> {
+async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild | null, guildId?: string, existingSession?: BlazeSession): Promise<{ summaryLine: string; allOk: boolean }> {
   const apiBase    = getApiBase();
   const key        = getWebhookKey();
   const platform   = token.platform;
@@ -1117,7 +1119,7 @@ async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild
 
   let rosterData: Awaited<ReturnType<typeof fetchLeagueTeamsAndRosters>>;
   try {
-    rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId);
+    rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId, existingSession);
     const refreshed = await refreshTokenIfNeeded(token);
     if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
   } catch (err: any) {
@@ -1172,7 +1174,7 @@ export async function runWeekImport(ctx: {
     return;
   }
 
-  const { token, eaLeagueId } = conn;
+  let { token, eaLeagueId } = conn;
   // Playoffs (weeks 19/20/21/23) use stageIndex=1 (same as regular season), weekIndex = weekNum - 1.
   // Wild Card (wk 19) → index 18 | Divisional (wk 20) → index 19 | Conf Champ (wk 21) → index 20 | Super Bowl (wk 23) → index 22
   const stageIndex = weekType === "pre" ? 0 : 1;
@@ -1184,11 +1186,36 @@ export async function runWeekImport(ctx: {
     components: [],
   });
 
+  // Create ONE Blaze session for the entire import — stats, rosters, news, and
+  // schedule sync all reuse it so EA never sees more than one session per import.
+  let blazeSession: BlazeSession;
+  try {
+    const refreshed = await refreshTokenIfNeeded(token);
+    if (refreshed.accessToken !== token.accessToken) {
+      await updateStoredToken(eaLeagueId, refreshed);
+      token = refreshed;
+    }
+    blazeSession = await createBlazeSession(token);
+  } catch (err: any) {
+    console.error("[ld/import] Blaze session creation failed:", err);
+    await editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle(`❌ Fetch Failed — ${wkLabel}`)
+          .setDescription(
+            `${err?.message ?? String(err)}\n\n` +
+            "If you see an auth error, use **Start EA Connection** to refresh the link.",
+          ),
+      ],
+      components: [],
+    });
+    return;
+  }
+
   let stats: Awaited<ReturnType<typeof fetchWeeklyStats>>;
   try {
-    stats = await fetchWeeklyStats(token, eaLeagueId, weekIndex, stageIndex);
-    const refreshed = await refreshTokenIfNeeded(token);
-    if (refreshed.accessToken !== token.accessToken) await updateStoredToken(eaLeagueId, refreshed);
+    stats = await fetchWeeklyStats(token, eaLeagueId, weekIndex, stageIndex, blazeSession);
   } catch (err: any) {
     console.error("[ld/import] Fetch error:", err);
     await editReply({
@@ -1212,7 +1239,7 @@ export async function runWeekImport(ctx: {
   });
 
   const { summaryLine: rosterSummary, allOk: rostersAllOk } =
-    await runRosterSync(token, eaLeagueId, guild, guildId);
+    await runRosterSync(token, eaLeagueId, guild, guildId, blazeSession);
 
   const apiBase  = getApiBase();
   const key      = getWebhookKey();
@@ -1269,7 +1296,7 @@ export async function runWeekImport(ctx: {
   results.push({ name: "schedules", ...schedRes });
 
   try {
-    const newsData = await fetchNewsData(token, eaLeagueId);
+    const newsData = await fetchNewsData(token, eaLeagueId, blazeSession);
     if (newsData != null) {
       const newsRes = await postToApi(`${leagueBase}/news${guildQs}`, newsData);
       results.push({ name: "in-game news", ...newsRes });
@@ -1312,7 +1339,7 @@ export async function runWeekImport(ctx: {
     try {
       if (!isPlayoffOrWk18) {
         // Regular season weeks 1-17: fetch all 18 weeks
-        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, 18);
+        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, 18, 1, 1, blazeSession);
         for (const { weekNum: wk, data } of weekResults) {
           const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
           const r = await postToApi(url, data);
@@ -1320,7 +1347,7 @@ export async function runWeekImport(ctx: {
         }
       } else if (nextPlayoffWeek) {
         // Week 18-21: fetch only the next playoff round's schedule
-        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, nextPlayoffWeek, 1, nextPlayoffWeek);
+        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, nextPlayoffWeek, 1, nextPlayoffWeek, blazeSession);
         for (const { weekNum: wk, data } of weekResults) {
           const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
           const r = await postToApi(url, data);

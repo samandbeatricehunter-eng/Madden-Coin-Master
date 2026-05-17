@@ -138,7 +138,7 @@ export type TokenInfo = {
   blazeId:      string;
 };
 
-type BlazeSession = {
+export type BlazeSession = {
   blazeId:    number;
   sessionKey: string;
   requestId:  number;
@@ -339,7 +339,7 @@ export async function refreshTokenIfNeeded(token: TokenInfo): Promise<TokenInfo>
 }
 
 // ── Blaze session ─────────────────────────────────────────────────────────────
-async function createBlazeSession(token: TokenInfo, attempt = 1): Promise<BlazeSession> {
+export async function createBlazeSession(token: TokenInfo, attempt = 1): Promise<BlazeSession> {
   const res = await blazeHttp.post(
     "https://wal2.tools.gos.bio-iad.ea.com/wal/authentication/login",
     {
@@ -545,9 +545,10 @@ export async function fetchWeeklyStats(
   eaLeagueId:  number,
   weekIndex:   number,
   stageIndex:  number,
+  existingSession?: BlazeSession,
 ): Promise<WeeklyExportData> {
   const refreshed = await refreshTokenIfNeeded(token);
-  const session   = await createBlazeSession(refreshed);
+  const session   = existingSession ?? await createBlazeSession(refreshed);
   const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
 
   const [passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, schedules] = await Promise.all([
@@ -583,10 +584,11 @@ export async function fetchAwardsData(
 export async function fetchNewsData(
   token:      TokenInfo,
   eaLeagueId: number,
+  existingSession?: BlazeSession,
 ): Promise<unknown | null> {
   try {
     const refreshed = await refreshTokenIfNeeded(token);
-    const session   = await createBlazeSession(refreshed);
+    const session   = existingSession ?? await createBlazeSession(refreshed);
     return await fetchExportData(refreshed, session, EXPORT_ENDPOINTS.news!, { leagueId: eaLeagueId });
   } catch (err: any) {
     // Treat 404 / unknown endpoint gracefully — some Madden versions may not expose this
@@ -608,9 +610,10 @@ export async function fetchAllWeekSchedules(
   totalWeeks:  number = 18,
   stageIndex:  number = 1,   // 1 = regular season
   startWeek:   number = 1,   // first week to fetch (skips earlier weeks entirely)
+  existingSession?: BlazeSession,
 ): Promise<{ weekResults: Array<{ weekNum: number; data: unknown }>; token: TokenInfo }> {
   const refreshed = await refreshTokenIfNeeded(token);
-  const session   = await createBlazeSession(refreshed);
+  const session   = existingSession ?? await createBlazeSession(refreshed);
 
   const weekResults: Array<{ weekNum: number; data: unknown }> = [];
   for (let weekNum = startWeek; weekNum <= totalWeeks; weekNum++) {
@@ -657,9 +660,10 @@ export type RostersExportData = {
 export async function fetchLeagueTeamsAndRosters(
   token:      TokenInfo,
   eaLeagueId: number,
+  existingSession?: BlazeSession,
 ): Promise<RostersExportData> {
   const refreshed = await refreshTokenIfNeeded(token);
-  const session   = await createBlazeSession(refreshed);
+  const session   = existingSession ?? await createBlazeSession(refreshed);
 
   // Step 1 — league teams (needed to get team IDs and list indices)
   const leagueTeams = await fetchExportData(
