@@ -785,15 +785,20 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     return;
   }
 
-  // Load existing channel records for this week (to avoid duplicates)
+  // Load existing channel records for this week (to avoid duplicates).
+  // Build a Map so we can verify the Discord channel still exists — stale DB rows
+  // (from channels deleted in Discord) must not block recreation.
   const existingChannelRows = await db.select()
     .from(gameChannelsTable)
     .where(and(
       eq(gameChannelsTable.seasonId,  schedSeasonId),
       eq(gameChannelsTable.weekIndex, weekIndex),
     ));
-  const existingKey = new Set(
-    existingChannelRows.map(r => `${r.awayTeamName.toLowerCase().trim()}|${r.homeTeamName.toLowerCase().trim()}`),
+  const existingRowByKey = new Map(
+    existingChannelRows.map(r => [
+      `${r.awayTeamName.toLowerCase().trim()}|${r.homeTeamName.toLowerCase().trim()}`,
+      r,
+    ]),
   );
 
   const results: string[] = [];
@@ -806,9 +811,18 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     const homeProper    = discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName;
     const gameKey       = `${awayProper.toLowerCase().trim()}|${homeProper.toLowerCase().trim()}`;
 
-    if (existingKey.has(gameKey)) {
-      results.push(`⏭️ **${awayProper} vs ${homeProper}** — channel already exists`);
-      continue;
+    const existingRow = existingRowByKey.get(gameKey);
+    if (existingRow) {
+      // Verify the Discord channel still exists — if it was deleted, clean up the
+      // stale DB row and fall through to recreate the channel.
+      const liveChannel = guild.channels.cache.get(existingRow.channelId);
+      if (liveChannel) {
+        results.push(`⏭️ **${awayProper} vs ${homeProper}** — channel already exists (<#${existingRow.channelId}>)`);
+        continue;
+      }
+      // Channel was deleted — remove the stale row so the insert below succeeds.
+      await db.delete(gameChannelsTable).where(eq(gameChannelsTable.id, existingRow.id));
+      existingRowByKey.delete(gameKey);
     }
 
     const awayNick = discordIdToMca.get(awayDiscordId)?.nickName ?? discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName.split(/\s+/).pop()!;
