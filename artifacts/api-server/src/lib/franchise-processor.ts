@@ -32,9 +32,9 @@ import {
 import { invalidateRostersCache } from "./rosterCache.js";
 
 // ── Coin payouts ──────────────────────────────────────────────────────────────
-// No distinction between H2H and CPU games — all wins pay 25, all losses 0.
-const H2H_WIN_PAYOUT  = 25;
-const H2H_LOSS_PAYOUT = 0;
+// H2H = both teams have a Discord user assigned. CPU = one side is unlinked.
+const H2H_WIN_PAYOUT  = 75;
+const H2H_LOSS_PAYOUT = 30;
 const CPU_WIN_PAYOUT  = 25;
 const MIN_COMPLETED_STATUS = 2;
 
