@@ -1,0 +1,251 @@
+Position	Last Name	First Name	PlayerID
+QB	Allen	Josh	553386033
+QB	Allen	Kyle	553386036
+QB	Buechele	Shane	
+QB	Willis	Malik	553388912
+QB	Ewers	Quinn	
+QB	Miller	Cam	
+QB	Gronowski	Mark	
+QB	Maye	Drake	553387686
+QB	DeVito	Tommy	553386629
+QB	Morton	Behren	
+QB	Smith	Geno	
+QB	Klubnik	Cade	
+QB	Cook	Brady	
+QB	Zappe	Bailey	553389014
+QB	Jackson	Lamar	553387273
+QB	Huntley	Tyler	553387226
+QB	Thompson	Skylar	553388635
+QB	Pavia	Diego	553389287
+QB	Fagnano	Joe	
+QB	Burrow	Joe	553386364
+QB	Flacco	Joe	
+QB	Johnson	Josh	
+QB	Clifford	Sean	
+QB	Watson	Deshaun	553388812
+QB	Sanders	Shedeur	553388322
+QB	Gabriel	Dillon	553386870
+QB	Green	Taylen	
+QB	Rodgers	Aaron	
+QB	Rudolph	Mason	
+QB	Howard	Will	
+QB	Allar	Drew	553388112
+QB	Stroud	C.J.	553388538
+QB	Mills	Davis	553387803
+QB	Mertz	Graham	
+QB	Jones	Daniel	553387388
+QB	Richardson	Anthony	553388215
+QB	Riley Leonard		553387565
+QB	Seth Henigan		
+QB	Trevor Lawrence		553387544
+QB	Nick Mullens		
+QB	Carter Bradley		
+QB	Joey Aguilar		
+QB	Cam Ward		553388785
+QB	Mitchell Trubisky		
+QB	Will Levis		553387570
+QB	Hendon Hooker		553387181
+QB	Bo Nix		553387936
+QB	Jarrett Stidham		553388509
+QB	Jake Fromm		553386860
+QB	Jaren Hall		553387006
+QB	Kyle Trask		553388678
+QB	Anthony Brown		553386307
+QB			
+QB			
+QB			
+QB			
+QB			
+QB			
+QB			
+QB			
+QB			
+QB	Sam Ehlinger		
+QB			
+QB	Patrick Mahomes		553387644
+QB			
+QB	Justin Fields		553386800
+QB			
+QB	Garrett Nussmeier		
+QB			
+QB	Chris Oladokun		
+QB			
+QB	Kirk Cousins		553386523
+QB			
+QB	Fernando Mendoza		
+QB			
+QB	Aidan O’Connell		553387955
+QB			
+QB	Jacob Clark		
+QB			
+QB	Justin Herbert		553387119
+QB			
+QB	Trey Lance		553387524
+QB			
+QB	DJ Uiagalelei		
+QB			
+QB	Dak Prescott		553388133
+QB			
+QB	Sam Howell		
+QB			
+QB	Joe Milton III		553387808
+QB			
+QB	Jaxson Dart		553386569
+QB			
+QB	Jameis Winston		553388943
+QB			
+QB	Brandon Allen		
+QB			
+QB	Jalen Hurts		553387229
+QB			
+QB	Tanner McKee		
+QB			
+QB	Andy Dalton		
+QB			
+QB	Cole Payton		
+QB			
+QB	Jayden Daniels		553386563
+QB			
+QB	Marcus Mariota		553387653
+QB			
+QB	Athan Kaliakmanis		
+QB			
+QB	Sam Hartman		
+QB			
+QB	Caleb Williams		553388871
+QB			
+QB	Tyson Bagent		553386103
+QB			
+QB	Case Keenum		553387449
+QB			
+QB	Miller Moss		
+QB			
+QB	Jared Goff		553386931
+QB			
+QB	Teddy Bridgewater		553389134
+QB			
+QB	Luke Altmyer		
+QB			
+QB	Jordan Love		553387611
+QB			
+QB	Tyrod Taylor		
+QB			
+QB	Kyle McCord		553387711
+QB			
+QB	Kyron Drones		
+QB			
+QB	Kyler Murray		553387895
+QB			
+QB	J.J. McCarthy		553387701
+QB			
+QB	Carson Wentz		
+			
+	Max Brosmer		
+			
+	Michael Penix Jr.		553388068
+			
+	Tua Tagovailoa		553388565
+			
+	Trevor Siemian		
+			
+	Jack Strand		
+			
+	Bryce Young		553389004
+			
+	Kenny Pickett		
+			
+	Will Grier		
+			
+	Haynes King		
+			
+	Tyler Shough		553388384
+			
+	Spencer Rattler		553388170
+			
+	Jake Haener		553386995
+			
+	Zach Wilson		553388932
+			
+	Baker Mayfield		553387689
+			
+	Jake Browning		553386331
+			
+	Connor Bazelak		
+			
+	Jalon Daniels		
+			
+	Jacoby Brissett		553386286
+			
+	Gardner Minshew II		553387817
+			
+	Carson Beck		553389139
+			
+	Kedon Slovis		
+			
+	Matthew Stafford		
+			
+	Ty Simpson		553386484
+			
+	Stetson Bennett		553386183
+			
+	Matthew Caldwell		
+			
+	Brock Purdy		553388147
+			
+	Mac Jones		553387405
+			
+	Kurtis Rourke		
+	Nathan Rourke		553388284
+	Adrian Martinez		
+			
+	Sam Darnold		553386567
+			
+	Drew Lock		553387592
+			
+	Jalen Milroe		553387807
+			
+			
+			
+	Ryan Tannehill		
+			
+	Cam Newton		
+			
+	Matt Ryan		
+			
+	Colt McCoy		
+			
+	Brian Hoyer		
+			
+	Blaine Gabbert		
+			
+	AJ McCarron		
+			
+	Trace McSorley		
+			
+	Ian Book		
+			
+	PJ Walker		553388770
+			
+	Ben DiNucci		
+			
+	Nathan Peterman		
+			
+	Brett Rypien		553388305
+			
+	Desmond Ridder		553388221
+			
+	Mike White		553388852
+			
+	Tim Boyle		
+			
+	Jeff Driskel		
+			
+	Easton Stick		553388508
+			
+	C.J. Beathard		
+			
+	John Wolford		553388955
+	Michael Vick		553389410
+	Joshua Dobbs		553386653
+	Taylor Heinicke		553387100
+	Clayton Tune		553388698
