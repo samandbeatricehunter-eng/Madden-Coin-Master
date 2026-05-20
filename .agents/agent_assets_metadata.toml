@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "01BltAv5YpCCzDc0XWdnt"
+uri = "file://exports/season-data.tar.gz"
+type = "unspecified"
+title = "Season Data — 16 tables (CSV)"

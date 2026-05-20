@@ -1,0 +1,8 @@
+id,discord_id,season_id,purchase_type,status,cost,legend_id,player_name,player_position,attribute_name,custom_player_tier,discord_message_id,notes,created_at,approved_at,draft_tracker_message_id,team_name,ea_franchise_id
+283,521551549873258506,15,legend,pending,1000,18,Champ Bailey,DB,,,,Legend: Champ Bailey,2026-05-19 01:50:40.997064,,,,
+285,792819168461324290,15,legend,refunded,1000,11,Calvin Johnson,WR,,,,Legend: Calvin Johnson,2026-05-19 01:57:03.006779,,,,
+284,954239175400488990,15,legend,refunded,1000,37,Randy Moss,WR,,,,Legend: Randy Moss,2026-05-19 01:54:32.329614,,,,
+286,792819168461324290,15,dev_up,pending,750,,Cam Taylor-Britt,CB,,,,Dev up for Cam Taylor-Britt,2026-05-19 02:33:31.783185,,,,
+287,1037925434123358258,15,dev_up,approved,750,,Kamari Lassiter,CB,,,,Dev up for Kamari Lassiter,2026-05-19 02:34:39.049176,2026-05-19 02:40:07.186,,,
+288,1349158444204298358,15,age_reset,pending,1000,,Derwin James Jr,FS,,,,Age reset for Derwin James Jr (age 30 → 23),2026-05-19 04:10:43.314314,,,,
+289,1349158444204298358,15,dev_up,pending,750,,Chase Brown,HB,,,,Dev up for Chase Brown,2026-05-19 04:11:24.930151,,,,
