@@ -18,3 +18,9 @@ id = "Rvv4288Fezjw38aInZXuh"
 uri = "file://exports/rec-league-bot-source.tar.gz"
 type = "unspecified"
 title = "REC League Bot — Full Source Code"
+
+[[outputs]]
+id = "fVv04lJuLNUIYxJLGKyrN"
+uri = "file://exports/supabase-schema-setup.sql.gz"
+type = "unspecified"
+title = "Supabase Schema Setup SQL (gzipped)"
