@@ -24,3 +24,9 @@ id = "fVv04lJuLNUIYxJLGKyrN"
 uri = "file://exports/supabase-schema-setup.sql.gz"
 type = "unspecified"
 title = "Supabase Schema Setup SQL (gzipped)"
+
+[[outputs]]
+id = "X7q8_qmqc6eoTB6CnkTEt"
+uri = "file://exports/chatgpt-build-prompt.md"
+type = "text"
+title = "ChatGPT Build Prompt — Data Routing & Schema Guide"
