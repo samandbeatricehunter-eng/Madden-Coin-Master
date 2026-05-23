@@ -12,3 +12,9 @@ id = "_AQvy2yE76dUKEJORXpYk"
 uri = "file://exports/railway-supabase-migration-guide.md"
 type = "text"
 title = "Railway + Supabase Migration Guide"
+
+[[outputs]]
+id = "Rvv4288Fezjw38aInZXuh"
+uri = "file://exports/rec-league-bot-source.tar.gz"
+type = "unspecified"
+title = "REC League Bot — Full Source Code"
