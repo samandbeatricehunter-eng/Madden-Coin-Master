@@ -23,7 +23,7 @@ title = "REC League Bot — Full Source Code"
 id = "fVv04lJuLNUIYxJLGKyrN"
 uri = "file://exports/supabase-schema-setup.sql.gz"
 type = "unspecified"
-title = "Supabase Schema Setup SQL (gzipped)"
+title = "Supabase Schema Setup SQL — Updated (with dedup)"
 
 [[outputs]]
 id = "X7q8_qmqc6eoTB6CnkTEt"

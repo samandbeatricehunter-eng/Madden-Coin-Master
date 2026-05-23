@@ -16,6 +16,258 @@
 -- =============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- SECTION 0: DEDUPLICATION (runs before index creation)
+--
+-- If you imported data from the old DB before running this script, tables may
+-- have duplicate rows that block unique index creation.  This block removes
+-- duplicates safely — keeping the row with the lowest id — and is a no-op on
+-- tables that do not yet exist.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+DO $$ BEGIN
+
+  -- economy_users: unique (discord_id, guild_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='economy_users' AND table_schema='public') THEN
+    DELETE FROM economy_users WHERE id NOT IN (
+      SELECT MIN(id) FROM economy_users GROUP BY discord_id, guild_id
+    );
+  END IF;
+
+  -- seasons: unique (guild_id, season_number)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='seasons' AND table_schema='public') THEN
+    DELETE FROM seasons WHERE id NOT IN (
+      SELECT MIN(id) FROM seasons GROUP BY guild_id, season_number
+    );
+  END IF;
+
+  -- user_records: unique (discord_id, season_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='user_records' AND table_schema='public') THEN
+    DELETE FROM user_records WHERE id NOT IN (
+      SELECT MIN(id) FROM user_records GROUP BY discord_id, season_id
+    );
+  END IF;
+
+  -- h2h_matchup_records: unique (guild_id, discord_id_1, discord_id_2)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='h2h_matchup_records' AND table_schema='public') THEN
+    DELETE FROM h2h_matchup_records WHERE id NOT IN (
+      SELECT MIN(id) FROM h2h_matchup_records GROUP BY guild_id, discord_id_1, discord_id_2
+    );
+  END IF;
+
+  -- franchise_game_participants: unique (season_id, week, discord_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='franchise_game_participants' AND table_schema='public') THEN
+    DELETE FROM franchise_game_participants WHERE id NOT IN (
+      SELECT MIN(id) FROM franchise_game_participants GROUP BY season_id, week, discord_id
+    );
+  END IF;
+
+  -- franchise_schedule: unique (season_id, week_index, home_team_id, away_team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='franchise_schedule' AND table_schema='public') THEN
+    DELETE FROM franchise_schedule WHERE id NOT IN (
+      SELECT MIN(id) FROM franchise_schedule GROUP BY season_id, week_index, home_team_id, away_team_id
+    );
+  END IF;
+
+  -- franchise_rosters: unique (season_id, team_id, player_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='franchise_rosters' AND table_schema='public') THEN
+    DELETE FROM franchise_rosters WHERE id NOT IN (
+      SELECT MIN(id) FROM franchise_rosters GROUP BY season_id, team_id, player_id
+    );
+  END IF;
+
+  -- franchise_draft_picks: unique (season_id, team_id, draft_year, round, pick_num)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='franchise_draft_picks' AND table_schema='public') THEN
+    DELETE FROM franchise_draft_picks WHERE id NOT IN (
+      SELECT MIN(id) FROM franchise_draft_picks GROUP BY season_id, team_id, draft_year, round, pick_num
+    );
+  END IF;
+
+  -- season_stat_tier_configs: unique (season_id, stat_category, tier)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='season_stat_tier_configs' AND table_schema='public') THEN
+    DELETE FROM season_stat_tier_configs WHERE id NOT IN (
+      SELECT MIN(id) FROM season_stat_tier_configs GROUP BY season_id, stat_category, tier
+    );
+  END IF;
+
+  -- team_season_stats: unique (season_id, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='team_season_stats' AND table_schema='public') THEN
+    DELETE FROM team_season_stats WHERE id NOT IN (
+      SELECT MIN(id) FROM team_season_stats GROUP BY season_id, team_id
+    );
+  END IF;
+
+  -- player_season_stats: unique (season_id, player_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='player_season_stats' AND table_schema='public') THEN
+    DELETE FROM player_season_stats WHERE id NOT IN (
+      SELECT MIN(id) FROM player_season_stats GROUP BY season_id, player_id
+    );
+  END IF;
+
+  -- player_stat_week_processed: unique (season_id, week_type, week_num, stat_type)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='player_stat_week_processed' AND table_schema='public') THEN
+    DELETE FROM player_stat_week_processed WHERE id NOT IN (
+      SELECT MIN(id) FROM player_stat_week_processed GROUP BY season_id, week_type, week_num, stat_type
+    );
+  END IF;
+
+  -- player_week_stats_delta: unique (season_id, week_type, week_num, stat_type, player_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='player_week_stats_delta' AND table_schema='public') THEN
+    DELETE FROM player_week_stats_delta WHERE id NOT IN (
+      SELECT MIN(id) FROM player_week_stats_delta GROUP BY season_id, week_type, week_num, stat_type, player_id
+    );
+  END IF;
+
+  -- team_week_stats_delta: unique (season_id, week_type, week_num, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='team_week_stats_delta' AND table_schema='public') THEN
+    DELETE FROM team_week_stats_delta WHERE id NOT IN (
+      SELECT MIN(id) FROM team_week_stats_delta GROUP BY season_id, week_type, week_num, team_id
+    );
+  END IF;
+
+  -- gotw_history: unique (season_id, week_index)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='gotw_history' AND table_schema='public') THEN
+    DELETE FROM gotw_history WHERE id NOT IN (
+      SELECT MIN(id) FROM gotw_history GROUP BY season_id, week_index
+    );
+  END IF;
+
+  -- playoff_gotw_polls: unique (season_id, week_index, matchup_index)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='playoff_gotw_polls' AND table_schema='public') THEN
+    DELETE FROM playoff_gotw_polls WHERE id NOT IN (
+      SELECT MIN(id) FROM playoff_gotw_polls GROUP BY season_id, week_index, matchup_index
+    );
+  END IF;
+
+  -- draft_presence: unique (session_id, discord_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='draft_presence' AND table_schema='public') THEN
+    DELETE FROM draft_presence WHERE id NOT IN (
+      SELECT MIN(id) FROM draft_presence GROUP BY session_id, discord_id
+    );
+  END IF;
+
+  -- franchise_mca_teams: unique (season_id, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='franchise_mca_teams' AND table_schema='public') THEN
+    DELETE FROM franchise_mca_teams WHERE id NOT IN (
+      SELECT MIN(id) FROM franchise_mca_teams GROUP BY season_id, team_id
+    );
+  END IF;
+
+  -- legend_templates: unique (legend_id, model)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='legend_templates' AND table_schema='public') THEN
+    DELETE FROM legend_templates WHERE id NOT IN (
+      SELECT MIN(id) FROM legend_templates GROUP BY legend_id, model
+    );
+  END IF;
+
+  -- player_xp_log: unique (season_id, player_id, week_num, week_type)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='player_xp_log' AND table_schema='public') THEN
+    DELETE FROM player_xp_log WHERE id NOT IN (
+      SELECT MIN(id) FROM player_xp_log GROUP BY season_id, player_id, week_num, week_type
+    );
+  END IF;
+
+  -- waitlist: unique (guild_id, discord_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='waitlist' AND table_schema='public') THEN
+    DELETE FROM waitlist WHERE id NOT IN (
+      SELECT MIN(id) FROM waitlist GROUP BY guild_id, discord_id
+    );
+  END IF;
+
+  -- guild_channels: unique (guild_id, channel_key)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='guild_channels' AND table_schema='public') THEN
+    DELETE FROM guild_channels WHERE id NOT IN (
+      SELECT MIN(id) FROM guild_channels GROUP BY guild_id, channel_key
+    );
+  END IF;
+
+  -- player_ea_ids: unique (discord_id, slot)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='player_ea_ids' AND table_schema='public') THEN
+    DELETE FROM player_ea_ids WHERE id NOT IN (
+      SELECT MIN(id) FROM player_ea_ids GROUP BY discord_id, slot
+    );
+  END IF;
+
+  -- app_user_league_links: unique (gamertag, ea_league_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='app_user_league_links' AND table_schema='public') THEN
+    DELETE FROM app_user_league_links WHERE id NOT IN (
+      SELECT MIN(id) FROM app_user_league_links GROUP BY gamertag, ea_league_id
+    );
+  END IF;
+
+  -- mca_seasons: unique (ea_league_id, season_number)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_seasons' AND table_schema='public') THEN
+    DELETE FROM mca_seasons WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_seasons GROUP BY ea_league_id, season_number
+    );
+  END IF;
+
+  -- mca_teams: unique (ea_season_id, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_teams' AND table_schema='public') THEN
+    DELETE FROM mca_teams WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_teams GROUP BY ea_season_id, team_id
+    );
+  END IF;
+
+  -- mca_rosters: unique (ea_season_id, team_id, player_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_rosters' AND table_schema='public') THEN
+    DELETE FROM mca_rosters WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_rosters GROUP BY ea_season_id, team_id, player_id
+    );
+  END IF;
+
+  -- mca_team_stats: unique (ea_season_id, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_team_stats' AND table_schema='public') THEN
+    DELETE FROM mca_team_stats WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_team_stats GROUP BY ea_season_id, team_id
+    );
+  END IF;
+
+  -- mca_team_week_stats: unique (ea_season_id, week_type, week_num, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_team_week_stats' AND table_schema='public') THEN
+    DELETE FROM mca_team_week_stats WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_team_week_stats GROUP BY ea_season_id, week_type, week_num, team_id
+    );
+  END IF;
+
+  -- mca_schedules: unique (ea_season_id, week_index, home_team_id, away_team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_schedules' AND table_schema='public') THEN
+    DELETE FROM mca_schedules WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_schedules GROUP BY ea_season_id, week_index, home_team_id, away_team_id
+    );
+  END IF;
+
+  -- mca_player_stats: unique (ea_season_id, player_id, team_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_player_stats' AND table_schema='public') THEN
+    DELETE FROM mca_player_stats WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_player_stats GROUP BY ea_season_id, player_id, team_id
+    );
+  END IF;
+
+  -- mca_player_week_stats: unique (ea_season_id, week_type, week_num, stat_type, player_id)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_player_week_stats' AND table_schema='public') THEN
+    DELETE FROM mca_player_week_stats WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_player_week_stats GROUP BY ea_season_id, week_type, week_num, stat_type, player_id
+    );
+  END IF;
+
+  -- mca_week_processed: unique (ea_season_id, week_type, week_num, stat_type)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_week_processed' AND table_schema='public') THEN
+    DELETE FROM mca_week_processed WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_week_processed GROUP BY ea_season_id, week_type, week_num, stat_type
+    );
+  END IF;
+
+  -- mca_draft_picks: unique (ea_season_id, team_id, draft_year, round, pick_num)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mca_draft_picks' AND table_schema='public') THEN
+    DELETE FROM mca_draft_picks WHERE id NOT IN (
+      SELECT MIN(id) FROM mca_draft_picks GROUP BY ea_season_id, team_id, draft_year, round, pick_num
+    );
+  END IF;
+
+END $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- SECTION 1: ENUM TYPES
 -- ─────────────────────────────────────────────────────────────────────────────
 
