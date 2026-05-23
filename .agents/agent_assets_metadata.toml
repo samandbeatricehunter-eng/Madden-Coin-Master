@@ -6,3 +6,9 @@ id = "01BltAv5YpCCzDc0XWdnt"
 uri = "file://exports/season-data.tar.gz"
 type = "unspecified"
 title = "Season Data — 16 tables (CSV)"
+
+[[outputs]]
+id = "_AQvy2yE76dUKEJORXpYk"
+uri = "file://exports/railway-supabase-migration-guide.md"
+type = "text"
+title = "Railway + Supabase Migration Guide"
