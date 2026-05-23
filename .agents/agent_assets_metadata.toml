@@ -30,3 +30,9 @@ id = "X7q8_qmqc6eoTB6CnkTEt"
 uri = "file://exports/chatgpt-build-prompt.md"
 type = "text"
 title = "ChatGPT Build Prompt — Data Routing & Schema Guide"
+
+[[outputs]]
+id = "TbAlOSEKNLGglxvyJvBtB"
+uri = "file://exports/fix-routing-bugs.tar.gz"
+type = "unspecified"
+title = "fix-routing-bugs.cjs — Run from project root"
