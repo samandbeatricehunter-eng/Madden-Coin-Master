@@ -13,7 +13,7 @@ import {
   gotwHistoryTable, gotwVotesTable, gameSchedulesTable,
   gotyRoundsTable, gotyVotesTable,
 } from "@workspace/db";
-import { eq, and, inArray, sql, desc } from "drizzle-orm";
+import { eq, and, inArray, sql, desc, isNotNull } from "drizzle-orm";
 
 export interface CommOfficeCounts {
   purchases:       number;
@@ -31,10 +31,17 @@ export async function getCommOfficeCounts(guildId: string): Promise<CommOfficeCo
   const guildSeasons = await db.select({ id: seasonsTable.id }).from(seasonsTable).where(eq(seasonsTable.guildId, guildId));
   const seasonIds = guildSeasons.map(s => s.id);
 
+  // Filter out NULL-id rows so the badge count matches what the Commissioner's
+  // Office page can actually display (the page filters them too because Discord
+  // buttons need a real id in the custom_id).
   const [purchasesRow] = seasonIds.length === 0 ? [{ cnt: 0 }] : await db
     .select({ cnt: sql<number>`count(*)::int` })
     .from(purchasesTable)
-    .where(and(eq(purchasesTable.status, "pending"), inArray(purchasesTable.seasonId, seasonIds)));
+    .where(and(
+      eq(purchasesTable.status, "pending"),
+      inArray(purchasesTable.seasonId, seasonIds),
+      isNotNull(purchasesTable.id),
+    ));
 
   const [payoutsRow] = userIds.length === 0 ? [{ cnt: 0 }] : await db
     .select({ cnt: sql<number>`count(*)::int` })

@@ -1,0 +1,92 @@
+[co-comm-migration] The R.E.C. League (Real Elite Competition): Done. 0 user(s) migrated. Co-Commissioner role deleted.
+🔄 Registering slash commands for 4 guild(s) on startup...
+✅ [register-commands] 1 commands registered for guild 1386858377119797415
+✅ Commands registered: ✰ 𝒮𝓅𝒾𝒹ℯ𝓎𝓈 ℛℯℊ𝓈✰ (1386858377119797415)
+✅ Commands registered: REC League Fantasy (1497423447192768612)
+✅ [register-commands] 1 commands registered for guild 1476251181524189438
+✅ Commands registered: The R.E.C. League (Real Elite Competition) (1476251181524189438)
+✅ [register-commands] 1 commands registered for guild 1493688089883971735
+✅ Commands registered: The R.E.C. League x2 (Real Elite Competition) (1493688089883971735)
+✅ [register-commands] 1 commands registered for guild 1497423447192768612
+(node:82) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+[button] co_main: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1095:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508229033140420649/aW50ZXJhY3Rpb246MTUwODIyOTAzMzE0MDQyMDY0OTptYk1zVnVJQ3dud2tkNXhvRjV5ckRiNHh2QjJ6WWNCYU1Oa0ZnVXRYeENGWGxOeUlzMndsVGdBbklwdzg3SHhYN1RTZXZkSDNDN0ZGVDdxNUtkWU1sWEc0eTk2cTRqWjQyOGJWaFhITU9wRFJHc0d2anpBM3lUeE00aWd5M1BHZw/callback?with_response=false'
+}
+[button] co_main: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1095:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508229044536213625/aW50ZXJhY3Rpb246MTUwODIyOTA0NDUzNjIxMzYyNTpZUFhsdWVpQVREVnZRNXBqQ25ONVhUTDdRZjlRNHlOUzJUSjNXMEVVaDVuZGx2RUpGVFNabE1nQXdBV1Z4WnRLYWQyMmgxM2RGaHd5ckFCMlZMTE5sWkltUFRYc1ZkcWlpWFhKWm40YUFlaDBDb2V5NzR3MWJGcllkMDNTNGJXcg/callback?with_response=false'
+}
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508229055403528383/aW50ZXJhY3Rpb246MTUwODIyOTA1NTQwMzUyODM4Mzp2QUF3ZGI0NG04RjhrUjhBZ3lZWEpNZEluem52SGhpdlJwd09NWVk2MW92dFljcTZidDFSVndGbHVROGVQQXdpVUkyQnZ3SFI2dTZBd2IwMW9UOVhzRk1XNUF6U0VyTk5nQmpWZHd2ZVpLVjE2M3NJSzJEbzNLWkNiMzY5N2pBSg/callback?with_response=false'
+[button] co_main: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1095:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+}
+[button] co_main: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1095:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+}
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508229079231369287/aW50ZXJhY3Rpb246MTUwODIyOTA3OTIzMTM2OTI4Nzp3alY0aDNuTlRLOHphQ0RtVlBJQjNEYnVhREpKeTJ6WkZzSDMyNkhOSDJVU0xabkQ4SEZBSXg3dGxJeVFNdFZEWERFcDdDVHZza3dlblFNMklFZ3lCVHVRYURvbTlHMXBiOTVEMVRvRm5IRWh4d0syMFZsZ0hwZldQZ2dSclhaRQ/callback?with_response=false'
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ModalSubmitInteraction.deferReply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:122:22)
+    at async handlePostGameChannelsModal (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:679:5)
+[handlePostGameChannelsModal] deferReply failed (likely cold-start 10062), aborting: DiscordAPIError[10062]: Unknown interaction
+    at async handleAdminOperationsInteraction (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:351:5)
+    at async handleModal (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2362:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:233:11) {
+  requestBody: { files: undefined, json: { type: 5, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508229142984921088/aW50ZXJhY3Rpb246MTUwODIyOTE0Mjk4NDkyMTA4ODpjYkdWbXk1d05ZVmdzTlEza0NPWXkwU1RoMktLOVA5bWVZTDZUQlFoMmxLc2VpbHNBUkNrUE5WUktUQ0ZpR1E1R3VvZEVNV2NqcnZ3NDRTaG44b3VWV1p6VktZUE1sSXJlRnFsNFRsTjFtVjZ1RkJBTjVIVlJYdUxvVURtQXdDcw/callback?with_response=false'
+}

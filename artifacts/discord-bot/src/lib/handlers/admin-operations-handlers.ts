@@ -673,21 +673,53 @@ async function handlePostGameChannels(interaction: ButtonInteraction) {
 
 async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) {
   // Defer immediately. On Railway cold-starts the modal submit can arrive after
-  // Discord's 3s window — in that case deferReply throws 10062 and the rest of
-  // this handler can't reply at all, so bail cleanly instead of crashing.
+  // Discord's 3s window — in that case deferReply throws 10062 and we can no
+  // longer reply to the interaction. We still want to DO the work (create the
+  // channels), so we track the interaction as dead and fall back to posting the
+  // status report in the originating channel instead of editing the reply.
+  let interactionDead = false;
   try {
-    await interaction.deferReply({ ephemeral: true });
-  } catch (err) {
-    console.error("[handlePostGameChannelsModal] deferReply failed (likely cold-start 10062), aborting:", err);
-    return;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  } catch (err: unknown) {
+    const code = (err as { code?: number } | null)?.code;
+    if (code === 10062) {
+      console.warn("[handlePostGameChannelsModal] deferReply failed (cold-start 10062) — continuing without interaction reply");
+      interactionDead = true;
+    } else {
+      console.error("[handlePostGameChannelsModal] deferReply failed:", err);
+      interactionDead = true;
+    }
   }
+
+  // Unified reply helper — uses editReply while the interaction is alive,
+  // otherwise posts the message into the channel the modal was opened from.
+  const reply = async (payload: { content?: string; embeds?: EmbedBuilder[] }) => {
+    if (!interactionDead) {
+      try {
+        await interaction.editReply(payload);
+        return;
+      } catch (err: unknown) {
+        const code = (err as { code?: number } | null)?.code;
+        if (code !== 10062 && code !== 10008) console.error("[handlePostGameChannelsModal] editReply failed:", err);
+        interactionDead = true;
+      }
+    }
+    const ch = interaction.channel;
+    if (ch && "send" in ch) {
+      try {
+        await (ch as import("discord.js").TextChannel).send(payload);
+      } catch (err) {
+        console.error("[handlePostGameChannelsModal] channel.send fallback failed:", err);
+      }
+    }
+  };
 
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
   const guild   = interaction.guild;
 
   if (!guild) {
-    await interaction.editReply({ content: "❌ Could not access guild." });
+    await reply({ content: "❌ Could not access guild." });
     return;
   }
 

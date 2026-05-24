@@ -1092,10 +1092,21 @@ export async function handleCommOfficeInteraction(
 
   // ── co_main: show Commissioner's Office main screen
   if (customId === "co_main") {
-    await interaction.update({
-      embeds: [buildCommOfficeEmbed()],
-      components: buildCommOfficeRows(),
-    });
+    try {
+      await interaction.update({
+        embeds: [buildCommOfficeEmbed()],
+        components: buildCommOfficeRows(),
+      });
+    } catch (err: unknown) {
+      // Cold-start 10062: interaction token expired before we could update.
+      // Swallow — user can click the button again. Logging just for visibility.
+      const code = (err as { code?: number } | null)?.code;
+      if (code === 10062) {
+        console.warn("[co_main] update failed (cold-start 10062), user should click again");
+      } else {
+        throw err;
+      }
+    }
     return;
   }
 
