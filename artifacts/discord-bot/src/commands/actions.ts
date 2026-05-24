@@ -44,7 +44,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({
       embeds:     [buildUnlinkedMenuEmbed(seasonNum, wkStr)],
       components: buildUnlinkedMenuRows(),
-      files:      [buildMenuBannerAttachment()],
+      files:      buildMenuBannerAttachment(),
     });
     return;
   }
@@ -52,6 +52,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({
     embeds:     [buildMenuHubEmbed(settings, isAdmin, seasonNum, wkStr)],
     components: buildMenuHubRows(ctx),
-    files:      [buildMenuBannerAttachment()],
+    files:      buildMenuBannerAttachment(),
   });
 }

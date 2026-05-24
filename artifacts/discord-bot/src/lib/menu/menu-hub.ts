@@ -19,20 +19,29 @@ import {
 } from "discord.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import { statSync } from "fs";
 import { THEME, goldEmbed } from "../discord/theme.js";
 import type { ServerSettings } from "../db/server-settings.js";
 
 // ── Banner image ──────────────────────────────────────────────────────────────
 
 export const MENU_BANNER_FILENAME = "rec-embed-banner.png";
-// Resolve relative to this source file so it works regardless of cwd
-// (dev runs from repo root; prod runs from artifacts/discord-bot).
-// __dirname here is .../artifacts/discord-bot/src/lib at runtime.
+// Resolve relative to this source file. __dirname here is
+// .../artifacts/discord-bot/src/lib/menu at runtime, and the asset lives in
+// .../artifacts/discord-bot/assets/, so we walk up THREE levels.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MENU_BANNER_PATH = path.resolve(__dirname, "../../assets", MENU_BANNER_FILENAME);
+const MENU_BANNER_PATH = path.resolve(__dirname, "../../../assets", MENU_BANNER_FILENAME);
+const MENU_BANNER_EXISTS = (() => {
+  try { return statSync(MENU_BANNER_PATH).isFile(); }
+  catch { return false; }
+})();
+if (!MENU_BANNER_EXISTS) {
+  console.warn(`[menu-hub] banner not found at ${MENU_BANNER_PATH} — menu will render without banner`);
+}
 
-export function buildMenuBannerAttachment(): AttachmentBuilder {
-  return new AttachmentBuilder(MENU_BANNER_PATH, { name: MENU_BANNER_FILENAME });
+export function buildMenuBannerAttachment(): AttachmentBuilder[] {
+  if (!MENU_BANNER_EXISTS) return [];
+  return [new AttachmentBuilder(MENU_BANNER_PATH, { name: MENU_BANNER_FILENAME })];
 }
 
 // ── Tree types ────────────────────────────────────────────────────────────────

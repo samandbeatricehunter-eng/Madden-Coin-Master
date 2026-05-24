@@ -66,7 +66,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       await interaction.update({
         embeds:     [buildUnlinkedMenuEmbed(ctx.seasonNum, ctx.weekStr)],
         components: buildUnlinkedMenuRows() as any,
-        files:      [buildMenuBannerAttachment()],
+        files:      buildMenuBannerAttachment(),
       });
       return true;
     }
@@ -117,7 +117,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     await interaction.update({
       embeds:     [buildMenuHubEmbed(ctx.settings, ctx.isAdmin, ctx.seasonNum, ctx.weekStr)],
       components: buildMenuHubRows(ctx) as any,
-      files:      [buildMenuBannerAttachment()],
+      files:      buildMenuBannerAttachment(),
     });
     return true;
   }
@@ -224,7 +224,7 @@ export async function handleMenuButton(interaction: ButtonInteraction): Promise<
   await interaction.update({
     embeds:     [buildMenuHubEmbed(ctx.settings, ctx.isAdmin, ctx.seasonNum, ctx.weekStr)],
     components: buildMenuHubRows(ctx) as any,
-    files:      [buildMenuBannerAttachment()],
+    files:      buildMenuBannerAttachment(),
   });
   return true;
 }

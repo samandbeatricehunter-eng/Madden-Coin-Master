@@ -723,7 +723,7 @@ export async function handleActionsInteraction(
       await btn.editReply({
         embeds:     [buildUnlinkedMenuEmbed(seasonNum, wkStr)],
         components: buildUnlinkedMenuRows(),
-        files:      [buildMenuBannerAttachment()],
+        files:      buildMenuBannerAttachment(),
       });
       return true;
     }
@@ -732,7 +732,7 @@ export async function handleActionsInteraction(
     await btn.editReply({
       embeds:     [buildMenuHubEmbed(settings, isAdmin, seasonNum, wkStr)],
       components: buildMenuHubRows(ctx),
-      files:      [buildMenuBannerAttachment()],
+      files:      buildMenuBannerAttachment(),
     });
     return true;
   }
