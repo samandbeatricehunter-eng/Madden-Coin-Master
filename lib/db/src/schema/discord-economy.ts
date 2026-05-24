@@ -166,7 +166,62 @@ export const seasonStatsTable = pgTable("season_stats", {
   bonusReductionsPurchased:    bigint("bonus_reductions_purchased", { mode: "number" }).notNull().default(0),
   trainingGoldPurchased:   bigint("training_gold_purchased", { mode: "number" }).notNull().default(0),
   trainingSilverPurchased: bigint("training_silver_purchased", { mode: "number" }).notNull().default(0),
+  trainersHired:           bigint("trainers_hired", { mode: "number" }).notNull().default(0),
 });
+
+// ── Positional Trainer (paid weekly per-player random-boost contract) ────────
+export const positionalTrainersTable = pgTable("positional_trainers", {
+  id:               serial("id").primaryKey(),
+  guildId:          text("guild_id").notNull(),
+  ownerDiscordId:   text("owner_discord_id").notNull(),
+  seasonId:         integer("season_id").notNull(),
+  playerId:         text("player_id"),
+  playerName:       text("player_name").notNull(),
+  playerPos:        text("player_pos").notNull(),
+  tier:             text("tier").notNull(),    // 'gold' | 'silver' | 'bronze'
+  focus:            text("focus").notNull(),   // 'speed' | 'power' | 'balanced' | 'position'
+  weeksTotal:       integer("weeks_total").notNull(),
+  weeksRemaining:   integer("weeks_remaining").notNull(),
+  weeklyCost:       integer("weekly_cost").notNull(),
+  totalCost:        integer("total_cost").notNull(),
+  hireWeekIndex:    integer("hire_week_index").notNull(),
+  lastHitWeekIndex: integer("last_hit_week_index"),
+  status:           text("status").notNull().default("active"), // 'active' | 'expired'
+  hiredAt:          timestamp("hired_at", { withTimezone: true }).notNull().defaultNow(),
+  expiredAt:        timestamp("expired_at", { withTimezone: true }),
+}, (t) => ({
+  trainerOwnerSeasonIdx: uniqueIndex("trainer_owner_season_player_active_idx")
+    .on(t.guildId, t.ownerDiscordId, t.seasonId, t.playerName, t.status),
+}));
+export type PositionalTrainer = typeof positionalTrainersTable.$inferSelect;
+
+export const trainerRollLogTable = pgTable("trainer_roll_log", {
+  id:               serial("id").primaryKey(),
+  trainerId:        integer("trainer_id").notNull(),
+  weekIndex:        integer("week_index").notNull(),
+  hit:              boolean("hit").notNull(),
+  chanceAppliedBps: integer("chance_applied_bps").notNull(),
+  reason:           text("reason").notNull(),
+  boosts:           json("boosts").$type<Array<{ attr: string; before: number | null; after: number | null; points: number }>>().default([]),
+  createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqTrainerWeek: uniqueIndex("trainer_roll_log_trainer_week_idx").on(t.trainerId, t.weekIndex),
+}));
+
+// Per-player per-season caps for trainer-method boosts (separate from training-package caps)
+export const trainerPlayerSeasonCapsTable = pgTable("trainer_player_season_caps", {
+  id:           serial("id").primaryKey(),
+  guildId:      text("guild_id").notNull(),
+  seasonId:     integer("season_id").notNull(),
+  playerName:   text("player_name").notNull(),
+  speedGain:    integer("speed_gain").notNull().default(0),     // cap 3
+  strengthGain: integer("strength_gain").notNull().default(0),  // cap 4
+  codGain:      integer("cod_gain").notNull().default(0),       // cap 4
+  accelGain:    integer("accel_gain").notNull().default(0),     // cap 4
+  agilityGain:  integer("agility_gain").notNull().default(0),   // cap 4
+}, (t) => ({
+  uniqCap: uniqueIndex("trainer_caps_guild_season_player_idx").on(t.guildId, t.seasonId, t.playerName),
+}));
 
 export const gameTypeEnum = pgEnum("game_type", ["regular_season", "playoff", "superbowl"]);
 

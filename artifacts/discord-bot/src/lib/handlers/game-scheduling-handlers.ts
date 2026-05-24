@@ -225,30 +225,38 @@ export async function handleGsInteraction(
   const sid = parseInt(sidStr ?? "0", 10);
   if (!sid && action !== "gs_sched_cancel") return true;
 
-  // ── Participant-only gate ──────────────────────────────────────────────────
-  // The header / scheduling / play-state buttons may ONLY be clicked by the two
-  // players in the matchup. Admins and Commissioners are explicitly NOT allowed
-  // to click them (they have their own approval buttons: gs_req_approve /
-  // gs_req_reject). Anything else gets a stern ephemeral.
+  // ── Strict participant-only gate ───────────────────────────────────────────
+  // EVERY button in a private game channel may ONLY be clicked by the two
+  // players in the matchup. Admins and Commissioners are explicitly NOT
+  // allowed — including the Fair Sim / Force Win approval buttons, which the
+  // opponent of the requester must approve themselves.
   //
-  // gs_pick_*  and gs_sched_confirm/cancel act on an ephemeral picker the user
-  // opened themselves, so no extra gate needed.
-  // gs_accept / gs_counter / gs_decline carry a PROPOSAL id (not a schedule id)
-  // in their custom_id, so they're gated by their own assertOpponent() check.
-  const PARTICIPANT_ONLY = new Set([
-    "gs_schedule", "gs_fairsim", "gs_forcewin",
-    "gs_begun", "gs_finished", "gs_mark_done", "gs_winner",
-  ]);
-  if (PARTICIPANT_ONLY.has(action)) {
-    const sched = await loadSchedule(sid);
-    if (!sched) {
+  // Exceptions (no gate needed):
+  //   gs_pick_*               — ephemeral picker only the opener can see.
+  //   gs_sched_confirm/cancel — same ephemeral picker.
+  //
+  // For proposal-keyed actions (gs_accept / gs_counter / gs_decline /
+  // gs_req_approve / gs_req_reject) the custom_id carries a PROPOSAL id, not a
+  // schedule id, so we resolve via the proposal first.
+  const EPHEMERAL_PICKER = new Set(["gs_pick_day", "gs_pick_time", "gs_pick_tz", "gs_sched_confirm", "gs_sched_cancel"]);
+  const PROPOSAL_KEYED   = new Set(["gs_accept", "gs_counter", "gs_decline", "gs_req_approve", "gs_req_reject"]);
+
+  if (!EPHEMERAL_PICKER.has(action)) {
+    let gateSched: typeof gameSchedulesTable.$inferSelect | null = null;
+    if (PROPOSAL_KEYED.has(action)) {
+      const [p] = await db.select().from(gameScheduleProposalsTable).where(eq(gameScheduleProposalsTable.id, sid)).limit(1);
+      if (p) gateSched = await loadSchedule(p.scheduleId);
+    } else {
+      gateSched = await loadSchedule(sid);
+    }
+    if (!gateSched) {
       await interaction.reply({ content: "❌ Schedule not found.", ephemeral: true }).catch(() => {});
       return true;
     }
     const uid = interaction.user.id;
-    if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+    if (uid !== gateSched.awayDiscordId && uid !== gateSched.homeDiscordId) {
       await interaction.reply({
-        content: "🚫 You're not scheduled to play in this game. Do not touch these buttons.",
+        content: "🚫 Only the two players in this matchup can use these buttons.",
         ephemeral: true,
       }).catch(() => {});
       return true;
@@ -439,11 +447,22 @@ async function loadProposal(propId: number) {
 
 async function assertOpponent(interaction: ButtonInteraction, sched: typeof gameSchedulesTable.$inferSelect, expectedOpponentOf: string): Promise<boolean> {
   const opp = expectedOpponentOf === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
-  if (interaction.user.id !== opp && !(await isCommish(interaction.member as GuildMember | null, sched.guildId, interaction.user.id))) {
+  if (interaction.user.id !== opp) {
     await interaction.reply({ content: "❌ Only the opponent can respond to this proposal.", ephemeral: true });
     return false;
   }
   return true;
+}
+
+/** Delete the original proposal message in the channel so the Accept/Counter/Reject
+ *  embed disappears entirely once it's been resolved. Best-effort — silently
+ *  swallows fetch/delete failures (e.g. message already gone). */
+async function deleteProposalMessage(interaction: ButtonInteraction, sched: typeof gameSchedulesTable.$inferSelect, messageId: string | null) {
+  if (!messageId) return;
+  const ch = await interaction.client.channels.fetch(sched.channelId).catch(() => null);
+  if (ch?.isTextBased()) {
+    await (ch as TextChannel).messages.delete(messageId).catch(() => {});
+  }
 }
 
 async function handleAccept(interaction: ButtonInteraction, propId: number): Promise<boolean> {
@@ -453,7 +472,18 @@ async function handleAccept(interaction: ButtonInteraction, propId: number): Pro
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   if (!(await assertOpponent(interaction, sched, prop.proposerId))) return true;
 
-  await db.update(gameScheduleProposalsTable).set({ status: "accepted" }).where(eq(gameScheduleProposalsTable.id, propId));
+  // Atomic claim — only the first click of Accept flips pending→accepted and
+  // gets to run the side-effects (channel post + state mutation). A racing
+  // second click sees zero rows updated and exits without posting again.
+  const claimed = await db.update(gameScheduleProposalsTable)
+    .set({ status: "accepted" })
+    .where(and(eq(gameScheduleProposalsTable.id, propId), eq(gameScheduleProposalsTable.status, "pending")))
+    .returning({ id: gameScheduleProposalsTable.id });
+  if (claimed.length === 0) {
+    await interaction.reply({ content: "That proposal was already resolved.", ephemeral: true }).catch(() => {});
+    return true;
+  }
+
   // Whenever scheduledAt changes (new schedule or reschedule) we MUST clear
   // the per-schedule reminder log so the next cycle's T-30/T0/T+20/T+60/T+120
   // actually fire — the dedup table is keyed only on (scheduleId, kind).
@@ -464,13 +494,31 @@ async function handleAccept(interaction: ButtonInteraction, propId: number): Pro
     .set({ status: "confirmed", scheduledAt: prop.proposedAt, scheduledTz: prop.tz, startedAt: null, finishedAt: null, winnerDiscordId: null, updatedAt: new Date() })
     .where(eq(gameSchedulesTable.id, prop.scheduleId));
 
+  // Cancel any OTHER still-pending proposals on the same schedule (a stale
+  // counter from earlier in the back-and-forth) and wipe their embeds too.
+  const otherPending = await db.select().from(gameScheduleProposalsTable)
+    .where(and(
+      eq(gameScheduleProposalsTable.scheduleId, prop.scheduleId),
+      eq(gameScheduleProposalsTable.status, "pending"),
+    ));
+  for (const op of otherPending) {
+    await db.update(gameScheduleProposalsTable).set({ status: "cancelled" }).where(eq(gameScheduleProposalsTable.id, op.id));
+    await deleteProposalMessage(interaction, sched, op.messageId);
+  }
+
+  // Remove the resolved proposal embed from the channel and ack the click.
+  // Doing the ack BEFORE the channel send avoids the rare ordering where
+  // Discord re-delivers the interaction on a slow ack and a second handler
+  // invocation slips past the atomic claim window.
+  await interaction.update({ embeds: [], components: [], content: "✅ Accepted." }).catch(() => {});
+  await deleteProposalMessage(interaction, sched, prop.messageId);
+
   const confirmEmbed = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("✅ Game Scheduled")
     .setDescription(`<@${sched.awayDiscordId}> vs <@${sched.homeDiscordId}>\n\n${formatAllZones(prop.proposedAt)}\n\n${discordTimestampLong(prop.proposedAt)}`);
-  await (interaction.channel as TextChannel).send({ embeds: [confirmEmbed] });
+  await (interaction.channel as TextChannel).send({ embeds: [confirmEmbed] }).catch(() => {});
 
-  await interaction.update({ components: [] });
   await refreshHeader(interaction.client, (await loadSchedule(prop.scheduleId))!);
   return true;
 }
@@ -483,8 +531,10 @@ async function handleCounter(interaction: ButtonInteraction, propId: number): Pr
   if (!(await assertOpponent(interaction, sched, prop.proposerId))) return true;
 
   await db.update(gameScheduleProposalsTable).set({ status: "countered" }).where(eq(gameScheduleProposalsTable.id, propId));
-  // Disable the prior buttons publicly
-  await interaction.update({ components: [] }).catch(() => {});
+  // Remove the prior Accept/Counter/Reject embed entirely so the channel
+  // doesn't pile up with stale proposals as both players counter back and forth.
+  await interaction.update({ embeds: [], components: [], content: "🔁 Countering…" }).catch(() => {});
+  await deleteProposalMessage(interaction, sched, prop.messageId);
 
   // Re-open the picker for the counter-er (the opponent of the original proposer)
   const uid = interaction.user.id;
@@ -516,7 +566,8 @@ async function handleDeclineFairSim(interaction: ButtonInteraction, propId: numb
   await db.delete(gameStatusConfirmationsTable).where(eq(gameStatusConfirmationsTable.scheduleId, prop.scheduleId));
   await db.update(gameSchedulesTable).set({ status: "unscheduled", scheduledAt: null, startedAt: null, finishedAt: null, updatedAt: new Date() }).where(eq(gameSchedulesTable.id, prop.scheduleId));
 
-  await interaction.update({ components: [] });
+  await interaction.update({ embeds: [], components: [], content: "❌ Declined." }).catch(() => {});
+  await deleteProposalMessage(interaction, sched, prop.messageId);
   await postFairSimRequest(interaction, sched, interaction.user.id, "Proposal declined — auto-requested Fair Sim.");
   await refreshHeader(interaction.client, (await loadSchedule(prop.scheduleId))!);
   return true;

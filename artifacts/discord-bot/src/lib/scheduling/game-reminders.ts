@@ -94,8 +94,20 @@ async function fireReminder(
   const ping = `<@${sched.awayDiscordId}> <@${sched.homeDiscordId}>`;
 
   if (kind === "t-30") {
+    // If the schedule was created < 30 min before game time, the "30-minute
+    // reminder" actually fires much closer to start. Quote the real remaining
+    // time so players don't see a misleading "30 minutes" when only a few
+    // remain. Also include a live Discord relative timestamp.
+    const startMs   = sched.scheduledAt!.getTime();
+    const remMs     = Math.max(0, startMs - Date.now());
+    const remMins   = Math.round(remMs / 60_000);
+    const phrase    = remMs <= 30_000          ? "right now"
+                    : remMins <= 1             ? "in less than a minute"
+                    : remMins < 60             ? `in ${remMins} minute${remMins === 1 ? "" : "s"}`
+                    : `in about ${Math.round(remMins / 60)} hour${Math.round(remMins / 60) === 1 ? "" : "s"}`;
+    const relTs     = `<t:${Math.floor(startMs / 1000)}:R>`;
     await tc.send({
-      content: `${ping}\n⏰ **Reminder:** game starts in 30 minutes.\n${formatAllZones(sched.scheduledAt!)}`,
+      content: `${ping}\n⏰ **Reminder:** game starts ${phrase} (${relTs}).\n${formatAllZones(sched.scheduledAt!)}`,
     });
     return;
   }
