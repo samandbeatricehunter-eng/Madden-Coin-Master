@@ -1,0 +1,32 @@
+(node:86) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+[buildPurchasesPage] dropping duplicate purchase.id=null (guild=1493688089883971735, page=1)
+[buildPurchasesPage] dropping duplicate purchase.id=null (guild=1493688089883971735, page=1)
+[button] co_main: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1081:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  code: 10062,
+  status: 404,
+  url: 'https://discord.com/api/v10/interactions/1508225153828524054/aW50ZXJhY3Rpb246MTUwODIyNTE1MzgyODUyNDA1NDpJeXJ5V3FWUnd5MXlZSkJsdng5Z3d5MHd4aXFSVnJnVk5nV0l2cnlSTmhqd1NBVjV1dUdtOXNGbUhtOUgwSGwwc0VpeXE1SjI2NjhFcVVXOFMwQ2M3R2ZhYmZxdUpOdzlVVjBndk1tY3g2ZVJRNzZTOFA5QTFPRG54YVc5dVB0dg/callback?with_response=false'
+}
+    at async handleModal (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2362:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:233:11) {
+  requestBody: { files: undefined, json: { type: 5, data: [Object] } },
+[handlePostGameChannelsModal] deferReply failed (likely cold-start 10062), aborting: DiscordAPIError[10062]: Unknown interaction
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ModalSubmitInteraction.deferReply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:122:22)
+    at async handlePostGameChannelsModal (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:679:5)
+  status: 404,
+    at async handleAdminOperationsInteraction (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:351:5)
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508225332355010590/aW50ZXJhY3Rpb246MTUwODIyNTMzMjM1NTAxMDU5MDo4STBHVUc3Rnc2N3JrQjZpMU5IMXYwRUp6MnRyMVdhb0s1c2JVZXczVERaMk9BNGd3TnVrZUVPeHZQV3FxTGUxSjZTOEt0Smx3VmV3b1pQaTRjSkZMd1lWTE03ZGtkSVh4NW1IMmE3a1hrUU5pWFNaRnVWTXdCc05jck1EUmpQMA/callback?with_response=false'
+}

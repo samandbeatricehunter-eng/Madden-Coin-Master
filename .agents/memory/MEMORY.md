@@ -2,3 +2,4 @@
 - [Discord bot menu hub architecture](discord-menu-hub.md) — /menu uses selector-based navigation; `menu_*` IDs handled by menu-router, action buttons keep `ac_`/`ao_` prefixes so existing handlers route them.
 - [Cross-DB row copy pitfalls](cross-db-copy-pitfalls.md) — INSERT-based copier between drifted Postgres schemas: param cap, resume mode, narrow auto-ALTER, JSON cast, float→int coercion.
 - [Drizzle vs Postgres drift cleanup](drizzle-supabase-drift-cleanup.md) — drizzle-kit push silently leaves drift; always programmatic-diff, bucket by risk, align Drizzle to DB for cosmetic / DB to Drizzle for correctness.
+- [Null PK rows from serial drift](null-pk-rows-from-serial-drift.md) — when a serial sequence was missing on prod, inserts wrote NULL ids; downstream code that builds button custom_ids from those ids must filter `IS NOT NULL` defensively.

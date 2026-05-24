@@ -36,7 +36,7 @@ import {
   pendingChannelPayoutsTable,
   coinTransactionsTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray, desc } from "drizzle-orm";
+import { eq, and, sql, inArray, desc, isNotNull } from "drizzle-orm";
 import {
   addBalance,
   logTransaction,
@@ -219,9 +219,13 @@ async function buildPurchasesPage(
   guildId: string,
   page: number,
 ): Promise<{ embed: EmbedBuilder; rows: ActionRowBuilder<ButtonBuilder>[] }> {
+  // Production data has rows with NULL id (legacy serial-sequence drift). They
+  // can't be acted on through buttons (custom_id would be `...:null`), so filter
+  // them out everywhere — count, list, and pagination.
   const guildFilter = and(
     eq(seasonsTable.guildId, guildId),
     eq(purchasesTable.status, "pending"),
+    isNotNull(purchasesTable.id),
   );
 
   const [{ cnt }] = await db
@@ -235,10 +239,15 @@ async function buildPurchasesPage(
     .select({
       purchase: purchasesTable,
       username: sql<string | null>`(
-        SELECT discord_username FROM economy_users
-        WHERE discord_id = ${purchasesTable.discordId} AND guild_id = ${guildId}
+        SELECT discord_username FROM economy_users eu
+        WHERE eu.discord_id = ${purchasesTable.discordId} AND eu.guild_id = ${guildId}
         LIMIT 1
       )`.as("username"),
+      userTeam: sql<string | null>`(
+        SELECT team FROM economy_users eu
+        WHERE eu.discord_id = ${purchasesTable.discordId} AND eu.guild_id = ${guildId}
+        LIMIT 1
+      )`.as("user_team"),
     })
     .from(purchasesTable)
     .innerJoin(seasonsTable, eq(purchasesTable.seasonId, seasonsTable.id))
@@ -247,13 +256,14 @@ async function buildPurchasesPage(
     .limit(PAGE_SIZE)
     .offset(page * PAGE_SIZE);
 
-  // Defensive dedupe by purchase.id. The innerJoin on seasons shouldn't expand
-  // rows, but production data has shown duplicate purchase rows surfacing here,
-  // which causes Discord to reject the message with COMPONENT_CUSTOM_ID_DUPLICATED
-  // because we mint per-purchase buttons.
+  // Defensive dedupe by purchase.id — even with the IS NOT NULL filter, the
+  // production drift has surfaced duplicate ids in the past. A duplicate id
+  // would cause Discord to reject the whole message with
+  // COMPONENT_CUSTOM_ID_DUPLICATED because we mint per-purchase buttons.
   const seenIds = new Set<number>();
   const raw: typeof rawAll = [];
   for (const r of rawAll) {
+    if (r.purchase.id == null) continue;
     if (seenIds.has(r.purchase.id)) {
       console.warn(`[buildPurchasesPage] dropping duplicate purchase.id=${r.purchase.id} (guild=${guildId}, page=${page})`);
       continue;
@@ -272,7 +282,7 @@ async function buildPurchasesPage(
     embed.setDescription("✅ No pending purchases. All caught up!");
   } else {
     for (let i = 0; i < raw.length; i++) {
-      const { purchase: p, username } = raw[i];
+      const { purchase: p, username, userTeam } = raw[i];
       const typeLabel = p.purchaseType
         .replace(/_/g, " ")
         .replace(/\b\w/g, c => c.toUpperCase());
@@ -282,11 +292,15 @@ async function buildPurchasesPage(
         ? `**Attribute:** ${p.attributeName}`
         : "";
 
+      // Team falls back to the user's linked economy team if the purchase row
+      // doesn't have a teamName stamped (older purchases pre-link).
+      const teamDisplay = p.teamName ?? userTeam ?? "?";
+
       embed.addFields({
         name: `#${i + 1}  ·  ${typeLabel}  —  ${p.cost} coins`,
         value: [
           `**User:** <@${p.discordId}>${username ? ` (${username})` : ""}`,
-          `**Team:** ${p.teamName ?? "?"}`,
+          `**Team:** ${teamDisplay}`,
           detailLine,
           p.notes ? `**Notes:** ${p.notes.slice(0, 500)}` : "",
           `**Submitted:** <t:${Math.floor(new Date(p.createdAt).getTime() / 1000)}:R>`,
