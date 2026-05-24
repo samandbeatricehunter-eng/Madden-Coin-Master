@@ -1,0 +1,80 @@
+
+
+Deployments
+Variables
+Metrics
+Settings
+Unexposed service
+US West
+1 Replica
+
+Set the RAILPACK_INSTALL_CMD environment variable to 'pnpm install --no-frozen-lockfile' as a temporary workaround, or regenerate pnpm-lock.yaml locally and commit it. The build failed because the overrides configuration in pnpm-workspace.yaml does not match what is recorded in pnpm-lock.yaml. pnpm's --frozen-lockfile flag (used by Railpack by default) rejects the install when it detects this mismatch.
+Read Railpack docs
+@workspace/discord-bot
+/
+Failed
+May 24, 2026, 11:16 AM CDT
+Get Help
+We looked into the failure. Check what we found on the details tab.
+Search build logs
+You reached the start of the range
+May 24, 2026, 11:11 AM
+scheduling build on Metal builder "production-builderv3-us-west1-sn9n"
+unpacking archive35.3 MB114ms
+using build driver railpack-v0.23.0
+                   
+╭─────────────────╮
+│ Railpack 0.23.0 │
+╰─────────────────╯
+ 
+  ↳ Detected Node
+  ↳ Using pnpm package manager
+  ↳ Found workspace with 8 packages
+            
+  Packages  
+  ──────────
+  node  │  22.22.3  │  railpack default (22)
+  pnpm  │  9.15.9   │  railpack default (9)
+            
+  Steps     
+  ──────────
+  ▸ install
+    $ pnpm add -g node-gyp
+    $ pnpm install --frozen-lockfile --prefer-offline
+         
+  ▸ build
+    $ pnpm run build
+            
+  Deploy    
+  ──────────
+    $ pnpm --filter @workspace/discord-bot start
+ 
+uploading snapshot28.4 MB733ms
+load build definition from ./railpack-plan.json
+0ms
+install apt packages: libatomic1 cached
+0ms
+install mise packages: node, pnpm cached
+0ms
+copy /mise/installs, /usr/local/bin/mise, /etc/mise/config.toml, /root/.local/state/mise, /mise/shims cached
+16ms
+copy / /app
+345ms
+mkdir -p /app/node_modules/.cache
+249ms
+pnpm add -g node-gyp
+1s
+Done in 955ms using pnpm v9.15.9
+pnpm install --frozen-lockfile --prefer-offline
+513ms
+Scope: all 9 workspace projects
+ ERR_PNPM_LOCKFILE_CONFIG_MISMATCH  Cannot proceed with the frozen installation. The current "overrides" configuration doesn't match the value found in the lockfile
+
+Update your lockfile using "pnpm install --no-frozen-lockfile"
+Build Failed: build daemon returned an error < failed to solve: process "pnpm install --frozen-lockfile --prefer-offline" did not complete successfully: exit code: 1 >
+You reached the end of the range
+May 24, 2026, 11:21 AM
+New Agent
+Agent usage limit reached
+Upgrade to Pro for 4x more
+100MB
