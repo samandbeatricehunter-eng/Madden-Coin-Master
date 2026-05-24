@@ -3,6 +3,7 @@ import { userSavingsTable, payoutConfigTable } from "@workspace/db";
 import { gt, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { logTransaction, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
+import { recomputeAllGuildInflation } from "../economy/inflation.js";
 
 const RATE_KEY      = "savings_interest_rate";   // stored as basis points (100 = 1%)
 const LAST_RUN_KEY  = "savings_last_interest_at"; // stored as unix epoch seconds
@@ -97,6 +98,8 @@ async function runInterestPayout(): Promise<{ usersRewarded: number; totalCoins:
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
+const INFLATION_LAST_RUN_KEY = "inflation_last_recompute_at";
+
 export function startSavingsInterestScheduler(): void {
   async function tick() {
     try {
@@ -104,12 +107,24 @@ export function startSavingsInterestScheduler(): void {
       const nowSecs     = Math.floor(Date.now() / 1000);
       const secondsAgo  = lastRunSecs !== null ? nowSecs - lastRunSecs : Infinity;
 
-      if (secondsAgo < 86400) return; // not 24 hours yet
+      if (secondsAgo >= 86400) {
+        console.log(`[savings-interest] 24h elapsed — running daily interest payout…`);
+        const { usersRewarded, totalCoins } = await runInterestPayout();
+        await setConfigInt(LAST_RUN_KEY, nowSecs, "Unix timestamp of last daily savings interest payout");
+        console.log(`[savings-interest] Done — ${usersRewarded} users rewarded, ${totalCoins} total coins distributed`);
+      }
 
-      console.log(`[savings-interest] 24h elapsed — running daily interest payout…`);
-      const { usersRewarded, totalCoins } = await runInterestPayout();
-      await setConfigInt(LAST_RUN_KEY, nowSecs, "Unix timestamp of last daily savings interest payout");
-      console.log(`[savings-interest] Done — ${usersRewarded} users rewarded, ${totalCoins} total coins distributed`);
+      // Piggyback: recompute per-guild economy inflation once per day.
+      // Cheap (one median per guild) and lives on the same scheduler so we
+      // don't need a second setInterval loop.
+      const lastInflationSecs = await getConfigInt(INFLATION_LAST_RUN_KEY);
+      const inflationAgo      = lastInflationSecs !== null ? nowSecs - lastInflationSecs : Infinity;
+      if (inflationAgo >= 86400) {
+        console.log(`[inflation] 24h elapsed — recomputing per-guild inflation multipliers…`);
+        const { guildsProcessed } = await recomputeAllGuildInflation();
+        await setConfigInt(INFLATION_LAST_RUN_KEY, nowSecs, "Unix timestamp of last economy-inflation recompute");
+        console.log(`[inflation] Done — recomputed ${guildsProcessed} guild(s)`);
+      }
     } catch (err) {
       console.error("[savings-interest] Scheduler error:", err);
     }

@@ -969,6 +969,18 @@ export const serverSettingsTable = pgTable("server_settings", {
   // Advance cadence — used to compute the per-week "Next Advance" deadline shown in game channels
   advancePeriodHours:       integer("advance_period_hours").notNull().default(72),
   lastAdvanceAt:            timestamp("last_advance_at", { withTimezone: true }),
+  // ── Economy inflation (per-guild, recomputed daily) ───────────────────────
+  // Scales every store price up/down based on the guild's current median
+  // active-user balance. Multiplier is stored as basis points (10000 = 1.00x).
+  // Recomputed once/day inside the savings-interest scheduler tick.
+  inflationEnabled:         boolean("inflation_enabled").notNull().default(true),
+  inflationTargetMedian:    integer("inflation_target_median").notNull().default(500),
+  inflationMinBps:          integer("inflation_min_bps").notNull().default(9000),   // 0.90x floor
+  inflationMaxBps:          integer("inflation_max_bps").notNull().default(20000),  // 2.00x ceiling
+  inflationMultiplierBps:   integer("inflation_multiplier_bps").notNull().default(10000),
+  inflationMedianBalance:   integer("inflation_median_balance").notNull().default(0),
+  inflationSampleSize:      integer("inflation_sample_size").notNull().default(0),
+  inflationComputedAt:      timestamp("inflation_computed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

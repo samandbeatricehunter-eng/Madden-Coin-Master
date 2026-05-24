@@ -354,9 +354,11 @@ function buildLtGroupSelectComponents(session: LtSession) {
 
 async function buildPcEmbed(guildId: string): Promise<EmbedBuilder> {
   const { COSTS, LIMITS } = await import("../constants.js");
+  const { getInflationState, inflationBadge } = await import("../economy/inflation.js");
   const season = await getOrCreateActiveSeason(guildId);
   const rules = await getSeasonRules(season);
   const settings = await getServerSettings(guildId);
+  const inflation = await getInflationState(guildId);
 
   const allTimeLegend = LIMITS.legendsPerTeam;
   const legendsPerSeason = season.legendsPerSeasonCapOverride ?? 2;
@@ -364,10 +366,20 @@ async function buildPcEmbed(guildId: string): Promise<EmbedBuilder> {
   const salaryCareer = settings.salaryReductionCareerCap ?? "—";
   const bonusCareer  = settings.bonusReductionCareerCap  ?? "—";
 
+  // Inflation header — surfaces the per-guild multiplier currently being
+  // applied to every price below. "Disabled" means base costs are shown.
+  const inflLine = inflation.enabled
+    ? `**Economy Inflation:** ${inflationBadge(inflation.multiplierBps)} ` +
+      `(median ${inflation.medianBalance.toLocaleString()} / target ${inflation.targetMedian.toLocaleString()} coins)`
+    : "**Economy Inflation:** ⏸️ Disabled (prices shown are base values)";
+
   return new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle("💰 Prices & Caps — Current Settings")
-    .setDescription(`Season #${season.seasonNumber} overrides. Blank = using global defaults.`)
+    .setDescription(
+      `Season #${season.seasonNumber} overrides. Blank = using global defaults.\n` +
+      `${inflLine}`
+    )
     .addFields(
       {
         name: "Prices",

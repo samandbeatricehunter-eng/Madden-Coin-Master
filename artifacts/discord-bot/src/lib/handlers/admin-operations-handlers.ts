@@ -450,6 +450,36 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     return true;
   }
 
+  // ── Economy Inflation panel ───────────────────────────────────────────────────
+  if (id === "ao_inflation") {
+    await handleInflationPanel(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_inflation_toggle") {
+    await handleInflationToggle(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_inflation_recompute") {
+    await handleInflationRecompute(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_inflation_target") {
+    await handleInflationTargetModal(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_inflation_range") {
+    await handleInflationRangeModal(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_inflation_target") {
+    await handleInflationTargetSubmit(interaction as ModalSubmitInteraction);
+    return true;
+  }
+  if (id === "ao_modal_inflation_range") {
+    await handleInflationRangeSubmit(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
   // ── Init Existing Server ──────────────────────────────────────────────────────
   if (id === "ao_init_existing") {
     await handleInitExisting(interaction as ButtonInteraction);
@@ -1812,11 +1842,186 @@ async function handleServerSettingsHub(interaction: ButtonInteraction) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_server_features").setLabel("🎛️ Server Features").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_server_setup").setLabel("🔧 Server Setup").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_inflation").setLabel("📈 Economy Inflation").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
 
   await (interaction as any).update({ embeds: [embed], components: [row] });
+}
+
+// ── Economy Inflation Panel ────────────────────────────────────────────────────
+
+async function handleInflationPanel(interaction: ButtonInteraction) {
+  const { getInflationState, formatMultiplier, inflationBadge } = await import("../economy/inflation.js");
+  const guildId = interaction.guildId!;
+  const state   = await getInflationState(guildId);
+
+  const fmtDate = state.computedAt
+    ? `<t:${Math.floor(state.computedAt.getTime() / 1000)}:R>`
+    : "never";
+
+  const minMult = formatMultiplier(state.minBps);
+  const maxMult = formatMultiplier(state.maxBps);
+
+  const embed = new EmbedBuilder()
+    .setColor(state.enabled ? Colors.Green : Colors.Grey)
+    .setTitle("📈 Economy Inflation")
+    .setDescription(
+      "Per-guild price scaling that gently counteracts coin stacking.\n" +
+      "When the median active-user balance rises above the target, every " +
+      "store price (legends, attrs, dev ups, age resets, custom players, " +
+      "contract mods) scales up proportionally. **Payouts are never inflated** " +
+      "— only what users spend.\n\n" +
+      "Formula: `multiplier = clamp(√(median / target), min, max)`, " +
+      "snapped to the nearest 5%."
+    )
+    .addFields(
+      {
+        name: "Status",
+        value: state.enabled ? "✅ **Enabled**" : "⏸️ **Disabled** (prices use base values)",
+        inline: true,
+      },
+      {
+        name: "Current Multiplier",
+        value: `**${inflationBadge(state.multiplierBps)}**`,
+        inline: true,
+      },
+      {
+        name: "Last Recomputed",
+        value: fmtDate,
+        inline: true,
+      },
+      {
+        name: "Median Balance (last sample)",
+        value: `${state.medianBalance.toLocaleString()} coins (${state.sampleSize} active users)`,
+        inline: true,
+      },
+      {
+        name: "Target Median",
+        value: `${state.targetMedian.toLocaleString()} coins`,
+        inline: true,
+      },
+      {
+        name: "Multiplier Range",
+        value: `${minMult} – ${maxMult}`,
+        inline: true,
+      },
+    )
+    .setFooter({ text: "Recomputed automatically once every 24h" });
+
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_inflation_toggle")
+      .setLabel(state.enabled ? "⏸️ Disable" : "▶️ Enable")
+      .setStyle(state.enabled ? ButtonStyle.Secondary : ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ao_inflation_target")
+      .setLabel("🎯 Set Target Median")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_inflation_range")
+      .setLabel("📐 Set Min/Max")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_inflation_recompute")
+      .setLabel("🔄 Recompute Now")
+      .setStyle(ButtonStyle.Success),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_server_settings").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  await (interaction as any).update({ embeds: [embed], components: [row1, row2] });
+}
+
+async function handleInflationToggle(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const settings = await getServerSettings(guildId);
+  await db.update(serverSettingsTable)
+    .set({ inflationEnabled: !settings.inflationEnabled, updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, guildId));
+  return handleInflationPanel(interaction);
+}
+
+async function handleInflationRecompute(interaction: ButtonInteraction) {
+  await interaction.deferUpdate();
+  const { recomputeInflationForGuild } = await import("../economy/inflation.js");
+  await recomputeInflationForGuild(interaction.guildId!);
+  return handleInflationPanel(interaction);
+}
+
+async function handleInflationTargetModal(interaction: ButtonInteraction) {
+  const settings = await getServerSettings(interaction.guildId!);
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_inflation_target")
+    .setTitle("Set Target Median Balance");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("target")
+        .setLabel("Target median balance (coins)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(String(settings.inflationTargetMedian ?? 500))
+        .setPlaceholder("e.g. 500 — multiplier hits 1.00x at this median")
+        .setRequired(true),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleInflationRangeModal(interaction: ButtonInteraction) {
+  const settings = await getServerSettings(interaction.guildId!);
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_inflation_range")
+    .setTitle("Set Multiplier Range");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("min")
+        .setLabel("Minimum multiplier (e.g. 0.90)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(((settings.inflationMinBps ?? 9000) / 10000).toFixed(2))
+        .setRequired(true),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("max")
+        .setLabel("Maximum multiplier (e.g. 2.00)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(((settings.inflationMaxBps ?? 20000) / 10000).toFixed(2))
+        .setRequired(true),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+export async function handleInflationTargetSubmit(interaction: any) {
+  const raw = interaction.fields.getTextInputValue("target").trim();
+  const value = Math.max(1, Math.round(Number(raw)));
+  if (!Number.isFinite(value)) {
+    return interaction.reply({ content: "❌ Invalid number.", ephemeral: true });
+  }
+  await db.update(serverSettingsTable)
+    .set({ inflationTargetMedian: value, updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, interaction.guildId!));
+  // Recompute immediately so the new target is reflected in the panel.
+  const { recomputeInflationForGuild } = await import("../economy/inflation.js");
+  await recomputeInflationForGuild(interaction.guildId!);
+  return interaction.reply({ content: `✅ Target median set to **${value.toLocaleString()}** coins. Multiplier recomputed.`, ephemeral: true });
+}
+
+export async function handleInflationRangeSubmit(interaction: any) {
+  const minRaw = Number(interaction.fields.getTextInputValue("min").trim());
+  const maxRaw = Number(interaction.fields.getTextInputValue("max").trim());
+  if (!Number.isFinite(minRaw) || !Number.isFinite(maxRaw) || minRaw <= 0 || maxRaw <= 0 || minRaw >= maxRaw) {
+    return interaction.reply({ content: "❌ Need 0 < min < max (e.g. 0.90 and 2.00).", ephemeral: true });
+  }
+  const minBps = Math.round(minRaw * 10000);
+  const maxBps = Math.round(maxRaw * 10000);
+  await db.update(serverSettingsTable)
+    .set({ inflationMinBps: minBps, inflationMaxBps: maxBps, updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, interaction.guildId!));
+  const { recomputeInflationForGuild } = await import("../economy/inflation.js");
+  await recomputeInflationForGuild(interaction.guildId!);
+  return interaction.reply({ content: `✅ Multiplier range set to **${minRaw.toFixed(2)}x – ${maxRaw.toFixed(2)}x**. Recomputed.`, ephemeral: true });
 }
 
 async function handleServerFeaturesHub(interaction: ButtonInteraction) {

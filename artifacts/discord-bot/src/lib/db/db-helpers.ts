@@ -470,27 +470,41 @@ export function getCoreAttributes(season: { coreAttributesOverride?: string | nu
   ]);
 }
 
-export async function getSeasonRules(_season: Season) {
-  const { COSTS, LIMITS } = await import("../constants.js");
+export async function getSeasonRules(season: Season) {
+  const { COSTS, LIMITS }                       = await import("../constants.js");
+  const { getInflationBpsForGuild, applyInflation } = await import("../economy/inflation.js");
+
+  // Per-guild economy inflation — single chokepoint. Every menu render and
+  // every debit calls getSeasonRules() before showing/charging a price, so
+  // multiplying the *Cost fields here automatically scales every purchase
+  // (legends / attrs / dev ups / age resets / custom players / contract
+  // mods) without touching any of the ~20 call sites. Payouts use a
+  // separate dispatcher and are intentionally NOT inflated.
+  const bps = await getInflationBpsForGuild(season.guildId).catch(() => 10000);
+  const $ = (base: number) => applyInflation(base, bps);
+
   return {
-    coreAttrCost:    COSTS.core_attribute,
+    coreAttrCost:    $(COSTS.core_attribute),
     coreAttrCap:     LIMITS.coreAttrPerSeason,
-    nonCoreAttrCost: COSTS.non_core_attribute,
+    nonCoreAttrCost: $(COSTS.non_core_attribute),
     nonCoreAttrCap:  LIMITS.nonCoreAttrPerSeason,
     devUpsCap:        LIMITS.devUpsPerSeason,
-    devUpsCost:       COSTS.dev_up,
+    devUpsCost:       $(COSTS.dev_up),
     ageResetsCap:     LIMITS.ageResetsPerSeason,
-    ageResetCost:     COSTS.age_reset,
-    legendCost:       COSTS.legend,
-    customGoldCost:   COSTS.custom_player_gold,
-    customSilverCost: COSTS.custom_player_silver,
-    customBronzeCost: COSTS.custom_player_bronze,
-    contractExtensionCost: COSTS.contract_extension,
+    ageResetCost:     $(COSTS.age_reset),
+    legendCost:       $(COSTS.legend),
+    customGoldCost:   $(COSTS.custom_player_gold),
+    customSilverCost: $(COSTS.custom_player_silver),
+    customBronzeCost: $(COSTS.custom_player_bronze),
+    contractExtensionCost: $(COSTS.contract_extension),
     contractExtensionCap:  LIMITS.contractExtensionsPerSeason,
-    salaryReductionCost:   COSTS.salary_reduction,
+    salaryReductionCost:   $(COSTS.salary_reduction),
     salaryReductionCap:    LIMITS.salaryReductionsPerSeason,
-    bonusReductionCost:    COSTS.bonus_reduction,
+    bonusReductionCost:    $(COSTS.bonus_reduction),
     bonusReductionCap:     LIMITS.bonusReductionsPerSeason,
+    // Raw (pre-inflation) values for admin/debug surfaces that want to show
+    // "Base: 1000 → Adjusted: 1250 (1.25x)".
+    inflationBps: bps,
   };
 }
 
