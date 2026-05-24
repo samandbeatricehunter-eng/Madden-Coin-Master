@@ -41,8 +41,12 @@ import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
   type InterviewType,
 } from "../commands/interviewrequest.js";
-import { buildActionsHubEmbed, buildActionsHubRows, buildUnlinkedHubEmbed, buildUnlinkedHubRows } from "../commands/actions.js";
-import { buildMenuBannerAttachment } from "./menu-hub.js";
+import {
+  buildMenuHubEmbed, buildMenuHubRows,
+  buildUnlinkedMenuEmbed, buildUnlinkedMenuRows,
+  buildMenuBannerAttachment,
+  type MenuCtx,
+} from "./menu-hub.js";
 import { buildUserProfilePages, buildProfileNavRow, buildProfileBackRow } from "./user-stats-embed.js";
 import { getSavingsInterestRateBps } from "./savings-interest.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
@@ -678,8 +682,9 @@ function fmtDiff(n: number): string { return n >= 0 ? `+${n}` : `${n}`; }
 
 export async function handleActionsInteraction(
   interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
+  overrideId?: string,
 ): Promise<boolean> {
-  const id  = interaction.customId;
+  const id  = overrideId ?? interaction.customId;
   const gid = interaction.guildId;
   const uid = interaction.user.id;
   if (!gid) return false;
@@ -706,24 +711,27 @@ export async function handleActionsInteraction(
       getOrCreateUser(uid, btn.user.username, gid),
       getOrCreateActiveSeason(gid),
     ]);
-    const isDiscordAdmin = (member as import("discord.js").GuildMember | null | undefined)?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
+    const memberTyped    = member as import("discord.js").GuildMember | null | undefined;
+    const isDiscordAdmin = memberTyped?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
     const isDbAdmin      = await isAdminUser(uid, gid);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
+    const isCommissioner = memberTyped?.roles?.cache?.some((r) => r.name === "Commissioner") ?? false;
     const seasonNum      = season.seasonNumber;
     const wkStr          = weekLabel(season.currentWeek);
 
-    if (!user.team && !isAdmin) {
+    if (!user.team && !isAdmin && !isCommissioner) {
       await btn.editReply({
-        embeds:     [buildUnlinkedHubEmbed(seasonNum, wkStr)],
-        components: buildUnlinkedHubRows(),
+        embeds:     [buildUnlinkedMenuEmbed(seasonNum, wkStr)],
+        components: buildUnlinkedMenuRows(),
         files:      [buildMenuBannerAttachment()],
       });
       return true;
     }
 
+    const ctx: MenuCtx = { settings, isAdmin, isCommissioner, seasonNum, weekStr: wkStr };
     await btn.editReply({
-      embeds:     [buildActionsHubEmbed(settings, isAdmin, seasonNum, wkStr)],
-      components: buildActionsHubRows(settings, isAdmin),
+      embeds:     [buildMenuHubEmbed(settings, isAdmin, seasonNum, wkStr)],
+      components: buildMenuHubRows(ctx),
       files:      [buildMenuBannerAttachment()],
     });
     return true;

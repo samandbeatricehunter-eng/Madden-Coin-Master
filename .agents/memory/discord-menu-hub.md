@@ -1,18 +1,30 @@
 ---
-name: Discord bot menu hub architecture
-description: How /menu is layered — selector navigation on top, existing ac_/ao_ action buttons underneath.
+name: Discord /menu hub architecture
+description: How the /menu nested-selector tree is structured and how leaf actions dispatch into legacy ac_* handlers.
 ---
 
-The `/menu` command in `artifacts/discord-bot` is split into two layers:
+# /menu hub — nested selector tree
 
-1. **Navigation layer** (`src/lib/menu-hub.ts` + `src/lib/menu-router.ts`): a `StringSelectMenu` (`menu_cat`, `menu_admin_cat`) chooses a category. The router re-renders the message with that category's embed + action buttons via `interaction.update()`. Back buttons (`menu_back`, `menu_admin_back`) return up the tree. Admin operations are nested as a category inside `/menu`, only visible when `isAdminUser` or Discord Administrator is true.
+The `/menu` command renders a tree of `StringSelectMenu` screens (no nav buttons). Every screen uses the same select `customId = "menu_cat"`. Option `value` is a dot-delimited tree path (e.g. `coaches.rosters.my`). Every non-root screen appends a `"__home"` option that returns to the root.
 
-2. **Action layer** (existing): all action buttons keep the legacy `ac_*` (user) and `ao_*` (admin) custom-id prefixes, so the huge handler files (`actions-handlers.ts`, `admin-operations-handlers.ts`, etc.) route them unchanged.
+**Why:** the user explicitly asked for selector-only navigation in the new menu layers — no back/close buttons.
 
-**Why:** The handler files are 4k–7k lines and tightly coupled. Rebuilding only the top-level navigation surface avoids a risky rewrite while still giving the user the new selector UX and gold/amber theme.
+**How to apply:** `menu-hub.ts` defines `ROOT_NODES` as the tree. Each node is one of:
+- `branch` — renders a sub-screen whose selector lists visible children + "Back to Main Menu".
+- `action` — leaf; the router calls `handleActionsInteraction(interaction, node.action)` to dispatch to the legacy `ac_*` handler (e.g. `ac_buy_training`, `ac_interview`).
+- `placeholder` — leaf with a body string; renders a "coming soon" embed with only the home option (used for Rivalries, Hire Positional Trainers).
+- `ops` — special leaf that delegates to `buildAdminHubPage` (League Operations is gated to `isAdmin || isCommissioner`).
 
-**How to apply:**
-- Adding a new top-level category: add to `USER_CATEGORIES`/`ADMIN_CATEGORIES` in `menu-hub.ts`, add a case in `buildUserCategoryPage`/`buildAdminCategoryPage`, and extend the `VALID_*_CATS` allowlist in `menu-router.ts`.
-- The role-guard at the top of `events/interactionCreate.ts` must exempt the `menu_` prefix (alongside `ac_`) so users with no roles can navigate the welcome hub.
-- Back-compat: `buildActionsHubEmbed/Rows` and `buildAdminOpsEmbed/Rows` are kept as shims in `commands/actions.ts` and `commands/admin-operations.ts` because the giant handler files import them to re-render after sub-flows. Don't delete those shims.
-- Colors come from `src/lib/theme.ts` (`THEME.GOLD`, `THEME.GOLD_DARK`, etc.) via `goldEmbed()`.
+`handleActionsInteraction(interaction, overrideId?)` takes an optional id override so a StringSelectMenuInteraction can be re-routed to any `ac_*` branch in the dispatch table. The dispatch casts to `ButtonInteraction` internally, but `.update()` / `.deferReply()` etc. work for both interaction types.
+
+**Visibility predicates** on nodes use a `MenuCtx` ({ settings, isAdmin, isCommissioner, seasonNum, weekStr }). Coaches Office is gated on MCA-visible; GM's Office + Wagers on coin economy; per-purchase leaves on their individual `*Enabled` settings.
+
+# Commissioner role
+
+League Operations is gated on `isAdmin || isCommissioner`. Commissioner = member has a Discord role literally named `"Commissioner"` (case-sensitive). Checked in three places: `commands/actions.ts` (slash entry), `lib/menu-router.ts` (`loadContext`), `lib/actions-handlers.ts` `ac_hub` restore path.
+
+# Caveats
+
+- Sub-pages explicitly pass `files: []` on `interaction.update()` to clear the banner attachment. The banner is re-attached only when returning to the root hub.
+- Admin sub-pages (`buildAdminCategoryPage`) and unlinked sub-pages (`buildUnlinkedCategoryPage`) intentionally still use action+nav buttons — those weren't in the reorganization spec.
+- Discord StringSelectMenuOption value max is 100 chars; tree paths stay well under.

@@ -1,51 +1,22 @@
 import {
   SlashCommandBuilder, ChatInputCommandInteraction,
-  ActionRowBuilder, ButtonBuilder,
-  StringSelectMenuBuilder,
-  EmbedBuilder, PermissionFlagsBits,
+  PermissionFlagsBits,
 } from "discord.js";
 import { getServerSettings } from "../lib/server-settings.js";
-import type { ServerSettings } from "../lib/server-settings.js";
 import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "../lib/week-helpers.js";
 import {
   buildMenuHubEmbed, buildMenuHubRows,
   buildUnlinkedMenuEmbed, buildUnlinkedMenuRows,
   buildMenuBannerAttachment,
+  type MenuCtx,
 } from "../lib/menu-hub.js";
+
+const COMMISSIONER_ROLE_NAME = "Commissioner";
 
 export const data = new SlashCommandBuilder()
   .setName("menu")
   .setDescription("League menu — economy, rosters, rankings, payouts, rules — and admin tools for commissioners");
-
-// ── Back-compat exports used by lib/actions-handlers.ts ──────────────────────
-// These now delegate to the new selector-based hub.
-
-export function buildActionsHubEmbed(
-  settings: ServerSettings,
-  isAdmin: boolean,
-  seasonNum?: number,
-  weekStr?: string,
-): EmbedBuilder {
-  return buildMenuHubEmbed(settings, isAdmin, seasonNum, weekStr);
-}
-
-export function buildActionsHubRows(
-  settings: ServerSettings,
-  isAdmin: boolean,
-): ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] {
-  return buildMenuHubRows(settings, isAdmin);
-}
-
-export function buildUnlinkedHubEmbed(seasonNum?: number, weekStr?: string): EmbedBuilder {
-  return buildUnlinkedMenuEmbed(seasonNum, weekStr);
-}
-
-export function buildUnlinkedHubRows(): ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] {
-  return buildUnlinkedMenuRows();
-}
-
-// ── Slash command execute ────────────────────────────────────────────────────
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const gid = interaction.guildId!;
@@ -62,12 +33,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const isDiscordAdmin = member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
   const isDbAdmin      = await isAdminUser(uid, gid);
   const isAdmin        = isDiscordAdmin || isDbAdmin;
+  const isCommissioner = member?.roles.cache.some((r) => r.name === COMMISSIONER_ROLE_NAME) ?? false;
 
   const seasonNum = season.seasonNumber;
   const wkStr     = weekLabel(season.currentWeek);
 
-  // ── Unlinked user — banner + selector ──────────────────────────────────────
-  if (!user.team && !isAdmin) {
+  const ctx: MenuCtx = { settings, isAdmin, isCommissioner, seasonNum, weekStr: wkStr };
+
+  if (!user.team && !isAdmin && !isCommissioner) {
     await interaction.editReply({
       embeds:     [buildUnlinkedMenuEmbed(seasonNum, wkStr)],
       components: buildUnlinkedMenuRows(),
@@ -76,10 +49,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // ── Linked user — banner + selector only ──────────────────────────────────
   await interaction.editReply({
     embeds:     [buildMenuHubEmbed(settings, isAdmin, seasonNum, wkStr)],
-    components: buildMenuHubRows(settings, isAdmin),
+    components: buildMenuHubRows(ctx),
     files:      [buildMenuBannerAttachment()],
   });
 }
