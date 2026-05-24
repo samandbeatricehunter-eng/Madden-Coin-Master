@@ -207,7 +207,6 @@ export async function postGotwToChannel(
         `<@${awayDiscordId}> **${awayTeamName}** vs <@${homeDiscordId}> **${homeTeamName}**\n` +
         `\n🗳️ Vote via **/menu → 🏆 GOTW Vote**. You can change your vote until the game starts.`,
     });
-    const pollMsg = { id: "" } as { id: string };
 
     await db.insert(gotwHistoryTable).values({
       seasonId,
@@ -218,7 +217,6 @@ export async function postGotwToChannel(
       teamName2:            homeTeamName,
       combinedScore:        Math.floor(combinedScore),
       announcementMessageId: announcementMsg.id,
-      pollMessageId:         pollMsg.id,
     }).onConflictDoUpdate({
       target: [gotwHistoryTable.seasonId, gotwHistoryTable.weekIndex],
       set: {
@@ -228,11 +226,10 @@ export async function postGotwToChannel(
         teamName2:             homeTeamName,
         combinedScore:         Math.floor(combinedScore),
         announcementMessageId: announcementMsg.id,
-        pollMessageId:         pollMsg.id,
       },
     });
 
-    return { announcementId: announcementMsg.id, pollId: pollMsg.id };
+    return { announcementId: announcementMsg.id, pollId: "" };
   } catch (err) {
     console.error("[gotw-helpers] Failed to post GOTW:", err);
     return null;

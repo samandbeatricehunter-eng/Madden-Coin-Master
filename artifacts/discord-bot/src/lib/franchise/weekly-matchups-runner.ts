@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { franchiseScheduleTable, franchiseMcaTeamsTable, usersTable, type Season } from "@workspace/db";
 import { eq, and, asc, isNotNull } from "drizzle-orm";
 import {
-  scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
+  scoreH2HMatchups, purgeChannel, purgeGotwChannel,
 } from "../helpers/gotw-helpers.js";
 import { getRosterSeasonId, getScheduleSeasonId, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
 const MIN_COMPLETED_STATUS = 2;
@@ -135,22 +135,14 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   const resolvedGuildId = opts.guildId ?? PRIMARY_GUILD_ID;
 
   const displayWeekIndex = displayWeekNum - 1;
-  const isPlayoff        = false;
 
-  let payoutSummary = "";
+  // GOTW payouts no longer happen here — they're settled per-game when the
+  // winner is confirmed in the private game channel (see settleGotwForGame
+  // in game-scheduling-handlers.ts). The previous-week voter readback from
+  // the Discord poll is dead — in-menu voting writes to gotw_votes directly.
+  void payoutWeekIndex;
 
-  // ── Step 1: Payout previous-week voters FIRST (reads poll voters from GOTW channel) ──
-  // IMPORTANT: payout must complete before we purge the GOTW channel, otherwise the
-  // Discord poll message (and its voter list) is deleted before we can read who voted.
-  if (payoutWeekIndex != null && payoutWeekIndex >= 0) {
-    payoutSummary = await autoPayoutGotwVoters(client, guild, season.id, payoutWeekIndex, payoutWeekIndex + 1, isPlayoff, resolvedGuildId)
-      .catch((err: unknown) => {
-        console.error("[weekly-runner] GOTW auto-payout error:", err);
-        return `❌ GOTW auto-payout failed: ${err}`;
-      });
-  }
-
-  // ── Step 2: Clear GOTW channel AFTER voters have been read and paid ──────────
+  // Clear GOTW channel of any prior announcement before posting this week's.
   await purgeGotwChannel(client, resolvedGuildId).catch((err: unknown) =>
     console.error("[weekly-runner] GOTW purge error:", err),
   );
@@ -242,9 +234,6 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   let baseContent =
     `✅ Week ${displayWeekNum} matchups recorded (auto-post disabled — private channels carry the matchup).\n` +
     `GOTW seeded.`;
-  if (payoutSummary) {
-    baseContent += `\n\n**Previous Week GOTW Payout:**\n${payoutSummary}`;
-  }
 
   await runGotwPrompt({ season, weekNum: displayWeekNum, teamToDiscord, games, baseContent, replyFn });
 }
