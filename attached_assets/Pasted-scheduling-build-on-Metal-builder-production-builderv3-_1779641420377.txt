@@ -1,0 +1,80 @@
+scheduling build on Metal builder "production-builderv3-us-west1-sn9n"
+fetched snapshot sha256:8cb3bd8b7eab67807911cac915a96f01379713d7eb539d2511f3be83470aa4e5 (30 MB bytes)
+fetching snapshot28.4 MB1.8s
+unpacking archive35.3 MB112ms
+using build driver railpack-v0.23.0
+                   
+╭─────────────────╮
+│ Railpack 0.23.0 │
+╰─────────────────╯
+ 
+  ↳ Detected Node
+  ↳ Using pnpm package manager
+  ↳ Found workspace with 8 packages
+            
+  Packages  
+  ──────────
+  node  │  22.22.3  │  railpack default (22)
+  pnpm  │  9.15.9   │  railpack default (9)
+            
+  Steps     
+  ──────────
+  ▸ install
+    $ pnpm install --no-frozen-lockfile
+         
+  ▸ build
+    $ pnpm run build
+            
+  Deploy    
+  ──────────
+    $ pnpm --filter @workspace/discord-bot start
+ 
+load build definition from ./railpack-plan.json
+0ms
+install apt packages: libatomic1
+1s
+Processing triggers for libc-bin (2.36-9+deb12u13) ...
+install mise packages: node, pnpm
+1s
+mise node@22.22.3 ✓ installed
+copy / /app, ., /mise/shims
+347ms
+pnpm install --no-frozen-lockfile
+5s
+Done in 4.9s using pnpm v9.15.9
+copy /mise/installs, /usr/local/bin/mise, /etc/mise/config.toml, /root/.local/state/mise, / /app
+6s
+pnpm run build
+9s
+> workspace@0.0.0 build /app
+> pnpm run typecheck && pnpm -r --if-present run build
+> workspace@0.0.0 typecheck /app
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+> workspace@0.0.0 typecheck:libs /app
+> tsc --build
+Scope: 4 of 9 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/discord-bot typecheck$ tsc --noEmit -p tsconfig.json
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck: Done
+artifacts/api-server typecheck: Done
+artifacts/mockup-sandbox typecheck: Done
+Scope: 8 of 9 workspace projects
+artifacts/mockup-sandbox build$ vite build
+artifacts/mockup-sandbox build: failed to load config from /app/artifacts/mockup-sandbox/vite.config.ts
+artifacts/mockup-sandbox build: error during build:
+artifacts/mockup-sandbox build:     at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+artifacts/mockup-sandbox build:     at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+artifacts/mockup-sandbox build:     at async loadConfigFromBundledFile (file:///app/node_modules/.pnpm/vite@7.3.2_@types+node@25.3.5_jiti@2.6.1_lightningcss@1.31.1_tsx@4.21.0_yaml@2.8.2/node_modules/vite/dist/node/chunks/config.js:35920:12)
+artifacts/mockup-sandbox build:     at async bundleAndLoadConfigFile (file:///app/node_modules/.pnpm/vite@7.3.2_@types+node@25.3.5_jiti@2.6.1_lightningcss@1.31.1_tsx@4.21.0_yaml@2.8.2/node_modules/vite/dist/node/chunks/config.js:35808:17)
+artifacts/mockup-sandbox build:     at async loadConfigFromFile (file:///app/node_modules/.pnpm/vite@7.3.2_@types+node@25.3.5_jiti@2.6.1_lightningcss@1.31.1_tsx@4.21.0_yaml@2.8.2/node_modules/vite/dist/node/chunks/config.js:35775:42)
+artifacts/mockup-sandbox build:     at async resolveConfig (file:///app/node_modules/.pnpm/vite@7.3.2_@types+node@25.3.5_jiti@2.6.1_lightningcss@1.31.1_tsx@4.21.0_yaml@2.8.2/node_modules/vite/dist/node/chunks/config.js:35424:22)
+artifacts/mockup-sandbox build:     at async createBuilder (file:///app/node_modules/.pnpm/vite@7.3.2_@types+node@25.3.5_jiti@2.6.1_lightningcss@1.31.1_tsx@4.21.0_yaml@2.8.2/node_modules/vite/dist/node/chunks/config.js:33879:19)
+artifacts/mockup-sandbox build:     at async CAC.<anonymous> (file:///app/node_modules/.pnpm/vite@7.3.2_@types+node@25.3.5_jiti@2.6.1_lightningcss@1.31.1_tsx@4.21.0_yaml@2.8.2/node_modules/vite/dist/node/cli.js:629:10)
+artifacts/mockup-sandbox build: Failed
+/app/artifacts/mockup-sandbox:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/mockup-sandbox@2.0.0 build: `vite build`
+Exit status 1
+ ELIFECYCLE  Command failed with exit code 1.
+Build Failed: build daemon returned an error < failed to solve: process "pnpm run build" did not complete successfully: exit code: 1 >
