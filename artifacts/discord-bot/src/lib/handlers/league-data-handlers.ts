@@ -1004,8 +1004,9 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
 // Adapted from admin-ea-export.ts exportWeek() — no interaction dependency.
 
 function getApiBase(): string {
+  if (process.env["API_BASE_URL"]) return process.env["API_BASE_URL"];
   const domain = (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim() ?? "";
-  if (!domain) throw new Error("REPLIT_DOMAINS is not set — cannot reach API server");
+  if (!domain) throw new Error("API_BASE_URL (or REPLIT_DOMAINS) is not set — cannot reach API server");
   return `https://${domain}/api`;
 }
 
