@@ -48,3 +48,9 @@ id = "H8n9uWD1jmrolbWrJMMLi"
 uri = "file://exports/recbot-fix-scripts.tar.gz"
 type = "unspecified"
 title = "fix-arch-and-startup.cjs + remove-features.cjs"
+
+[[outputs]]
+id = "8Qyu-ghVt9GdXlLC7Zmx9"
+uri = "file://exports/recbot-refactors-complete.zip"
+type = "unspecified"
+title = "recbot-refactors-complete.zip — All 7 refactor scripts"
