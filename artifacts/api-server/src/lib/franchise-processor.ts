@@ -1,4 +1,4 @@
-import { db } from "@workspace/db";
+import { db, payoutConfigTable } from "@workspace/db";
 import {
   usersTable,
   seasonsTable,
@@ -33,9 +33,21 @@ import { invalidateRostersCache } from "./rosterCache.js";
 
 // ── Coin payouts ──────────────────────────────────────────────────────────────
 // H2H = both teams have a Discord user assigned. CPU = one side is unlinked.
-const H2H_WIN_PAYOUT  = 75;
-const H2H_LOSS_PAYOUT = 30;
-const CPU_WIN_PAYOUT  = 25;
+// Values are read from payout_config table (single source of truth shared with
+// the Discord bot's payout-config.ts DEFAULTS). Fallbacks match those DEFAULTS.
+const PAYOUT_DEFAULTS = { h2h_win: 50, h2h_loss: 25, cpu_win: 25 } as const;
+type PayoutKnob = keyof typeof PAYOUT_DEFAULTS;
+const payoutCache = new Map<string, number>();
+async function getGamePayout(key: PayoutKnob): Promise<number> {
+  if (payoutCache.has(key)) return payoutCache.get(key)!;
+  const [row] = await db.select({ value: payoutConfigTable.value })
+    .from(payoutConfigTable)
+    .where(eq(payoutConfigTable.key, key))
+    .limit(1);
+  const v = Number(row?.value ?? PAYOUT_DEFAULTS[key]);
+  payoutCache.set(key, v);
+  return v;
+}
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Win milestones ─────────────────────────────────────────────────────────────
@@ -2289,17 +2301,19 @@ export async function processWeekScores(
           if (blowoutFlag) violations.push(blowoutFlag);
 
           const guildId = season.guildId ?? "";
-          await addBalance(winnerId, H2H_WIN_PAYOUT, guildId);
-          await logTransaction(winnerId, H2H_WIN_PAYOUT, "addcoins",
+          const h2hWin = await getGamePayout("h2h_win");
+          const h2hLoss = await getGamePayout("h2h_loss");
+          await addBalance(winnerId, h2hWin, guildId);
+          await logTransaction(winnerId, h2hWin, "addcoins",
             `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} win vs ${loserTeam} (${hiScore}–${loScore})${gameRoundLabel}`,
             guildId);
-          await addBalance(loserId, H2H_LOSS_PAYOUT, guildId);
-          await logTransaction(loserId, H2H_LOSS_PAYOUT, "addcoins",
+          await addBalance(loserId, h2hLoss, guildId);
+          await logTransaction(loserId, h2hLoss, "addcoins",
             `MCA webhook: ${isPlayoff ? "Playoff" : "H2H"} loss vs ${winnerTeam} (${loScore}–${hiScore})${gameRoundLabel}`,
             guildId);
 
           const resultPrefix = isPlayoff ? "🏆🏈" : "🏆";
-          payoutLines.push(`${resultPrefix} **${winnerTeam}** +${H2H_WIN_PAYOUT} | 🎮 **${loserTeam}** +${H2H_LOSS_PAYOUT} *(${hiScore}–${loScore})*`);
+          payoutLines.push(`${resultPrefix} **${winnerTeam}** +${h2hWin} | 🎮 **${loserTeam}** +${h2hLoss} *(${hiScore}–${loScore})*`);
           resultLines.push(`${resultPrefix} **${winnerTeam}** ${hiScore} — ${loScore} **${loserTeam}**`);
 
           await upsertH2HRecord(winnerId, season.id, true,    spread, guildId);
@@ -2362,7 +2376,7 @@ export async function processWeekScores(
           payoutMeta = {
             payoutType: isPlayoff ? "playoff" : "h2h",
             winnerDiscordId: winnerId, loserDiscordId: loserId,
-            winnerCoins: H2H_WIN_PAYOUT, loserCoins: H2H_LOSS_PAYOUT,
+            winnerCoins: h2hWin, loserCoins: h2hLoss,
             appliedPointDiff: spread,
             milestoneBonus:    milestoneBonusAwarded,
             milestonePrevTier: milestoneBonusAwarded !== null ? prevMilestoneTier : null,
@@ -2402,15 +2416,16 @@ export async function processWeekScores(
 
         if (!isTie) {
           if (humanWon) {
-            await addBalance(humanId, CPU_WIN_PAYOUT, guildId);
-            await logTransaction(humanId, CPU_WIN_PAYOUT, "addcoins",
+            const cpuWin = await getGamePayout("cpu_win");
+            await addBalance(humanId, cpuWin, guildId);
+            await logTransaction(humanId, cpuWin, "addcoins",
               `MCA webhook: CPU win vs ${cpuData.fullName} (${humanScore}–${cpuScore})`, guildId);
-            payoutLines.push(`🤖 **${humanData.fullName}** +${CPU_WIN_PAYOUT} *(CPU win vs ${cpuData.fullName} ${humanScore}–${cpuScore})*`);
+            payoutLines.push(`🤖 **${humanData.fullName}** +${cpuWin} *(CPU win vs ${cpuData.fullName} ${humanScore}–${cpuScore})*`);
             resultLines.push(`🤖 **${humanData.fullName}** ${humanScore} — ${cpuScore} **${cpuData.fullName}** *(CPU)*`);
             payoutMeta = {
               payoutType: "cpu",
               winnerDiscordId: humanId, loserDiscordId: null,
-              winnerCoins: CPU_WIN_PAYOUT, loserCoins: 0,
+              winnerCoins: cpuWin, loserCoins: 0,
               appliedPointDiff: Math.abs(spread),
             };
           } else {

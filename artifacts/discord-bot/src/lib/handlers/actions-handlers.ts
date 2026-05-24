@@ -1398,6 +1398,7 @@ async function handleBuyContractModExecute(interaction: ButtonInteraction, sess:
             eq(purchasesTable.purchaseType, type),
             sql`lower(${purchasesTable.playerName}) = lower(${sess.selectedPlayerName})`,
             ne(purchasesTable.status, "refunded"),
+            isNotNull(purchasesTable.id),
           ));
         if ((row?.count ?? 0) >= careerCap) {
           await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.selectedPlayerName}** has reached the career cap of **${careerCap}** ${CM_LABEL[type]}(s) in this franchise.`)], components: [backToHubRow()] });

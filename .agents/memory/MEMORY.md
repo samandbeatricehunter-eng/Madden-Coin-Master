@@ -2,4 +2,5 @@
 - [Discord bot menu hub architecture](discord-menu-hub.md) — /menu uses selector-based navigation; `menu_*` IDs handled by menu-router, action buttons keep `ac_`/`ao_` prefixes so existing handlers route them.
 - [Cross-DB row copy pitfalls](cross-db-copy-pitfalls.md) — INSERT-based copier between drifted Postgres schemas: param cap, resume mode, narrow auto-ALTER, JSON cast, float→int coercion.
 - [Drizzle vs Postgres drift cleanup](drizzle-supabase-drift-cleanup.md) — drizzle-kit push silently leaves drift; always programmatic-diff, bucket by risk, align Drizzle to DB for cosmetic / DB to Drizzle for correctness.
-- [Null PK rows from serial drift](null-pk-rows-from-serial-drift.md) — when a serial sequence was missing on prod, inserts wrote NULL ids; downstream code that builds button custom_ids from those ids must filter `IS NOT NULL` defensively.
+- [NULL-PK rows from serial drift](null-pk-rows-from-serial-drift.md) — purchases with NULL id charge wallets but can't be refunded via UI; every list/count must filter `isNotNull(id)`, repair = refund + delete + decrement season_stats in one tx.
+- [payout_config PK is on key only](payout-config-pk-drift.md) — DB has `PRIMARY KEY (key)` even though Drizzle code targets `[guildId, key]` on conflict; effectively single-guild until the constraint is widened.

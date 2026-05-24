@@ -422,7 +422,10 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
         eq(customPlayersTable.seasonId, seasonId),
         ne(customPlayersTable.status, "refunded"),
       )),
-    // Only "pending" — "approved" ones are already reflected in inventoryTable
+    // Only "pending" — "approved" ones are already reflected in inventoryTable.
+    // Defensive isNotNull(id): orphan rows from serial drift charged the user
+    // but have no PK and can't be acted on from the UI, so they must NOT count
+    // against the cap (see .agents/memory/null-pk-rows-from-serial-drift.md).
     db.select({ id: purchasesTable.id })
       .from(purchasesTable)
       .where(and(
@@ -430,6 +433,7 @@ export async function getInventoryCount(discordId: string, seasonId: number) {
         eq(purchasesTable.seasonId, seasonId),
         eq(purchasesTable.purchaseType, "legend"),
         eq(purchasesTable.status, "pending"),
+        isNotNull(purchasesTable.id),
       )),
   ]);
   // Approved/applied legends from inventory (current season, not yet rolled to permanent vault)
@@ -546,7 +550,8 @@ export async function getTeamLegendCount(
     && i.legendCategory === "current"
   ).length;
 
-  // Pending legend purchases this season by this user (not yet in inventory)
+  // Pending legend purchases this season by this user (not yet in inventory).
+  // isNotNull(id) filters orphan NULL-PK rows — see getInventoryCount above.
   const [pendingRows, cpRows] = await Promise.all([
     db.select({ id: purchasesTable.id })
       .from(purchasesTable)
@@ -555,6 +560,7 @@ export async function getTeamLegendCount(
         eq(purchasesTable.seasonId, seasonId),
         eq(purchasesTable.purchaseType, "legend"),
         eq(purchasesTable.status, "pending"),
+        isNotNull(purchasesTable.id),
       )),
     db.select({ id: customPlayersTable.id })
       .from(customPlayersTable)

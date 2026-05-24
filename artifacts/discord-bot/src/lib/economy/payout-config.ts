@@ -87,9 +87,9 @@ export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
 
 const DEFAULTS: Record<PayoutKey, { value: number; description: string; category: string }> = {
   // ── Game result payouts ──────────────────────────────────────────────────────
-  h2h_win:           { value: 25,  description: "Game win (all games — H2H and CPU treated equally)",          category: "Game Payouts"          },
-  h2h_loss:          { value: 0,   description: "Game loss (no payout for losing)",                            category: "Game Payouts"          },
-  cpu_win:           { value: 25,  description: "CPU/force win (same payout as H2H win)",                      category: "Game Payouts"          },
+  h2h_win:           { value: 50,  description: "H2H game win",                                                 category: "Game Payouts"          },
+  h2h_loss:          { value: 25,  description: "H2H game loss participation payout",                            category: "Game Payouts"          },
+  cpu_win:           { value: 25,  description: "CPU win (losses and ties vs CPU still receive 0)",              category: "Game Payouts"          },
   // ── Playoff game payouts ─────────────────────────────────────────────────────
   playoff_h2h_win:   { value: 25,  description: "Playoff game win",                                            category: "Game Payouts"          },
   playoff_h2h_loss:  { value: 0,   description: "Playoff game loss (no payout)",                               category: "Game Payouts"          },
@@ -103,8 +103,8 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   superbowl_win_bonus:    { value: 200, description: "Super Bowl winner bonus",                                 category: "Playoff Bonuses"       },
   superbowl_runner_up:    { value: 100, description: "Super Bowl runner-up bonus",                              category: "Playoff Bonuses"       },
   // ── Channel activity payouts ─────────────────────────────────────────────────
-  stream_payout:            { value: 15,  description: "Twitch stream post — coins paid to the streamer only",            category: "Activity Payouts" },
-  highlight_payout:         { value: 5,   description: "Highlight video — regular season payout per video",              category: "Activity Payouts" },
+  stream_payout:            { value: 25,  description: "Twitch stream post — coins paid to the streamer only",            category: "Activity Payouts" },
+  highlight_payout:         { value: 25,  description: "Highlight video — regular season payout per video",              category: "Activity Payouts" },
   highlight_playoff_payout: { value: 5,   description: "Highlight video — postseason payout per video",                  category: "Activity Payouts" },
   highlight_limit:          { value: 2,   description: "Max paid highlight videos per user per week",                    category: "Activity Payouts" },
   // ── GOTW voter bonuses ────────────────────────────────────────────────────────
