@@ -849,7 +849,6 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
         awayTeamName: awayProper,
         homeTeamName: homeProper,
       });
-      existingKey.add(gameKey);
       created++;
       results.push(`✅ Created <#${newChannel.id}>`);
 

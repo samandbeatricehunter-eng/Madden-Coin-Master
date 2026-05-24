@@ -135,6 +135,7 @@ import {
   handleLeagueDataModal,
   handleLeagueDataSelect,
 } from "../lib/league-data-handlers.js";
+import { handleMenuButton, handleMenuSelect } from "../lib/menu-router.js";
 
 
 export const name = "interactionCreate";
@@ -147,11 +148,12 @@ export async function execute(interaction: Interaction) {
   // itself handles the linked/unlinked branching — the unlinked hub is
   // specifically designed for users who have no role yet.
   const isMenuCommand    = interaction.isChatInputCommand() && interaction.commandName === "menu";
-  const isActionsInteraction = (interaction.isButton() || interaction.isStringSelectMenu())
-    && typeof (interaction as any).customId === "string"
-    && (interaction as any).customId.startsWith("ac_");
+  const customId         = (interaction as any).customId as string | undefined;
+  const isMenuInteraction = (interaction.isButton() || interaction.isStringSelectMenu())
+    && typeof customId === "string"
+    && (customId.startsWith("ac_") || customId.startsWith("menu_"));
 
-  if (interaction.inGuild() && interaction.member && !isMenuCommand && !isActionsInteraction) {
+  if (interaction.inGuild() && interaction.member && !isMenuCommand && !isMenuInteraction) {
     const roles = (interaction.member as any).roles;
     // GuildMemberRoleManager exposes .cache (Collection); raw API payloads give a string[]
     const roleCount: number = roles?.cache?.size ?? (Array.isArray(roles) ? roles.length : 0);
@@ -256,6 +258,12 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action?.startsWith("ld_")) {
     await handleLeagueDataButton(interaction);
     return;
+  }
+
+  // ── New /menu navigation (menu_back, menu_admin_back) ───────────────────────
+  if (action?.startsWith("menu_")) {
+    const handled = await handleMenuButton(interaction);
+    if (handled) return;
   }
 
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
@@ -2306,6 +2314,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action === "ts_sched_sel") {
     await handleTsSchedSel(interaction);
     return;
+  }
+
+  // ── New /menu navigation (menu_cat, menu_admin_cat) ─────────────────────────
+  if (action?.startsWith("menu_")) {
+    const handled = await handleMenuSelect(interaction);
+    if (handled) return;
   }
 
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
