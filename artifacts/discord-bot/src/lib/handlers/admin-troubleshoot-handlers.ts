@@ -44,17 +44,13 @@ import {
 } from "../franchise/playoff-seeding.js";
 import { getArticleStandings } from "../franchise/gcs-fallback.js";
 import { runScheduleOnlyImport } from "./league-data-handlers.js";
+import { getMilestoneTiers } from "../economy/payout-config.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
 import { nextAdvanceDeadline } from "../discord/timezones.js";
 import { getServerSettings } from "../db/server-settings.js";
 
-// ── Win milestones (mirror of admin-milestone-audit.ts) ───────────────────────
-const WIN_MILESTONES = [
-  { tier: 1, wins:  5, bonus:  100, label:  "5 All-Time H2H Wins" },
-  { tier: 2, wins: 12, bonus:  250, label: "12 All-Time H2H Wins" },
-  { tier: 3, wins: 25, bonus:  500, label: "25 All-Time H2H Wins" },
-  { tier: 4, wins: 50, bonus: 1000, label: "50 All-Time H2H Wins" },
-] as const;
+// Win milestones are now resolved dynamically per-guild via getMilestoneTiers()
+// in payout-config.ts (25 tiers, shared with the MCA webhook processor).
 
 // ── Troubleshoot Hub Embed / Rows ──────────────────────────────────────────────
 
@@ -664,11 +660,17 @@ export async function handleTsMilestoneAudit(interaction: ButtonInteraction): Pr
   const correct: string[] = [];
   const skipped: string[] = [];
 
+  const allTiers = await getMilestoneTiers(guildId);
+  // Add labels matching the franchise processor's format so dedup against
+  // `Career milestone: <label> (MCA webhook)` and prior-audit `Career milestone: <label>`
+  // descriptions both work.
+  const tiersWithLabels = allTiers.map(m => ({ ...m, label: `${m.wins} All-Time H2H Wins` }));
+
   for (const user of guildUsers) {
     const totalWins   = winMap.get(user.discordId) ?? 0;
     const currentTier = user.milestoneTierAwarded ?? 0;
 
-    const correctTier = WIN_MILESTONES.filter(m => totalWins >= m.wins).reduce(
+    const correctTier = tiersWithLabels.filter(m => totalWins >= m.wins).reduce(
       (max, m) => (m.tier > max ? m.tier : max), 0,
     );
 
@@ -689,11 +691,14 @@ export async function handleTsMilestoneAudit(interaction: ButtonInteraction): Pr
         eq(coinTransactionsTable.guildId, guildId),
       ))
       .orderBy(desc(coinTransactionsTable.createdAt))
-      .limit(10);
+      .limit(50);
 
     const paidDescriptions = new Set(recentTxns.map(t => t.description ?? ""));
+    const wasPaid = (label: string) =>
+      paidDescriptions.has(`Career milestone: ${label}`) ||
+      paidDescriptions.has(`Career milestone: ${label} (MCA webhook)`);
 
-    const owedMilestones = WIN_MILESTONES.filter(
+    const owedMilestones = tiersWithLabels.filter(
       m => totalWins >= m.wins && currentTier < m.tier,
     );
 
@@ -701,15 +706,13 @@ export async function handleTsMilestoneAudit(interaction: ButtonInteraction): Pr
     const userPaidLines: string[] = [];
 
     for (const m of owedMilestones) {
-      const expectedDesc = `Career milestone: ${m.label}`;
-
-      if (paidDescriptions.has(expectedDesc)) {
+      if (wasPaid(m.label)) {
         if (m.tier > highestNewTier) highestNewTier = m.tier;
         continue;
       }
 
       await addBalance(user.discordId, m.bonus, guildId);
-      await logTransaction(user.discordId, m.bonus, "addcoins", expectedDesc, guildId);
+      await logTransaction(user.discordId, m.bonus, "addcoins", `Career milestone: ${m.label}`, guildId);
       userPaidLines.push(`Tier ${m.tier} — ${m.label}: **+${m.bonus.toLocaleString()} coins**`);
 
       if (m.tier > highestNewTier) highestNewTier = m.tier;

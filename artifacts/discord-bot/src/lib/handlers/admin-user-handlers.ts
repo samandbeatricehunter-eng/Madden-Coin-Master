@@ -1185,7 +1185,7 @@ export async function handleUdEditAllTime(interaction: ButtonInteraction): Promi
       new TextInputBuilder().setCustomId("sb_losses").setLabel(`All-Time Super Bowl Losses (current: ${userRow?.allTimeSuperbowlLosses ?? 0})`).setStyle(TextInputStyle.Short).setValue(String(userRow?.allTimeSuperbowlLosses ?? 0)).setRequired(false),
     ),
     new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder().setCustomId("milestone_tier").setLabel(`Milestone Tier Awarded (current: ${userRow?.milestoneTierAwarded ?? 0})`).setStyle(TextInputStyle.Short).setValue(String(userRow?.milestoneTierAwarded ?? 0)).setRequired(false).setPlaceholder("0–10"),
+      new TextInputBuilder().setCustomId("milestone_tier").setLabel(`Milestone Tier Awarded (current: ${userRow?.milestoneTierAwarded ?? 0})`).setStyle(TextInputStyle.Short).setValue(String(userRow?.milestoneTierAwarded ?? 0)).setRequired(false).setPlaceholder("0–25"),
     ),
   );
 

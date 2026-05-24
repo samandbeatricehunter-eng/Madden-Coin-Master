@@ -1094,7 +1094,7 @@ async function executeGameModal(
           let newTier = currentTier;
           for (const m of owed) {
             await addBalance(winnerId, m.bonus, guildId);
-            await logTransaction(winnerId, m.bonus, "addcoins", `Career milestone: Tier ${m.tier} (${m.wins} wins)`, guildId);
+            await logTransaction(winnerId, m.bonus, "addcoins", `Career milestone: ${m.wins} All-Time H2H Wins`, guildId);
             resultLines.push(`🎯 **Career Milestone Tier ${m.tier}** (${m.wins} wins): +${m.bonus} coins!`);
             newTier = m.tier;
           }

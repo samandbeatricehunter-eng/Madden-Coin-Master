@@ -51,18 +51,51 @@ async function getGamePayout(key: PayoutKnob): Promise<number> {
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Win milestones ─────────────────────────────────────────────────────────────
-const H2H_MILESTONES = [
-  { tier: 4, wins: 50, bonus: 1000, label: "50 All-Time Wins" },
-  { tier: 3, wins: 25, bonus: 500,  label: "25 All-Time Wins" },
-  { tier: 2, wins: 12, bonus: 250,  label: "12 All-Time Wins" },
-  { tier: 1, wins: 5,  bonus: 100,  label:  "5 All-Time Wins" },
-] as const;
-
-function checkMilestone(totalWins: number, currentTier: number) {
-  for (const m of H2H_MILESTONES) {
-    if (totalWins >= m.wins && currentTier < m.tier) return m;
+// 25 tiers, read from payout_config (shared with the Discord bot's
+// payout-config.ts DEFAULTS). Fallbacks below mirror those DEFAULTS so the
+// processor still functions if the DB rows haven't been seeded yet.
+const MILESTONE_FALLBACK: Array<{ tier: number; wins: number; bonus: number }> = [
+  { tier: 1, wins: 5, bonus: 50 }, { tier: 2, wins: 10, bonus: 100 },
+  { tier: 3, wins: 20, bonus: 150 }, { tier: 4, wins: 35, bonus: 200 },
+  { tier: 5, wins: 50, bonus: 300 }, { tier: 6, wins: 75, bonus: 400 },
+  { tier: 7, wins: 100, bonus: 500 }, { tier: 8, wins: 150, bonus: 700 },
+  { tier: 9, wins: 200, bonus: 900 }, { tier: 10, wins: 250, bonus: 1100 },
+  { tier: 11, wins: 300, bonus: 1300 }, { tier: 12, wins: 350, bonus: 1500 },
+  { tier: 13, wins: 400, bonus: 1800 }, { tier: 14, wins: 450, bonus: 2100 },
+  { tier: 15, wins: 500, bonus: 2500 }, { tier: 16, wins: 550, bonus: 3000 },
+  { tier: 17, wins: 600, bonus: 3500 }, { tier: 18, wins: 650, bonus: 4000 },
+  { tier: 19, wins: 700, bonus: 4500 }, { tier: 20, wins: 750, bonus: 5000 },
+  { tier: 21, wins: 800, bonus: 6000 }, { tier: 22, wins: 850, bonus: 7000 },
+  { tier: 23, wins: 900, bonus: 8000 }, { tier: 24, wins: 950, bonus: 9000 },
+  { tier: 25, wins: 1000, bonus: 10000 },
+];
+type Milestone = { tier: number; wins: number; bonus: number; label: string };
+let milestonesCache: Milestone[] | null = null;
+async function getMilestones(): Promise<Milestone[]> {
+  if (milestonesCache) return milestonesCache;
+  const rows = await db.select({ key: payoutConfigTable.key, value: payoutConfigTable.value })
+    .from(payoutConfigTable)
+    .where(sql`${payoutConfigTable.key} LIKE 'milestone_t%'`);
+  const m = new Map(rows.map(r => [r.key, Number(r.value)]));
+  const out: Milestone[] = [];
+  for (const fb of MILESTONE_FALLBACK) {
+    const wins  = m.get(`milestone_t${fb.tier}_wins`)  ?? fb.wins;
+    const bonus = m.get(`milestone_t${fb.tier}_bonus`) ?? fb.bonus;
+    if (wins > 0) out.push({ tier: fb.tier, wins, bonus, label: `${wins} All-Time H2H Wins` });
   }
-  return null;
+  // Highest tier first so checkMilestone returns the top one the user newly qualifies for.
+  out.sort((a, b) => b.tier - a.tier);
+  milestonesCache = out;
+  return out;
+}
+// Returns ALL owed milestones (ascending tier) so a single batch that crosses
+// multiple thresholds (e.g. 0 → 50 wins via admin correction or backfill) pays
+// every tier in between, not just the highest one.
+async function getOwedMilestones(totalWins: number, currentTier: number): Promise<Milestone[]> {
+  const milestones = await getMilestones();
+  return milestones
+    .filter(m => totalWins >= m.wins && currentTier < m.tier)
+    .sort((a, b) => a.tier - b.tier);
 }
 
 // ── Duplicated DB helpers (keeps API server free of discord.js dependency) ────
@@ -2361,16 +2394,20 @@ export async function processWeekScores(
           const winnerRow = await db.select({ allTimeH2HWins: usersTable.allTimeH2HWins, milestoneTierAwarded: usersTable.milestoneTierAwarded })
             .from(usersTable).where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId))).limit(1);
           const prevMilestoneTier = winnerRow[0]?.milestoneTierAwarded ?? 0;
-          const milestone = checkMilestone(winnerRow[0]?.allTimeH2HWins ?? 0, prevMilestoneTier);
+          const owed = await getOwedMilestones(winnerRow[0]?.allTimeH2HWins ?? 0, prevMilestoneTier);
           let milestoneBonusAwarded: number | null = null;
-          if (milestone) {
-            await addBalance(winnerId, milestone.bonus, guildId);
-            await logTransaction(winnerId, milestone.bonus, "addcoins", `Career milestone: ${milestone.label} (MCA webhook)`, guildId);
+          let highestNewTier = prevMilestoneTier;
+          for (const m of owed) {
+            await addBalance(winnerId, m.bonus, guildId);
+            await logTransaction(winnerId, m.bonus, "addcoins", `Career milestone: ${m.label} (MCA webhook)`, guildId);
+            milestoneLines.push(`🎯 **${winnerTeam}** hit **${m.label}** → +${m.bonus} coins`);
+            milestoneBonusAwarded = (milestoneBonusAwarded ?? 0) + m.bonus;
+            highestNewTier = m.tier;
+          }
+          if (highestNewTier > prevMilestoneTier) {
             await db.update(usersTable)
-              .set({ milestoneTierAwarded: milestone.tier, updatedAt: new Date() })
+              .set({ milestoneTierAwarded: highestNewTier, updatedAt: new Date() })
               .where(and(eq(usersTable.discordId, winnerId), eq(usersTable.guildId, guildId)));
-            milestoneLines.push(`🎯 **${winnerTeam}** hit **${milestone.label}** → +${milestone.bonus} coins`);
-            milestoneBonusAwarded = milestone.bonus;
           }
 
           payoutMeta = {
