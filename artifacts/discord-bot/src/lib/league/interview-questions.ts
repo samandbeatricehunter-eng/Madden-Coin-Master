@@ -5,8 +5,8 @@ import {
 import { db } from "@workspace/db";
 import { interviewRequestsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { getOrCreateUser, getOrCreateActiveSeason } from "../../lib/db/db-helpers.js";
-import { weekLabel } from "../../lib/helpers/week-helpers.js";
+import { getOrCreateUser, getOrCreateActiveSeason } from "../db/db-helpers.js";
+import { weekLabel } from "../helpers/week-helpers.js";
 
 export const INTERVIEW_PAYOUT = 10;
 
@@ -127,11 +127,11 @@ export function pickThreeIndices(poolSize: number): [number, number, number] {
   return [a!, b!, c!];
 }
 
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("interviewrequest")
   .setDescription(`Submit a weekly interview for ${INTERVIEW_PAYOUT} coins — one per in-game week`);
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const requester     = await getOrCreateUser(interaction.user.id, interaction.user.username, interaction.guildId!);

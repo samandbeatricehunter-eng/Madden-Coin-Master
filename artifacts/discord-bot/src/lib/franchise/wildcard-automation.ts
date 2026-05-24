@@ -28,7 +28,6 @@ import { eq, and, ne, notLike, sql, isNotNull } from "drizzle-orm";
 import { readMcaJson } from "./mca-storage-reader.js";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
-import { postSeasonRecap } from "./season-recap.js";
 
 // HISTORICAL_CATEGORY_ID used to be hardcoded; now resolved per-guild inside the function.
 
@@ -235,13 +234,6 @@ export async function runWildcardAutomation(
       }
     } catch { /* ignore */ }
     // historicalChannel stays null — downstream steps check for null before using it
-  }
-
-  // ── 2. AI season recap (headlines + historical channel) ──────────────────────
-  try {
-    await postSeasonRecap(client, seasonId, seasonNumber, historicalChannel, false, resolvedGuild.id);
-  } catch (err) {
-    console.error("[wildcard] Season recap failed:", err);
   }
 
   // ── 3–7. Historical channel steps — skip if channel unavailable ───────────────
@@ -839,14 +831,6 @@ export async function rebuildHistoricalChannel(
       target: seasonHistoricalChannelsTable.seasonId,
       set: { channelId: newChannel.id },
     });
-
-  // ── Season recap (historical channel only — no headlines @everyone) ───────────
-  try {
-    const { postSeasonRecap } = await import("./season-recap.js");
-    await postSeasonRecap(client, seasonId, seasonNumber, newChannel, /* skipHeadlines */ true, guild.id);
-  } catch (err) {
-    console.error("[rebuild] Season recap failed:", err);
-  }
 
   // ── Awards (display only — no coin bonuses) ───────────────────────────────────
   try {

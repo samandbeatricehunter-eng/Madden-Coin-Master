@@ -38,7 +38,7 @@ import {
 } from "../db/db-helpers.js";
 import { NFL_TEAMS, NFL_DIVISION_MAP } from "../constants.js";
 import { getPayoutValue, setPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
-import { notifyTeamWaitlist } from "../../commands/league/waitlist.js";
+import { notifyTeamWaitlist } from "../league/waitlist-helpers.js";
 
 // ── User Data Hub Embed / Rows (moved from admin-user-data.ts) ─────────────────
 

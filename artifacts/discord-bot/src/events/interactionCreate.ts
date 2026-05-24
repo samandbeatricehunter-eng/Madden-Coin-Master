@@ -30,9 +30,9 @@ import {
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
   handleCcpMotionStyle, handleCcpQbDetailsModal, handleCcpAppearanceModal,
 } from "../lib/handlers/custom-player-interactions.js";
-import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/stats/viewcustomarchetypes.js";
-import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/stats/viewplayerstats.js";
-import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin/admin-inventory.js";
+import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../lib/stats/archetype-viewer.js";
+import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../lib/stats/player-stats-viewer.js";
+import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../lib/handlers/admin-helpers/inventory.js";
 import {
   handleCancel as apHandleCancel,
   handleGotw, handleGotwSelectAfc, handleGotwSelectNfc, handleGotwFinalize,
@@ -54,7 +54,6 @@ import {
   handleReferral, handleReferralModal,
   handleEos, handleEosKeySelect, handleEosEditModal, handleEosStatTierModal,
   handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
-  handleTweetPayout, handleTweetPayoutModal,
   handleInterviewPayout, handleInterviewPayoutModal,
 } from "../lib/handlers/admin-payout-handlers.js";
 import {
@@ -87,11 +86,11 @@ import {
   FEATURE_LABELS,
 } from "../lib/db/server-settings.js";
 import { registerCommandsForGuild } from "../lib/discord/register-commands.js";
-import { buildMemberHelpEmbed } from "../commands/stats/help.js";
+import { buildMemberHelpEmbed } from "../lib/menu/help-text.js";
 import {
   INTERVIEW_QUESTIONS, getQuestionPool, interviewTypeLabel,
   type InterviewType,
-} from "../commands/league/interviewrequest.js";
+} from "../lib/league/interview-questions.js";
 import { handleActionsInteraction, handleInterviewTypePick } from "../lib/handlers/actions-handlers.js";
 import { handleAdminOperationsInteraction } from "../lib/handlers/admin-operations-handlers.js";
 import { weekLabel } from "../lib/helpers/week-helpers.js";
@@ -104,11 +103,10 @@ import {
 } from "../lib/helpers/gotw-helpers.js";
 import { buildTeamToDiscord } from "../lib/franchise/weekly-matchups-runner.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/economy/payout-config.js";
-import { logTradeEvent } from "../lib/discord/league-twitter.js";
 import { waitlistTable } from "@workspace/db";
 import {
   WAITLIST_ACCEPT_PREFIX, WAITLIST_DENY_PREFIX,
-} from "../commands/league/waitlist.js";
+} from "../lib/league/waitlist-helpers.js";
 import {
   handleTsRepairRecords,
   handleTsResyncData,
@@ -249,6 +247,13 @@ async function handleButton(interaction: ButtonInteraction) {
   // ── Team request commissioner buttons (treq_link|uid|team, treq_deny|uid|team) ─
   if (interaction.customId.startsWith("treq_link|")) { await handleTreqLinkButton(interaction); return; }
   if (interaction.customId.startsWith("treq_deny|")) { await handleTreqDenyButton(interaction); return; }
+
+  // ── Commissioner's Office (pending transactions hub) ─────────────────────────
+  if (interaction.customId.startsWith("co_")) {
+    const { handleCommOfficeInteraction } = await import("../lib/handlers/pending-inbox-handlers.js");
+    await handleCommOfficeInteraction(interaction);
+    return;
+  }
 
   // ── Admin troubleshoot panel buttons ─────────────────────────────────────────
   if (action === "ts_repair_records")    { await handleTsRepairRecords(interaction);    return; }
@@ -1130,275 +1135,6 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Stream payout: approve ───────────────────────────────────────────────────
-  if (action === "stream_approve") {
-    const payoutId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
-      await interaction.followUp({ content: "❌ Only commissioners can approve payouts.", ephemeral: true });
-      return;
-    }
-
-    const [payout] = await db
-      .select().from(pendingChannelPayoutsTable)
-      .where(eq(pendingChannelPayoutsTable.id, payoutId))
-      .limit(1);
-
-    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
-    if (payout.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
-      return;
-    }
-
-    // Award coins to streamer
-    await addBalance(payout.discordId, payout.amount, interaction.guildId!);
-    await logTransaction(payout.discordId, payout.amount, "addcoins",
-      `Stream payout — Week ${payout.week}`, interaction.guildId!, interaction.user.id);
-
-    // Award coins to H2H opponent if applicable
-    if (payout.opponentDiscordId && payout.opponentAmount) {
-      await addBalance(payout.opponentDiscordId, payout.opponentAmount, interaction.guildId!);
-      await logTransaction(payout.opponentDiscordId, payout.opponentAmount, "addcoins",
-        `Stream payout (opponent) — Week ${payout.week}`, interaction.guildId!, interaction.user.id);
-    }
-
-    await db.update(pendingChannelPayoutsTable)
-      .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(pendingChannelPayoutsTable.id, payoutId));
-
-    // React ✅ to original message
-    try {
-      const origChannel = await interaction.client.channels.fetch(payout.channelId).catch(() => null);
-      if (origChannel?.isTextBased()) {
-        const origMsg = await (origChannel as TextChannel).messages.fetch(payout.messageId).catch(() => null);
-        if (origMsg) await origMsg.react("✅").catch(() => {});
-      }
-    } catch (_) {}
-
-    // DM the streamer
-    try {
-      const u = await interaction.client.users.fetch(payout.discordId);
-      await u.send(`🎮 Your stream payout for Week ${payout.week} was approved! **+${payout.amount} coins** added.`).catch(() => {});
-    } catch (_) {}
-
-    // DM the opponent if applicable
-    if (payout.opponentDiscordId && payout.opponentAmount) {
-      try {
-        const u = await interaction.client.users.fetch(payout.opponentDiscordId);
-        await u.send(`🎮 A league member streamed your Week ${payout.week} game — you received **+${payout.opponentAmount} coins**!`).catch(() => {});
-      } catch (_) {}
-    }
-
-    // Look up streamer's team scoped to THIS guild — prevents cross-guild team names appearing
-    const [streamerUserRow] = await db.select({ team: usersTable.team })
-      .from(usersTable)
-      .where(and(eq(usersTable.discordId, payout.discordId), eq(usersTable.guildId, payout.guildId)))
-      .limit(1);
-    const streamerTeam = streamerUserRow?.team ?? null;
-
-    let streamUrl = "(see original message)";
-    try {
-      const origCh = await interaction.client.channels.fetch(payout.channelId).catch(() => null);
-      if (origCh?.isTextBased()) {
-        const origMsg = await (origCh as TextChannel).messages.fetch(payout.messageId).catch(() => null);
-        const match = origMsg?.content.match(/https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i);
-        if (match) streamUrl = match[0];
-      }
-    } catch (_) {}
-
-    const isH2H = !!payout.opponentDiscordId;
-    const streamDescLines = [
-      `**Streamer:** <@${payout.discordId}>${streamerTeam ? ` (${streamerTeam})` : ""}`,
-      `**Opponent:** ${isH2H ? `${payout.opponentTeam ?? ""} — <@${payout.opponentDiscordId}>` : "CPU (no payout)"}`,
-      `**Stream:** ${streamUrl}`,
-      `**Week:** ${payout.week}`,
-      "",
-      `**Coins Awarded:**`,
-      `+${payout.amount} coins → <@${payout.discordId}>`,
-      isH2H ? `+${payout.opponentAmount} coins → <@${payout.opponentDiscordId}> (H2H opponent)` : null,
-      "",
-      `✅ Approved by ${interaction.user.toString()}`,
-    ].filter((l): l is string => l !== null).join("\n");
-
-    const approvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green).setTitle("✅ Stream Payout Approved")
-      .setDescription(streamDescLines)
-      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
-      .setTimestamp();
-
-    await interaction.editReply({
-      embeds: [approvedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("stream_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
-      )],
-    });
-    return;
-  }
-
-  // ── Stream payout: deny ──────────────────────────────────────────────────────
-  if (action === "stream_deny") {
-    const payoutId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
-      await interaction.followUp({ content: "❌ Only commissioners can deny payouts.", ephemeral: true });
-      return;
-    }
-
-    const [payout] = await db
-      .select().from(pendingChannelPayoutsTable)
-      .where(eq(pendingChannelPayoutsTable.id, payoutId))
-      .limit(1);
-
-    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
-    if (payout.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ Already **${payout.status}**.`, ephemeral: true });
-      return;
-    }
-
-    await db.update(pendingChannelPayoutsTable)
-      .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(pendingChannelPayoutsTable.id, payoutId));
-
-    const [deniedStreamerRow] = await db.select({ team: usersTable.team })
-      .from(usersTable)
-      .where(and(eq(usersTable.discordId, payout.discordId), eq(usersTable.guildId, payout.guildId)))
-      .limit(1);
-
-    const deniedEmbed = new EmbedBuilder()
-      .setColor(Colors.Red).setTitle("❌ Stream Payout Denied")
-      .setDescription(
-        `**Streamer:** <@${payout.discordId}>${deniedStreamerRow?.team ? ` (${deniedStreamerRow.team})` : ""}\n` +
-        `**Opponent:** ${payout.opponentDiscordId ? `${payout.opponentTeam ?? ""} — <@${payout.opponentDiscordId}>` : "CPU"}\n` +
-        `**Week:** ${payout.week}\n\n` +
-        `❌ Denied by ${interaction.user.toString()}`
-      )
-      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
-      .setTimestamp();
-
-    await interaction.editReply({
-      embeds: [deniedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("stream_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
-      )],
-    });
-    return;
-  }
-
-  // ── Highlight payout: approve ────────────────────────────────────────────────
-  if (action === "highlight_approve") {
-    const payoutId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
-      await interaction.followUp({ content: "❌ Only commissioners can approve payouts.", ephemeral: true });
-      return;
-    }
-
-    const [payout] = await db
-      .select().from(pendingChannelPayoutsTable)
-      .where(eq(pendingChannelPayoutsTable.id, payoutId))
-      .limit(1);
-
-    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
-    if (payout.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
-      return;
-    }
-
-    await addBalance(payout.discordId, payout.amount, interaction.guildId!);
-    await logTransaction(payout.discordId, payout.amount, "addcoins",
-      `Highlight video payout — Week ${payout.week}`, interaction.guildId!, interaction.user.id);
-
-    await db.update(pendingChannelPayoutsTable)
-      .set({ status: "approved", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(pendingChannelPayoutsTable.id, payoutId));
-
-    // React ✅ to original message
-    try {
-      const origChannel = await interaction.client.channels.fetch(payout.channelId).catch(() => null);
-      if (origChannel?.isTextBased()) {
-        const origMsg = await (origChannel as TextChannel).messages.fetch(payout.messageId).catch(() => null);
-        if (origMsg) await origMsg.react("✅").catch(() => {});
-      }
-    } catch (_) {}
-
-    // DM the poster
-    try {
-      const u = await interaction.client.users.fetch(payout.discordId);
-      await u.send(`🎬 Your highlight video payout for Week ${payout.week} was approved! **+${payout.amount} coins** added.`).catch(() => {});
-    } catch (_) {}
-
-    const [hlPosterRow] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
-
-    const approvedEmbed = new EmbedBuilder()
-      .setColor(Colors.Green).setTitle("✅ Highlight Payout Approved")
-      .setDescription(
-        `**Poster:** <@${payout.discordId}>${hlPosterRow?.team ? ` (${hlPosterRow.team})` : ""}\n` +
-        `**Week:** ${payout.week}\n\n` +
-        `**Coins Awarded:**\n+${payout.amount} coins → <@${payout.discordId}>\n\n` +
-        `✅ Approved by ${interaction.user.toString()}`
-      )
-      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
-      .setTimestamp();
-
-    await interaction.editReply({
-      embeds: [approvedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("highlight_done").setLabel("✅ Approved").setStyle(ButtonStyle.Success).setDisabled(true),
-      )],
-    });
-    return;
-  }
-
-  // ── Highlight payout: deny ───────────────────────────────────────────────────
-  if (action === "highlight_deny") {
-    const payoutId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferUpdate();
-
-    if (!(await isAdminUser(interaction.user.id, interaction.guildId!))) {
-      await interaction.followUp({ content: "❌ Only commissioners can deny payouts.", ephemeral: true });
-      return;
-    }
-
-    const [payout] = await db
-      .select().from(pendingChannelPayoutsTable)
-      .where(eq(pendingChannelPayoutsTable.id, payoutId))
-      .limit(1);
-
-    if (!payout) { await interaction.followUp({ content: "❌ Payout record not found.", ephemeral: true }); return; }
-    if (payout.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ Already **${payout.status}**.`, ephemeral: true });
-      return;
-    }
-
-    await db.update(pendingChannelPayoutsTable)
-      .set({ status: "denied", resolvedAt: new Date(), resolvedBy: interaction.user.id })
-      .where(eq(pendingChannelPayoutsTable.id, payoutId));
-
-    const [hlDeniedPosterRow] = await db.select({ team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.discordId, payout.discordId)).limit(1);
-
-    const deniedEmbed = new EmbedBuilder()
-      .setColor(Colors.Red).setTitle("❌ Highlight Payout Denied")
-      .setDescription(
-        `**Poster:** <@${payout.discordId}>${hlDeniedPosterRow?.team ? ` (${hlDeniedPosterRow.team})` : ""}\n` +
-        `**Week:** ${payout.week}\n\n` +
-        `❌ Denied by ${interaction.user.toString()}`
-      )
-      .setFooter({ text: `Payout #${payoutId} • Week ${payout.week}` })
-      .setTimestamp();
-
-    await interaction.editReply({
-      embeds: [deniedEmbed],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("highlight_denied_done").setLabel("❌ Denied").setStyle(ButtonStyle.Danger).setDisabled(true),
-      )],
-    });
-    return;
-  }
 
   // ── Interview: open answer modal (player-facing) ──────────────────────────
   // Format: interview_answer:{targetUserId}:{i1,i2,i3}:{type}
@@ -2276,7 +2012,6 @@ async function handleButton(interaction: ButtonInteraction) {
     const tier = parseInt(action.slice("ap_ms_edit_".length), 10);
     if (!isNaN(tier)) { await handleMilestoneEdit(interaction, tier); return; }
   }
-  if (action === "ap_tweetpayout")       { await handleTweetPayout(interaction);      return; }
   if (action === "ap_interviewpayout")   { await handleInterviewPayout(interaction);  return; }
 
   // ── Admin User Data Hub ────────────────────────────────────────────────────
@@ -2683,6 +2418,13 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const action = parts[0]!;
   const idStr  = parts[1];
 
+  // ── Commissioner's Office — edit-amount modals (co_modal_edit_*) ────────────
+  if (interaction.customId.startsWith("co_modal_edit_")) {
+    const { handleCommOfficeModal } = await import("../lib/handlers/pending-inbox-handlers.js");
+    await handleCommOfficeModal(interaction);
+    return;
+  }
+
   // ── Draft Lottery — count modal (modal_lottery:<roleId>) ────────────────────
   if (action === "modal_lottery") {
     const { handleLotteryCountModal } = await import("../lib/handlers/lottery-handler.js");
@@ -2946,7 +2688,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ap_modal_newmember")      { await handleNewMemberModal(interaction);     return; }
   if (action === "ap_modal_gotwbonus")        { await handleGotwBonusModal(interaction);       return; }
   if (action === "ap_modal_potwbonus")        { await handlePotwBonusModal(interaction);       return; }
-  if (action === "ap_modal_tweetpayout")      { await handleTweetPayoutModal(interaction);     return; }
   if (action === "ap_modal_interviewpayout")  { await handleInterviewPayoutModal(interaction); return; }
   if (action === "ap_modal_eos_edit")       { await handleEosEditModal(interaction);        return; }
   if (action === "ap_modal_eos_stat_tier")  { await handleEosStatTierModal(interaction);    return; }

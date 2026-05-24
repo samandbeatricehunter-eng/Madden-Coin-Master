@@ -17,7 +17,7 @@ import {
   wagersTable, interviewRequestsTable, coinTransactionsTable,
   seasonStatsTable, teamSeasonStatsTable, purchasesTable, inventoryTable,
   legendsTable, franchiseScheduleTable,
-  guildTweetsTable, autoPilotRequestsTable, ruleViolationsTable,
+  autoPilotRequestsTable, ruleViolationsTable,
   playerEaIdsTable, customPlayersTable,
   playerSeasonStatsTable, waitlistTable, payoutConfigTable,
   seasonStatTierConfigsTable,
@@ -40,7 +40,7 @@ import { weekLabel } from "../helpers/week-helpers.js";
 import {
   INTERVIEW_QUESTIONS, pickThreeIndices, getQuestionPool, interviewTypeLabel,
   type InterviewType,
-} from "../../commands/league/interviewrequest.js";
+} from "../league/interview-questions.js";
 import {
   buildMenuHubEmbed, buildMenuHubRows,
   buildUnlinkedMenuEmbed, buildUnlinkedMenuRows,
@@ -766,7 +766,6 @@ export async function handleActionsInteraction(
   if (id === "ac_wager")        { await handleWagerStart(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_coins")        { await handleCoins(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_interview")    { await handleInterview(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_tweet")        { await handleTweetModal(interaction as ButtonInteraction); return true; }
 
   // Purchase sub-buttons
   if (id === "ac_buy_agereset") { await handleBuyAgeResetPosPick(interaction as ButtonInteraction, sess); return true; }
@@ -914,7 +913,6 @@ export async function handleActionsInteraction(
   if (id === "ac_req_rmwl_confirm")      { await handleReqRmWaitlistConfirm(interaction as ButtonInteraction, sess); return true; }
 
   // Modal submits
-  if (id === "ac_modal_tweet")      { await handleTweetSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id === "ac_modal_sendcoins")              { await handleSendCoinsSubmit(interaction as ModalSubmitInteraction, sess); return true; }
   if (id.startsWith("ac_modal_transfer:"))      { await handleBankTransferSubmit(interaction as ModalSubmitInteraction); return true; }
   if (id === "ac_modal_wageramount") { await handleWagerAmountSubmit(interaction as ModalSubmitInteraction, sess); return true; }
@@ -3328,106 +3326,6 @@ export async function handleInterviewTypePick(interaction: ButtonInteraction) {
   await interaction.showModal(modal);
 }
 
-// ── Tweet ─────────────────────────────────────────────────────────────────────
-
-async function handleTweetModal(interaction: ButtonInteraction) {
-  const modal = new ModalBuilder()
-    .setCustomId("ac_modal_tweet")
-    .setTitle("Post a Tweet")
-    .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("tweet_text")
-          .setLabel("Your tweet (max 280 characters)")
-          .setStyle(TextInputStyle.Paragraph)
-          .setMaxLength(280)
-          .setRequired(true)
-          .setPlaceholder("Write your tweet here…"),
-      ),
-    );
-  await interaction.showModal(modal);
-}
-
-async function handleTweetSubmit(interaction: ModalSubmitInteraction, sess: ActionsSession) {
-  const text = interaction.fields.getTextInputValue("tweet_text").trim();
-  const gid  = interaction.guildId!;
-
-  if (!text) { await interaction.reply({ content: "❌ Tweet cannot be empty.", ephemeral: true }); return; }
-
-  const [season, user] = await Promise.all([
-    getOrCreateActiveSeason(gid),
-    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
-  ]);
-
-  const weeklyLimit = await getPayoutValue("tweet_weekly_limit", gid);
-  const payout      = await getPayoutValue("tweet_payout", gid);
-  const currentWeek = (season as any).currentWeek ?? "1";
-
-  // Count tweets this week
-  const tweetsThisWeek = (await db.select({ id: guildTweetsTable.id })
-    .from(guildTweetsTable)
-    .where(and(
-      eq(guildTweetsTable.discordId, interaction.user.id),
-      eq(guildTweetsTable.guildId, gid),
-      eq(guildTweetsTable.weekNumber, String(currentWeek)),
-    ))).length;
-
-  const willEarnCoins = weeklyLimit === 0 || tweetsThisWeek < weeklyLimit;
-  const earnedCoins   = willEarnCoins ? payout : 0;
-
-  await db.insert(guildTweetsTable).values({
-    discordId:    interaction.user.id,
-    guildId:      gid,
-    seasonId:     season.id,
-    weekNumber:   String(currentWeek),
-    tweetText:    text,
-    coinsAwarded: earnedCoins,
-  });
-
-  if (earnedCoins > 0) {
-    await addBalance(interaction.user.id, earnedCoins, gid);
-    await logTransaction(interaction.user.id, earnedCoins, "addcoins", `Tweet payout — Week ${currentWeek}`, gid);
-  }
-
-  // Post the tweet to the league twitter channel
-  const twitterChannelId = await getGuildChannel(gid, CHANNEL_KEYS.LEAGUE_TWITTER);
-  if (twitterChannelId) {
-    try {
-      const ch = await interaction.client.channels.fetch(twitterChannelId);
-      if (ch?.isTextBased()) {
-        await (ch as TextChannel).send({
-          embeds: [new EmbedBuilder()
-            .setColor(Colors.Blue)
-            .setAuthor({
-              name: `@${interaction.user.username}${user.team ? ` · ${user.team}` : ""}`,
-              iconURL: interaction.user.displayAvatarURL(),
-            })
-            .setDescription(text)
-            .setFooter({ text: `Week ${currentWeek} 🐦 League Twitter` })
-            .setTimestamp()],
-        });
-      }
-    } catch { /* channel fetch/send failure is non-fatal */ }
-  }
-
-  const limitNote = !willEarnCoins
-    ? `\n*Weekly tweet limit reached (${weeklyLimit}) — no coins awarded.*`
-    : earnedCoins > 0
-      ? `\n**+${earnedCoins} coins** awarded!`
-      : `\n*Tweet posted! (No coin payout configured this week.)*`;
-
-  await interaction.reply({
-    ephemeral: true,
-    embeds: [new EmbedBuilder()
-      .setColor(Colors.Blue)
-      .setTitle("🐦 Tweet Posted!")
-      .setDescription(`> ${text}${limitNote}`)
-      .setFooter({ text: `Week ${currentWeek} • ${user.team ?? interaction.user.username}` })
-      .setTimestamp()],
-    components: [backToHubRow()],
-  });
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ROW 2 — Rosters
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5607,7 +5505,6 @@ async function handleWeeklyPayouts(interaction: ButtonInteraction, sess: Actions
     h2hWin, h2hLoss, cpuWin,
     hlPay, hlPostPay, hlLimit,
     streamPay,
-    tweetPay, tweetLimit,
     interviewPay,
     gotwReg, gotwPo, potwBonus,
   ] = await Promise.all([
@@ -5618,8 +5515,6 @@ async function handleWeeklyPayouts(interaction: ButtonInteraction, sess: Actions
     getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT, gid),
     getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT,        gid),
     getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT,          gid),
-    getPayoutValue(PAYOUT_KEYS.TWEET_PAYOUT,           gid),
-    getPayoutValue(PAYOUT_KEYS.TWEET_WEEKLY_LIMIT,     gid),
     getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT,       gid),
     getPayoutValue(PAYOUT_KEYS.GOTW_REGULAR_BONUS,     gid),
     getPayoutValue(PAYOUT_KEYS.GOTW_PLAYOFF_BONUS,     gid),
@@ -5627,7 +5522,6 @@ async function handleWeeklyPayouts(interaction: ButtonInteraction, sess: Actions
   ]);
 
   const hlCapNote   = hlLimit > 0 ? ` *(max ${hlLimit}/week)*` : "";
-  const tweetCapNote = tweetLimit > 0 ? ` *(max ${tweetLimit}/week)*` : " *(no weekly limit)*";
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
@@ -5649,7 +5543,6 @@ async function handleWeeklyPayouts(interaction: ButtonInteraction, sess: Actions
           `Highlight (Regular Season): **${hlPay.toLocaleString()}** coins per video${hlCapNote}`,
           `Highlight (Postseason): **${hlPostPay.toLocaleString()}** coins per video${hlCapNote}`,
           `Twitch Stream: **${streamPay.toLocaleString()}** coins per side (streamer + opponent)`,
-          `Tweet: **${tweetPay.toLocaleString()}** coins per post${tweetCapNote}`,
           `Interview: **${interviewPay.toLocaleString()}** coins per approved submission`,
         ].join("\n"),
         inline: false,

@@ -17,9 +17,9 @@ import {
   playerSeasonStatsTable, seasonsTable, purchasesTable,
 } from "@workspace/db";
 import { eq, and, desc, ne } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "../../lib/db/db-helpers.js";
-import { NFL_DIVISION_MAP, eaPortraitUrl, CORE_ATTRIBUTES } from "../../lib/constants.js";
-import { DEV_EMOJI } from "../../lib/economy/dev-trait.js";
+import { getOrCreateActiveSeason } from "../db/db-helpers.js";
+import { NFL_DIVISION_MAP, eaPortraitUrl, CORE_ATTRIBUTES } from "../constants.js";
+import { DEV_EMOJI } from "../economy/dev-trait.js";
 
 // Division display order within each conference: East → North → South → West
 const DIV_ORDER: Record<string, number> = { East: 0, North: 1, South: 2, West: 3 };
@@ -36,7 +36,7 @@ function sortByDivision<T extends { fullName: string; nickName: string }>(teams:
     return a.fullName.localeCompare(b.fullName);
   });
 }
-import { requireMcaEnabled } from "../../lib/db/server-settings.js";
+import { requireMcaEnabled } from "../db/server-settings.js";
 
 
 // ── Dev trait display ────────────────────────────────────────────────────────
@@ -180,13 +180,13 @@ function renderGroup(attrs: Record<string, unknown>, keys: string[]): string | n
 
 // ── Command definition ───────────────────────────────────────────────────────
 
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("viewplayerstats")
   .setDescription("Browse full player profile and stats — pick team → position → player");
 
 // ── Step 1: Entry — show NFC/AFC team pickers ───────────────────────────────
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   if (!await requireMcaEnabled(interaction)) return;
 

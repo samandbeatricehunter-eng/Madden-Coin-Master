@@ -19,6 +19,10 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ModalBuilder,
+  ModalSubmitInteraction,
+  TextInputBuilder,
+  TextInputStyle,
   type Client,
 } from "discord.js";
 import { db } from "@workspace/db";
@@ -29,8 +33,10 @@ import {
   payoutRequestsTable,
   interviewRequestsTable,
   inventoryTable,
+  pendingChannelPayoutsTable,
+  coinTransactionsTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import {
   addBalance,
   logTransaction,
@@ -46,12 +52,14 @@ const PAGE_SIZE = 3;
 export function buildCommOfficeEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0xB68B2D)
-    .setTitle("🏛️ Commissioner's Office — Pending Inbox")
+    .setTitle("🏛️ Commissioner's Office — Pending Transactions")
     .setDescription(
       "Select a category to review and act on pending items.\n\n" +
-      "**📋 Pending Payouts** — User-submitted score reports\n" +
-      "**🛒 Pending Purchases** — Store purchases awaiting in-game application\n" +
-      "**🎙️ Pending Interviews** — Post-game interviews awaiting review"
+      "**🛒 Pending Purchases** — Store purchases awaiting application (apply / refund)\n" +
+      "**📋 Pending Payouts** — User-submitted game payouts (approve / deny / edit)\n" +
+      "**🎙️ Pending Interviews** — Post-game interviews (approve / deny / edit)\n" +
+      "**🎬 Stream & Highlight Payouts** — Channel-detected media payouts (approve / deny / edit)\n" +
+      "**🧾 Recent History** — Last 25 completed transactions"
     )
     .setFooter({ text: "Actions are immediate. Users receive a DM on approve/deny." })
     .setTimestamp();
@@ -60,12 +68,16 @@ export function buildCommOfficeEmbed(): EmbedBuilder {
 export function buildCommOfficeRows(): ActionRowBuilder<ButtonBuilder>[] {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("co_payouts:0").setLabel("📋 Pending Payouts").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("co_purchases:0").setLabel("🛒 Pending Purchases").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_payouts:0").setLabel("📋 Pending Payouts").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("co_interviews:0").setLabel("🎙️ Pending Interviews").setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ao_admin_root").setLabel("↩ Back").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("co_channel:0").setLabel("🎬 Stream/Highlight").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_history:0").setLabel("🧾 Recent History").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("menu_admin_back").setLabel("↩ Back").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -148,6 +160,10 @@ async function buildPayoutsPage(
           .setCustomId(`co_approve_payout:${id}`)
           .setLabel(`✅ Approve #${i + 1}`)
           .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`co_edit_payout:${id}`)
+          .setLabel(`✏ Edit #${i + 1}`)
+          .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId(`co_deny_payout:${id}`)
           .setLabel(`❌ Deny #${i + 1}`)
@@ -363,6 +379,10 @@ async function buildInterviewsPage(
           .setLabel(`✅ Approve #${i + 1}`)
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
+          .setCustomId(`co_edit_interview:${id}`)
+          .setLabel(`✏ Edit #${i + 1}`)
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
           .setCustomId(`co_deny_interview:${id}`)
           .setLabel(`❌ Deny #${i + 1}`)
           .setStyle(ButtonStyle.Danger),
@@ -392,6 +412,171 @@ async function buildInterviewsPage(
   return { embed, rows };
 }
 
+// ── Stream / Highlight Channel Payouts ────────────────────────────────────────
+
+async function buildChannelPayoutsPage(
+  guildId: string,
+  page: number,
+): Promise<{ embed: EmbedBuilder; rows: ActionRowBuilder<ButtonBuilder>[] }> {
+  const filter = and(
+    eq(pendingChannelPayoutsTable.guildId, guildId),
+    eq(pendingChannelPayoutsTable.status, "pending"),
+  );
+
+  const [{ cnt }] = await db
+    .select({ cnt: sql<number>`count(*)::int` })
+    .from(pendingChannelPayoutsTable)
+    .where(filter);
+  const total = cnt ?? 0;
+
+  const items = await db
+    .select()
+    .from(pendingChannelPayoutsTable)
+    .where(filter)
+    .orderBy(pendingChannelPayoutsTable.createdAt)
+    .limit(PAGE_SIZE)
+    .offset(page * PAGE_SIZE);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Orange)
+    .setTitle(`🎬 Stream & Highlight Payouts — ${total} total`)
+    .setFooter({ text: `Page ${page + 1} / ${totalPages}` });
+
+  if (items.length === 0) {
+    embed.setDescription("✅ No pending stream/highlight payouts. All caught up!");
+  } else {
+    for (let i = 0; i < items.length; i++) {
+      const p = items[i];
+      const emoji = p.type === "stream" ? "🎮" : "🎬";
+      const link = `https://discord.com/channels/${p.guildId}/${p.channelId}/${p.messageId}`;
+      embed.addFields({
+        name: `#${i + 1}  ·  ${emoji} ${p.type.toUpperCase()}  —  ${p.amount} coins`,
+        value: [
+          `**User:** <@${p.discordId}>`,
+          `**Week:** ${p.week}`,
+          `**Post:** [jump](${link})`,
+          `**Submitted:** <t:${Math.floor(new Date(p.createdAt).getTime() / 1000)}:R>`,
+        ].join("\n"),
+        inline: false,
+      });
+    }
+  }
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const id = items[i].id;
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`co_approve_channel:${id}`)
+          .setLabel(`✅ Approve #${i + 1}`)
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`co_deny_channel:${id}`)
+          .setLabel(`❌ Deny #${i + 1}`)
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`co_edit_channel:${id}`)
+          .setLabel(`✏️ Edit #${i + 1}`)
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`co_channel:${page - 1}`)
+        .setLabel("◀ Prev")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page === 0),
+      new ButtonBuilder()
+        .setCustomId(`co_channel:${page + 1}`)
+        .setLabel("▶ Next")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page >= totalPages - 1),
+      new ButtonBuilder()
+        .setCustomId("co_main")
+        .setLabel("↩ Back")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  );
+
+  return { embed, rows };
+}
+
+// ── Recent History (last 25 completed transactions) ──────────────────────────
+
+async function buildHistoryPage(
+  guildId: string,
+  page: number,
+): Promise<{ embed: EmbedBuilder; rows: ActionRowBuilder<ButtonBuilder>[] }> {
+  const HISTORY_LIMIT = 25;
+  const HISTORY_PAGE_SIZE = 10;
+
+  // Pull the last 25 commissioner-driven coin transactions for this guild.
+  // We filter by transaction types tied to commissioner actions to avoid
+  // flooding with regular game payouts and savings interest.
+  const rowsRaw = await db
+    .select()
+    .from(coinTransactionsTable)
+    .where(and(
+      eq(coinTransactionsTable.guildId, guildId),
+      inArray(coinTransactionsTable.type, [
+        "addcoins",
+        "removecoins",
+        "purchase_refund",
+        "purchase",
+      ]),
+    ))
+    .orderBy(desc(coinTransactionsTable.createdAt))
+    .limit(HISTORY_LIMIT);
+
+  const total = rowsRaw.length;
+  const totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+  const safePage = Math.min(Math.max(0, page), totalPages - 1);
+  const slice = rowsRaw.slice(safePage * HISTORY_PAGE_SIZE, (safePage + 1) * HISTORY_PAGE_SIZE);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x808080)
+    .setTitle(`🧾 Recent Commissioner Activity — last ${total}`)
+    .setFooter({ text: `Page ${safePage + 1} / ${totalPages}` });
+
+  if (slice.length === 0) {
+    embed.setDescription("No completed commissioner actions yet.");
+  } else {
+    const lines = slice.map(t => {
+      const sign = t.amount >= 0 ? "+" : "";
+      const when = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:R>`;
+      return `${when} • <@${t.discordId}> • **${sign}${t.amount}** • ${t.description}`;
+    });
+    embed.setDescription(lines.join("\n"));
+  }
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`co_history:${safePage - 1}`)
+        .setLabel("◀ Prev")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage === 0),
+      new ButtonBuilder()
+        .setCustomId(`co_history:${safePage + 1}`)
+        .setLabel("▶ Next")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage >= totalPages - 1),
+      new ButtonBuilder()
+        .setCustomId("co_main")
+        .setLabel("↩ Back")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+
+  return { embed, rows };
+}
+
 // ── Action implementations ────────────────────────────────────────────────────
 // These functions throw on failure so the dispatcher can handle the error
 // uniformly with followUp() after deferUpdate().
@@ -402,6 +587,7 @@ async function doApprovePayoutRequest(
   adminId: string,
   client: Client,
 ): Promise<string> {
+  // NOTE: payoutRequestsTable has no guildId column (bot is single-guild today).
   const [req] = await db
     .select()
     .from(payoutRequestsTable)
@@ -446,6 +632,7 @@ async function doApprovePayoutRequest(
 
 async function doDenyPayoutRequest(
   id: number,
+  guildId: string,
   adminId: string,
   client: Client,
 ): Promise<string> {
@@ -479,9 +666,11 @@ async function doDenyPayoutRequest(
 
 async function doApprovePurchase(
   id: number,
+  guildId: string,
   adminId: string,
   client: Client,
 ): Promise<string> {
+  // NOTE: purchasesTable has no guildId column (bot is single-guild today).
   const [purchase] = await db
     .select()
     .from(purchasesTable)
@@ -574,7 +763,7 @@ async function doApproveInterview(
   const [iv] = await db
     .select()
     .from(interviewRequestsTable)
-    .where(eq(interviewRequestsTable.id, id))
+    .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)))
     .limit(1);
 
   if (!iv) throw new Error("Interview not found.");
@@ -585,7 +774,7 @@ async function doApproveInterview(
   await db
     .update(interviewRequestsTable)
     .set({ status: "approved", resolvedAt: new Date(), resolvedBy: adminId })
-    .where(eq(interviewRequestsTable.id, id));
+    .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)));
 
   await addBalance(iv.discordId, amount, guildId);
   await logTransaction(
@@ -613,13 +802,14 @@ async function doApproveInterview(
 
 async function doDenyInterview(
   id: number,
+  guildId: string,
   adminId: string,
   client: Client,
 ): Promise<string> {
   const [iv] = await db
     .select()
     .from(interviewRequestsTable)
-    .where(eq(interviewRequestsTable.id, id))
+    .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)))
     .limit(1);
 
   if (!iv) throw new Error("Interview not found.");
@@ -628,7 +818,7 @@ async function doDenyInterview(
   await db
     .update(interviewRequestsTable)
     .set({ status: "denied", resolvedAt: new Date(), resolvedBy: adminId })
-    .where(eq(interviewRequestsTable.id, id));
+    .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)));
 
   client.users
     .fetch(iv.discordId)
@@ -640,6 +830,212 @@ async function doDenyInterview(
     .catch(() => null);
 
   return `❌ Interview #${id} denied.`;
+}
+
+// ── Channel payout actions (stream / highlight) ──────────────────────────────
+
+async function doApproveChannelPayout(
+  id: number,
+  guildId: string,
+  adminId: string,
+  client: Client,
+  overrideAmount?: number,
+): Promise<string> {
+  const [row] = await db
+    .select()
+    .from(pendingChannelPayoutsTable)
+    .where(and(eq(pendingChannelPayoutsTable.id, id), eq(pendingChannelPayoutsTable.guildId, guildId)))
+    .limit(1);
+
+  if (!row) throw new Error("Channel payout not found.");
+  if (row.status !== "pending") throw new Error(`Already ${row.status}.`);
+
+  const amount = overrideAmount ?? row.amount;
+
+  await db
+    .update(pendingChannelPayoutsTable)
+    .set({
+      status: "approved",
+      amount,
+      resolvedAt: new Date(),
+      resolvedBy: adminId,
+    })
+    .where(and(eq(pendingChannelPayoutsTable.id, id), eq(pendingChannelPayoutsTable.guildId, guildId)));
+
+  await addBalance(row.discordId, amount, guildId);
+  await logTransaction(
+    row.discordId,
+    amount,
+    "addcoins",
+    `${row.type === "stream" ? "Stream" : "Highlight"} approved (Week ${row.week})`,
+    guildId,
+    adminId,
+  );
+
+  // Bonus to opponent for streams
+  if (row.type === "stream" && row.opponentDiscordId && row.opponentAmount && row.opponentAmount > 0) {
+    await addBalance(row.opponentDiscordId, row.opponentAmount, guildId);
+    await logTransaction(
+      row.opponentDiscordId,
+      row.opponentAmount,
+      "addcoins",
+      `Stream opponent bonus (Week ${row.week})`,
+      guildId,
+      adminId,
+    );
+  }
+
+  client.users
+    .fetch(row.discordId)
+    .then(u =>
+      u.send(
+        `✅ Your ${row.type} payout (Week ${row.week}) was approved! **+${amount} coins** added.`,
+      ).catch(() => null),
+    )
+    .catch(() => null);
+
+  return `✅ ${row.type} #${id} approved — **+${amount} coins** → <@${row.discordId}>`;
+}
+
+async function doDenyChannelPayout(
+  id: number,
+  guildId: string,
+  adminId: string,
+  client: Client,
+): Promise<string> {
+  const [row] = await db
+    .select()
+    .from(pendingChannelPayoutsTable)
+    .where(and(eq(pendingChannelPayoutsTable.id, id), eq(pendingChannelPayoutsTable.guildId, guildId)))
+    .limit(1);
+
+  if (!row) throw new Error("Channel payout not found.");
+  if (row.status !== "pending") throw new Error(`Already ${row.status}.`);
+
+  await db
+    .update(pendingChannelPayoutsTable)
+    .set({ status: "denied", resolvedAt: new Date(), resolvedBy: adminId })
+    .where(and(eq(pendingChannelPayoutsTable.id, id), eq(pendingChannelPayoutsTable.guildId, guildId)));
+
+  client.users
+    .fetch(row.discordId)
+    .then(u =>
+      u.send(
+        `❌ Your ${row.type} payout (Week ${row.week}) was denied by a commissioner.`,
+      ).catch(() => null),
+    )
+    .catch(() => null);
+
+  return `❌ ${row.type} #${id} denied.`;
+}
+
+// ── Edit-amount approval (payouts / interviews — no amount column, so we
+//    just bake the override into the resulting coin_transactions row) ────────
+
+async function doApprovePayoutWithOverride(
+  id: number,
+  guildId: string,
+  adminId: string,
+  client: Client,
+  amount: number,
+): Promise<string> {
+  const [req] = await db
+    .select()
+    .from(payoutRequestsTable)
+    .where(eq(payoutRequestsTable.id, id))
+    .limit(1);
+
+  if (!req) throw new Error("Payout request not found.");
+  if (req.status !== "pending") throw new Error(`Already ${req.status}.`);
+
+  await db
+    .update(payoutRequestsTable)
+    .set({ status: "approved", resolvedAt: new Date(), resolvedBy: adminId })
+    .where(eq(payoutRequestsTable.id, id));
+
+  await addBalance(req.requesterId, amount, guildId);
+  await logTransaction(
+    req.requesterId,
+    amount,
+    "addcoins",
+    `Game payout approved (edited) by commissioner (Week ${req.week ?? "?"})`,
+    guildId,
+    adminId,
+  );
+
+  client.users
+    .fetch(req.requesterId)
+    .then(u =>
+      u.send(
+        `✅ Your payout request (Week ${req.week ?? "?"}) was approved with an adjusted amount! **+${amount} coins** added.`,
+      ).catch(() => null),
+    )
+    .catch(() => null);
+
+  return `✅ Payout #${id} approved (edited) — **+${amount} coins** → <@${req.requesterId}>`;
+}
+
+async function doApproveInterviewWithOverride(
+  id: number,
+  guildId: string,
+  adminId: string,
+  client: Client,
+  amount: number,
+): Promise<string> {
+  const [iv] = await db
+    .select()
+    .from(interviewRequestsTable)
+    .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)))
+    .limit(1);
+
+  if (!iv) throw new Error("Interview not found.");
+  if (iv.status !== "pending") throw new Error(`Already ${iv.status}.`);
+
+  await db
+    .update(interviewRequestsTable)
+    .set({ status: "approved", resolvedAt: new Date(), resolvedBy: adminId })
+    .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)));
+
+  await addBalance(iv.discordId, amount, guildId);
+  await logTransaction(
+    iv.discordId,
+    amount,
+    "addcoins",
+    `Interview approved (edited) (Week ${iv.week ?? "?"})`,
+    guildId,
+    adminId,
+  );
+
+  client.users
+    .fetch(iv.discordId)
+    .then(u =>
+      u.send(
+        `🎙️ Your Week ${iv.week ?? "?"} interview was approved with an adjusted amount! **+${amount} coins** added.`,
+      ).catch(() => null),
+    )
+    .catch(() => null);
+
+  return `✅ Interview #${id} approved (edited) — **+${amount} coins** → <@${iv.discordId}>`;
+}
+
+// ── Edit modal builders ──────────────────────────────────────────────────────
+
+function buildEditAmountModal(kind: "payout" | "interview" | "channel", id: number, currentAmount: number): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId(`co_modal_edit_${kind}:${id}`)
+    .setTitle(`Edit ${kind} amount`);
+
+  const input = new TextInputBuilder()
+    .setCustomId("amount")
+    .setLabel("Amount (coins)")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setValue(String(currentAmount))
+    .setMinLength(1)
+    .setMaxLength(10);
+
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+  return modal;
 }
 
 // ── Main interaction dispatcher ───────────────────────────────────────────────
@@ -659,27 +1055,87 @@ export async function handleCommOfficeInteraction(
     return;
   }
 
-  // ── co_payouts:PAGE
+  // ── Selector pages
   if (customId.startsWith("co_payouts:")) {
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildPayoutsPage(guildId, page);
     await interaction.update({ embeds: [embed], components: rows });
     return;
   }
-
-  // ── co_purchases:PAGE
   if (customId.startsWith("co_purchases:")) {
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildPurchasesPage(guildId, page);
     await interaction.update({ embeds: [embed], components: rows });
     return;
   }
-
-  // ── co_interviews:PAGE
   if (customId.startsWith("co_interviews:")) {
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildInterviewsPage(guildId, page);
     await interaction.update({ embeds: [embed], components: rows });
+    return;
+  }
+  if (customId.startsWith("co_channel:")) {
+    const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
+    const { embed, rows } = await buildChannelPayoutsPage(guildId, page);
+    await interaction.update({ embeds: [embed], components: rows });
+    return;
+  }
+  if (customId.startsWith("co_history:")) {
+    const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
+    const { embed, rows } = await buildHistoryPage(guildId, page);
+    await interaction.update({ embeds: [embed], components: rows });
+    return;
+  }
+
+  // ── Edit buttons — open a modal (cannot deferUpdate before showModal)
+  if (customId.startsWith("co_edit_payout:")) {
+    const id = parseInt(customId.split(":")[1] ?? "0", 10);
+    if (isNaN(id)) return;
+    const [req] = await db
+      .select()
+      .from(payoutRequestsTable)
+      .where(eq(payoutRequestsTable.id, id))
+      .limit(1);
+    if (!req) {
+      await interaction.reply({ content: "❌ Payout not found.", ephemeral: true });
+      return;
+    }
+    const defaultAmount = await getPayoutValue(
+      req.gameType === "cpu" ? PAYOUT_KEYS.CPU_WIN : PAYOUT_KEYS.H2H_WIN,
+      guildId,
+    );
+    await interaction.showModal(buildEditAmountModal("payout", id, defaultAmount));
+    return;
+  }
+  if (customId.startsWith("co_edit_interview:")) {
+    const id = parseInt(customId.split(":")[1] ?? "0", 10);
+    if (isNaN(id)) return;
+    const [iv] = await db
+      .select()
+      .from(interviewRequestsTable)
+      .where(and(eq(interviewRequestsTable.id, id), eq(interviewRequestsTable.guildId, guildId)))
+      .limit(1);
+    if (!iv) {
+      await interaction.reply({ content: "❌ Interview not found.", ephemeral: true });
+      return;
+    }
+    const defaultAmount = await getPayoutValue(PAYOUT_KEYS.INTERVIEW_PAYOUT, guildId);
+    await interaction.showModal(buildEditAmountModal("interview", id, defaultAmount));
+    return;
+  }
+  if (customId.startsWith("co_edit_channel:")) {
+    const id = parseInt(customId.split(":")[1] ?? "0", 10);
+    if (isNaN(id)) return;
+    const [row] = await db
+      .select()
+      .from(pendingChannelPayoutsTable)
+      .where(and(eq(pendingChannelPayoutsTable.id, id), eq(pendingChannelPayoutsTable.guildId, guildId)))
+      .limit(1);
+    if (!row) {
+      await interaction.reply({ content: "❌ Channel payout not found.", ephemeral: true });
+      return;
+    }
+    await interaction.showModal(buildEditAmountModal("channel", id, row.amount));
     return;
   }
 
@@ -690,7 +1146,6 @@ export async function handleCommOfficeInteraction(
   const id = parseInt(customId.slice(colonIdx + 1), 10);
   if (isNaN(id)) return;
 
-  // Defer the component update so we can do async DB work before replying
   await interaction.deferUpdate();
 
   let resultMsg: string;
@@ -701,10 +1156,10 @@ export async function handleCommOfficeInteraction(
         resultMsg = await doApprovePayoutRequest(id, guildId, interaction.user.id, interaction.client);
         break;
       case "co_deny_payout":
-        resultMsg = await doDenyPayoutRequest(id, interaction.user.id, interaction.client);
+        resultMsg = await doDenyPayoutRequest(id, guildId, interaction.user.id, interaction.client);
         break;
       case "co_approve_purchase":
-        resultMsg = await doApprovePurchase(id, interaction.user.id, interaction.client);
+        resultMsg = await doApprovePurchase(id, guildId, interaction.user.id, interaction.client);
         break;
       case "co_refund_purchase":
         resultMsg = await doRefundPurchase(id, guildId, interaction.user.id, interaction.client);
@@ -713,7 +1168,13 @@ export async function handleCommOfficeInteraction(
         resultMsg = await doApproveInterview(id, guildId, interaction.user.id, interaction.client);
         break;
       case "co_deny_interview":
-        resultMsg = await doDenyInterview(id, interaction.user.id, interaction.client);
+        resultMsg = await doDenyInterview(id, guildId, interaction.user.id, interaction.client);
+        break;
+      case "co_approve_channel":
+        resultMsg = await doApproveChannelPayout(id, guildId, interaction.user.id, interaction.client);
+        break;
+      case "co_deny_channel":
+        resultMsg = await doDenyChannelPayout(id, guildId, interaction.user.id, interaction.client);
         break;
       default:
         return;
@@ -725,12 +1186,22 @@ export async function handleCommOfficeInteraction(
     return;
   }
 
-  // Re-render the appropriate page after the action, and surface the result
+  await rerenderAfterAction(interaction, prefix, guildId, resultMsg);
+}
+
+async function rerenderAfterAction(
+  interaction: ButtonInteraction | ModalSubmitInteraction,
+  prefix: string,
+  guildId: string,
+  resultMsg: string,
+): Promise<void> {
   try {
     let embed: EmbedBuilder;
     let rows: ActionRowBuilder<ButtonBuilder>[];
 
-    if (prefix.includes("payout")) {
+    if (prefix.includes("channel")) {
+      ({ embed, rows } = await buildChannelPayoutsPage(guildId, 0));
+    } else if (prefix.includes("payout")) {
       ({ embed, rows } = await buildPayoutsPage(guildId, 0));
     } else if (prefix.includes("purchase")) {
       ({ embed, rows } = await buildPurchasesPage(guildId, 0));
@@ -745,4 +1216,52 @@ export async function handleCommOfficeInteraction(
   } catch (err) {
     console.error("[CommOffice] Re-render failed:", err);
   }
+}
+
+// ── Modal submit dispatcher ───────────────────────────────────────────────────
+
+export async function handleCommOfficeModal(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
+  const customId = interaction.customId;
+  const guildId = interaction.guildId!;
+
+  // co_modal_edit_<kind>:<id>
+  const m = /^co_modal_edit_(payout|interview|channel):(\d+)$/.exec(customId);
+  if (!m) return;
+
+  const kind = m[1] as "payout" | "interview" | "channel";
+  const id = parseInt(m[2], 10);
+
+  const raw = interaction.fields.getTextInputValue("amount").trim();
+  const amount = parseInt(raw, 10);
+  if (isNaN(amount) || amount < 0 || amount > 999999) {
+    await interaction.reply({ content: "❌ Invalid amount.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  let resultMsg: string;
+  let prefix: string;
+
+  try {
+    if (kind === "payout") {
+      resultMsg = await doApprovePayoutWithOverride(id, guildId, interaction.user.id, interaction.client, amount);
+      prefix = "co_approve_payout";
+    } else if (kind === "interview") {
+      resultMsg = await doApproveInterviewWithOverride(id, guildId, interaction.user.id, interaction.client, amount);
+      prefix = "co_approve_interview";
+    } else {
+      resultMsg = await doApproveChannelPayout(id, guildId, interaction.user.id, interaction.client, amount);
+      prefix = "co_approve_channel";
+    }
+  } catch (err) {
+    await interaction
+      .followUp({ content: `❌ Edit failed: ${err instanceof Error ? err.message : String(err)}`, ephemeral: true })
+      .catch(() => null);
+    return;
+  }
+
+  await rerenderAfterAction(interaction, prefix, guildId, resultMsg);
 }

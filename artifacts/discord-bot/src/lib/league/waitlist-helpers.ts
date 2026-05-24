@@ -6,8 +6,8 @@ import {
 import { db } from "@workspace/db";
 import { waitlistTable, usersTable } from "@workspace/db";
 import { eq, and, asc, isNotNull } from "drizzle-orm";
-import { getGuildChannel, CHANNEL_KEYS } from "../../lib/db/db-helpers.js";
-import { NFL_TEAMS } from "../../lib/constants.js";
+import { getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
+import { NFL_TEAMS } from "../constants.js";
 
 // ── Button ID helpers ─────────────────────────────────────────────────────────
 export const WAITLIST_ACCEPT_PREFIX = "waitlist_accept:";

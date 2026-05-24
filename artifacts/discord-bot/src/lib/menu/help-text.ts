@@ -2,12 +2,12 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, Colors,
   PermissionFlagsBits,
 } from "discord.js";
-import { isAdminUser, getOrCreateActiveSeason, getSeasonRules } from "../../lib/db/db-helpers.js";
-import { getServerSettings, type ServerSettings } from "../../lib/db/server-settings.js";
+import { isAdminUser, getOrCreateActiveSeason, getSeasonRules } from "../db/db-helpers.js";
+import { getServerSettings, type ServerSettings } from "../db/server-settings.js";
 
 type SeasonRulesShape = { [k: string]: unknown };
 
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("help")
   .setDescription("View all available bot commands")
   .addStringOption(o => o
@@ -119,7 +119,7 @@ export function buildMemberHelpEmbed(
 }
 
 // ── Execute ────────────────────────────────────────────────────────────────────
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   try {
     const section   = interaction.options.getString("section") ?? "member";
     const isPublic  = interaction.options.getBoolean("public") ?? false;
@@ -270,7 +270,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           name: "📰 Articles & Weekly Posts",
           value: [
             "`/advanceweek [week]` — Advance the league week and post the recap article",
-            "`/admin-resendarticle week:N` — Regenerate and post the recap for any previous week",
             "**Post Custom Article** — Available via the Admin Operations hub (`/admin-operations`)",
             "**Post Matchups/GOTW** — Available via the Admin Operations hub (`/admin-operations`)",
             "`/endofseasonpayout` — Run end-of-season playoff ranking bonuses",

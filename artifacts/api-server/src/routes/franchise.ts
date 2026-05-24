@@ -17,7 +17,6 @@ import {
   getOrCreateActiveSeason,
   clearWeekData,
 } from "../lib/franchise-processor.js";
-import { sendDiscordEmbed, sendDiscordEmbedWithButtons } from "../lib/discord-notify.js";
 import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaStorage.js";
 import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable, guildChannelsTable, eaConnectionsTable, franchiseScheduleTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
@@ -69,15 +68,14 @@ async function resolveLeagueChannels(eaLeagueId: number): Promise<LeagueChannels
   }
 }
 
-// ── Per-violation commissioner posting (with Confirm/Deny buttons) ────────────
+// ── Per-violation recording (commissioner posting removed — pending-transactions hub will surface these) ──
 async function postViolationMessages(
   violations: ViolationRecord[],
   week: string,
   seasonId: number,
-  commChannelId: string,
+  _commChannelId: string,
 ): Promise<void> {
   for (const v of violations) {
-    // Resolve discordId by teamName if not already provided
     let discordId = v.discordId ?? null;
     if (!discordId && v.teamName) {
       const [userRow] = await db
@@ -88,14 +86,7 @@ async function postViolationMessages(
       discordId = userRow?.discordId ?? null;
     }
 
-    const typeLabel: Record<string, string> = {
-      h2h_blowout: "H2H Blowout",
-      cpu_score:   "CPU Score Anomaly",
-      player_stat: "Player Stat Padding",
-    };
-
-    // Save violation record to DB
-    const [inserted] = await db
+    await db
       .insert(statPaddingViolationsTable)
       .values({
         seasonId,
@@ -106,34 +97,7 @@ async function postViolationMessages(
         teamName:    v.teamName,
         description: v.description,
         status:      "pending",
-      })
-      .returning({ id: statPaddingViolationsTable.id });
-
-    if (!inserted) continue;
-    const violationId = inserted.id;
-
-    // Post individual embed to commissioner log with Confirm/Deny buttons
-    const embed = {
-      title:       `🚨 Violation Flagged — ${typeLabel[v.type] ?? v.type}`,
-      description: v.description + (discordId ? `\n\n**Owner:** <@${discordId}>` : ""),
-      color:       0xed4245,
-      footer:      { text: `Violation #${violationId} · ${week} · Requires commissioner review` },
-    };
-
-    const msgId = await sendDiscordEmbedWithButtons(
-      commChannelId,
-      embed,
-      `violation_confirm:${violationId}`,
-      `violation_deny:${violationId}`,
-    ).catch(() => null);
-
-    // Store the message ID so the bot can edit it on confirm/deny
-    if (msgId) {
-      await db
-        .update(statPaddingViolationsTable)
-        .set({ commMessageId: msgId })
-        .where(eq(statPaddingViolationsTable.id, violationId));
-    }
+      });
   }
 }
 
@@ -218,13 +182,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/seedings", validateKey, asyn
     resolveLeagueChannels(leagueId),
   ]);
   console.log("[mca/seedings] Result:", result.message);
-  if (!result.ok && channels.commCh) {
-    sendDiscordEmbed(channels.commCh, {
-      title: "⚠️ Playoff Seedings Import Issue",
-      description: result.message,
-      color: 0xed4245,
-    }).catch(() => {});
-  }
+  void channels;
 });
 
 // ── /internal/reseed-from-standings — internal bot call, no league key in URL ──
@@ -259,13 +217,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
     resolveLeagueChannels(leagueId),
   ]);
   console.log("[mca/schedules] Result:", result.message);
-  if (!result.ok && channels.commCh) {
-    sendDiscordEmbed(channels.commCh, {
-      title: "⚠️ MCA Schedule Import Issue",
-      description: result.message,
-      color: 0xed4245,
-    }).catch(() => {});
-  }
+  void channels;
 });
 
 // ── /freeagents/roster — free agent pool (EA historically sent empty; process if populated) ──
@@ -434,105 +386,18 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
 
   if (!result.ok) {
     console.error(`[mca/week${weekNum}/schedules] Processing failed:`, result.message);
-    if (commCh) {
-      sendDiscordEmbed(commCh, {
-        title: `❌ Week ${weekNum} Import Failed`,
-        description: result.message,
-        color: 0xed4245,
-      }).catch(() => {});
-    }
     return;
   }
 
   const roundLabel = weekLabel(weekType, weekNum);
 
   if (commCh) {
-    // ── Catchup mode: send a minimal commissioner-only confirmation, no payouts ──
-    if (result.catchupMode) {
-      const gameLines = result.resultLines.length > 0
-        ? result.resultLines.slice(0, 15).join("\n")
-        : "No completed games found";
-      await sendDiscordEmbed(commCh, {
-        title: `📋 ${roundLabel} — MCA Import (Catchup Mode)`,
-        description: `Scores logged — no payouts issued\n\n${gameLines}`,
-        color: 0x5865f2,
-        footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
-      }).catch(() => {});
-      if (result.violations.length > 0) {
-        await postViolationMessages(result.violations, roundLabel, result.seasonId, commCh).catch(() => {});
-      }
-      return;
-    }
-
-    const fields = [];
-
-    if (result.resultLines.length > 0) {
-      fields.push({
-        name: "🏈 Game Results",
-        value: result.resultLines.slice(0, 15).join("\n"),
-        inline: false,
-      });
-    }
-
-    if (result.unregisteredLines.length > 0) {
-      fields.push({
-        name: "⚠️ Unregistered — no coins paid",
-        value: result.unregisteredLines.join("\n"),
-        inline: false,
-      });
-    }
-
-    if (result.milestoneLines.length > 0) {
-      fields.push({ name: "🎯 Milestones", value: result.milestoneLines.join("\n"), inline: false });
-    }
-
-    if (result.reconciliationLines.length > 0) {
-      fields.push({
-        name: `🔧 Record Corrections (${result.reconciliationLines.length})`,
-        value: result.reconciliationLines.slice(0, 20).join("\n"),
-        inline: false,
-      });
-    }
-
-    const summaryParts: string[] = [];
-    if (result.gamesProcessed > 0)    summaryParts.push(`✅ Paid out: **${result.gamesProcessed}** game(s)`);
-    if (result.gamesDuplicate > 0)    summaryParts.push(`⏭ Already processed: ${result.gamesDuplicate}`);
-    if (result.gamesCpuVsCpu > 0)     summaryParts.push(`🤖 CPU vs CPU skipped: ${result.gamesCpuVsCpu}`);
-    if (result.gamesUnregistered > 0) summaryParts.push(`⚠️ Unregistered (no payout): ${result.gamesUnregistered}`);
-    if (result.resultLines.length === 0 && result.gamesProcessed === 0) summaryParts.push("No completed games found in this week's data yet");
-
-    fields.push({ name: "📊 Summary", value: summaryParts.join("\n") || "Nothing to process", inline: false });
-
-    await sendDiscordEmbed(commCh, {
-      title: `✅ ${roundLabel} — MCA Import`,
-      color: result.gamesProcessed > 0 ? 0x57f287 : 0x5865f2,
-      fields,
-      footer: { text: `Season ${result.seasonId} · Madden Companion App` },
-    }).catch(() => {});
-
-    // ── Violation alerts — individual messages with Confirm/Deny ─────────────
     if (result.violations.length > 0) {
       await postViolationMessages(result.violations, roundLabel, result.seasonId, commCh).catch(() => {});
     }
   }
 
-  // Only post results to the general channel in normal (non-catchup) mode
-  if (genCh && result.payoutLines.length > 0 && !result.catchupMode) {
-    const lines = result.payoutLines
-      .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
-      .map(l => {
-        const m = l.match(/\*\*(.+?)\*\* \+\d+ \| 🎮 \*\*(.+?)\*\* \+\d+ \*\((\d+)–(\d+)\)\*/);
-        if (m) return `🏆 **${m[1]}** ${m[3]} — ${m[4]} **${m[2]}**`;
-        return l;
-      });
-    if (lines.length > 0) {
-      await sendDiscordEmbed(genCh, {
-        title: `🏈 ${roundLabel} Results`,
-        description: lines.join("\n"),
-        color: 0xf0b132,
-      }).catch(() => {});
-    }
-  }
+  void genCh;
 });
 
 // ── /draftpicks — league-wide draft pick ledger (next 3 classes) ─────────────
@@ -569,25 +434,6 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/draftpicks", va
   console.log(`[mca/team/${teamIdStr}/draftpicks]`, result.message);
 });
 
-// ── Transaction embed builder for roster changes ─────────────────────────────
-function buildTransactionEmbeds(transactions: any[]): { title: string; description: string; color: number }[] {
-  const teamChanges = transactions.filter(t => t.transactionType === "team_change");
-  const embeds: { title: string; description: string; color: number }[] = [];
-
-  if (teamChanges.length > 0) {
-    const lines = teamChanges.map(t =>
-      `🔀 **${t.playerName}** (${t.position}) — ${t.fromTeam} → **${t.toTeam}**`
-    );
-    embeds.push({
-      title:       "📋 Roster Moves",
-      description: lines.join("\n"),
-      color:       0x1abc9c,
-    });
-  }
-
-  return embeds;
-}
-
 // ── /team/:teamId/roster — per-team active 53-man roster ─────────────────────
 router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", validateKey, async (req, res) => {
   const teamIdStr = String(req.params["teamId"] ?? "0");
@@ -602,16 +448,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
   const result = await processTeamRoster(req.body, mcaTeamId, parseInt(String(req.params.leagueId ?? "0"), 10), guildId).catch(err => ({ ok: false, message: String(err), details: undefined }));
   console.log(`[mca/team/${teamIdStr}/roster] ${result.message}`);
 
-  // Post detected transactions to the guild-scoped transactions channel
-  const txList: any[] = result.details?.["transactions"] ?? [];
-  if (result.ok && txList.length > 0) {
-    const txEmbeds = buildTransactionEmbeds(txList);
-    if (txEmbeds.length > 0) {
-      resolveLeagueChannels(parseInt(String(req.params.leagueId ?? "0"), 10))
-        .then(ch => { for (const embed of txEmbeds) sendDiscordEmbed(ch.txCh, embed).catch(() => {}); })
-        .catch(() => {});
-    }
-  }
+  // Transactions are no longer posted to a designated channel; the pending-transactions hub will surface them.
 });
 
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
@@ -643,99 +480,14 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
 
   if (!result.ok) {
     console.error(`[mca/week${weekNum}/scores] Processing failed:`, result.message);
-    if (commCh) {
-      sendDiscordEmbed(commCh, {
-        title: `❌ ${scoresRoundLabel} Import Failed`,
-        description: result.message,
-        color: 0xed4245,
-      }).catch(() => {});
-    }
     return;
   }
 
-  if (commCh) {
-    if (result.catchupMode) {
-      const gameLines = result.resultLines.length > 0
-        ? result.resultLines.slice(0, 15).join("\n")
-        : "No completed games found";
-      await sendDiscordEmbed(commCh, {
-        title: `📋 ${scoresRoundLabel} — MCA Import (Catchup Mode)`,
-        description: `Scores logged — no payouts issued\n\n${gameLines}`,
-        color: 0x5865f2,
-        footer: { text: `Season ${result.seasonId} · Catchup Mode Active` },
-      }).catch(() => {});
-      if (result.violations.length > 0) {
-        await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
-      }
-      return;
-    }
-
-    const fields = [];
-
-    if (result.payoutLines.length > 0) {
-      fields.push({
-        name: "💰 Coin Payouts",
-        value: result.payoutLines.slice(0, 10).join("\n") || "None",
-        inline: false,
-      });
-    }
-
-    if (result.milestoneLines.length > 0) {
-      fields.push({
-        name: "🎯 Win Milestones",
-        value: result.milestoneLines.join("\n"),
-        inline: false,
-      });
-    }
-
-    if (result.reconciliationLines.length > 0) {
-      fields.push({
-        name: `🔧 Record Corrections (${result.reconciliationLines.length})`,
-        value: result.reconciliationLines.slice(0, 20).join("\n"),
-        inline: false,
-      });
-    }
-
-    fields.push({
-      name: "📊 Import Stats",
-      value: [
-        `Games processed: **${result.gamesProcessed}**`,
-        `Duplicates skipped: ${result.gamesDuplicate}`,
-        `CPU vs CPU: ${result.gamesCpuVsCpu}`,
-        `Unregistered: ${result.gamesUnregistered}`,
-      ].join("\n"),
-      inline: false,
-    });
-
-    await sendDiscordEmbed(commCh, {
-      title: `✅ ${scoresRoundLabel} — MCA Import Complete`,
-      color: 0x57f287,
-      fields,
-      footer: { text: `Season ${result.seasonId} · Madden Companion App` },
-    }).catch(() => {});
-
-    if (result.violations.length > 0) {
-      await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
-    }
+  if (commCh && result.violations.length > 0) {
+    await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
   }
 
-  if (genCh && result.payoutLines.length > 0 && !result.catchupMode) {
-    const lines = result.payoutLines
-      .filter(l => l.startsWith("🏆") || l.startsWith("🤝"))
-      .map(l => {
-        const m = l.match(/\*\*(.+?)\*\* \+\d+ \| 🎮 \*\*(.+?)\*\* \+\d+ \*\((\d+)–(\d+)\)\*/);
-        if (m) return `🏆 **${m[1]}** ${m[3]} — ${m[4]} **${m[2]}**`;
-        return l;
-      });
-
-    if (lines.length > 0) {
-      await sendDiscordEmbed(genCh, {
-        title: `🏈 ${scoresRoundLabel} Results`,
-        description: lines.join("\n"),
-        color: 0xf0b132,
-      }).catch(() => {});
-    }
-  }
+  void genCh;
 });
 
 // ── /news — EA in-game CFM news feed ─────────────────────────────────────────

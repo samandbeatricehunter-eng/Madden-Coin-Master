@@ -6,7 +6,7 @@ import {
 import { db } from "@workspace/db";
 import { inventoryTable, usersTable, franchiseRostersTable } from "@workspace/db";
 import { eq, and, or, desc } from "drizzle-orm";
-import { isAdminUser, getOrCreateActiveSeason } from "../../lib/db/db-helpers.js";
+import { isAdminUser, getOrCreateActiveSeason } from "../../db/db-helpers.js";
 
 const ITEM_TYPE_LABELS: Record<string, string> = {
   legend: "Legend",
@@ -58,7 +58,7 @@ async function checkAdmin(interaction: ChatInputCommandInteraction): Promise<boo
   return isAdminUser(interaction.user.id, interaction.guildId!);
 }
 
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("admininventory")
   .setDescription("Admin: view, remove, transfer, or manually add inventory items")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -93,7 +93,7 @@ export const data = new SlashCommandBuilder()
       )
   );
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+async function execute(interaction: ChatInputCommandInteraction) {
   if (!(await checkAdmin(interaction))) {
     await interaction.reply({ content: "❌ You do not have permission to use admin commands.", ephemeral: true });
     return;

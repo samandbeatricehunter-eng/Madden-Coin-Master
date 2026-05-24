@@ -28,10 +28,10 @@ import {
   playerStatWeekProcessedTable,
 } from "@workspace/db";
 import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "../../lib/db/db-helpers.js";
-import { STAT_CATEGORIES, evaluateTier } from "../../lib/economy/stat-categories.js";
-import { getPayoutValue, getAllPayoutConfig, PAYOUT_KEYS } from "../../lib/economy/payout-config.js";
-import { getSeasonRecords, getArticleStandings, type ArticleStanding } from "../../lib/franchise/gcs-fallback.js";
+import { getOrCreateActiveSeason } from "../../db/db-helpers.js";
+import { STAT_CATEGORIES, evaluateTier } from "../../economy/stat-categories.js";
+import { getPayoutValue, getAllPayoutConfig, PAYOUT_KEYS } from "../../economy/payout-config.js";
+import { getSeasonRecords, getArticleStandings, type ArticleStanding } from "../../franchise/gcs-fallback.js";
 
 const QB_POSITIONS = new Set(["QB"]);
 const RB_POSITIONS = new Set(["HB", "RB", "FB"]);
@@ -81,7 +81,7 @@ function computePlayoffSeeds(confTeams: ArticleStanding[]): ArticleStanding[] {
 }
 
 // ── Command definition ─────────────────────────────────────────────────────────
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("admin-eos-testrun")
   .setDescription("Preview all EOS payouts (read-only — no coins awarded, no DB writes)")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -591,7 +591,7 @@ export async function runEosTestRun(ctx: EosRunContext): Promise<void> {
 }
 
 // ── Execute (slash command entrypoint) ────────────────────────────────────────
-export async function execute(interaction: ChatInputCommandInteraction) {
+async function execute(interaction: ChatInputCommandInteraction) {
   await runEosTestRun({
     guildId:          interaction.guildId!,
     seasonIdOverride: interaction.options.getInteger("season_id"),

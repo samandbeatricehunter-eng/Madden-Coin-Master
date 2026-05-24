@@ -10,9 +10,9 @@ import { eq } from "drizzle-orm";
 import {
   ALL_POSITIONS, formatArchetypeEmbed,
   attrPageCount, buildVcaAttrPageNavRow,
-} from "../../lib/economy/custom-player-helpers.js";
+} from "../economy/custom-player-helpers.js";
 
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("viewcustomarchetypes")
   .setDescription("Browse available custom player archetypes by position");
 
@@ -79,7 +79,7 @@ function buildVcaReply(
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   await interaction.editReply({

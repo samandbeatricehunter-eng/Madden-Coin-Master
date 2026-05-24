@@ -386,6 +386,7 @@ export function buildBranchPage(node: MenuNode, ctx: MenuCtx): MenuPage {
 // ── Admin hub (unchanged: buttons + nested admin selector) ────────────────────
 
 export type AdminCategoryId =
+  | "commissioner_office"
   | "week" | "ao_payouts" | "post" | "league_data"
   | "user_data" | "store" | "server" | "troubleshoot";
 
@@ -397,9 +398,10 @@ interface AdminCategoryDef {
 }
 
 const ADMIN_CATEGORIES: AdminCategoryDef[] = [
+  { id: "commissioner_office", emoji: "🏛️", label: "Commissioner's Office", description: "Pending purchases, payouts, interviews, stream/highlight + recent history" },
   { id: "week",         emoji: "📅", label: "Week & Season",   description: "Set week, advance week, set season number" },
   { id: "ao_payouts",   emoji: "💰", label: "Payouts",         description: "All payout management" },
-  { id: "post",         emoji: "📢", label: "Post Content",    description: "Matchups, GOTW, articles, media cycle" },
+  { id: "post",         emoji: "📢", label: "Post Content",    description: "Matchups, GOTW, draft lottery" },
   { id: "league_data",  emoji: "🏈", label: "League Data",     description: "EA connection, imports, season data" },
   { id: "user_data",    emoji: "👤", label: "User Data",       description: "Manage user economy, records, links" },
   { id: "store",        emoji: "🏪", label: "Store Settings",  description: "Archetypes, templates, prices, caps" },
@@ -535,9 +537,6 @@ export function buildAdminCategoryPage(
       buttons.push(
         btn("ao_post_matchups",       "📋 Matchups/GOTW",     ButtonStyle.Secondary),
         btn("ao_post_game_channels",  "🎮 Game Channels",     ButtonStyle.Secondary),
-        btn("ao_post_custom_article", "📰 Custom Article",    ButtonStyle.Secondary),
-        btn("ao_rerun_media",         "🐦 Media Cycle",       ButtonStyle.Secondary),
-        btn("ao_rerun_hist",          "📜 Rerun Historical",  ButtonStyle.Secondary),
         btn("ao_lottery",             "🎰 Draft Lottery",     ButtonStyle.Secondary),
       );
       break;

@@ -34,7 +34,7 @@ import {
 } from "../db/db-helpers.js";
 import { repairUserRecords } from "../db/repair-records.js";
 import { assignRosterLegends } from "../economy/roster-legend-assign.js";
-import { runEosTestRun } from "../../commands/admin/admin-eos-testrun.js";
+import { runEosTestRun } from "./admin-helpers/eos-testrun.js";
 import { runEosAutoPost } from "../franchise/eos-auto-post.js";
 import {
   computePlayoffSeeds,

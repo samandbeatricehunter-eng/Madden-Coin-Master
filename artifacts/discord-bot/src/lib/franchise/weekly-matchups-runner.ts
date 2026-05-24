@@ -8,7 +8,6 @@ import { eq, and, asc, isNotNull } from "drizzle-orm";
 import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "../helpers/gotw-helpers.js";
-import { cacheMatchupsForTwitter } from "../discord/league-twitter.js";
 import { getRosterSeasonId, getScheduleSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 const MIN_COMPLETED_STATUS = 2;
 
@@ -262,13 +261,6 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   }
 
   await (targetCh as TextChannel).send({ embeds: [embed] });
-
-  // Cache matchup list for League Twitter
-  await cacheMatchupsForTwitter(
-    season.id,
-    `Week ${displayWeekNum}`,
-    games.map(g => ({ homeTeamName: g.homeTeamName, awayTeamName: g.awayTeamName })),
-  );
 
   // ── Build reply base + send GOTW prompt ───────────────────────────────────
   let baseContent =

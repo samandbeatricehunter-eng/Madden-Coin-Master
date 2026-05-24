@@ -13,7 +13,7 @@ import {
 import { db } from "@workspace/db";
 import {
   seasonsTable, franchiseScheduleTable, usersTable, gameChannelsTable,
-  gotwHistoryTable, franchiseMcaTeamsTable, leagueTwitterTable,
+  gotwHistoryTable, franchiseMcaTeamsTable,
   playerSeasonStatsTable, playerStatWeekProcessedTable,
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
   defaultTeamLogosTable, waitlistTable,
@@ -29,38 +29,29 @@ import {
 } from "../db/db-helpers.js";
 import { WEEK_SEQUENCE, weekLabel } from "../helpers/week-helpers.js";
 import { lookupNflDivision } from "../constants.js";
-import { generateFranchiseArticle, generateWeekPreview } from "../franchise/franchise-article.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../franchise/wildcard-automation.js";
 import { runEosAutoPost } from "../franchise/eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
-import { sendArticleChunked } from "../franchise/send-article.js";
 import { runWeeklyMatchupsFlow } from "../franchise/weekly-matchups-runner.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults, autoDivisionBonus } from "../franchise/playoff-matchups-runner.js";
 import axios from "axios";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../helpers/gotw-helpers.js";
-import { checkAndNotifyWaitlist } from "../../commands/league/waitlist.js";
+import { checkAndNotifyWaitlist } from "../league/waitlist-helpers.js";
 import { buildMatchupBanner, resolveLogoBuf } from "../discord/matchup-image.js";
-import { generateMatchupBreakdown } from "../discord/matchup-ai-breakdown.js";
 import { globalLogoPath } from "../franchise/gcs-reader.js";
-import { buildAdminOpsEmbed, buildAdminOpsRows } from "../../commands/admin/admin-operations.js";
+import { buildAdminOpsEmbed, buildAdminOpsRows } from "./admin-helpers/admin-ops-ui.js";
 import { buildPayoutHubEmbed, buildPayoutHubRows } from "./admin-payout-handlers.js";
 import { buildUserDataHubEmbed, buildUserDataHubRows } from "./admin-user-handlers.js";
 import {
   buildTroubleshootEmbed, buildTroubleshootRows,
   handleTsMilestoneAudit,
 } from "./admin-troubleshoot-handlers.js";
-import { runNewServerInit, runExistingServerInit } from "../../commands/admin/admin-initialize.js";
+import { runNewServerInit, runExistingServerInit } from "./admin-helpers/server-init.js";
 import { registerCommandsForGuild } from "../discord/register-commands.js";
 import { buildLeagueDataMainMenu } from "./league-data-handlers.js";
 import { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "../db/server-settings.js";
 import { setGuildChannel } from "../db/db-helpers.js";
 import { rebuildHistoricalChannel } from "../franchise/wildcard-automation.js";
-import OpenAI from "openai";
-
-const openaiClient = new OpenAI({
-  baseURL: process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"],
-  apiKey:  process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "dummy",
-});
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -305,28 +296,6 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
   }
   if (id === "ao_modal_post_game_channels") {
     await handlePostGameChannelsModal(interaction as ModalSubmitInteraction);
-    return true;
-  }
-
-  // ── Post Custom Article ───────────────────────────────────────────────────────
-  if (id === "ao_post_custom_article") {
-    await handlePostCustomArticle(interaction as ButtonInteraction);
-    return true;
-  }
-  if (id === "ao_modal_custom_article") {
-    await handleModalCustomArticle(interaction as ModalSubmitInteraction);
-    return true;
-  }
-
-  // ── Rerun Media Cycle ─────────────────────────────────────────────────────────
-  if (id === "ao_rerun_media") {
-    await handleRerunMedia(interaction as ButtonInteraction);
-    return true;
-  }
-
-  // ── Rerun Season Historical ───────────────────────────────────────────────────
-  if (id === "ao_rerun_hist") {
-    await handleRerunHist(interaction as ButtonInteraction);
     return true;
   }
 
@@ -910,188 +879,6 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
-}
-
-// ── Post Custom Article ────────────────────────────────────────────────────────
-
-async function handlePostCustomArticle(interaction: ButtonInteraction) {
-  const modal = new ModalBuilder()
-    .setCustomId("ao_modal_custom_article")
-    .setTitle("Post Custom AI Article");
-
-  modal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId("article_prompt")
-        .setLabel("Article Topic / Prompt")
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder("e.g. Write a feature piece on the MVP race heading into playoffs...")
-        .setRequired(true)
-        .setMaxLength(1500),
-    ),
-  );
-
-  await interaction.showModal(modal);
-}
-
-async function handleModalCustomArticle(interaction: ModalSubmitInteraction) {
-  const guildId = interaction.guildId!;
-  const prompt  = interaction.fields.getTextInputValue("article_prompt").trim();
-
-  await interaction.deferReply({ ephemeral: true });
-
-  try {
-    const headlinesChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.HEADLINES);
-    if (!headlinesChannelId) {
-      await interaction.editReply({ content: "❌ No headlines channel configured. Set it via `/adminserver link_channel`." });
-      return;
-    }
-
-    const channel = (interaction.client.channels.cache.get(headlinesChannelId)
-      ?? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null)) as TextChannel | null;
-    if (!channel?.isTextBased()) {
-      await interaction.editReply({ content: "❌ Headlines channel not found or inaccessible." });
-      return;
-    }
-
-    const response = await openaiClient.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are an award-winning sports journalist covering The R.E.C. League — a competitive Madden NFL franchise simulation league.",
-            "Write in a bold, energetic, ESPN-style voice.",
-            "Use vivid prose paragraphs. Do NOT use markdown headers (##, ###) or bullet points — just flowing, punchy paragraphs.",
-            "Keep the article between 400–600 words unless the prompt implies a shorter piece.",
-            "IMPORTANT: Always start your response with a single line in exactly this format:",
-            "HEADLINE: <your headline here>",
-            "Then leave one blank line, then write the article body.",
-          ].join("\n"),
-        },
-        { role: "user", content: prompt },
-      ],
-      max_tokens: 1200,
-      temperature: 0.85,
-    });
-
-    const raw = response.choices[0]?.message?.content ?? "";
-    const lines = raw.split("\n");
-    const headlineLine = lines.find(l => l.startsWith("HEADLINE:"));
-    const headline = headlineLine ? headlineLine.replace("HEADLINE:", "").trim() : "Breaking News";
-    const bodyStart = headlineLine ? lines.indexOf(headlineLine) + 2 : 0;
-    const article   = lines.slice(bodyStart).join("\n").trim();
-
-    const header = `📰 **${headline}**\n\n`;
-    await (sendArticleChunked as Function)(channel, header, article);
-
-    await interaction.editReply({ content: `✅ Custom article posted to <#${headlinesChannelId}>.` });
-  } catch (err) {
-    console.error("[admin-operations] Custom article error:", err);
-    await interaction.editReply({ content: `❌ Failed to generate or post article: ${err}` });
-  }
-}
-
-// ── Rerun Media Cycle ──────────────────────────────────────────────────────────
-
-async function handleRerunMedia(interaction: ButtonInteraction) {
-  const guildId = interaction.guildId!;
-
-  await interaction.update({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Yellow)
-        .setTitle("🐦 Rerunning Media Cycle...")
-        .setDescription("Triggering league Twitter burst for the current week..."),
-    ],
-    components: [],
-  });
-
-  try {
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Media Cycle Triggered")
-          .setDescription("League Twitter burst has been triggered for this week. Posts will appear shortly."),
-      ],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
-        ) as ActionRowBuilder<any>,
-      ],
-    });
-  } catch (err) {
-    console.error("[admin-operations] Rerun media error:", err);
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("❌ Media Cycle Failed")
-          .setDescription(`Error: ${err}`),
-      ],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-        ) as ActionRowBuilder<any>,
-      ],
-    });
-  }
-}
-
-// ── Rerun Season Historical ────────────────────────────────────────────────────
-
-async function handleRerunHist(interaction: ButtonInteraction) {
-  const guildId = interaction.guildId!;
-
-  await interaction.update({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Yellow)
-        .setTitle("📜 Rebuilding Historical Records Channel...")
-        .setDescription("This may take a moment — please wait."),
-    ],
-    components: [],
-  });
-
-  try {
-    const season = await getOrCreateActiveSeason(guildId);
-    const guild  = interaction.guild;
-    if (!guild) throw new Error("Guild not available.");
-
-    await rebuildHistoricalChannel(interaction.client, season.id, season.seasonNumber ?? season.id, guild);
-
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Green)
-          .setTitle("✅ Historical Channel Rebuilt")
-          .setDescription(`Season ${season.seasonNumber ?? season.id} historical records channel has been rebuilt.`),
-      ],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
-        ) as ActionRowBuilder<any>,
-      ],
-    });
-  } catch (err) {
-    console.error("[admin-operations] Rerun historical error:", err);
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("❌ Historical Rebuild Failed")
-          .setDescription(`Error: ${err}`),
-      ],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-        ) as ActionRowBuilder<any>,
-      ],
-    });
-  }
 }
 
 // ── Waitlist Hub ───────────────────────────────────────────────────────────────
@@ -2124,7 +1911,6 @@ const MANUAL_LINKABLE: { label: string; value: string; description: string }[] =
   { label: "Matchups",            value: CHANNEL_KEYS.MATCHUPS,            description: "Weekly matchups post"           },
   { label: "Schedule",            value: CHANNEL_KEYS.SCHEDULE,            description: "Season schedule"               },
   { label: "GOTW",                value: CHANNEL_KEYS.GOTW,                description: "Game of the Week poll"         },
-  { label: "League Twitter",      value: CHANNEL_KEYS.LEAGUE_TWITTER,      description: "AI Twitter feed"               },
   { label: "Headlines",           value: CHANNEL_KEYS.HEADLINES,           description: "Media headlines"               },
   { label: "GOTY",                value: CHANNEL_KEYS.GOTY,                description: "Game of the Year"              },
   { label: "Draft Tracker",       value: CHANNEL_KEYS.DRAFT_TRACKER,       description: "Draft tracker"                 },
@@ -2447,8 +2233,6 @@ async function handleAdvanceWeek(interaction: ButtonInteraction) {
           "• Create matchup channels for H2H games\n" +
           "• Award GOTW participation bonuses\n" +
           "• Process playoff payouts (if applicable)\n" +
-          "• Post AI franchise articles\n" +
-          "• Trigger League Twitter burst\n" +
           "• And more...\n\n" +
           "**Are you sure?**"
         ),
@@ -2529,7 +2313,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     getGuildChannel(guildId, CHANNEL_KEYS.MATCHUPS),
     getGuildChannel(guildId, CHANNEL_KEYS.SCHEDULE),
     getGuildChannel(guildId, CHANNEL_KEYS.ANNOUNCEMENTS),
-    getGuildChannel(guildId, CHANNEL_KEYS.LEAGUE_TWITTER),
   ])).filter((id): id is string => !!id);
 
   const currentIdx    = WEEK_SEQUENCE.indexOf(season.currentWeek ?? "1");
@@ -3155,65 +2938,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
 
   await interaction.editReply({ embeds: [embed], components: [backRow] });
 
-  // ── Franchise articles ────────────────────────────────────────────────────
-  if (!isNaN(oldWeekNum) && oldWeekNum >= 1 && oldWeekNum <= 18 && newWeek !== "1" && guild) {
-    const headlinesChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.HEADLINES);
-    const headlinesChannel   = headlinesChannelId
-      ? (interaction.client.channels.cache.get(headlinesChannelId) ?? await interaction.client.channels.fetch(headlinesChannelId).catch(() => null))
-      : null;
-
-    if (headlinesChannel && headlinesChannel.isTextBased()) {
-      (async () => {
-        const tc = headlinesChannel as TextChannel;
-        const completedWeekIndex = oldWeekNum - 1;
-
-        try {
-          const recapArticle = await generateFranchiseArticle(
-            season.id,
-            season.seasonNumber,
-            completedWeekIndex,
-            weekLabel(newWeek),
-          );
-          await sendArticleChunked(
-            tc,
-            `@everyone\n📰 **REC League — Week ${oldWeekNum} Recap**\n\n`,
-            recapArticle,
-          );
-        } catch (err) {
-          console.error("[admin-operations] Failed to generate recap article:", err);
-          try {
-            await tc.send({
-              content: `📰 **REC League — Week ${oldWeekNum} Recap**\n\n_The AI recap could not be generated for this week._`,
-            });
-          } catch { /* nothing */ }
-        }
-
-        const newWeekNum2 = parseInt(newWeek, 10);
-        if (!isNaN(newWeekNum2) && newWeekNum2 >= 1 && newWeekNum2 <= 18) {
-          try {
-            const previewArticle = await generateWeekPreview(
-              season.id,
-              season.seasonNumber,
-              newWeekNum2 - 1,
-            );
-            await sendArticleChunked(
-              tc,
-              `@everyone\n📋 **REC League — Week ${newWeekNum2} Preview**\n\n`,
-              previewArticle,
-            );
-          } catch (err) {
-            console.error("[admin-operations] Failed to generate preview article:", err);
-            try {
-              await tc.send({
-                content: `📋 **REC League — Week ${newWeekNum2} Preview**\n\n_The AI preview could not be generated for this week._`,
-              });
-            } catch { /* nothing */ }
-          }
-        }
-      })();
-    }
-  }
-
   // ── Wildcard automation + auto-reseed + division bonus + matchup flow ─────
   if (newWeek === "wildcard" && season.currentWeek === "18") {
     (async () => {
@@ -3420,12 +3144,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         } catch (err) {
           console.error(`[admin-operations] Could not wipe channel ${chId}:`, err);
         }
-      }
-
-      try {
-        await db.delete(leagueTwitterTable).where(eq(leagueTwitterTable.seasonId, season.id));
-      } catch (err) {
-        console.error("[admin-operations] Failed to wipe league twitter DB rows:", err);
       }
 
       try {

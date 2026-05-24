@@ -9,7 +9,6 @@ import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel } from "../helpers/gotw-helpers.js";
 import { addBalance, logTransaction, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
-import { cacheMatchupsForTwitter } from "../discord/league-twitter.js";
 const MIN_COMPLETED_STATUS = 2;
 
 // ── Playoff week metadata ──────────────────────────────────────────────────────
@@ -161,15 +160,6 @@ export async function runPlayoffMatchupsFlow(
     await (matchupsCh as TextChannel).send({ embeds: [embed] }).catch(err =>
       console.error("[playoff-runner] Failed to post matchups embed:", err),
     );
-
-    // Cache matchup list for League Twitter (4-hour freshness window)
-    if (h2hGames.length > 0) {
-      await cacheMatchupsForTwitter(
-        season.id,
-        label,
-        h2hGames.map(g => ({ homeTeamName: g.homeTeamName, awayTeamName: g.awayTeamName })),
-      );
-    }
   }
 
   if (h2hGames.length === 0) {

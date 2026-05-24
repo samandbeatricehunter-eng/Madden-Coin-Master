@@ -3,11 +3,11 @@ import {
   ActionRowBuilder, ButtonBuilder, StringSelectMenuBuilder,
   EmbedBuilder, PermissionFlagsBits,
 } from "discord.js";
-import { isAdminUser, getOrCreateActiveSeason } from "../../lib/db/db-helpers.js";
-import { weekLabel } from "../../lib/helpers/week-helpers.js";
-import { buildAdminHubPage } from "../../lib/menu/menu-hub.js";
+import { isAdminUser, getOrCreateActiveSeason } from "../../db/db-helpers.js";
+import { weekLabel } from "../../helpers/week-helpers.js";
+import { buildAdminHubPage } from "../../menu/menu-hub.js";
 
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("admin-menu")
   .setDescription("Admin hub — manage week, season, payouts, rules, and all league settings")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
@@ -23,7 +23,7 @@ export function buildAdminOpsRows(): ActionRowBuilder<ButtonBuilder | StringSele
   return buildAdminHubPage().rows as ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[];
 }
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+async function execute(interaction: ChatInputCommandInteraction) {
   const gid  = interaction.guildId!;
   const uid  = interaction.user.id;
 

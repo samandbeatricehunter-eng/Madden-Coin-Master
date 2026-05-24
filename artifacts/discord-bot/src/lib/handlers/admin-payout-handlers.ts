@@ -11,7 +11,7 @@ import {
   h2hMatchupRecordsTable, franchiseProcessedGamesTable,
   globalUserRecordsTable, franchiseScheduleTable,
   franchiseMcaTeamsTable, coinTransactionsTable,
-  seasonStatTierConfigsTable, guildTweetsTable, interviewRequestsTable,
+  seasonStatTierConfigsTable, interviewRequestsTable,
 } from "@workspace/db";
 import { eq, and, sql, isNotNull, isNull, desc, inArray } from "drizzle-orm";
 import {
@@ -65,7 +65,6 @@ export function buildPayoutHubRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ap_milestone").setLabel("Set Milestone Payouts & Tiers").setStyle(ButtonStyle.Secondary),
   );
   const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ap_tweetpayout").setLabel("🟡 Tweet Payouts").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ap_interviewpayout").setLabel("🔵 Interview Payouts").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ap_close").setLabel("✖ Close Hub").setStyle(ButtonStyle.Danger),
   );
@@ -2163,28 +2162,6 @@ export async function handleMilestoneEditModal(interaction: ModalSubmitInteracti
   await interaction.editReply({
     content: `✅ Milestone Tier ${tier} updated: **${wins} wins** → **+${bonus} coins**`,
   });
-}
-
-// ── Set Tweet Payout Amount ────────────────────────────────────────────────────
-export async function handleTweetPayout(interaction: ButtonInteraction): Promise<void> {
-  if (!await checkAdmin(interaction)) { await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return; }
-  const current = await getPayoutValue(PAYOUT_KEYS.TWEET_PAYOUT, interaction.guildId!);
-  const modal = new ModalBuilder().setCustomId("ap_modal_tweetpayout").setTitle("Set Tweet Payout Amount");
-  modal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder().setCustomId("amount").setLabel(`Coins per tweet submission (current: ${current})`).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(4).setPlaceholder(String(current))
-    ),
-  );
-  await interaction.showModal(modal);
-}
-
-export async function handleTweetPayoutModal(interaction: ModalSubmitInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-  const raw = interaction.fields.getTextInputValue("amount").trim();
-  const val = parseInt(raw, 10);
-  if (isNaN(val) || val < 0) { await interaction.editReply({ content: "❌ Invalid amount." }); return; }
-  await setPayoutValue(PAYOUT_KEYS.TWEET_PAYOUT, val, interaction.user.id, interaction.guildId!);
-  await interaction.editReply({ content: `✅ Tweet payout set to **${val} coins** per submission.` });
 }
 
 // ── Set Interview Payout Amount ───────────────────────────────────────────────

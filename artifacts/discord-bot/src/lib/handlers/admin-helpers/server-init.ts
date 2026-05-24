@@ -16,11 +16,11 @@ import {
 import { db } from "@workspace/db";
 import { seasonsTable, usersTable, serverSettingsTable, legendsTable } from "@workspace/db";
 import { eq, and, isNotNull, sql } from "drizzle-orm";
-import { isAdminUser, setGuildChannel, CHANNEL_KEYS, DEFAULT_RULES, SECTION_META } from "../../lib/db/db-helpers.js";
-import { getServerSettings } from "../../lib/db/server-settings.js";
-import { registerCommandsForGuild } from "../../lib/discord/register-commands.js";
-import { NFL_TEAMS } from "../../lib/constants.js";
-import { DEFAULT_LEGENDS } from "../../lib/economy/default-legends.js";
+import { isAdminUser, setGuildChannel, CHANNEL_KEYS, DEFAULT_RULES, SECTION_META } from "../../db/db-helpers.js";
+import { getServerSettings } from "../../db/server-settings.js";
+import { registerCommandsForGuild } from "../../discord/register-commands.js";
+import { NFL_TEAMS } from "../../constants.js";
+import { DEFAULT_LEGENDS } from "../../economy/default-legends.js";
 
 // ── Channel name → DB key mapping ─────────────────────────────────────────────
 const CHANNEL_KEY_MAP: Record<string, string> = {
@@ -30,7 +30,6 @@ const CHANNEL_KEY_MAP: Record<string, string> = {
   "season-schedule":       CHANNEL_KEYS.SCHEDULE,
   "weekly-matchups":       CHANNEL_KEYS.MATCHUPS,
   "weekly-gotw-spotlight":    CHANNEL_KEYS.GOTW,
-  "league-twitter":           CHANNEL_KEYS.LEAGUE_TWITTER,
   "league-headlines":         CHANNEL_KEYS.HEADLINES,
   "h2h-goty-candidates":      CHANNEL_KEYS.GOTY,
   "position-change-requests": CHANNEL_KEYS.DRAFT_TRACKER,
@@ -99,7 +98,6 @@ const SERVER_BLUEPRINT: CategoryDef[] = [
   {
     name: "📰 R.E.C. LEAGUE MEDIA",
     channels: [
-      { name: "league-twitter",      topic: "AI-generated league news feed",                    readOnly: true },
       { name: "league-headlines",    topic: "Season recap headlines posted by bot",             readOnly: true },
       { name: "highlights",          topic: "Share your best plays and highlights"                             },
       { name: "streams",             topic: "Post your stream links here"                                      },
@@ -146,7 +144,7 @@ const SETUP_STEPS = [
 ];
 
 // ── Command definition ─────────────────────────────────────────────────────────
-export const data = new SlashCommandBuilder()
+const data = new SlashCommandBuilder()
   .setName("initialize-server")
   .setDescription("First-time server setup: creates channels, roles, team slots, and walks through configuration")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -207,7 +205,7 @@ export const data = new SlashCommandBuilder()
   );
 
 // ── Execute ────────────────────────────────────────────────────────────────────
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const password            = interaction.options.getString("password", true);
   const confirm             = interaction.options.getBoolean("confirm", true);
   const startingWeek        = interaction.options.getString("starting_week")  ?? "training_camp";
@@ -547,7 +545,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     `📅 ${channelMentions["season-schedule"]           ?? "#season-schedule"}         — Schedule`,
     `🏟️ ${channelMentions["weekly-matchups"]           ?? "#weekly-matchups"}         — Matchups`,
     `🗳️ ${channelMentions["weekly-gotw-spotlight"]     ?? "#weekly-gotw-spotlight"}   — GOTW Spotlight`,
-    `🐦 ${channelMentions["league-twitter"]            ?? "#league-twitter"}          — League Twitter`,
     `📰 ${channelMentions["league-headlines"]          ?? "#league-headlines"}        — Headlines`,
     `🆚 ${channelMentions["h2h-goty-candidates"]       ?? "#h2h-goty-candidates"}     — GOTY`,
     `📋 ${channelMentions["position-change-requests"]  ?? "#position-change-requests"} — Position Changes`,
@@ -906,7 +903,6 @@ export async function runNewServerInit(opts: NewServerInitOptions): Promise<{
           `💬 ${channelMentions["general-discussion"]      ?? "#general-discussion"} — General`,
           `📅 ${channelMentions["season-schedule"]         ?? "#season-schedule"} — Schedule`,
           `🏟️ ${channelMentions["weekly-matchups"]         ?? "#weekly-matchups"} — Matchups`,
-          `🐦 ${channelMentions["league-twitter"]          ?? "#league-twitter"} — League Twitter`,
           `📰 ${channelMentions["league-headlines"]        ?? "#league-headlines"} — Headlines`,
           `🔒 ${channelMentions["commissioners-office"]    ?? "#commissioners-office"} — Commissioner (private)`,
           `🎊 ${channelMentions["end-of-season-payouts"]   ?? "#end-of-season-payouts"} — EOS Payouts`,

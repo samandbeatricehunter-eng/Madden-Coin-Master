@@ -4,8 +4,7 @@
  */
 
 import {
-  ChatInputCommandInteraction, EmbedBuilder, Colors,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel,
+  ChatInputCommandInteraction,
   AutocompleteInteraction,
 } from "discord.js";
 import { db } from "@workspace/db";
@@ -13,7 +12,6 @@ import {
   usersTable, franchiseRostersTable, franchiseMcaTeamsTable,
 } from "@workspace/db";
 import { eq, and, ilike, or, sql } from "drizzle-orm";
-import { getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 import { errorEmbed } from "../discord/embeds.js";
 
 export const DEV_LABEL: Record<number, string> = { 0: "Normal", 1: "Star", 2: "Superstar", 3: "X-Factor" };
@@ -34,176 +32,16 @@ export function insufficientFunds(
 }
 
 // ── Commissioner notification ──────────────────────────────────────────────────
+// No-op: commissioner-facing notifications are now surfaced through the
+// pending-transactions hub instead of being posted into a designated channel.
 export async function sendCommissionerNotification(
-  interaction: ChatInputCommandInteraction,
+  _interaction: ChatInputCommandInteraction,
   type: string,
   purchaseId: number,
-  details: Record<string, string | number | undefined>,
+  _details: Record<string, string | number | undefined>,
 ) {
-  try {
-    const gid = interaction.guildId!;
-
-    // Route to the appropriate log channel based on purchase type
-    const isUpgrade    = type === "dev_upgrade" || type === "age_reset" || type === "attribute"
-      || type === "contract_extension" || type === "salary_reduction" || type === "bonus_reduction";
-    const isDraftBuy   = type === "legend" || type.startsWith("custom_player");
-
-    let channelId: string | null = null;
-    if (isUpgrade) {
-      channelId = await getGuildChannel(gid, CHANNEL_KEYS.UPGRADES_LOG)
-        ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
-        ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER)
-        ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? null;
-    } else if (isDraftBuy) {
-      channelId = await getGuildChannel(gid, CHANNEL_KEYS.DRAFT_PURCHASES_LOG)
-        ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER_LOG)
-        ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER)
-        ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? null;
-    } else {
-      channelId = await getGuildChannel(gid, CHANNEL_KEYS.TRANSACTION_LOG)
-        ?? await getGuildChannel(gid, CHANNEL_KEYS.TRANSACTIONS)
-        ?? await getGuildChannel(gid, CHANNEL_KEYS.COMMISSIONER)
-        ?? process.env["DISCORD_COMMISSIONER_CHANNEL_ID"] ?? null;
-    }
-    if (!channelId) return;
-    const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
-    if (!channel?.isTextBased()) return;
-
-    let title        = "";
-    let description  = "";
-    let buttonLabel  = "✅ Mark as Applied";
-
-    if (type === "legend") {
-      title = "🏆 Legend Purchase Request";
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        `**Legend:** ${details["legendName"]} (${details["legendPosition"]})`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Once you've added this player to the draft pool, click the button below to notify the member.",
-      ].join("\n");
-      buttonLabel = "✅ Added to Draft Pool";
-    } else if (type === "dev_upgrade") {
-      const costPer  = details["costPer"];
-      const fromDev  = details["currentDevLabel"] ?? "?";
-      const toDev    = details["devUpType"] ?? "?";
-      title = "📈 Dev Upgrade Request";
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
-        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-        `**Dev Level:** ${fromDev} → ${toDev}`,
-        `**Cost:** ${costPer} coins`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Click the button below once this has been applied in-game.",
-      ].filter(Boolean).join("\n");
-    } else if (type === "age_reset") {
-      const costPer   = details["costPer"];
-      const ageBefore = details["currentAge"] ? `${details["currentAge"]} → 23` : "→ 23";
-      title = "🔄 Age Reset Request";
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
-        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-        `**Age:** ${ageBefore}`,
-        `**Cost:** ${costPer} coins`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Click the button below once this has been applied in-game.",
-      ].filter(Boolean).join("\n");
-    } else if (type.startsWith("custom_player")) {
-      title = `🎨 Custom Player Request — ${details["tier"]}`;
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-        `**Tier:** ${details["tier"]}`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Click the button below once this has been applied in-game.",
-      ].join("\n");
-    } else if (type === "contract_extension") {
-      title = "📝 Contract Extension Request (1YR)";
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
-        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-        `**Cost:** ${details["costPer"]} coins`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Click the button below once this has been applied in-game.",
-      ].filter(Boolean).join("\n");
-    } else if (type === "salary_reduction") {
-      title = "💸 Salary Reduction Request";
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
-        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-        `**Cost:** ${details["costPer"]} coins`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Click the button below once this has been applied in-game.",
-      ].filter(Boolean).join("\n");
-    } else if (type === "bonus_reduction") {
-      title = "💰 Bonus Reduction Request";
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        details["ownerNote"] ? `**${details["ownerNote"]}**` : null,
-        `**Player:** ${details["playerName"]} (${details["playerPosition"]})`,
-        `**Cost:** ${details["costPer"]} coins`,
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        "Click the button below once this has been applied in-game.",
-      ].filter(Boolean).join("\n");
-    } else if (type.startsWith("training_")) {
-      const tierLabel = type === "training_gold" ? "🥇 Gold" : type === "training_silver" ? "🥈 Silver" : "🥉 Bronze";
-      const goalLabel = details["trainingGoal"] === "speed"    ? "⚡ Speed"
-                      : details["trainingGoal"] === "power"    ? "💪 Power"
-                      : details["trainingGoal"] === "position" ? "🎯 Position Focused"
-                      : "⚖️ Balanced";
-      const lotteryBlock = details["trainingResults"]
-        ? String(details["trainingResults"])
-        : details["attributeName"] ? `+${details["points"] ?? "?"} ${details["attributeName"]}` : "—";
-      const applyLine = details["attributeName"]
-        ? `Apply the above attribute upgrades to **${details["playerName"] ?? "their chosen player"}**.`
-        : `Apply the training upgrades for **${details["playerName"] ?? "their chosen player"}**.`;
-      title = `🎓 Training Package — ${tierLabel}`;
-      description = [
-        `**User:** ${interaction.user.toString()} (${interaction.user.username})`,
-        `**Tier:** ${tierLabel}`,
-        details["trainingGoal"] ? `**Training Goal:** ${goalLabel}` : null,
-        details["playerName"] ? `**Player:** ${details["playerName"]}${details["playerPos"] ? ` (${details["playerPos"]})` : ""}` : null,
-        "",
-        `**🎲 Lottery Results:**\n${lotteryBlock}`,
-        "",
-        `**Purchase ID:** #${purchaseId}`,
-        "",
-        applyLine,
-      ].filter(v => v !== null).join("\n");
-      buttonLabel = "✅ Applied in Game";
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Orange)
-      .setTitle(title)
-      .setDescription(description)
-      .setTimestamp();
-
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`approve_purchase:${purchaseId}:${interaction.user.id}:${type}`)
-        .setLabel(buttonLabel)
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`refund_purchase:${purchaseId}:${interaction.user.id}:${type}`)
-        .setLabel("🔄 Refund")
-        .setStyle(ButtonStyle.Danger),
-    );
-
-    await (channel as TextChannel).send({ embeds: [embed], components: [row] });
-  } catch (err) {
-    console.error("Commissioner notification failed (purchase still completed):", err);
-  }
+  console.log(`[purchase-shared] sendCommissionerNotification no-op: type=${type} purchaseId=${purchaseId}`);
+  return;
 }
 
 // ── Roster row lookup (shared by autocomplete in devup / agereset / attribute) ─

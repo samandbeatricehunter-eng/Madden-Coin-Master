@@ -80,8 +80,6 @@ export const PAYOUT_KEYS = {
   // ── Stat reimport safe mode (1 = active, 0 = disabled) ───────────────────────
   STAT_SAFE_MODE: "stat.safe_mode",
   // ── Member activity payouts ──────────────────────────────────────────────────
-  TWEET_PAYOUT:        "tweet_payout",          // coins per tweet post (default 5)
-  TWEET_WEEKLY_LIMIT:  "tweet_weekly_limit",    // max paid tweets per week (default 2)
   INTERVIEW_PAYOUT:    "interview_payout",      // coins per interview submission (default 10)
 } as const;
 
@@ -163,8 +161,6 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   // ── Stat reimport safe mode ────────────────────────────────────────────────────
   "stat.safe_mode":    { value: 0,   description: "Stat reimport safe mode (1 = active — EOS payouts blocked)",       category: "System"            },
   // ── Member activity payouts ───────────────────────────────────────────────────
-  tweet_payout:        { value: 5,   description: "Coins awarded per member tweet post",                               category: "Activity Payouts"  },
-  tweet_weekly_limit:  { value: 2,   description: "Max paid tweets per user per week (0 = no limit)",                  category: "Activity Payouts"  },
   interview_payout:    { value: 10,  description: "Coins awarded per approved interview submission",                    category: "Activity Payouts"  },
 };
 

@@ -88,10 +88,21 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       return true;
     }
     const validAdmin: AdminCategoryId[] = [
+      "commissioner_office",
       "week", "ao_payouts", "post", "league_data", "user_data", "store", "server", "troubleshoot",
     ];
     if (!validAdmin.includes(value as AdminCategoryId)) {
       await interaction.reply({ content: "❌ Unknown admin option (this menu may have expired).", ephemeral: true });
+      return true;
+    }
+    // Commissioner's Office → render the pending-transactions hub directly
+    if (value === "commissioner_office") {
+      const { buildCommOfficeEmbed, buildCommOfficeRows } = await import("../handlers/pending-inbox-handlers.js");
+      await interaction.update({
+        embeds: [buildCommOfficeEmbed()],
+        components: buildCommOfficeRows() as any,
+        files: [],
+      });
       return true;
     }
     const page = buildAdminCategoryPage(value as AdminCategoryId, ctx.seasonNum, ctx.weekStr);
