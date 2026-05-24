@@ -11,10 +11,20 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
-  EmbedBuilder,
+  EmbedBuilder, AttachmentBuilder,
 } from "discord.js";
+import path from "path";
 import { THEME, goldEmbed } from "./theme.js";
 import type { ServerSettings } from "./server-settings.js";
+
+// ── Banner image ──────────────────────────────────────────────────────────────
+
+export const MENU_BANNER_FILENAME = "rec-embed-banner.png";
+const MENU_BANNER_PATH = path.join(process.cwd(), "artifacts/discord-bot/assets", MENU_BANNER_FILENAME);
+
+export function buildMenuBannerAttachment(): AttachmentBuilder {
+  return new AttachmentBuilder(MENU_BANNER_PATH, { name: MENU_BANNER_FILENAME });
+}
 
 // ── Category catalog ──────────────────────────────────────────────────────────
 
@@ -57,26 +67,17 @@ const ADMIN_CATEGORIES: CategoryDef<AdminCategoryId>[] = [
 
 // ── Hub embed + selector ──────────────────────────────────────────────────────
 
-function buildHubHeader(settings: ServerSettings, isAdmin: boolean): string {
-  const lines: string[] = [];
-  lines.push("Choose a category from the menu below.");
-  lines.push("All replies are private — only you can see them.");
-  if (!settings.coinEconomy) lines.push("\n_Economy features are disabled by the commissioner._");
-  if (isAdmin) lines.push("\n👑 **You have admin access** — see _League Operations_ for commissioner tools.");
-  return lines.join("\n");
-}
-
+/** Banner-only embed for the top of /menu. No title, description, or footer —
+ *  the banner image is the entire visual. */
 export function buildMenuHubEmbed(
-  settings: ServerSettings,
-  isAdmin: boolean,
-  seasonNum?: number,
-  weekStr?: string,
+  _settings?: ServerSettings,
+  _isAdmin?: boolean,
+  _seasonNum?: number,
+  _weekStr?: string,
 ): EmbedBuilder {
-  return goldEmbed({
-    title: "🏈 League Menu",
-    description: buildHubHeader(settings, isAdmin),
-    seasonNum, weekStr,
-  });
+  return new EmbedBuilder()
+    .setColor(THEME.GOLD)
+    .setImage(`attachment://${MENU_BANNER_FILENAME}`);
 }
 
 function visibleUserCategories(settings: ServerSettings, isAdmin: boolean): CategoryDef<UserCategoryId>[] {
@@ -112,11 +113,7 @@ export function buildMenuHubRows(
     );
 
   const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
-  const closeRow  = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close Menu").setStyle(ButtonStyle.Secondary),
-  );
-
-  return [selectRow, closeRow];
+  return [selectRow];
 }
 
 // ── Sub-pages: each category renders its category embed + ac_ action buttons ──
@@ -344,19 +341,10 @@ export function buildAdminCategoryPage(
 
 // ── Unlinked welcome hub (users not yet on a team) ────────────────────────────
 
-export function buildUnlinkedMenuEmbed(seasonNum?: number, weekStr?: string): EmbedBuilder {
-  return goldEmbed({
-    title: "🏈 Welcome to the League",
-    description:
-      "You are not yet linked to a team. Use the menu below to request a team or browse league info.\n\n" +
-      "**🟢 Team Requests** — open teams, waitlist, request a team\n" +
-      "**🏈 Rosters & Schedule** — browse any team and the schedule\n" +
-      "**📊 League Info** — standings and user stats\n" +
-      "**🏆 Power Rankings** — season, all-time, global\n" +
-      "**📜 Rules** — full league rulebook",
-    seasonNum, weekStr,
-    footer: "Contact a commissioner to get linked · /menu expires after 15 min",
-  });
+export function buildUnlinkedMenuEmbed(_seasonNum?: number, _weekStr?: string): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(THEME.GOLD)
+    .setImage(`attachment://${MENU_BANNER_FILENAME}`);
 }
 
 export function buildUnlinkedMenuRows(): ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] {
@@ -376,10 +364,5 @@ export function buildUnlinkedMenuRows(): ActionRowBuilder<StringSelectMenuBuilde
         .setDescription("Rules and report violations").setEmoji("📜"),
     );
 
-  return [
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
-    ),
-  ];
+  return [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)];
 }

@@ -42,6 +42,7 @@ import {
   type InterviewType,
 } from "../commands/interviewrequest.js";
 import { buildActionsHubEmbed, buildActionsHubRows, buildUnlinkedHubEmbed, buildUnlinkedHubRows } from "../commands/actions.js";
+import { buildMenuBannerAttachment } from "./menu-hub.js";
 import { buildUserProfilePages, buildProfileNavRow, buildProfileBackRow } from "./user-stats-embed.js";
 import { getSavingsInterestRateBps } from "./savings-interest.js";
 import { PLAYOFF_WEEK_META } from "./playoff-matchups-runner.js";
@@ -712,13 +713,18 @@ export async function handleActionsInteraction(
     const wkStr          = weekLabel(season.currentWeek);
 
     if (!user.team && !isAdmin) {
-      await btn.editReply({ embeds: [buildUnlinkedHubEmbed(seasonNum, wkStr)], components: buildUnlinkedHubRows() });
+      await btn.editReply({
+        embeds:     [buildUnlinkedHubEmbed(seasonNum, wkStr)],
+        components: buildUnlinkedHubRows(),
+        files:      [buildMenuBannerAttachment()],
+      });
       return true;
     }
 
     await btn.editReply({
       embeds:     [buildActionsHubEmbed(settings, isAdmin, seasonNum, wkStr)],
       components: buildActionsHubRows(settings, isAdmin),
+      files:      [buildMenuBannerAttachment()],
     });
     return true;
   }

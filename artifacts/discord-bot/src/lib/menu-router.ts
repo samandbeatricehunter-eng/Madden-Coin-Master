@@ -16,11 +16,13 @@ import {
 import {
   buildMenuHubEmbed, buildMenuHubRows,
   buildUserCategoryPage, buildAdminHubPage, buildAdminCategoryPage,
+  buildMenuBannerAttachment,
   type UserCategoryId, type AdminCategoryId,
 } from "./menu-hub.js";
 import { getServerSettings } from "./server-settings.js";
-import { getOrCreateActiveSeason, isAdminUser } from "./db-helpers.js";
+import { getOrCreateActiveSeason, isAdminUser, getOrCreateUser, getSeasonRules } from "./db-helpers.js";
 import { weekLabel } from "./week-helpers.js";
+import { buildTransactionsEmbed } from "./user-stats-embed.js";
 
 async function loadContext(interaction: ButtonInteraction | StringSelectMenuInteraction) {
   const gid = interaction.guildId!;
@@ -68,7 +70,35 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     const page = buildUserCategoryPage(
       value as UserCategoryId, ctx.settings, ctx.isAdmin, ctx.seasonNum, ctx.weekStr,
     );
-    await interaction.update({ embeds: [page.embed], components: page.rows as any });
+
+    // Economy & Social — append the transactions/purchases embed.
+    const embeds = [page.embed];
+    if (value === "economy") {
+      const gid = interaction.guildId!;
+      const uid = interaction.user.id;
+      try {
+        const [user, season, member] = await Promise.all([
+          getOrCreateUser(uid, interaction.user.username, gid),
+          getOrCreateActiveSeason(gid),
+          interaction.guild?.members.fetch(uid).catch(() => null),
+        ]);
+        const rules = await getSeasonRules(season);
+        const displayName =
+          (member as import("discord.js").GuildMember | null)?.nickname
+            ?? interaction.user.displayName
+            ?? interaction.user.username;
+        void user; // user not needed by buildTransactionsEmbed
+        const txEmbed = await buildTransactionsEmbed(
+          uid, gid, season, ctx.settings, rules,
+          interaction.user.displayAvatarURL(), displayName,
+        );
+        embeds.push(txEmbed);
+      } catch (err) {
+        console.error("[menu-router] Failed to build transactions embed for economy:", err);
+      }
+    }
+
+    await interaction.update({ embeds, components: page.rows as any });
     return true;
   }
 
@@ -103,10 +133,11 @@ export async function handleMenuButton(interaction: ButtonInteraction): Promise<
     return true;
   }
 
-  // menu_back → main hub (drop any extra profile-page embeds shown by /menu)
+  // menu_back → main hub (banner + selector)
   await interaction.update({
     embeds:     [buildMenuHubEmbed(ctx.settings, ctx.isAdmin, ctx.seasonNum, ctx.weekStr)],
     components: buildMenuHubRows(ctx.settings, ctx.isAdmin) as any,
+    files:      [buildMenuBannerAttachment()],
   });
   return true;
 }

@@ -6,12 +6,12 @@ import {
 } from "discord.js";
 import { getServerSettings } from "../lib/server-settings.js";
 import type { ServerSettings } from "../lib/server-settings.js";
-import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason, getSeasonRules } from "../lib/db-helpers.js";
+import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
 import { weekLabel } from "../lib/week-helpers.js";
-import { buildUserProfilePages } from "../lib/user-stats-embed.js";
 import {
   buildMenuHubEmbed, buildMenuHubRows,
   buildUnlinkedMenuEmbed, buildUnlinkedMenuRows,
+  buildMenuBannerAttachment,
 } from "../lib/menu-hub.js";
 
 export const data = new SlashCommandBuilder()
@@ -66,27 +66,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const seasonNum = season.seasonNumber;
   const wkStr     = weekLabel(season.currentWeek);
 
-  // ── Unlinked user — show welcome hub ───────────────────────────────────────
+  // ── Unlinked user — banner + selector ──────────────────────────────────────
   if (!user.team && !isAdmin) {
     await interaction.editReply({
       embeds:     [buildUnlinkedMenuEmbed(seasonNum, wkStr)],
       components: buildUnlinkedMenuRows(),
+      files:      [buildMenuBannerAttachment()],
     });
     return;
   }
 
-  // ── Linked user — main hub + profile pages ────────────────────────────────
-  const rules = await getSeasonRules(season);
-  const profilePages = await buildUserProfilePages(
-    uid, gid, user, season, settings, rules,
-    interaction.user.displayAvatarURL(),
-    (member as import("discord.js").GuildMember | null)?.nickname
-      ?? interaction.user.displayName
-      ?? interaction.user.username,
-  );
-
+  // ── Linked user — banner + selector only ──────────────────────────────────
   await interaction.editReply({
-    embeds:     [buildMenuHubEmbed(settings, isAdmin, seasonNum, wkStr), ...profilePages],
+    embeds:     [buildMenuHubEmbed(settings, isAdmin, seasonNum, wkStr)],
     components: buildMenuHubRows(settings, isAdmin),
+    files:      [buildMenuBannerAttachment()],
   });
 }
