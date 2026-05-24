@@ -787,9 +787,9 @@ export const draftPresenceTable = pgTable("draft_presence", {
 
 // ── Game matchup channels (created per week by /advanceweek, deleted on next advance) ──
 export const gameChannelsTable = pgTable("game_channels", {
-  id:           bigserial("id", { mode: "number" }).primaryKey(),
-  seasonId:     bigint("season_id", { mode: "number" }).notNull(),
-  weekIndex:    bigint("week_index", { mode: "number" }).notNull(),
+  id:           serial("id").primaryKey(),
+  seasonId:     integer("season_id").notNull(),
+  weekIndex:    integer("week_index").notNull(),
   channelId:    text("channel_id").notNull(),
   awayTeamName: text("away_team_name").notNull().default(""),
   homeTeamName: text("home_team_name").notNull().default(""),
