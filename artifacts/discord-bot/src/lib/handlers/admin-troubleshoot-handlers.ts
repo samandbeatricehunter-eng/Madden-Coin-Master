@@ -1390,7 +1390,6 @@ export async function handleTsRepostSchedulingHeaders(interaction: ButtonInterac
           `🏈 **${awayProper} @ ${homeProper}**\n` +
           `${awayTag}  vs  ${homeTag}\n` +
           `Schedule your game using the buttons below. Good luck!`,
-        embeds:     [buildHeaderEmbed(sched, deadline)],
         components: [buildHeaderRow(sched)],
       });
       await headerMsg.pin().catch(() => {});

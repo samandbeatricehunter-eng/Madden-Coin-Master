@@ -1,0 +1,32 @@
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.showModal (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:399:22)
+    at async handlePostGameChannels (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:672:3)
+    at async handleAdminOperationsInteraction (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:348:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:320:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: undefined, json: { type: 9, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508218969000251412/aW50ZXJhY3Rpb246MTUwODIxODk2OTAwMDI1MTQxMjpqdkp2UkJOcVB1am11WGQwNUxzUEU2Y2hFa2E5WDZaYWJvckMyUnVKaU52T3lxVVlBSmd1Qm5NaUg2Y0FJNVo3dWZ5Y2lsNk4xMkxpUGtta0hNV285U2IyWTNtYWpORE8zY0FmZ2RNbGtYS1FpMHFMVHpidGdHN2htTW9kWXZ3ZQ/callback?with_response=false'
+}
+[modal] ao_modal_post_game_channels: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ModalSubmitInteraction.deferReply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:122:22)
+    at async handlePostGameChannelsModal (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:676:3)
+    at async handleAdminOperationsInteraction (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:352:5)
+    at async handleModal (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2362:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:233:11) {
+  requestBody: { files: undefined, json: { type: 5, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508218977103511735/aW50ZXJhY3Rpb246MTUwODIxODk3NzEwMzUxMTczNTpVZjlOdnZxYzdpdW9PY1NlOXhtMGl5a1cxZFRqcnA0bE1mVncwVWVkRXpsVEhjMnl1cFpDMmNlYWg4b2VkeW1WTWVUalF3Y1B5bVNramJqcFQyeXd5M0V6QWM3MGZDSnhuelRQY0dsbEtVbmlCaUc4QWlLMW9JNXVHQ3NwOGJ4Yw/callback?with_response=false'
+}

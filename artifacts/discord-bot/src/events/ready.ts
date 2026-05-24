@@ -13,23 +13,46 @@ export const once = true;
 // Backfills the `team` column on permanent-vault inventory rows that predate
 // the team-stamping feature. Safe to run every startup — it's a no-op once all
 // rows are stamped. Matches discord_id → economy_users.team via a single UPDATE.
-// ── Ensure game_channels.id has a sequence (production DB has bigint with no DEFAULT) ──
-async function ensureGameChannelsSequence(): Promise<void> {
+// ── Ensure id sequences exist + are wired as column defaults ──────────────────
+// Drizzle's `serial("id").primaryKey()` produces an auto-incrementing column,
+// but the production DB has several of these tables with bigint/integer ids
+// and no DEFAULT (created out-of-band before the sequence was set up). Insert
+// then throws `null value in column "id" violates not-null constraint`, which
+// silently breaks downstream work (e.g. ensureScheduleRow → no header posted).
+//
+// This migration is idempotent: creates the sequence if missing, seeds it from
+// MAX(id)+1, then sets the column DEFAULT. Safe to run on every startup.
+async function ensureIdSequence(table: string): Promise<void> {
+  const seq = `${table}_id_seq`;
   try {
-    await db.execute(sql`
+    await db.execute(sql.raw(`
       DO $$
       BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE sequencename = 'game_channels_id_seq') THEN
-          CREATE SEQUENCE game_channels_id_seq;
-          PERFORM setval('game_channels_id_seq', COALESCE((SELECT MAX(id) FROM game_channels), 0) + 1, false);
+        IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE sequencename = '${seq}') THEN
+          CREATE SEQUENCE ${seq};
+          PERFORM setval('${seq}', COALESCE((SELECT MAX(id) FROM ${table}), 0) + 1, false);
         END IF;
-        ALTER TABLE game_channels ALTER COLUMN id SET DEFAULT nextval('game_channels_id_seq');
+        ALTER TABLE ${table} ALTER COLUMN id SET DEFAULT nextval('${seq}');
       END
       $$;
-    `);
-    console.log("[startup-migration] game_channels sequence ensured.");
+    `));
+    console.log(`[startup-migration] ${table} id sequence ensured.`);
   } catch (err) {
-    console.error("[startup-migration] Failed to ensure game_channels sequence:", err);
+    console.error(`[startup-migration] Failed to ensure ${table} id sequence:`, err);
+  }
+}
+
+async function ensureSerialSequences(): Promise<void> {
+  // Tables that use `serial("id").primaryKey()` in the Drizzle schema but may
+  // have a bare integer/bigint id on production with no DEFAULT.
+  for (const t of [
+    "game_channels",
+    "game_schedules",
+    "game_schedule_proposals",
+    "game_status_confirmations",
+    "game_reminder_log",
+  ]) {
+    await ensureIdSequence(t);
   }
 }
 
@@ -228,7 +251,7 @@ export async function execute(client: Client) {
   console.log(`✅ Bot logged in as ${client.user?.tag}`);
 
   // Run data migrations before serving any interactions
-  await ensureGameChannelsSequence();
+  await ensureSerialSequences();
   await backfillPermanentVaultTeams();
   await seedKnownGuildChannels();
   await autoDiscoverChannelsByName(client);

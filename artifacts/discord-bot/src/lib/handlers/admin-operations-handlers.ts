@@ -887,7 +887,6 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
               `🏈 **${awayProper} @ ${homeProper}** — ${displayLabel}\n` +
               `${awayTag}  vs  ${homeTag}\n` +
               `Schedule your game using the buttons below. Good luck!`,
-            embeds:     [buildHeaderEmbed(sched, deadline)],
             components: [buildHeaderRow(sched)],
           });
           await headerMsg.pin().catch(() => {});
@@ -985,7 +984,6 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
             `🏈 **${awayProper} @ ${homeProper}** — ${displayLabel}\n` +
             `${awayTag}  vs  ${homeTag}\n` +
             `Schedule your game using the buttons below. Good luck!`,
-          embeds:     [buildHeaderEmbed(sched, deadline)],
           components: [buildHeaderRow(sched)],
         });
         await headerMsg.pin().catch(() => {});
@@ -3000,13 +2998,17 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
             permissionOverwrites: overwrites,
           });
 
-          await db.insert(gameChannelsTable).values({
-            seasonId:     season.id,
-            weekIndex,
-            channelId:    newChannel.id,
-            awayTeamName: awayProper,
-            homeTeamName: homeProper,
-          });
+          try {
+            await db.insert(gameChannelsTable).values({
+              seasonId:     season.id,
+              weekIndex,
+              channelId:    newChannel.id,
+              awayTeamName: awayProper,
+              homeTeamName: homeProper,
+            });
+          } catch (dbErr) {
+            console.error(`[admin-operations] game_channels INSERT failed for ${chanName}:`, dbErr);
+          }
 
           // ── Scheduling header ────────────────────────────────────────────────
           try {
@@ -3035,7 +3037,6 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
                 `🏈 **${awayProper} @ ${homeProper}** — ${channelWeekDisplayLabel}\n` +
                 `${awayTag}  vs  ${homeTag}\n` +
                 `Schedule your game using the buttons below. Good luck!`,
-              embeds:  [buildHeaderEmbed(sched, deadline)],
               components: [buildHeaderRow(sched)],
             });
             await headerMsg.pin().catch(() => {});
