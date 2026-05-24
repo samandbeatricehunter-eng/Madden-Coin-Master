@@ -54,3 +54,9 @@ id = "8Qyu-ghVt9GdXlLC7Zmx9"
 uri = "file://exports/recbot-refactors-complete.zip"
 type = "unspecified"
 title = "recbot-refactors-complete.zip"
+
+[[outputs]]
+id = "JTMjCgtLiScIO286RYNkF"
+uri = "file://exports/actions-handlers-cleaned.tar.gz"
+type = "unspecified"
+title = "actions-handlers.ts (cleaned) — extract and replace your local file"
