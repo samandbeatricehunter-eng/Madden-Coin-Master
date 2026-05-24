@@ -1,0 +1,66 @@
+PS C:\Users\Hollywood\Desktop\recbot> node -e "const l=require('fs').readFileSync('src/lib/admin-operations-handlers.ts','utf8').split('\n');console.log(l.slice(120,185).map((x,i)=>(i+121)+': '+x).join('\n'))"
+121:       new StringSelectMenuBuilder()
+122:         .setCustomId("ao_manage_server_select")
+123:         .setPlaceholder("Select Server workflow")
+124:         .addOptions(
+125:           { label: "User Data", value: "user_data", description: "Manage user/team data", emoji: "👥" },
+126:           { label: "Store Settings", value: "store_settings", description: "Manage store options", emoji: "🏪" },
+127:           { label: "Server Settings", value: "server_settings", description: "Manage server settings", emoji: "⚙️" },
+128:           { label: "Troubleshoot", value: "troubleshoot", description: "Repair/check bot data", emoji: "🧰" },
+129:           { label: "Report Bug", value: "report_bug", description: "Report a bot issue", emoji: "🐞" },
+130:         ),
+131:     ),
+132:     buildAdminBackRow(),
+133:   ];
+134: }
+135: 
+136: async function showAdminRootMenu(interaction: any) {
+137:   await interaction.update({
+138:     embeds: [new EmbedBuilder().setColor(0xB68B2D).setTitle("Commissioner's Office").setDescription("Select an admin department below.")],
+139:     components: buildAdminRootMenuRows(),
+140:   });
+141: }
+142: 
+143: async function showAdminDepartmentMenu(interaction: any, title: string, description: string, components: any[]) {
+144:   await interaction.update({
+145:     embeds: [new EmbedBuilder().setColor(0xB68B2D).setTitle(title).setDescription(description)],
+146:     components,
+147:   });
+148: }
+149: 
+150:   if (selected === "manage_economy") {
+151:     await interaction.update({
+152:       embeds: [buildAdminEconomyEmbed(season?.seasonNumber ?? undefined, wkStr)],
+153:       components: buildAdminEconomyRows(),
+154:     });
+155:     return;
+156:   }
+157: 
+158:   if (selected === "manage_server") {
+159:     await interaction.update({
+160:       embeds: [buildAdminServerEmbed(season?.seasonNumber ?? undefined, wkStr)],
+161:       components: buildAdminServerRows(),
+162:     });
+163:     return;
+164:   }
+165: 
+166:   await interaction.reply({ content: "Unknown admin department.", ephemeral: true });
+167: }
+168: 
+169: async function handleAdminImportAdvanceSelect(interaction: StringSelectMenuInteraction) {
+170:   const selected = interaction.values[0];
+171: 
+172:   if (selected === "import") return handleLeagueDataHub(interaction as any);
+173:   if (selected === "advance_week") return handleAdvanceWeek(interaction as any);
+174:   if (selected === "set_week") return handleSetWeek(interaction as any);
+175:   if (selected === "set_season") return handleSetSeasonNum(interaction as any);
+176:   if (selected === "run_weekly_matchups") return handleRunWeeklyMatchups(interaction);
+177: 
+178:   await interaction.reply({ content: "Unknown Import/Advance action.", ephemeral: true });
+179: }
+180: 
+181: async function handleAdminEconomySelect(interaction: StringSelectMenuInteraction) {
+182:   const selected = interaction.values[0];
+183:   if (selected === "payouts") return handlePayoutsHub(interaction as any);
+184:   await interaction.reply({ content: "Unknown economy action.", ephemeral: true });
+185: }
