@@ -127,6 +127,7 @@ import {
   handleTsSchedSel,
   handleTsSchedDelete,
   handleTsImportSchedule,
+  handleTsRepostSchedulingHeaders,
 } from "../lib/handlers/admin-troubleshoot-handlers.js";
 import {
   handleLeagueDataButton,
@@ -290,10 +291,11 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ts_eos_reset")         { await handleTsEosReset(interaction);         return; }
   if (action === "ts_eos_reset_confirm") { await handleTsEosResetConfirm(interaction);  return; }
   if (action === "ts_eos_reset_cancel")  { await handleTsEosResetCancel(interaction);   return; }
-  if (action === "ts_repair_schedules")  { await handleTsRepairSchedules(interaction);  return; }
-  if (action === "ts_sched_review_week") { await handleTsSchedReviewWeek(interaction);  return; }
-  if (action === "ts_sched_delete")      { await handleTsSchedDelete(interaction);      return; }
-  if (action === "ts_import_schedule")   { await handleTsImportSchedule(interaction);   return; }
+  if (action === "ts_repair_schedules")     { await handleTsRepairSchedules(interaction);          return; }
+  if (action === "ts_sched_review_week")    { await handleTsSchedReviewWeek(interaction);          return; }
+  if (action === "ts_sched_delete")         { await handleTsSchedDelete(interaction);              return; }
+  if (action === "ts_import_schedule")      { await handleTsImportSchedule(interaction);           return; }
+  if (action === "ts_repost_sched_headers") { await handleTsRepostSchedulingHeaders(interaction);  return; }
 
   // ── League Data wizard — all ld_ prefixed buttons ─────────────────────────
   if (action?.startsWith("ld_")) {

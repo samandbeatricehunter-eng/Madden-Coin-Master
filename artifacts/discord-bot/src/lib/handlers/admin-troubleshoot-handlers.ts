@@ -11,6 +11,7 @@
  *   ts_repair_schedules | ts_sched_review_week | ts_sched_sel | ts_sched_delete:<id>
  *   ts_modal_sched_week (modal)
  *   ts_import_schedule
+ *   ts_repost_sched_headers
  */
 
 import {
@@ -19,12 +20,12 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   ModalBuilder, TextInputBuilder, TextInputStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
-  TextChannel,
+  TextChannel, ChannelType, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
   usersTable, seasonsTable, userRecordsTable, coinTransactionsTable,
-  franchiseScheduleTable, pendingEosPayoutsTable,
+  franchiseScheduleTable, pendingEosPayoutsTable, gameSchedulesTable,
 } from "@workspace/db";
 import { eq, and, sql, isNotNull, desc, asc, inArray } from "drizzle-orm";
 
@@ -43,6 +44,9 @@ import {
 } from "../franchise/playoff-seeding.js";
 import { getArticleStandings } from "../franchise/gcs-fallback.js";
 import { runScheduleOnlyImport } from "./league-data-handlers.js";
+import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
+import { nextAdvanceDeadline } from "../discord/timezones.js";
+import { getServerSettings } from "../db/server-settings.js";
 
 // ── Win milestones (mirror of admin-milestone-audit.ts) ───────────────────────
 const WIN_MILESTONES = [
@@ -94,7 +98,12 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "**📅 Import Schedule Only**\n" +
       "Connects to EA and fetches the schedule for the **current week** (regular season or playoffs) without " +
       "importing any stats, rosters, or awarding payouts. Use this to load matchup data " +
-      "after advancing a week early, or any time the schedule is missing or incomplete.",
+      "after advancing a week early, or any time the schedule is missing or incomplete.\n\n" +
+      "**📌 Re-post Scheduling Headers**\n" +
+      "Finds every game channel for the active season that is missing its pinned scheduling " +
+      "header (Schedule Game / Fair Sim / Force Win buttons). Also corrects channel " +
+      "permissions so only the two players, the Commissioner role, and bot-admins can see " +
+      "each channel. Safe to run on channels that already exist — nothing is deleted.",
     )
     .setFooter({ text: "All operations are scoped to this server only" })
     .setTimestamp();
@@ -116,6 +125,7 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ts_repost_sched_headers").setLabel("📌 Re-post Scheduling Headers").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   return [row1, row2, row3];
@@ -1263,5 +1273,152 @@ export async function handleTsEosResetCancel(interaction: ButtonInteraction): Pr
   await interaction.editReply({
     embeds: [buildTroubleshootEmbed()],
     components: buildTroubleshootRows() as ActionRowBuilder<any>[],
+  });
+}
+
+// ── Re-post Scheduling Headers ─────────────────────────────────────────────────
+export async function handleTsRepostSchedulingHeaders(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId!;
+  const guild   = interaction.guild;
+  if (!guild) {
+    await interaction.editReply({ content: "❌ Could not access guild." });
+    return;
+  }
+
+  const season = await getOrCreateActiveSeason(guildId);
+
+  // Find game_channels rows with no matching game_schedules row.
+  // Raw SQL needed because away_discord_id / home_discord_id are not in the Drizzle schema.
+  const orphans = await db.execute<{
+    id: number;
+    channel_id: string;
+    away_team_name: string;
+    home_team_name: string;
+    season_id: number;
+    week_index: number;
+    away_discord_id: string | null;
+    home_discord_id: string | null;
+  }>(sql`
+    SELECT gc.id, gc.channel_id, gc.away_team_name, gc.home_team_name,
+           gc.season_id, gc.week_index, gc.away_discord_id, gc.home_discord_id
+    FROM game_channels gc
+    WHERE gc.season_id = ${season.id}
+      AND NOT EXISTS (
+        SELECT 1 FROM game_schedules gs WHERE gs.channel_id = gc.channel_id
+      )
+  `);
+
+  if (orphans.rows.length === 0) {
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Green)
+          .setTitle("📌 Scheduling Headers — All Good")
+          .setDescription("Every game channel for the active season already has a scheduling header. Nothing to do.")
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  const settings = await getServerSettings(guildId);
+  const deadline = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
+  const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
+  const botAdmins = await db.select({ discordId: usersTable.discordId })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));
+
+  let fixed   = 0;
+  let skipped = 0;
+  const lines: string[] = [];
+
+  for (const row of orphans.rows) {
+    const awayDiscordId = row.away_discord_id ?? "";
+    const homeDiscordId = row.home_discord_id ?? "";
+    const awayProper    = row.away_team_name;
+    const homeProper    = row.home_team_name;
+
+    try {
+      const ch = await guild.channels.fetch(row.channel_id).catch(() => null);
+      if (!ch || ch.type !== ChannelType.GuildText) {
+        lines.push(`⏭️ **${awayProper} vs ${homeProper}** — channel not found in Discord, skipped`);
+        skipped++;
+        continue;
+      }
+      const textCh = ch as TextChannel;
+
+      // Fix permission overwrites
+      const overwrites: import("discord.js").OverwriteResolvable[] = [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: guild.client.user!.id,   allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] },
+      ];
+      if (commRole) overwrites.push({ id: commRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+      if (awayDiscordId && !awayDiscordId.startsWith("unlinked_")) overwrites.push({ id: awayDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+      if (homeDiscordId && !homeDiscordId.startsWith("unlinked_")) overwrites.push({ id: homeDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+      for (const a of botAdmins) {
+        if (a.discordId && a.discordId !== awayDiscordId && a.discordId !== homeDiscordId && !a.discordId.startsWith("unlinked_")) {
+          overwrites.push({ id: a.discordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+        }
+      }
+      await textCh.permissionOverwrites.set(overwrites).catch(() => {});
+
+      // Insert game_schedules row and post header
+      const sched = await ensureScheduleRow({
+        guildId,
+        channelId:    row.channel_id,
+        seasonId:     season.id,
+        weekIndex:    row.week_index,
+        awayDiscordId,
+        homeDiscordId,
+        awayTeamName: awayProper,
+        homeTeamName: homeProper,
+        status:       "unscheduled",
+      });
+
+      const awayMember = awayDiscordId && !awayDiscordId.startsWith("unlinked_")
+        ? await guild.members.fetch(awayDiscordId).catch(() => null) : null;
+      const homeMember = homeDiscordId && !homeDiscordId.startsWith("unlinked_")
+        ? await guild.members.fetch(homeDiscordId).catch(() => null) : null;
+      const awayTag = awayMember ? `<@${awayDiscordId}> (@${awayMember.displayName})` : awayProper;
+      const homeTag = homeMember ? `<@${homeDiscordId}> (@${homeMember.displayName})` : homeProper;
+
+      const headerMsg = await textCh.send({
+        content:
+          `🏈 **${awayProper} @ ${homeProper}**\n` +
+          `${awayTag}  vs  ${homeTag}\n` +
+          `Schedule your game using the buttons below. Good luck!`,
+        embeds:     [buildHeaderEmbed(sched, deadline)],
+        components: [buildHeaderRow(sched)],
+      });
+      await headerMsg.pin().catch(() => {});
+      await db.update(gameSchedulesTable)
+        .set({ headerMessageId: headerMsg.id })
+        .where(eq(gameSchedulesTable.id, sched.id));
+
+      lines.push(`✅ <#${row.channel_id}> — **${awayProper} vs ${homeProper}**`);
+      fixed++;
+    } catch (err) {
+      console.error(`[ts_repost_sched_headers] Error for channel ${row.channel_id}:`, err);
+      lines.push(`❌ **${awayProper} vs ${homeProper}** — error, check bot logs`);
+      skipped++;
+    }
+  }
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(fixed > 0 ? Colors.Green : Colors.Greyple)
+        .setTitle("📌 Re-post Scheduling Headers")
+        .addFields(
+          { name: "Fixed",   value: String(fixed),   inline: true },
+          { name: "Skipped", value: String(skipped), inline: true },
+        )
+        .setDescription(lines.join("\n") || "No channels processed.")
+        .setFooter({ text: "Permissions corrected + scheduling header posted in each fixed channel" })
+        .setTimestamp(),
+    ],
   });
 }
