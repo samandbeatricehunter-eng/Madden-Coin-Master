@@ -965,8 +965,86 @@ export const serverSettingsTable = pgTable("server_settings", {
   // Career caps for salary/bonus reductions (per player, across all seasons) — null = no cap
   salaryReductionCareerCap: integer("salary_reduction_career_cap"),
   bonusReductionCareerCap:  integer("bonus_reduction_career_cap"),
+  // Advance cadence — used to compute the per-week "Next Advance" deadline shown in game channels
+  advancePeriodHours:       integer("advance_period_hours").notNull().default(72),
+  lastAdvanceAt:            timestamp("last_advance_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ── Per-game scheduling (one row per matchup channel) ─────────────────────────
+export const gameSchedulesTable = pgTable("game_schedules", {
+  id:                serial("id").primaryKey(),
+  guildId:           text("guild_id").notNull(),
+  channelId:         text("channel_id").notNull().unique(),
+  seasonId:          integer("season_id").notNull(),
+  weekIndex:         integer("week_index").notNull(),
+  awayDiscordId:     text("away_discord_id").notNull(),
+  homeDiscordId:     text("home_discord_id").notNull(),
+  awayTeamName:      text("away_team_name").notNull(),
+  homeTeamName:      text("home_team_name").notNull(),
+  // unscheduled | pending | confirmed | started | finished | fair_sim | force_win | auto_fair_sim | completed_imported
+  status:            text("status").notNull().default("unscheduled"),
+  scheduledAt:       timestamp("scheduled_at", { withTimezone: true }),
+  scheduledTz:       text("scheduled_tz"),
+  startedAt:         timestamp("started_at", { withTimezone: true }),
+  finishedAt:        timestamp("finished_at", { withTimezone: true }),
+  winnerDiscordId:   text("winner_discord_id"),
+  importedWinnerDiscordId: text("imported_winner_discord_id"),
+  awayScore:         integer("away_score"),
+  homeScore:         integer("home_score"),
+  headerMessageId:   text("header_message_id"),
+  scheduleMessageId: text("schedule_message_id"),
+  advanceDeadlineAt: timestamp("advance_deadline_at", { withTimezone: true }),
+  createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:         timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Schedule proposals (one per Schedule / Counter attempt) ───────────────────
+export const gameScheduleProposalsTable = pgTable("game_schedule_proposals", {
+  id:           serial("id").primaryKey(),
+  scheduleId:   integer("schedule_id").notNull(),
+  proposerId:   text("proposer_id").notNull(),
+  proposedAt:   timestamp("proposed_at", { withTimezone: true }).notNull(),
+  tz:           text("tz").notNull(),
+  messageId:    text("message_id"),
+  // pending | accepted | declined | cancelled | countered
+  status:       text("status").notNull().default("pending"),
+  createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Per-player Begin/Finish confirmation (both players must click) ────────────
+export const gameStatusConfirmationsTable = pgTable("game_status_confirmations", {
+  id:         serial("id").primaryKey(),
+  scheduleId: integer("schedule_id").notNull(),
+  discordId:  text("discord_id").notNull(),
+  kind:       text("kind").notNull(), // "begun" | "finished"
+  createdAt:  timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqConfirm: uniqueIndex("game_status_conf_unique_idx").on(t.scheduleId, t.discordId, t.kind),
+}));
+
+// ── Dedup log so a reminder only fires once per kind ──────────────────────────
+export const gameReminderLogTable = pgTable("game_reminder_log", {
+  id:         serial("id").primaryKey(),
+  scheduleId: integer("schedule_id").notNull(),
+  kind:       text("kind").notNull(), // "t-30" | "t0" | "t+20" | "t+60" | "t+120"
+  sentAt:     timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqKind: uniqueIndex("game_reminder_unique_idx").on(t.scheduleId, t.kind),
+}));
+
+// ── Bot-managed GOTW votes (replaces Discord poll) ────────────────────────────
+export const gotwVotesTable = pgTable("gotw_votes", {
+  id:                serial("id").primaryKey(),
+  seasonId:          integer("season_id").notNull(),
+  weekIndex:         integer("week_index").notNull(),
+  voterId:           text("voter_id").notNull(),
+  votedForDiscordId: text("voted_for_discord_id").notNull(),
+  createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:         timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqVote: uniqueIndex("gotw_votes_voter_idx").on(t.seasonId, t.weekIndex, t.voterId),
+}));
 
 // ── Pending end-of-season stat payouts (awaiting commissioner approval) ─────────
 export const pendingEosPayoutsTable = pgTable("pending_eos_payouts", {
