@@ -1,0 +1,147 @@
+2336:   });
+2337: }
+2338: 
+2339: 
+2340: import {} from "./admin-week-handlers.js"; // week handlers
+2341: import { buildRulesPages, handleRulesHub, handleRulesSection, handleRulesAdd, handleRulesEdit, handleRulesEditSel, handleRulesDelete, handleRulesPage, handleModalRulesAdd, handleModalRulesEdit, handleModalRulesDelete } from "./admin-rules-handlers.js";
+2342: 
+2343: // ── Set Season Number ──────────────────────────────────────────────────────────
+2344: 
+2345: async function getMaxSeasons(guildId: string): Promise<number> {
+2346:   const [row] = await db.select({ maxSeasons: serverSettingsTable.maxSeasons })
+2347:     .from(serverSettingsTable)
+2348:     .where(eq(serverSettingsTable.guildId, guildId))
+2349:     .limit(1);
+2350:   return row?.maxSeasons ?? 10;
+2351: }
+2352: 
+2353: async function handleSetSeasonNum(interaction: ButtonInteraction) {
+2354:   const guildId   = interaction.guildId!;
+2355:   const [season, maxSeasons] = await Promise.all([
+2356:     getOrCreateActiveSeason(guildId),
+2357:     getMaxSeasons(guildId),
+2358:   ]);
+2359:   const current = season.seasonNumber ?? 1;
+2360: 
+2361:   const options = Array.from({ length: maxSeasons }, (_, i) => i + 1).map(n =>
+2362:     new StringSelectMenuOptionBuilder()
+2363:       .setLabel(`Season ${n}${n === current ? " (current)" : ""}`)
+2364:       .setValue(String(n))
+2365:       .setDefault(n === current),
+2366:   );
+2367: 
+2368:   const select = new StringSelectMenuBuilder()
+2369:     .setCustomId("ao_set_season_num_sel")
+2370:     .setPlaceholder(`Current: Season ${current} of ${maxSeasons}`)
+2371:     .addOptions(options);
+2372: 
+2373:   await interaction.update({
+2374:     embeds: [
+2375:       new EmbedBuilder()
+2376:         .setColor(Colors.Blue)
+2377:         .setTitle("🔢 Set Season Number")
+2378:         .setDescription(
+2379:           `Select the season number to activate.\n\n` +
+2380:           `Current season: **Season ${current} of ${maxSeasons}**\n\n` +
+2381:           `⚠️ This sets the active season record only — it does **not** roll over inventories or player data. ` +
+2382:           `Use **Advance Week** through Training Camp for a full season rollover.`
+2383:         ),
+2384:     ],
+2385:     components: [
+2386:       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+2387:       new ActionRowBuilder<ButtonBuilder>().addComponents(
+2388:         new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+2389:         new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+2390:       ),
+2391:     ],
+2392:   });
+2393: }
+2394: 
+2395: async function handleSetSeasonNumSel(interaction: StringSelectMenuInteraction) {
+2396:   const guildId   = interaction.guildId!;
+2397:   const target    = parseInt(interaction.values[0]!, 10);
+2398:   const maxSeasons = await getMaxSeasons(guildId);
+2399:   const isLast    = target >= maxSeasons;
+2400: 
+2401:   await interaction.update({
+2402:     embeds: [
+2403:       new EmbedBuilder()
+2404:         .setColor(isLast ? Colors.Orange : Colors.Blue)
+2405:         .setTitle("🔢 Confirm Season Change")
+2406:         .setDescription(
+2407:           `Set the active season to **Season ${target} of ${maxSeasons}**?\n\n` +
+2408:           (isLast ? "⚠️ This is the **final season** of the franchise.\n\n" : "") +
+2409:           `This will activate (or create) the Season ${target} record. ` +
+2410:           `Coin balances and inventories are unchanged.`
+2411:         ),
+2412:     ],
+2413:     components: [
+2414:       new ActionRowBuilder<ButtonBuilder>().addComponents(
+2415:         new ButtonBuilder()
+2416:           .setCustomId(`ao_set_season_num_confirm:${target}`)
+2417:           .setLabel(`✅ Set to Season ${target}`)
+2418:           .setStyle(isLast ? ButtonStyle.Danger : ButtonStyle.Success),
+2419:         new ButtonBuilder().setCustomId("ao_set_season_num").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+2420:         new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+2421:       ),
+2422:     ],
+2423:   });
+2424: }
+2425: 
+2426: async function handleSetSeasonNumConfirm(interaction: ButtonInteraction) {
+2427:   const guildId    = interaction.guildId!;
+2428:   const target     = parseInt(interaction.customId.split(":")[1]!, 10);
+2429:   const maxSeasons = await getMaxSeasons(guildId);
+2430: 
+2431:   // Check if this season already exists for THIS guild only.
+2432:   const [existing] = await db.select().from(seasonsTable)
+2433:     .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.seasonNumber, target)))
+2434:     .limit(1);
+2435: 
+2436:   // Deactivate all seasons for THIS guild only (not all guilds).
+2437:   await db.update(seasonsTable)
+2438:     .set({ isActive: false })
+2439:     .where(eq(seasonsTable.guildId, guildId));
+2440: 
+2441:   let activeSeason;
+2442:   if (existing) {
+2443:     // Activate the existing season record for this guild.
+2444:     const [updated] = await db.update(seasonsTable)
+2445:       .set({ isActive: true })
+2446:       .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.seasonNumber, target)))
+2447:       .returning();
+2448:     activeSeason = updated;
+2449:   } else {
+2450:     // Season doesn't exist yet for this guild — create it.
+2451:     const [created] = await db.insert(seasonsTable)
+2452:       .values({ guildId, seasonNumber: target, isActive: true })
+2453:       .returning();
+2454:     activeSeason = created;
+2455:   }
+2456: 
+2457:   const isLast = target >= maxSeasons;
+2458:   await interaction.update({
+2459:     embeds: [
+2460:       new EmbedBuilder()
+2461:         .setColor(isLast ? Colors.Orange : Colors.Green)
+2462:         .setTitle(`📅 Season Set to ${target} of ${maxSeasons}`)
+2463:         .setDescription(
+2464:           `The active season is now **Season ${target}**.\n\n` +
+2465:           `Season ID: \`${activeSeason?.id ?? "?"}\`` +
+2466:           (isLast ? "\n\n🏁 **This is the final season of the franchise.**" : "")
+2467:         )
+2468:         .setTimestamp(),
+2469:     ],
+2470:     components: [
+2471:       new ActionRowBuilder<ButtonBuilder>().addComponents(
+2472:         new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+2473:         new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+2474:       ),
+2475:     ],
+2476:   });
+2477: }
+2478: 
+2479: 
+2480: 
+2481: 
+2482: 
