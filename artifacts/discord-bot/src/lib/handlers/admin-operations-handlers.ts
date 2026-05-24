@@ -37,7 +37,6 @@ import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults, a
 import axios from "axios";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../helpers/gotw-helpers.js";
 import { checkAndNotifyWaitlist } from "../league/waitlist-helpers.js";
-import { buildMatchupBanner, resolveLogoBuf } from "../discord/matchup-image.js";
 import { globalLogoPath } from "../franchise/gcs-reader.js";
 import { buildAdminOpsEmbed, buildAdminOpsRows } from "./admin-helpers/admin-ops-ui.js";
 import { buildPayoutHubEmbed, buildPayoutHubRows } from "./admin-payout-handlers.js";
@@ -673,7 +672,15 @@ async function handlePostGameChannels(interaction: ButtonInteraction) {
 }
 
 async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) {
-  await interaction.deferReply({ ephemeral: true });
+  // Defer immediately. On Railway cold-starts the modal submit can arrive after
+  // Discord's 3s window — in that case deferReply throws 10062 and the rest of
+  // this handler can't reply at all, so bail cleanly instead of crashing.
+  try {
+    await interaction.deferReply({ ephemeral: true });
+  } catch (err) {
+    console.error("[handlePostGameChannelsModal] deferReply failed (likely cold-start 10062), aborting:", err);
+    return;
+  }
 
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
@@ -1008,7 +1015,6 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       { name: "H2H Games",        value: String(h2hGames.length),      inline: true },
       { name: "Total Schedule",   value: String(games.length),         inline: true },
     )
-    .setFooter({ text: "Matchup banners are posting in the background" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });

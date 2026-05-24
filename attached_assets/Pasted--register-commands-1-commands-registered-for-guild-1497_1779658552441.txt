@@ -1,0 +1,58 @@
+✅ [register-commands] 1 commands registered for guild 1497423447192768612
+✅ Commands registered: REC League Fantasy (1497423447192768612)
+(node:80) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ModalSubmitInteraction.deferReply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:122:22)
+    at async handlePostGameChannelsModal (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:676:3)
+    at async handleAdminOperationsInteraction (/app/artifacts/discord-bot/src/lib/handlers/admin-operations-handlers.ts:352:5)
+    at async handleModal (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2362:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:233:11) {
+  requestBody: { files: undefined, json: { type: 5, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508221790646833303/aW50ZXJhY3Rpb246MTUwODIyMTc5MDY0NjgzMzMwMzoyMHgyOEZ2UjdtQURETEFacXZyR2VGNmpPZDRKNlVxa1N2TTZrNjZ4Uk9jb0xPZWpqaHpFc3owM2hpTGNrOVp0MGJTMnZXOEpvSWtmUzNKQkNqczZpSlNEV1NuMGhSVnRIUDNBRWVGb1h2dFA4Uk01aTVhaWZtVFVVZHpTelBpaA/callback?with_response=false'
+[modal] ao_modal_post_game_channels: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+}
+components[1].components[0].custom_id[COMPONENT_CUSTOM_ID_DUPLICATED]: Component custom id cannot be duplicated
+components[1].components[1].custom_id[COMPONENT_CUSTOM_ID_DUPLICATED]: Component custom id cannot be duplicated
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async InteractionWebhook.editMessage (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/Webhook.js:351:15)
+    at async ButtonInteraction.editReply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:247:17)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1085:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+      embeds: [Array],
+      components: [Array],
+      username: undefined,
+      tts: false,
+      nonce: undefined,
+    json: {
+      enforce_nonce: false,
+  url: 'https://discord.com/api/v10/webhooks/1486456254367793192/aW50ZXJhY3Rpb246MTUwODIyMTkxOTAyNTk1NDkyNjpYUWxCTUJ0WWFMQnhIeUw1eVlOOGVWb2kzdGFkVFZENHR6aTBUNm1aQ204bmRiZ0dRc2Jqbk03NDIwbFpHY3A0UnE3a3JtaHlreTZxZ2pIVVZxcjN4RnJlQWFuUHB6U1ZmM2d4NVNSck40T3IwRkpUUmZLWE5kaDZkUDc5bHNGMA/messages/%40original'
+      content: undefined,
+      attachments: undefined,
+      flags: undefined,
+  rawError: {
+  requestBody: {
+      sticker_ids: undefined,
+    message: 'Invalid Form Body',
+      message_reference: undefined,
+      poll: undefined
+  },
+      thread_name: undefined,
+    code: 50035,
+    }
+      applied_tags: undefined,
+  code: 50035,
+    errors: { components: [Object] }
+  status: 400,
+  },
+  method: 'PATCH',
+      avatar_url: undefined,
+      allowed_mentions: undefined,
+}

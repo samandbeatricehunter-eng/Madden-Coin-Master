@@ -231,7 +231,7 @@ async function buildPurchasesPage(
     .where(guildFilter);
   const total = cnt ?? 0;
 
-  const raw = await db
+  const rawAll = await db
     .select({
       purchase: purchasesTable,
       username: sql<string | null>`(
@@ -243,9 +243,24 @@ async function buildPurchasesPage(
     .from(purchasesTable)
     .innerJoin(seasonsTable, eq(purchasesTable.seasonId, seasonsTable.id))
     .where(guildFilter)
-    .orderBy(purchasesTable.createdAt)
+    .orderBy(purchasesTable.createdAt, purchasesTable.id)
     .limit(PAGE_SIZE)
     .offset(page * PAGE_SIZE);
+
+  // Defensive dedupe by purchase.id. The innerJoin on seasons shouldn't expand
+  // rows, but production data has shown duplicate purchase rows surfacing here,
+  // which causes Discord to reject the message with COMPONENT_CUSTOM_ID_DUPLICATED
+  // because we mint per-purchase buttons.
+  const seenIds = new Set<number>();
+  const raw: typeof rawAll = [];
+  for (const r of rawAll) {
+    if (seenIds.has(r.purchase.id)) {
+      console.warn(`[buildPurchasesPage] dropping duplicate purchase.id=${r.purchase.id} (guild=${guildId}, page=${page})`);
+      continue;
+    }
+    seenIds.add(r.purchase.id);
+    raw.push(r);
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const embed = new EmbedBuilder()
