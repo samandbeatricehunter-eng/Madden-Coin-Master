@@ -1,6 +1,6 @@
 import { Events, Message, EmbedBuilder, Colors, ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel, GuildMember } from "discord.js";
-import { executeAdminAction, type AdminAction, type AdminActionContext } from "../lib/admin-actions.js";
-import { pendingCoCommActions, purgeExpiredCoCommActions, type PendingCoCommAction } from "../lib/pending-cocomm-actions.js";
+import { executeAdminAction, type AdminAction, type AdminActionContext } from "../lib/handlers/admin-actions.js";
+import { pendingCoCommActions, purgeExpiredCoCommActions, type PendingCoCommAction } from "../lib/handlers/pending-cocomm-actions.js";
 import OpenAI from "openai";
 import { db } from "@workspace/db";
 import {
@@ -14,12 +14,12 @@ import { eq, and, or, desc, isNotNull, inArray, count, sql, gte } from "drizzle-
 import {
   isAdminUser, getOrCreateActiveSeason, getAllSections, getOrSeedRules, getSeasonRules,
   PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS,
-} from "../lib/db-helpers.js";
+} from "../lib/db/db-helpers.js";
 import { COSTS, LIMITS } from "../lib/constants.js";
-import { getAllPayoutConfig, getPayoutValue, getMilestoneTiers, PAYOUT_KEYS } from "../lib/payout-config.js";
-import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/stat-categories.js";
-import { handleTwitterReply } from "../lib/league-twitter.js";
-import { getServerSettings } from "../lib/server-settings.js";
+import { getAllPayoutConfig, getPayoutValue, getMilestoneTiers, PAYOUT_KEYS } from "../lib/economy/payout-config.js";
+import { STAT_CATEGORIES, STAT_TIER_DEFAULTS, evaluateTier } from "../lib/economy/stat-categories.js";
+import { handleTwitterReply } from "../lib/discord/league-twitter.js";
+import { getServerSettings } from "../lib/db/server-settings.js";
 
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 

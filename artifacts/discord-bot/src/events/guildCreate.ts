@@ -1,5 +1,5 @@
 import { Guild } from "discord.js";
-import { registerCommandsForGuild } from "../lib/register-commands.js";
+import { registerCommandsForGuild } from "../lib/discord/register-commands.js";
 
 export const name = "guildCreate";
 export const once = false;

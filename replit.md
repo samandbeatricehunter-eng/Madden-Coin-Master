@@ -32,6 +32,25 @@ artifacts-monorepo/
 │   │       └── lib/discord-notify.ts      # Discord REST API notifier (no discord.js)
 │   ├── mockup-sandbox/     # UI prototyping sandbox
 │   └── discord-bot/        # Discord economy bot (main artifact)
+│       └── src/
+│           ├── commands/
+│           │   ├── actions.ts     # /menu hub entry point
+│           │   ├── admin/         # all admin-*, admin.ts, adminserver, endofseasonpayout, lottery
+│           │   ├── economy/       # buy-*, purchase*
+│           │   ├── stats/         # h2hrecord, globalrecords, userstats, view*, help, rules
+│           │   └── league/        # interviewrequest, waitlist, draft-presence
+│           ├── lib/
+│           │   ├── constants.ts
+│           │   ├── db/            # db-helpers, user-data, server-settings, repair-records
+│           │   ├── menu/          # menu-hub, menu-router, command-list
+│           │   ├── handlers/      # actions-handlers, admin-*-handlers, custom-player-*, pending-*, league-data-handlers
+│           │   ├── franchise/     # franchise-article, full-sync-engine, gcs-*, mca-storage-reader, season-recap, send-article, eos-auto-post, playoff-*, weekly-matchups-runner, wildcard-automation
+│           │   ├── ea/            # ea-client
+│           │   ├── economy/       # purchase-shared, custom-player-helpers, default-legends, payout-config, dev-trait, stat-categories, roster-legend-assign
+│           │   ├── discord/       # embeds, theme, user-stats-embed, matchup-*, draft-presence-manager, league-twitter, register-commands
+│           │   ├── scheduling/    # savings-interest, poll-checker
+│           │   └── helpers/       # gotw-helpers, week-helpers
+│           ├── events/, scripts/, index.ts, deploy-commands.ts
 ├── lib/
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks

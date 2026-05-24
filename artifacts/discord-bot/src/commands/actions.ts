@@ -2,15 +2,15 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction,
   PermissionFlagsBits,
 } from "discord.js";
-import { getServerSettings } from "../lib/server-settings.js";
-import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db-helpers.js";
-import { weekLabel } from "../lib/week-helpers.js";
+import { getServerSettings } from "../lib/db/server-settings.js";
+import { isAdminUser, getOrCreateUser, getOrCreateActiveSeason } from "../lib/db/db-helpers.js";
+import { weekLabel } from "../lib/helpers/week-helpers.js";
 import {
   buildMenuHubEmbed, buildMenuHubRows,
   buildUnlinkedMenuEmbed, buildUnlinkedMenuRows,
   buildMenuBannerAttachment,
   type MenuCtx,
-} from "../lib/menu-hub.js";
+} from "../lib/menu/menu-hub.js";
 
 const COMMISSIONER_ROLE_NAME = "Commissioner";
 

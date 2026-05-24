@@ -26,5 +26,6 @@ League Operations is gated on `isAdmin || isCommissioner`. Commissioner = member
 # Caveats
 
 - Sub-pages explicitly pass `files: []` on `interaction.update()` to clear the banner attachment. The banner is re-attached only when returning to the root hub.
-- Admin sub-pages (`buildAdminCategoryPage`) and unlinked sub-pages (`buildUnlinkedCategoryPage`) intentionally still use action+nav buttons — those weren't in the reorganization spec.
+- Admin sub-pages (`buildAdminCategoryPage`) and unlinked sub-pages (`buildUnlinkedCategoryPage`) keep their action buttons but use selector nav rows (`adminSubPageNavRow` / `unlinkedSubPageNavRow`) with values `__admin_home` / `__home` / `__unlinked_home`, handled in `menu-router.ts`.
+- Banner image path is resolved via `import.meta.url` (not `process.cwd()`) — production cwd is `artifacts/discord-bot/`, dev cwd is repo root; `cwd()`-based paths double up in prod.
 - Discord StringSelectMenuOption value max is 100 chars; tree paths stay well under.

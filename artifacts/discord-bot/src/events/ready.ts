@@ -3,8 +3,8 @@ import { sql } from "drizzle-orm";
 import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { registerCommandsForGuild } from "../lib/register-commands.js";
-import { setGuildChannel, getGuildChannel, KNOWN_GUILD_CHANNELS, CHANNEL_KEYS } from "../lib/db-helpers.js";
+import { registerCommandsForGuild } from "../lib/discord/register-commands.js";
+import { setGuildChannel, getGuildChannel, KNOWN_GUILD_CHANNELS, CHANNEL_KEYS } from "../lib/db/db-helpers.js";
 
 export const name = "clientReady";
 export const once = true;

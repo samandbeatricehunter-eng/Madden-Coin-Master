@@ -1,6 +1,6 @@
 import { REST, Routes } from "discord.js";
-import { buildCommandJSON } from "./lib/command-list.js";
-import { getServerSettings } from "./lib/server-settings.js";
+import { buildCommandJSON } from "./lib/menu/command-list.js";
+import { getServerSettings } from "./lib/db/server-settings.js";
 
 const token    = process.env["DISCORD_TOKEN"]!;
 const clientId = process.env["DISCORD_CLIENT_ID"]!;

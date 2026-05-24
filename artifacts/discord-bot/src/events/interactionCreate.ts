@@ -16,9 +16,9 @@ import {
   statPaddingViolationsTable, seasonStatsTable,
 } from "@workspace/db";
 import { CORE_ATTRIBUTES } from "../lib/constants.js";
-import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/stat-categories.js";
-import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/pending-cocomm-actions.js";
-import { executeAdminAction, type AdminActionContext } from "../lib/admin-actions.js";
+import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/economy/stat-categories.js";
+import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/handlers/pending-cocomm-actions.js";
+import { executeAdminAction, type AdminActionContext } from "../lib/handlers/admin-actions.js";
 import {
   handleCcpPreConfirm,
   handleCcpPos, handleCcpArch, handleCcpArchPrev, handleCcpArchNext, handleCcpArchPick,
@@ -29,10 +29,10 @@ import {
   handleCcpModal, handleCcpHand, handleCcpHeight, handleCcpWeight,
   handleCcpApplied, handleCcpRefund, handleCcpRefundModal,
   handleCcpMotionStyle, handleCcpQbDetailsModal, handleCcpAppearanceModal,
-} from "../lib/custom-player-interactions.js";
-import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/viewcustomarchetypes.js";
-import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/viewplayerstats.js";
-import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin-inventory.js";
+} from "../lib/handlers/custom-player-interactions.js";
+import { handleViewArchetypeSelect, handleVcaNav, handleVcaAttrPageNav } from "../commands/stats/viewcustomarchetypes.js";
+import { handleTeamSelect, handlePositionSelect, handlePlayerSelect } from "../commands/stats/viewplayerstats.js";
+import { handleAcpPositionSelect, handleAcpPlayerSelect } from "../commands/admin/admin-inventory.js";
 import {
   handleCancel as apHandleCancel,
   handleGotw, handleGotwSelectAfc, handleGotwSelectNfc, handleGotwFinalize,
@@ -56,7 +56,7 @@ import {
   handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
   handleTweetPayout, handleTweetPayoutModal,
   handleInterviewPayout, handleInterviewPayoutModal,
-} from "../lib/admin-payout-handlers.js";
+} from "../lib/handlers/admin-payout-handlers.js";
 import {
   handleUdClose, handleUdCancel,
   handleUdViewTeams,
@@ -67,7 +67,7 @@ import {
   handleUdEditEconomyModal, handleUdEditRecordsModal, handleUdEditAllTimeModal,
   handleUdDelete, handleUdDeleteUserSelect, handleUdDeleteToggle, handleUdDeleteConfirm,
   handleTreqLinkButton, handleTreqDenyButton, handleTreqDenyReasonModal,
-} from "../lib/admin-user-handlers.js";
+} from "../lib/handlers/admin-user-handlers.js";
 import {
   handleSsClose, handleSsCancel,
   handleSsArch, handleSsArchPrev, handleSsArchNext, handleSsArchEdit, handleSsArchBackToView,
@@ -75,40 +75,40 @@ import {
   handleSsArchPos, handleSsArchEditGroup,
   handleSsLtPos, handleSsLtLegend, handleSsLtModel, handleSsLtEditGroup,
   handleSsArchEditModal, handleSsLtEditModal,
-} from "../lib/admin-store-handlers.js";
+} from "../lib/handlers/admin-store-handlers.js";
 import { eq, and, sql, inArray, count } from "drizzle-orm";
 import {
   addBalance, deductBalance, logTransaction,
   getOrCreateActiveSeason, getOrCreateUser, isAdminUser,
   getSeasonRules, getGuildChannel, CHANNEL_KEYS,
-} from "../lib/db-helpers.js";
+} from "../lib/db/db-helpers.js";
 import {
   getServerSettings, toggleFeature, buildSettingsEmbed, buildSettingsRows,
   FEATURE_LABELS,
-} from "../lib/server-settings.js";
-import { registerCommandsForGuild } from "../lib/register-commands.js";
-import { buildMemberHelpEmbed } from "../commands/help.js";
+} from "../lib/db/server-settings.js";
+import { registerCommandsForGuild } from "../lib/discord/register-commands.js";
+import { buildMemberHelpEmbed } from "../commands/stats/help.js";
 import {
   INTERVIEW_QUESTIONS, getQuestionPool, interviewTypeLabel,
   type InterviewType,
-} from "../commands/interviewrequest.js";
-import { handleActionsInteraction, handleInterviewTypePick } from "../lib/actions-handlers.js";
-import { handleAdminOperationsInteraction } from "../lib/admin-operations-handlers.js";
-import { weekLabel } from "../lib/week-helpers.js";
+} from "../commands/league/interviewrequest.js";
+import { handleActionsInteraction, handleInterviewTypePick } from "../lib/handlers/actions-handlers.js";
+import { handleAdminOperationsInteraction } from "../lib/handlers/admin-operations-handlers.js";
+import { weekLabel } from "../lib/helpers/week-helpers.js";
 import {
   DRAFT_TOGGLE_PREFIX, DRAFT_CLOSE_BUTTON_ID,
   getActiveSession, togglePresence, refreshPresence, endDraftSession,
-} from "../lib/draft-presence-manager.js";
+} from "../lib/discord/draft-presence-manager.js";
 import {
   scoreH2HMatchups, postGotwToChannel,
-} from "../lib/gotw-helpers.js";
-import { buildTeamToDiscord } from "../lib/weekly-matchups-runner.js";
-import { getPayoutValue, PAYOUT_KEYS } from "../lib/payout-config.js";
-import { logTradeEvent } from "../lib/league-twitter.js";
+} from "../lib/helpers/gotw-helpers.js";
+import { buildTeamToDiscord } from "../lib/franchise/weekly-matchups-runner.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../lib/economy/payout-config.js";
+import { logTradeEvent } from "../lib/discord/league-twitter.js";
 import { waitlistTable } from "@workspace/db";
 import {
   WAITLIST_ACCEPT_PREFIX, WAITLIST_DENY_PREFIX,
-} from "../commands/waitlist.js";
+} from "../commands/league/waitlist.js";
 import {
   handleTsRepairRecords,
   handleTsResyncData,
@@ -129,13 +129,13 @@ import {
   handleTsSchedSel,
   handleTsSchedDelete,
   handleTsImportSchedule,
-} from "../lib/admin-troubleshoot-handlers.js";
+} from "../lib/handlers/admin-troubleshoot-handlers.js";
 import {
   handleLeagueDataButton,
   handleLeagueDataModal,
   handleLeagueDataSelect,
-} from "../lib/league-data-handlers.js";
-import { handleMenuButton, handleMenuSelect } from "../lib/menu-router.js";
+} from "../lib/handlers/league-data-handlers.js";
+import { handleMenuButton, handleMenuSelect } from "../lib/menu/menu-router.js";
 
 
 export const name = "interactionCreate";
@@ -1670,7 +1670,10 @@ async function handleButton(interaction: ButtonInteraction) {
       const { AttachmentBuilder } = await import("discord.js");
       const tc = faqChannel as TextChannel;
       const path = await import("path");
-      const ASSETS_DIR = path.join(process.cwd(), "artifacts/discord-bot/assets");
+      const { fileURLToPath } = await import("url");
+      // Resolve relative to this source file so it works regardless of cwd
+      // (dev cwd is repo root; prod cwd is artifacts/discord-bot).
+      const ASSETS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../assets");
 
       const faqSeason = await getOrCreateActiveSeason(interaction.guildId!).catch(() => null);
       const faqRules  = faqSeason ? await getSeasonRules(faqSeason).catch(() => null) : null;

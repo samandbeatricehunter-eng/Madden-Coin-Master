@@ -2,7 +2,7 @@ import { Events, GuildMember, EmbedBuilder, Colors, TextChannel } from "discord.
 import { db } from "@workspace/db";
 import { seasonsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
-import { getGuildChannel, CHANNEL_KEYS } from "../lib/db-helpers.js";
+import { getGuildChannel, CHANNEL_KEYS } from "../lib/db/db-helpers.js";
 
 export const name = Events.GuildMemberAdd;
 export const once = false;
