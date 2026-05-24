@@ -364,40 +364,49 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   const guildId    = String(req.query["guildId"] ?? "");
   const skipPayouts = String(req.query["skipPayouts"] ?? "0") === "1";
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-schedules.json`, req.body);
-  res.status(200).json({ status: "received" });
   console.log(`[mca/week${weekNum}/schedules] Received schedule+scores (weekType=${weekType}, skipPayouts=${skipPayouts}), processing...`);
 
-  // Resolve guild-scoped channels and sync schedule concurrently.
-  const [, channels] = await Promise.all([
-    syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
-    resolveLeagueChannels(leagueId),
-  ]);
-  const { commCh, genCh } = channels;
+  // Process SYNCHRONOUSLY before responding so the bot's import embed can show
+  // the actual game-write count and payout count. Previously this returned
+  // `{status:"received"}` immediately and processed async, which made silent
+  // EA-outage failures (0 games written) look like ✅ success in Discord.
+  try {
+    const [scheduleCount, channels] = await Promise.all([
+      syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
+      resolveLeagueChannels(leagueId),
+    ]);
+    const { commCh, genCh } = channels;
 
-  const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts, guildId).catch(err => ({
-    ok: false, message: String(err),
-    gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
-    payoutLines: [] as string[], milestoneLines: [] as string[],
-    resultLines: [] as string[], unregisteredLines: [] as string[],
-    reconciliationLines: [] as string[], violations: [] as ViolationRecord[],
-    weekNum, seasonId: 0, catchupMode: false,
-  }));
-  console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
+    const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts, guildId).catch(err => ({
+      ok: false, message: String(err),
+      gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
+      payoutLines: [] as string[], milestoneLines: [] as string[],
+      resultLines: [] as string[], unregisteredLines: [] as string[],
+      reconciliationLines: [] as string[], violations: [] as ViolationRecord[],
+      weekNum, seasonId: 0, catchupMode: false,
+    }));
+    console.log(`[mca/week${weekNum}/schedules] Result: ${result.message} | scheduleCount=${scheduleCount} processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
 
-  if (!result.ok) {
-    console.error(`[mca/week${weekNum}/schedules] Processing failed:`, result.message);
-    return;
-  }
-
-  const roundLabel = weekLabel(weekType, weekNum);
-
-  if (commCh) {
-    if (result.violations.length > 0) {
+    const roundLabel = weekLabel(weekType, weekNum);
+    if (commCh && result.violations.length > 0) {
       await postViolationMessages(result.violations, roundLabel, result.seasonId, commCh).catch(() => {});
     }
-  }
+    void genCh;
 
-  void genCh;
+    return res.status(200).json({
+      ok:              result.ok,
+      status:          "processed",
+      scheduleCount,
+      gamesProcessed:  result.gamesProcessed,
+      gamesDuplicate:  result.gamesDuplicate,
+      gamesCpuVsCpu:   result.gamesCpuVsCpu,
+      gamesUnregistered: result.gamesUnregistered,
+      message:         result.message,
+    });
+  } catch (err) {
+    console.error(`[mca/week${weekNum}/schedules] Error:`, err);
+    return res.status(500).json({ ok: false, status: "error", scheduleCount: 0, gamesProcessed: 0, message: String(err) });
+  }
 });
 
 // ── /draftpicks — league-wide draft pick ledger (next 3 classes) ─────────────

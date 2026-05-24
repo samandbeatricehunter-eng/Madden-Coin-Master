@@ -486,6 +486,27 @@ const EXPORT_ENDPOINTS: Record<string, string> = {
   teamRoster:  "CareerMode_GetTeamRostersExport",
 };
 
+/**
+ * Thrown when EA returns HTTP 200 but the body is an error envelope
+ * (e.g. `{ "error": { "errorname": "ERR_SYSTEM", "errortdf": {...} } }`).
+ * Most commonly this is EA's "league temporarily unavailable" outage.
+ * Surfacing this as an error — instead of returning the blob as data —
+ * prevents the import pipeline from silently writing 0 rows and reporting
+ * everything as ✅.
+ */
+export class EaUnavailableError extends Error {
+  readonly exportType: string;
+  readonly errorname:  string;
+  readonly userMessage: string;
+  constructor(exportType: string, errorname: string, userMessage: string) {
+    super(`EA ${exportType}: ${errorname} — ${userMessage}`);
+    this.name        = "EaUnavailableError";
+    this.exportType  = exportType;
+    this.errorname   = errorname;
+    this.userMessage = userMessage;
+  }
+}
+
 async function fetchExportData(
   token:      TokenInfo,
   session:    BlazeSession,
@@ -502,7 +523,20 @@ async function fetchExportData(
   );
   // Strip control characters that sometimes appear in EA responses
   const cleaned = (res.data as string).replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
-  return JSON.parse(cleaned);
+  const parsed = JSON.parse(cleaned);
+
+  // EA WAL sometimes returns HTTP 200 with an error envelope instead of data.
+  // Detect that shape and throw so callers don't treat the error blob as a
+  // real payload (which would post junk to the API and silently write 0 rows).
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    const err: any = (parsed as any).error;
+    const errorname   = String(err?.errorname ?? "EA_ERROR");
+    const userMessage = String(err?.errortdf?.errorString ?? err?.errorString ?? "EA returned an error envelope");
+    console.warn(`[ea-client] ${exportType} returned error envelope: ${errorname} — ${userMessage}`);
+    throw new EaUnavailableError(exportType, errorname, userMessage);
+  }
+
+  return parsed;
 }
 
 export type WeeklyExportData = {

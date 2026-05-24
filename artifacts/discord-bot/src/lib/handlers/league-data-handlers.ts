@@ -1016,14 +1016,14 @@ function getWebhookKey(): string {
   return key;
 }
 
-async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; status: number }> {
+async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; status: number; body?: any }> {
   try {
     const res = await axios.post(url, payload, {
       headers:        { "Content-Type": "application/json" },
-      timeout:        30_000,
+      timeout:        60_000,
       validateStatus: () => true,
     });
-    return { ok: res.status >= 200 && res.status < 300, status: res.status };
+    return { ok: res.status >= 200 && res.status < 300, status: res.status, body: res.data };
   } catch (err: any) {
     console.error("[ld/postToApi]", err?.message);
     return { ok: false, status: 0 };
@@ -1294,7 +1294,31 @@ export async function runWeekImport(ctx: {
     ? `${weekBase}/schedules${guildQs}&skipPayouts=1`
     : `${weekBase}/schedules${guildQs}`;
   const schedRes = await postToApi(schedulesUrl, stats.schedules);
-  results.push({ name: "schedules", ...schedRes });
+  // The /schedules endpoint now returns { scheduleCount, gamesProcessed, ... }
+  // synchronously. Surface those counts so a silent "0 games written" failure
+  // is visible. Detect EA's error-envelope shape directly from stats.schedules
+  // so we can distinguish "EA outage" from "legitimately empty week" (e.g. a
+  // bye-only week or a week with no fixtures yet).
+  const schedCount   = Number(schedRes.body?.scheduleCount ?? 0);
+  const schedGames   = Number(schedRes.body?.gamesProcessed ?? 0);
+  const schedPayload = stats.schedules as any;
+  const isEaError    = schedPayload && typeof schedPayload === "object" && "error" in schedPayload;
+  let schedSuffix: string;
+  if (isEaError) {
+    const msg = String(schedPayload.error?.errortdf?.errorString ?? schedPayload.error?.errorname ?? "EA returned an error envelope");
+    schedSuffix = `⚠️ EA error: ${msg}`;
+  } else if (schedCount === 0) {
+    schedSuffix = "⚠️ 0 games written — empty payload (no fixtures returned)";
+  } else {
+    schedSuffix = `${schedCount} games stored${skipPayouts ? "" : ` · ${schedGames} processed`}`;
+  }
+  // Treat 0-games as a soft failure even if HTTP returned 200, so the embed
+  // doesn't show a misleading ✅.
+  results.push({
+    name:   `schedules (${schedSuffix})`,
+    ok:     schedRes.ok && schedCount > 0,
+    status: schedRes.status,
+  });
 
   try {
     const newsData = await fetchNewsData(token, eaLeagueId, blazeSession);
