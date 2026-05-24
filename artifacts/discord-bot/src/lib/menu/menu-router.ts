@@ -45,7 +45,6 @@ async function loadContext(interaction: ButtonInteraction | StringSelectMenuInte
   const isCommissioner =
     member?.roles.cache.some((r) => r.name === COMMISSIONER_ROLE_NAME) ?? false;
 
-  // Notification counts — failures must never block menu nav.
   const [commCounts, gotwUnvoted, goty] = await Promise.all([
     (isAdmin || isCommissioner)
       ? getCommOfficeCounts(gid).catch(() => null)
@@ -72,13 +71,33 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
   const id = interaction.customId;
   if (id !== "menu_cat" && id !== "menu_admin_cat" && id !== "menu_unlinked_cat") return false;
 
-  const ctx = await loadContext(interaction);
   const value = interaction.values[0] ?? "";
 
-  // ── Unlinked user flat categories ─────────────────────────────────────────
+  // ── Leaf actions: dispatch BEFORE any async work ──────────────────────────
+  // handleActionsInteraction does its own deferReply — calling deferUpdate here
+  // first would cause 40060 when it tries to respond.
+  if (id === "menu_cat") {
+    const node = findNode(value);
+    if (node?.kind === "action") {
+      const handled = await handleActionsInteraction(interaction, node.action);
+      if (!handled) {
+        await interaction.reply({ content: "❌ That action couldn't be opened. Try again.", ephemeral: true });
+      }
+      return true;
+    }
+  }
+
+  // ── All navigation paths: acknowledge immediately, then do async work ─────
+  // deferUpdate() satisfies Discord's 3-second window; editReply()/followUp()
+  // update the message afterwards.
+  await interaction.deferUpdate();
+
+  const ctx = await loadContext(interaction);
+
+  // ── menu_unlinked_cat ─────────────────────────────────────────────────────
   if (id === "menu_unlinked_cat") {
     if (value === MENU_UNLINKED_HOME_VALUE) {
-      await interaction.update({
+      await interaction.editReply({
         embeds:     [buildUnlinkedMenuEmbed(ctx.seasonNum, ctx.weekStr)],
         components: buildUnlinkedMenuRows() as any,
         files:      buildMenuBannerAttachment(),
@@ -88,18 +107,18 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     const ok = ["teams", "rosters", "league", "rankings", "rules"] as const;
     type UnlinkedCat = (typeof ok)[number];
     if (!ok.includes(value as UnlinkedCat)) {
-      await interaction.reply({ content: "❌ Unknown menu option (this menu may have expired).", ephemeral: true });
+      await interaction.followUp({ content: "❌ Unknown menu option (this menu may have expired).", ephemeral: true });
       return true;
     }
     const page = buildUnlinkedCategoryPage(value as UnlinkedCat, ctx);
-    await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
+    await interaction.editReply({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
 
-  // ── Admin nested category selector (existing flow) ────────────────────────
+  // ── menu_admin_cat ────────────────────────────────────────────────────────
   if (id === "menu_admin_cat") {
     if (!ctx.isAdmin && !ctx.isCommissioner) {
-      await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
+      await interaction.followUp({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
     const validAdmin: AdminCategoryId[] = [
@@ -107,30 +126,28 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       "week", "ao_payouts", "post", "league_data", "user_data", "store", "server", "troubleshoot",
     ];
     if (!validAdmin.includes(value as AdminCategoryId)) {
-      await interaction.reply({ content: "❌ Unknown admin option (this menu may have expired).", ephemeral: true });
+      await interaction.followUp({ content: "❌ Unknown admin option (this menu may have expired).", ephemeral: true });
       return true;
     }
-    // Commissioner's Office → render the pending-transactions hub directly
     if (value === "commissioner_office") {
       const { buildCommOfficeEmbed, buildCommOfficeRows } = await import("../handlers/pending-inbox-handlers.js");
       const counts = await getCommOfficeCounts(interaction.guildId!).catch(() => null);
-      await interaction.update({
-        embeds: [buildCommOfficeEmbed()],
+      await interaction.editReply({
+        embeds:     [buildCommOfficeEmbed()],
         components: buildCommOfficeRows(counts ?? undefined) as any,
-        files: [],
+        files:      [],
       });
       return true;
     }
     const page = buildAdminCategoryPage(value as AdminCategoryId, ctx.seasonNum, ctx.weekStr);
-    await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
+    await interaction.editReply({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
 
-  // ── menu_cat — main tree navigation + leaf dispatch ───────────────────────
+  // ── menu_cat — main tree navigation ──────────────────────────────────────
 
-  // Back-to-main-menu option
   if (value === MENU_HOME_VALUE) {
-    await interaction.update({
+    await interaction.editReply({
       embeds:     [buildMenuHubEmbed(ctx.settings, ctx.isAdmin, ctx.seasonNum, ctx.weekStr)],
       components: buildMenuHubRows(ctx) as any,
       files:      buildMenuBannerAttachment(),
@@ -138,46 +155,41 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     return true;
   }
 
-  // Back-to-admin-hub option (used from admin sub-page nav selectors)
   if (value === MENU_ADMIN_HOME_VALUE) {
     if (!ctx.isAdmin && !ctx.isCommissioner) {
-      await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
+      await interaction.followUp({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
     const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr, ctx.commOfficeTotal);
-    await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
+    await interaction.editReply({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
 
   const node = findNode(value);
   if (!node) {
-    await interaction.reply({ content: "❌ Unknown menu option (this menu may have expired).", ephemeral: true });
+    await interaction.followUp({ content: "❌ Unknown menu option (this menu may have expired).", ephemeral: true });
     return true;
   }
 
-  // Visibility check
   if (node.visible && !node.visible(ctx)) {
-    await interaction.reply({ content: "❌ That option isn't available right now.", ephemeral: true });
+    await interaction.followUp({ content: "❌ That option isn't available right now.", ephemeral: true });
     return true;
   }
 
   if (node.kind === "ops") {
     if (!ctx.isAdmin && !ctx.isCommissioner) {
-      await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
+      await interaction.followUp({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
     const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr, ctx.commOfficeTotal);
-    await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
+    await interaction.editReply({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
 
   if (node.kind === "branch" || node.kind === "placeholder") {
-    // Economy & Social legacy: if user is on a "gm" branch, optionally append
-    // the transactions embed. For now keep sub-pages clean (banner removed).
     const page = buildBranchPage(node, ctx);
-
-    // Append transactions embed when entering the Bank or GM root for at-a-glance.
     let embeds: any[] = [page.embed];
+
     if (node.path === "gm") {
       try {
         const gid = interaction.guildId!;
@@ -203,16 +215,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       }
     }
 
-    await interaction.update({ embeds, components: page.rows as any, files: [] });
-    return true;
-  }
-
-  // Leaf action — dispatch to the existing ac_ handler with the chosen acId.
-  if (node.kind === "action") {
-    const handled = await handleActionsInteraction(interaction, node.action);
-    if (!handled) {
-      await interaction.reply({ content: "❌ That action couldn't be opened. Try again.", ephemeral: true });
-    }
+    await interaction.editReply({ embeds, components: page.rows as any, files: [] });
     return true;
   }
 
@@ -224,20 +227,22 @@ export async function handleMenuButton(interaction: ButtonInteraction): Promise<
   const id = interaction.customId;
   if (id !== "menu_back" && id !== "menu_admin_back") return false;
 
+  // Acknowledge immediately before async work
+  await interaction.deferUpdate();
+
   const ctx = await loadContext(interaction);
 
   if (id === "menu_admin_back") {
     if (!ctx.isAdmin && !ctx.isCommissioner) {
-      await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
+      await interaction.followUp({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
     const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr, ctx.commOfficeTotal);
-    await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
+    await interaction.editReply({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
 
-  // menu_back → main hub (banner + selector)
-  await interaction.update({
+  await interaction.editReply({
     embeds:     [buildMenuHubEmbed(ctx.settings, ctx.isAdmin, ctx.seasonNum, ctx.weekStr)],
     components: buildMenuHubRows(ctx) as any,
     files:      buildMenuBannerAttachment(),

@@ -655,11 +655,6 @@ async function handlePostMatchupsConfirm(interaction: ButtonInteraction) {
 // ── Post Game Channels ─────────────────────────────────────────────────────────
 
 async function handlePostGameChannels(interaction: ButtonInteraction) {
-  const guildId  = interaction.guildId!;
-  const season   = await getOrCreateActiveSeason(guildId);
-  const currWeek = parseInt(season.currentWeek ?? "1", 10);
-  const defaultW = isNaN(currWeek) ? "1" : String(currWeek);
-
   const modal = new ModalBuilder()
     .setCustomId("ao_modal_post_game_channels")
     .setTitle("Post Game Channels");
@@ -671,8 +666,7 @@ async function handlePostGameChannels(interaction: ButtonInteraction) {
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMaxLength(2)
-        .setPlaceholder(defaultW)
-        .setValue(defaultW),
+        .setPlaceholder("e.g. 7"),
     ),
   );
   await interaction.showModal(modal);
