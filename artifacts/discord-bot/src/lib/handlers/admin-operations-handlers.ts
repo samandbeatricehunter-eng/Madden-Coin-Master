@@ -853,7 +853,58 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       // stale DB row and fall through to recreate the channel.
       const liveChannel = guild.channels.cache.get(existingRow.channelId);
       if (liveChannel) {
-        results.push(`⏭️ **${awayProper} vs ${homeProper}** — channel already exists (<#${existingRow.channelId}>)`);
+        // Channel exists — check if the scheduling header was ever posted.
+        const [existingSched] = await db.select()
+          .from(gameSchedulesTable)
+          .where(eq(gameSchedulesTable.channelId, existingRow.channelId))
+          .limit(1);
+
+        if (existingSched?.headerMessageId) {
+          // Fully set up — skip entirely.
+          results.push(`⏭️ **${awayProper} vs ${homeProper}** — channel already exists (<#${existingRow.channelId}>)`);
+          continue;
+        }
+
+        // Channel + DB row exist but header is missing (previous run failed at that step).
+        // Post the header now without touching the channel.
+        try {
+          const sched = await ensureScheduleRow({
+            guildId,
+            channelId:    existingRow.channelId,
+            seasonId:     season.id,
+            weekIndex,
+            awayDiscordId,
+            homeDiscordId,
+            awayTeamName: awayProper,
+            homeTeamName: homeProper,
+            status:       "unscheduled",
+          });
+          const settings = await getServerSettings(guildId);
+          const deadline = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
+          const awayMember = awayDiscordId && !awayDiscordId.startsWith("unlinked_")
+            ? await guild.members.fetch(awayDiscordId).catch(() => null) : null;
+          const homeMember = homeDiscordId && !homeDiscordId.startsWith("unlinked_")
+            ? await guild.members.fetch(homeDiscordId).catch(() => null) : null;
+          const awayTag = awayMember ? `<@${awayDiscordId}> (@${awayMember.displayName})` : awayProper;
+          const homeTag = homeMember ? `<@${homeDiscordId}> (@${homeMember.displayName})` : homeProper;
+          const tc = liveChannel as import("discord.js").TextChannel;
+          const headerMsg = await tc.send({
+            content:
+              `🏈 **${awayProper} @ ${homeProper}** — ${displayLabel}\n` +
+              `${awayTag}  vs  ${homeTag}\n` +
+              `Schedule your game using the buttons below. Good luck!`,
+            embeds:     [buildHeaderEmbed(sched, deadline)],
+            components: [buildHeaderRow(sched)],
+          });
+          await headerMsg.pin().catch(() => {});
+          await db.update(gameSchedulesTable)
+            .set({ headerMessageId: headerMsg.id })
+            .where(eq(gameSchedulesTable.id, sched.id));
+          results.push(`✅ Posted missing header to existing <#${existingRow.channelId}>`);
+        } catch (hdrErr) {
+          console.error(`[handlePostGameChannelsModal] Failed to recover header for ${existingRow.channelId}:`, hdrErr);
+          results.push(`⚠️ Channel exists but header posting failed (<#${existingRow.channelId}>)`);
+        }
         continue;
       }
       // Channel was deleted — remove the stale row so the insert below succeeds.
@@ -864,6 +915,15 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     const awayNick = discordIdToMca.get(awayDiscordId)?.nickName ?? discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName.split(/\s+/).pop()!;
     const homeNick = discordIdToMca.get(homeDiscordId)?.nickName ?? discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName.split(/\s+/).pop()!;
     const chanName = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
+
+    // Delete any orphaned Discord channel with the same name that has no DB row
+    // (happens when a previous run failed after channel creation but before DB insert).
+    const orphan = guild.channels.cache.find(
+      c => c.parentId === matchupCategory.id && c.name === chanName,
+    );
+    if (orphan) {
+      await orphan.delete("Post Game Channels — replacing orphaned matchup channel").catch(() => {});
+    }
 
     try {
       // ── Permission overwrites: deny @everyone, allow bot + Commissioner role + both players + bot-admins ──
@@ -2778,6 +2838,21 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
       await db.delete(gameChannelsTable)
         .where(eq(gameChannelsTable.seasonId, season.id));
       if (deleted > 0) channelLines.push(`🗑️ Removed **${deleted}** previous matchup channel${deleted !== 1 ? "s" : ""}`);
+    }
+
+    // Also sweep the GAMEDAY category for any orphaned Discord channels that have
+    // no DB row (e.g. created by a previous run that failed before the DB insert).
+    const gamedayCategory = guild.channels.cache.find(
+      c => c.type === ChannelType.GuildCategory && c.name.toUpperCase().includes("GAMEDAY"),
+    );
+    if (gamedayCategory) {
+      const orphans = guild.channels.cache.filter(
+        c => c.parentId === gamedayCategory.id && c.name.includes("-vs-"),
+      );
+      for (const [, ch] of orphans) {
+        try { await ch.delete("Advance week — sweeping orphaned matchup channel"); deleted++; }
+        catch (_) {}
+      }
     }
 
     const newWeekNum = parseInt(newWeek, 10);
