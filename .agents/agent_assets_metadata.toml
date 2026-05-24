@@ -60,3 +60,9 @@ id = "JTMjCgtLiScIO286RYNkF"
 uri = "file://exports/actions-handlers-cleaned.tar.gz"
 type = "unspecified"
 title = "actions-handlers.ts (cleaned) — extract and replace your local file"
+
+[[outputs]]
+id = "7YQKddai3G4p6glymzkzU"
+uri = "file://exports/admin-rules-handlers-cleaned.tar.gz"
+type = "unspecified"
+title = "admin-rules-handlers.ts (rebuilt) — replace your local file with this"
