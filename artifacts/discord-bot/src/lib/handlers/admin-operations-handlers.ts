@@ -20,7 +20,7 @@ import {
   serverSettingsTable, franchiseRostersTable, inventoryTable, legendsTable, customPlayersTable,
   guildChannelsTable, gameSchedulesTable,
 } from "@workspace/db";
-import { eq, and, sql, ne, desc } from "drizzle-orm";
+import { eq, and, sql, ne, desc, inArray } from "drizzle-orm";
 import {
   getOrCreateActiveSeason, addBalance, logTransaction,
   getGuildChannel, CHANNEL_KEYS,
@@ -726,14 +726,14 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
   const raw     = interaction.fields.getTextInputValue("week_num").trim();
   const weekNum = parseInt(raw, 10);
   if (isNaN(weekNum) || weekNum < 1 || weekNum > 22) {
-    await interaction.editReply({ content: "❌ Invalid week number. Enter 1–18 for regular season, 19–22 for playoffs." });
+    await reply({ content: "❌ Invalid week number. Enter 1–18 for regular season, 19–22 for playoffs." });
     return;
   }
 
   const playoffIndexMap: Record<number, number> = { 19: 1018, 20: 1019, 21: 1020, 22: 1022 };
   const weekIndex = weekNum <= 18 ? weekNum - 1 : (playoffIndexMap[weekNum] ?? -1);
   if (weekIndex === -1) {
-    await interaction.editReply({ content: "❌ Could not resolve week index." });
+    await reply({ content: "❌ Could not resolve week index." });
     return;
   }
 
@@ -755,7 +755,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     ));
 
   if (games.length === 0) {
-    await interaction.editReply({
+    await reply({
       content: `❌ No schedule data found for **${displayLabel}**. Run \`/franchiseupdate\` or import the schedule first.`,
     });
     return;
@@ -838,7 +838,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
   );
 
   if (h2hGames.length === 0) {
-    await interaction.editReply({
+    await reply({
       content: `ℹ️ No H2H matchups found for **${displayLabel}** — all ${games.length} game${games.length !== 1 ? "s" : ""} are CPU matchups. No channels created.`,
     });
     return;
@@ -850,8 +850,36 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     c => c.type === ChannelType.GuildCategory && c.name.toUpperCase().includes("GAMEDAY"),
   );
   if (!matchupCategory) {
-    await interaction.editReply({ content: "❌ Could not find a **GAMEDAY CENTER** category. Create one in Discord first." });
+    await reply({ content: "❌ Could not find a **GAMEDAY CENTER** category. Create one in Discord first." });
     return;
+  }
+
+  // ── Wipe every existing game channel in GAMEDAY before recreating ────────
+  // Per user spec: clicking Post Game Channels nukes EVERY child channel under
+  // the GAMEDAY category (any week, any season) plus their DB rows, then
+  // recreates fresh channels for this week. This keeps the category from
+  // accumulating dead channels across the season.
+  const deletedChannelIds: string[] = [];
+  const childChannels = guild.channels.cache.filter(c => c.parentId === matchupCategory.id);
+  let wipedCount = 0;
+  for (const ch of childChannels.values()) {
+    try {
+      await ch.delete("Post Game Channels — wiping previous week's channels");
+      deletedChannelIds.push(ch.id);
+      wipedCount++;
+    } catch (err) {
+      // Don't queue the DB rows for deletion if the channel itself survived —
+      // otherwise we'd end up with a live channel that has no schedule row.
+      console.error(`[handlePostGameChannelsModal] Failed to delete channel ${ch.id} (${ch.name}):`, err);
+    }
+  }
+  if (deletedChannelIds.length > 0) {
+    try {
+      await db.delete(gameSchedulesTable).where(inArray(gameSchedulesTable.channelId, deletedChannelIds));
+      await db.delete(gameChannelsTable).where(inArray(gameChannelsTable.channelId, deletedChannelIds));
+    } catch (err) {
+      console.error("[handlePostGameChannelsModal] Failed to clean DB rows for wiped channels:", err);
+    }
   }
 
   // Load existing channel records for this week (to avoid duplicates).

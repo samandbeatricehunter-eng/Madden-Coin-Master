@@ -225,6 +225,36 @@ export async function handleGsInteraction(
   const sid = parseInt(sidStr ?? "0", 10);
   if (!sid && action !== "gs_sched_cancel") return true;
 
+  // ── Participant-only gate ──────────────────────────────────────────────────
+  // The header / scheduling / play-state buttons may ONLY be clicked by the two
+  // players in the matchup. Admins and Commissioners are explicitly NOT allowed
+  // to click them (they have their own approval buttons: gs_req_approve /
+  // gs_req_reject). Anything else gets a stern ephemeral.
+  //
+  // gs_pick_*  and gs_sched_confirm/cancel act on an ephemeral picker the user
+  // opened themselves, so no extra gate needed.
+  // gs_accept / gs_counter / gs_decline carry a PROPOSAL id (not a schedule id)
+  // in their custom_id, so they're gated by their own assertOpponent() check.
+  const PARTICIPANT_ONLY = new Set([
+    "gs_schedule", "gs_fairsim", "gs_forcewin",
+    "gs_begun", "gs_finished", "gs_mark_done", "gs_winner",
+  ]);
+  if (PARTICIPANT_ONLY.has(action)) {
+    const sched = await loadSchedule(sid);
+    if (!sched) {
+      await interaction.reply({ content: "❌ Schedule not found.", ephemeral: true }).catch(() => {});
+      return true;
+    }
+    const uid = interaction.user.id;
+    if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+      await interaction.reply({
+        content: "🚫 You're not scheduled to play in this game. Do not touch these buttons.",
+        ephemeral: true,
+      }).catch(() => {});
+      return true;
+    }
+  }
+
   try {
     if (interaction.isButton()) {
       if (action === "gs_schedule")        return await handleScheduleClick(interaction, sid);
@@ -262,10 +292,16 @@ async function handleScheduleClick(interaction: ButtonInteraction, sid: number):
   const uid = interaction.user.id;
   const member = interaction.member as GuildMember | null;
 
-  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId && !(await isCommish(member, sched.guildId, uid))) {
-    await interaction.reply({ content: "❌ Only the two players in this matchup can schedule.", ephemeral: true });
+  // Participant-only is already enforced by the dispatcher gate, but keep a
+  // defense-in-depth check here in case this is called from another path.
+  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+    await interaction.reply({
+      content: "🚫 You're not scheduled to play in this game. Do not touch these buttons.",
+      ephemeral: true,
+    });
     return true;
   }
+  void member;
 
   // If there's a pending proposal owned by the clicker, treat as CANCEL.
   if (sched.status === "pending") {
