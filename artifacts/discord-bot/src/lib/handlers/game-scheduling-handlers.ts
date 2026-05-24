@@ -21,10 +21,10 @@ import {
 import { db } from "@workspace/db";
 import {
   gameSchedulesTable, gameScheduleProposalsTable,
-  gameStatusConfirmationsTable, gotwHistoryTable, gotwVotesTable,
+  gameStatusConfirmationsTable, gameReminderLogTable, gotwHistoryTable, gotwVotesTable,
   coinTransactionsTable, usersTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { isAdminUser, addBalance, logTransaction, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
 import { getServerSettings } from "../db/server-settings.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
@@ -418,8 +418,14 @@ async function handleAccept(interaction: ButtonInteraction, propId: number): Pro
   if (!(await assertOpponent(interaction, sched, prop.proposerId))) return true;
 
   await db.update(gameScheduleProposalsTable).set({ status: "accepted" }).where(eq(gameScheduleProposalsTable.id, propId));
+  // Whenever scheduledAt changes (new schedule or reschedule) we MUST clear
+  // the per-schedule reminder log so the next cycle's T-30/T0/T+20/T+60/T+120
+  // actually fire — the dedup table is keyed only on (scheduleId, kind).
+  await db.delete(gameReminderLogTable).where(eq(gameReminderLogTable.scheduleId, prop.scheduleId));
+  // Also clear any stale begun/finished confirmations from a prior cycle.
+  await db.delete(gameStatusConfirmationsTable).where(eq(gameStatusConfirmationsTable.scheduleId, prop.scheduleId));
   await db.update(gameSchedulesTable)
-    .set({ status: "confirmed", scheduledAt: prop.proposedAt, scheduledTz: prop.tz, updatedAt: new Date() })
+    .set({ status: "confirmed", scheduledAt: prop.proposedAt, scheduledTz: prop.tz, startedAt: null, finishedAt: null, winnerDiscordId: null, updatedAt: new Date() })
     .where(eq(gameSchedulesTable.id, prop.scheduleId));
 
   const confirmEmbed = new EmbedBuilder()
@@ -470,7 +476,9 @@ async function handleDeclineFairSim(interaction: ButtonInteraction, propId: numb
   if (!(await assertOpponent(interaction, sched, prop.proposerId))) return true;
 
   await db.update(gameScheduleProposalsTable).set({ status: "declined" }).where(eq(gameScheduleProposalsTable.id, propId));
-  await db.update(gameSchedulesTable).set({ status: "unscheduled", scheduledAt: null, updatedAt: new Date() }).where(eq(gameSchedulesTable.id, prop.scheduleId));
+  await db.delete(gameReminderLogTable).where(eq(gameReminderLogTable.scheduleId, prop.scheduleId));
+  await db.delete(gameStatusConfirmationsTable).where(eq(gameStatusConfirmationsTable.scheduleId, prop.scheduleId));
+  await db.update(gameSchedulesTable).set({ status: "unscheduled", scheduledAt: null, startedAt: null, finishedAt: null, updatedAt: new Date() }).where(eq(gameSchedulesTable.id, prop.scheduleId));
 
   await interaction.update({ components: [] });
   await postFairSimRequest(interaction, sched, interaction.user.id, "Proposal declined — auto-requested Fair Sim.");
@@ -574,8 +582,15 @@ async function handleReqReject(interaction: ButtonInteraction, sid: number): Pro
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const tail = interaction.customId.split(":")[1] ?? "";
   const [, kind, requesterId] = tail.split("|");
-  if (interaction.user.id !== (requesterId === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId)) {
-    await interaction.reply({ content: "❌ Only the opponent can reject.", ephemeral: true });
+  // Symmetric with handleReqApprove: opponent OR a non-requester commissioner.
+  const opponentId = requesterId === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
+  const isOpponent = interaction.user.id === opponentId;
+  const isElevated = await isCommish(interaction.member as GuildMember | null, sched.guildId, interaction.user.id);
+  if (!isOpponent && !(isElevated && interaction.user.id !== requesterId)) {
+    const reason = interaction.user.id === requesterId
+      ? "❌ You can't reject your own request."
+      : "❌ Only the opponent (or a commissioner) can reject.";
+    await interaction.reply({ content: reason, ephemeral: true });
     return true;
   }
   await interaction.update({ components: [] });
@@ -588,31 +603,54 @@ async function handleBegun(interaction: ButtonInteraction, sid: number): Promise
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const uid = interaction.user.id;
-  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
-    await interaction.reply({ content: "❌ Only the two players can confirm.", ephemeral: true });
+  const isPlayer = uid === sched.awayDiscordId || uid === sched.homeDiscordId;
+  const isElevated = await isCommish(interaction.member as GuildMember | null, sched.guildId, uid);
+  if (!isPlayer && !isElevated) {
+    await interaction.reply({ content: "❌ Only the two players or a commissioner can confirm.", ephemeral: true });
     return true;
   }
 
-  await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "begun" }).onConflictDoNothing();
+  // Commissioner / bot-admin override: record both players' confirmations in
+  // one shot so the T+120 "Override: Mark Begun" button works as intended.
+  if (!isPlayer && isElevated) {
+    await db.insert(gameStatusConfirmationsTable)
+      .values([
+        { scheduleId: sid, discordId: sched.awayDiscordId, kind: "begun" },
+        { scheduleId: sid, discordId: sched.homeDiscordId, kind: "begun" },
+      ])
+      .onConflictDoNothing();
+  } else {
+    await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "begun" }).onConflictDoNothing();
+  }
+
   const confirms = await db.select().from(gameStatusConfirmationsTable)
     .where(and(eq(gameStatusConfirmationsTable.scheduleId, sid), eq(gameStatusConfirmationsTable.kind, "begun")));
   const ids = new Set(confirms.map((c) => c.discordId));
   const both = ids.has(sched.awayDiscordId) && ids.has(sched.homeDiscordId);
 
-  if (both && sched.status !== "started") {
-    await db.update(gameSchedulesTable).set({ status: "started", startedAt: new Date(), updatedAt: new Date() }).where(eq(gameSchedulesTable.id, sid));
-    await (interaction.channel as TextChannel).send({
-      content: `▶️ **Game started** — confirmed by both <@${sched.awayDiscordId}> and <@${sched.homeDiscordId}>.\n\nWhen the game finishes, both players click **Confirm Game Finished** below.`,
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId(`gs_finished:${sid}`).setLabel("🏁 Confirm Game Finished").setStyle(ButtonStyle.Primary),
-      )],
-    });
-    await tagCommissioner(interaction.channel as TextChannel, `▶️ **Game started:** <@${sched.awayDiscordId}> vs <@${sched.homeDiscordId}>`);
-    await refreshHeader(interaction.client, (await loadSchedule(sid))!);
+  if (both) {
+    // Conditional update — only the first call that sees a non-`started`
+    // status actually flips it and posts the "Game started" side-effects.
+    // Prevents duplicate posts when both players (or a commish + player)
+    // click within the same tick.
+    const flipped = await db.update(gameSchedulesTable)
+      .set({ status: "started", startedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(gameSchedulesTable.id, sid), inArray(gameSchedulesTable.status, ["confirmed", "auto_fair_sim", "pending", "unscheduled"])))
+      .returning({ id: gameSchedulesTable.id });
+    if (flipped.length > 0) {
+      await (interaction.channel as TextChannel).send({
+        content: `▶️ **Game started** — confirmed by both <@${sched.awayDiscordId}> and <@${sched.homeDiscordId}>.\n\nWhen the game finishes, both players click **Confirm Game Finished** below.`,
+        components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`gs_finished:${sid}`).setLabel("🏁 Confirm Game Finished").setStyle(ButtonStyle.Primary),
+        )],
+      });
+      await tagCommissioner(interaction.channel as TextChannel, `▶️ **Game started:** <@${sched.awayDiscordId}> vs <@${sched.homeDiscordId}>`);
+      await refreshHeader(interaction.client, (await loadSchedule(sid))!);
+    }
   }
 
   await interaction.reply({
-    content: both ? "✅ Both players confirmed start." : "✅ You confirmed start. Waiting on opponent.",
+    content: both ? "✅ Game marked started." : "✅ You confirmed start. Waiting on opponent.",
     ephemeral: true,
   });
   return true;
@@ -622,12 +660,24 @@ async function handleFinished(interaction: ButtonInteraction, sid: number): Prom
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const uid = interaction.user.id;
-  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
-    await interaction.reply({ content: "❌ Only the two players can confirm.", ephemeral: true });
+  const isPlayer = uid === sched.awayDiscordId || uid === sched.homeDiscordId;
+  const isElevated = await isCommish(interaction.member as GuildMember | null, sched.guildId, uid);
+  if (!isPlayer && !isElevated) {
+    await interaction.reply({ content: "❌ Only the two players or a commissioner can confirm.", ephemeral: true });
     return true;
   }
 
-  await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "finished" }).onConflictDoNothing();
+  if (!isPlayer && isElevated) {
+    await db.insert(gameStatusConfirmationsTable)
+      .values([
+        { scheduleId: sid, discordId: sched.awayDiscordId, kind: "finished" },
+        { scheduleId: sid, discordId: sched.homeDiscordId, kind: "finished" },
+      ])
+      .onConflictDoNothing();
+  } else {
+    await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "finished" }).onConflictDoNothing();
+  }
+
   const confirms = await db.select().from(gameStatusConfirmationsTable)
     .where(and(eq(gameStatusConfirmationsTable.scheduleId, sid), eq(gameStatusConfirmationsTable.kind, "finished")));
   const ids = new Set(confirms.map((c) => c.discordId));
@@ -749,6 +799,22 @@ export async function settleGotwForGame(
   if (!hist) return null;
   if (hist.payoutIssuedAt) return `GOTW: payout already issued at ${hist.payoutIssuedAt.toISOString()}.`;
 
+  // Atomic claim — conditional UPDATE that only succeeds when payoutIssuedAt
+  // is still NULL. Two simultaneous winner selections would both pass the
+  // read-side `if (hist.payoutIssuedAt)` check above; this guarantees only
+  // ONE of them advances to the payout loop, eliminating double-payment.
+  const claimed = await db.update(gotwHistoryTable)
+    .set({ payoutIssuedAt: new Date() })
+    .where(and(
+      eq(gotwHistoryTable.seasonId, sched.seasonId),
+      eq(gotwHistoryTable.weekIndex, sched.weekIndex),
+      isNull(gotwHistoryTable.payoutIssuedAt),
+    ))
+    .returning({ id: gotwHistoryTable.id });
+  if (claimed.length === 0) {
+    return `GOTW: payout already settled by a concurrent action.`;
+  }
+
   const votes = await db.select().from(gotwVotesTable).where(and(
     eq(gotwVotesTable.seasonId, sched.seasonId),
     eq(gotwVotesTable.weekIndex, sched.weekIndex),
@@ -764,9 +830,6 @@ export async function settleGotwForGame(
       await u?.send(`🏈 GOTW correct! +${bonus} coins for Week ${sched.weekIndex + 1}.`).catch(() => {});
     } catch { /* ignore */ }
   }
-
-  await db.update(gotwHistoryTable).set({ payoutIssuedAt: new Date() })
-    .where(and(eq(gotwHistoryTable.seasonId, sched.seasonId), eq(gotwHistoryTable.weekIndex, sched.weekIndex)));
 
   return `GOTW: paid **${correct.length}** voter(s) **${bonus}** coin(s) each.`;
 }

@@ -8,7 +8,7 @@ import { eq, and, asc, isNotNull } from "drizzle-orm";
 import {
   scoreH2HMatchups, purgeChannel, purgeGotwChannel, autoPayoutGotwVoters,
 } from "../helpers/gotw-helpers.js";
-import { getRosterSeasonId, getScheduleSeasonId, PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
+import { getRosterSeasonId, getScheduleSeasonId, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
 const MIN_COMPLETED_STATUS = 2;
 
 export type MatchupsReplyFn = (opts: {
@@ -232,32 +232,11 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
     .setFooter({ text: footerParts.join(" · ") || "No games" })
     .setTimestamp();
 
-  // ── Clear & post to matchups channel ──────────────────────────────────────
-  const matchupsId = await getGuildChannel(resolvedGuildId, CHANNEL_KEYS.MATCHUPS);
-  const targetCh = matchupsId
-    ? (client.channels.cache.get(matchupsId) ?? await client.channels.fetch(matchupsId).catch(() => null))
-    : null;
-
-  if (!targetCh?.isTextBased()) {
-    await replyFn({ content: `❌ Cannot find matchups channel. Run \`/initialize-server\` or use \`/adminserver link_channel\` to configure this server's channels.` });
-    return;
-  }
-
-  // Guard: ensure the resolved channel actually belongs to THIS guild,
-  // not another server the bot is also in.
-  const chGuildId = "guild" in targetCh ? (targetCh as { guild?: { id: string } }).guild?.id : undefined;
-  if (chGuildId && chGuildId !== resolvedGuildId) {
-    await replyFn({
-      content: `❌ The registered matchups channel belongs to a different server. Run \`/adminserver link_channel channel:#weekly-matchups key:matchups\` in THIS server to point it to the right channel.`,
-    });
-    return;
-  }
-
   // Matchup auto-post has been DISABLED — matchups are stored in the DB and
-  // displayed in per-game private channels instead. The line below intentionally
-  // does nothing with `embed` / `targetCh`, but we keep the channel resolution
-  // above so misconfiguration is still surfaced to the admin.
-  void embed; void targetCh;
+  // displayed in per-game private channels instead. We no longer require the
+  // matchups channel to even exist, so the weekly flow can't be blocked by
+  // a missing/misconfigured channel link.
+  void embed;
 
   // ── Build reply base + send GOTW prompt ───────────────────────────────────
   let baseContent =

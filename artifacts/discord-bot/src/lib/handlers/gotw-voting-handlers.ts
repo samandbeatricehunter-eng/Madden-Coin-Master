@@ -45,8 +45,8 @@ async function findMatchedSchedule(hist: typeof gotwHistoryTable.$inferSelect): 
 
 function votingLocked(sched: typeof gameSchedulesTable.$inferSelect | null): { locked: boolean; reason: string } {
   if (!sched) return { locked: false, reason: "" };
-  if (sched.status === "started" || sched.status === "finished" || sched.status === "completed_imported") {
-    return { locked: true, reason: "Voting closed — game has started or finished." };
+  if (["started", "finished", "completed_imported", "fair_sim", "auto_fair_sim", "force_win"].includes(sched.status)) {
+    return { locked: true, reason: "Voting closed — game has started, finished, or been resolved." };
   }
   if (sched.scheduledAt && sched.scheduledAt.getTime() <= Date.now()) {
     return { locked: true, reason: "Voting closed — scheduled start time has passed." };
