@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
-import pg from "pg";
-import { spawn } from "node:child_process";
+import pg from "/home/runner/workspace/lib/db/node_modules/pg/lib/index.js";
 
 const SUPABASE_URL = process.env.SUPABASE_DATABASE_URL;
 const PROD_URL = process.env.PROD_DATABASE_URL;
 if (!SUPABASE_URL) throw new Error("SUPABASE_DATABASE_URL not set");
 if (!PROD_URL) throw new Error("PROD_DATABASE_URL not set (the Replit prod DB connection string)");
 
-const BATCH = 1000;
+const MAX_PARAMS = 30000; // Stay well under Postgres's 65535 (int16) param limit
 
 const sb = new pg.Pool({ connectionString: SUPABASE_URL, max: 4 });
 const prod = new pg.Pool({ connectionString: PROD_URL, max: 2, ssl: { rejectUnauthorized: false } });
@@ -62,15 +61,15 @@ async function copyTable(table, commonCols, sbClient) {
   const orderBy = pkCols.length
     ? pkCols.map(quoteIdent).join(",")
     : "ctid";
+  const batch = Math.max(1, Math.floor(MAX_PARAMS / commonCols.length));
 
   let offset = 0;
   let total = 0;
   for (;;) {
-    const sel = `SELECT ${cols} FROM public.${quoteIdent(table)} ORDER BY ${orderBy} LIMIT ${BATCH} OFFSET ${offset}`;
+    const sel = `SELECT ${cols} FROM public.${quoteIdent(table)} ORDER BY ${orderBy} LIMIT ${batch} OFFSET ${offset}`;
     const r = await prod.query(sel);
     if (r.rows.length === 0) break;
 
-    // Build multi-row INSERT with parameters
     const params = [];
     const valuesSql = r.rows.map((row, ri) => {
       const ph = commonCols.map((c, ci) => {
@@ -80,11 +79,16 @@ async function copyTable(table, commonCols, sbClient) {
       return `(${ph.join(",")})`;
     }).join(",");
     const insert = `INSERT INTO public.${quoteIdent(table)} (${cols}) VALUES ${valuesSql}`;
-    await sbClient.query(insert, params);
+    try {
+      await sbClient.query(insert, params);
+    } catch (e) {
+      console.error(`  ✗ ${table}: failed at offset ${offset}, batch=${batch}, cols=${commonCols.length}, params=${params.length}`);
+      throw e;
+    }
 
     total += r.rows.length;
-    offset += BATCH;
-    if (r.rows.length < BATCH) break;
+    offset += batch;
+    if (r.rows.length < batch) break;
   }
   return total;
 }
@@ -127,14 +131,24 @@ async function main() {
     logStep("\nDisabling FK triggers on Supabase session...");
     await sbClient.query("SET session_replication_role = replica");
 
-    // Truncate all Supabase populated tables (those we're about to write to)
-    // Use CASCADE to handle FKs from other tables
-    const truncTables = plan.map(p => `public.${quoteIdent(p.table)}`).join(", ");
-    logStep(`Truncating ${plan.length} Supabase tables (RESTART IDENTITY CASCADE)...`);
-    await sbClient.query(`TRUNCATE ${truncTables} RESTART IDENTITY CASCADE`);
+    // Check what's already there — resume mode if any table has rows
+    const sbCountsPre = await getCounts(sb);
+    const alreadyDone = plan.filter(p => sbCountsPre[p.table] === p.rows);
+    const remaining = plan.filter(p => sbCountsPre[p.table] !== p.rows);
+    if (alreadyDone.length) {
+      logStep(`Resume mode: ${alreadyDone.length} tables already match prod, will skip.`);
+      for (const p of alreadyDone) console.log(`  ⏭  ${p.table}: ${p.rows} rows already in Supabase`);
+    }
 
-    // Copy each table
-    for (const p of plan) {
+    // Truncate only the tables we still need to copy (those that don't match)
+    if (remaining.length > 0) {
+      const truncTables = remaining.map(p => `public.${quoteIdent(p.table)}`).join(", ");
+      logStep(`Truncating ${remaining.length} Supabase tables (RESTART IDENTITY CASCADE)...`);
+      await sbClient.query(`TRUNCATE ${truncTables} RESTART IDENTITY CASCADE`);
+    }
+
+    // Copy each table that still needs copying
+    for (const p of remaining) {
       const start = Date.now();
       const copied = await copyTable(p.table, p.common, sbClient);
       const ms = Date.now() - start;
