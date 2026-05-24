@@ -39,7 +39,6 @@ import * as adminServer             from "./commands/admin/adminserver.js";
 import * as adminTeamLogo          from "./commands/admin/admin-team-logo.js";
 import * as adminRepostBanners     from "./commands/admin/admin-repost-banners.js";
 import * as adminOperations        from "./commands/admin/admin-operations.js";
-import * as lottery                from "./commands/admin/lottery.js";
 
 // ── Events ────────────────────────────────────────────────────────────────────
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -126,7 +125,6 @@ if (!isProduction && !devBotEnabled) {
     adminTeamLogo,
     adminRepostBanners,
     adminOperations,
-    lottery,
   ];
 
   for (const command of commands) {

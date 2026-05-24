@@ -281,6 +281,13 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     return true;
   }
 
+  // ── Draft Lottery setup (step 1 — show role picker) ──────────────────────────
+  if (id === "ao_lottery") {
+    const { handleLotterySetup } = await import("./lottery-handler.js");
+    await handleLotterySetup(interaction as ButtonInteraction);
+    return true;
+  }
+
   // ── Post Matchups/GOTW ────────────────────────────────────────────────────────
   if (id === "ao_post_matchups") {
     await handlePostMatchups(interaction as ButtonInteraction);

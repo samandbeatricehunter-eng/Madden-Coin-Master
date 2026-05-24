@@ -538,6 +538,7 @@ export function buildAdminCategoryPage(
         btn("ao_post_custom_article", "📰 Custom Article",    ButtonStyle.Secondary),
         btn("ao_rerun_media",         "🐦 Media Cycle",       ButtonStyle.Secondary),
         btn("ao_rerun_hist",          "📜 Rerun Historical",  ButtonStyle.Secondary),
+        btn("ao_lottery",             "🎰 Draft Lottery",     ButtonStyle.Secondary),
       );
       break;
     }

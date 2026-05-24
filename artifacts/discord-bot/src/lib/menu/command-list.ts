@@ -11,7 +11,6 @@ import * as adminCustomPlayerSettings from "../../commands/admin/admin-custompla
 import * as adminFixPlayerNames      from "../../commands/admin/admin-fixplayernames.js";
 import * as adminServer              from "../../commands/admin/adminserver.js";
 import * as adminTeamLogo            from "../../commands/admin/admin-team-logo.js";
-import * as lottery                  from "../../commands/admin/lottery.js";
 
 /**
  * Builds the list of slash command JSON payloads to register with Discord.
@@ -31,7 +30,6 @@ export function buildCommandJSON(settings: ServerSettings | null = null): object
     [draftPresence,             true],
     [adminServer,               true],
     [adminTeamLogo,             true],
-    [lottery,                   true],
     [adminLegend,               legends],
     [adminLegendVault,          legends],
     [adminCustomArcetypes,      custom],

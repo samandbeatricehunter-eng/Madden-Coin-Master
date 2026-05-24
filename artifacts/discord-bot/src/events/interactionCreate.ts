@@ -215,6 +215,21 @@ export async function execute(interaction: Interaction) {
     return;
   }
 
+  if (interaction.isRoleSelectMenu()) {
+    try {
+      if (interaction.customId === "role_lottery") {
+        const { handleLotteryRoleSelect } = await import("../lib/handlers/lottery-handler.js");
+        await handleLotteryRoleSelect(interaction);
+      }
+    } catch (err) {
+      console.error(`[roleSelect] ${interaction.customId}:`, err);
+      const msg = { content: "❌ Something went wrong. Please try again.", ephemeral: true };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
+    }
+    return;
+  }
+
   if (interaction.isModalSubmit()) {
     try { await handleModal(interaction); }
     catch (err) {
@@ -2667,6 +2682,13 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const parts  = interaction.customId.split(":");
   const action = parts[0]!;
   const idStr  = parts[1];
+
+  // ── Draft Lottery — count modal (modal_lottery:<roleId>) ────────────────────
+  if (action === "modal_lottery") {
+    const { handleLotteryCountModal } = await import("../lib/handlers/lottery-handler.js");
+    await handleLotteryCountModal(interaction);
+    return;
+  }
 
   // ── League Data wizard — all ld_ prefixed modal submissions ──────────────────
   if (action?.startsWith("ld_")) {
