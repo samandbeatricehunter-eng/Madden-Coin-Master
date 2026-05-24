@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, serial, pgEnum, json, uniqueIndex, real, primaryKey } from "drizzle-orm/pg-core";
+import { bigint, bigserial, boolean, integer, json, pgEnum, pgTable, primaryKey, real, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -31,36 +31,36 @@ export const customPlayerTierEnum = pgEnum("custom_player_tier", [
 ]);
 
 export const usersTable = pgTable("economy_users", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   discordId: text("discord_id").notNull(),
   guildId:   text("guild_id").notNull().default("1476251181524189438"),
   discordUsername: text("discord_username").notNull(),
   team: text("team"),
   serverNickname: text("server_nickname"), // Discord server display name (nickname ?? username), kept in sync by the bot
-  balance: integer("balance").notNull().default(0),
-  totalLegendPurchases: integer("total_legend_purchases").notNull().default(0),
+  balance: bigint("balance", { mode: "number" }).notNull().default(0),
+  totalLegendPurchases: bigint("total_legend_purchases", { mode: "number" }).notNull().default(0),
   // All-time tracking for milestone payouts (per-guild)
-  allTimeSuperbowlWins:   integer("all_time_superbowl_wins").notNull().default(0),
-  allTimeSuperbowlLosses: integer("all_time_superbowl_losses").notNull().default(0),
-  allTimeH2HWins: integer("all_time_h2h_wins").notNull().default(0),
-  allTimeH2HLosses: integer("all_time_h2h_losses").notNull().default(0),
+  allTimeSuperbowlWins:   bigint("all_time_superbowl_wins", { mode: "number" }).notNull().default(0),
+  allTimeSuperbowlLosses: bigint("all_time_superbowl_losses", { mode: "number" }).notNull().default(0),
+  allTimeH2HWins: bigint("all_time_h2h_wins", { mode: "number" }).notNull().default(0),
+  allTimeH2HLosses: bigint("all_time_h2h_losses", { mode: "number" }).notNull().default(0),
   // Which win milestone has been awarded: 0=none, 1=5W, 2=12W, 3=25W, 4=50W
-  milestoneTierAwarded: integer("milestone_tier_awarded").notNull().default(0),
+  milestoneTierAwarded: bigint("milestone_tier_awarded", { mode: "number" }).notNull().default(0),
   // Playoff seeding for current season (set by admin when advancing to wildcard)
   playoffSeed: integer("playoff_seed"),         // 1–7 within their conference; null = not in playoffs
   playoffConference: text("playoff_conference"), // "NFC" | "AFC" | null
   eaId: text("ea_id"),                                                    // EA/PSN/Xbox gamertag for CFM
   isAdmin: boolean("is_admin").notNull().default(false),
-  botEscalationLevel: integer("bot_escalation_level").notNull().default(0), // persistent rudeness memory
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  botEscalationLevel: bigint("bot_escalation_level", { mode: "number" }).notNull().default(0), // persistent rudeness memory
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqDiscordGuild: uniqueIndex("economy_users_discord_guild_idx").on(t.discordId, t.guildId),
   uniqTeamGuild:    uniqueIndex("economy_users_team_guild_idx").on(t.team, t.guildId),
 }));
 
 export const seasonsTable = pgTable("seasons", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   guildId:      text("guild_id").notNull().default("1476251181524189438"),
   seasonNumber: integer("season_number").notNull(),
   isActive: boolean("is_active").notNull().default(true),
@@ -97,7 +97,7 @@ export const seasonsTable = pgTable("seasons", {
 }));
 
 export const legendsTable = pgTable("legends", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   guildId:     text("guild_id").notNull().default("1476251181524189438"),
   name: text("name").notNull(),
   position: text("position").notNull(),
@@ -108,20 +108,20 @@ export const legendsTable = pgTable("legends", {
 });
 
 export const purchasesTable = pgTable("purchases", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   discordId: text("discord_id").notNull(),
-  seasonId: integer("season_id").notNull(),
+  seasonId: bigint("season_id", { mode: "number" }).notNull(),
   purchaseType: purchaseTypeEnum("purchase_type").notNull(),
   status: purchaseStatusEnum("status").notNull().default("pending"),
-  cost: integer("cost").notNull(),
-  legendId: integer("legend_id"),
+  cost: bigint("cost", { mode: "number" }).notNull(),
+  legendId: bigint("legend_id", { mode: "number" }),
   playerName: text("player_name"),
   playerPosition: text("player_position"),
   attributeName: text("attribute_name"),
   customPlayerTier: customPlayerTierEnum("custom_player_tier"),
   discordMessageId: text("discord_message_id"),
   notes: text("notes"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   approvedAt: timestamp("approved_at"),
   draftTrackerMessageId: text("draft_tracker_message_id"),
   teamName: text("team_name"),
@@ -129,9 +129,9 @@ export const purchasesTable = pgTable("purchases", {
 });
 
 export const inventoryTable = pgTable("inventory", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   discordId: text("discord_id").notNull(),
-  seasonId: integer("season_id").notNull(),
+  seasonId: bigint("season_id", { mode: "number" }).notNull(),
   purchaseId: integer("purchase_id").notNull(),
   itemType: purchaseTypeEnum("item_type").notNull(),
   legendId: integer("legend_id"),
@@ -153,55 +153,55 @@ export const inventoryTable = pgTable("inventory", {
 });
 
 export const seasonStatsTable = pgTable("season_stats", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   discordId: text("discord_id").notNull(),
-  seasonId: integer("season_id").notNull(),
-  coreAttrPurchased: integer("core_attr_purchased").notNull().default(0),
-  nonCoreAttrPurchased: integer("non_core_attr_purchased").notNull().default(0),
-  devUpsPurchased: integer("dev_ups_purchased").notNull().default(0),
-  ageResetsPurchased: integer("age_resets_purchased").notNull().default(0),
-  legendsPurchasedThisSeason: integer("legends_purchased_this_season").notNull().default(0),
-  contractExtensionsPurchased: integer("contract_extensions_purchased").notNull().default(0),
-  salaryReductionsPurchased:   integer("salary_reductions_purchased").notNull().default(0),
-  bonusReductionsPurchased:    integer("bonus_reductions_purchased").notNull().default(0),
-  trainingGoldPurchased:   integer("training_gold_purchased").notNull().default(0),
-  trainingSilverPurchased: integer("training_silver_purchased").notNull().default(0),
+  seasonId: bigint("season_id", { mode: "number" }).notNull(),
+  coreAttrPurchased: bigint("core_attr_purchased", { mode: "number" }).notNull().default(0),
+  nonCoreAttrPurchased: bigint("non_core_attr_purchased", { mode: "number" }).notNull().default(0),
+  devUpsPurchased: bigint("dev_ups_purchased", { mode: "number" }).notNull().default(0),
+  ageResetsPurchased: bigint("age_resets_purchased", { mode: "number" }).notNull().default(0),
+  legendsPurchasedThisSeason: bigint("legends_purchased_this_season", { mode: "number" }).notNull().default(0),
+  contractExtensionsPurchased: bigint("contract_extensions_purchased", { mode: "number" }).notNull().default(0),
+  salaryReductionsPurchased:   bigint("salary_reductions_purchased", { mode: "number" }).notNull().default(0),
+  bonusReductionsPurchased:    bigint("bonus_reductions_purchased", { mode: "number" }).notNull().default(0),
+  trainingGoldPurchased:   bigint("training_gold_purchased", { mode: "number" }).notNull().default(0),
+  trainingSilverPurchased: bigint("training_silver_purchased", { mode: "number" }).notNull().default(0),
 });
 
 export const gameTypeEnum = pgEnum("game_type", ["regular_season", "playoff", "superbowl"]);
 
 export const userRecordsTable = pgTable("user_records", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   discordId: text("discord_id").notNull(),
   discordUsername: text("discord_username").notNull(),
   team: text("team"),
-  seasonId: integer("season_id").notNull(),
-  wins: integer("wins").notNull().default(0),
-  losses: integer("losses").notNull().default(0),
-  ties: integer("ties").notNull().default(0),
-  pointDifferential: integer("point_differential").notNull().default(0),
+  seasonId: bigint("season_id", { mode: "number" }).notNull(),
+  wins: bigint("wins", { mode: "number" }).notNull().default(0),
+  losses: bigint("losses", { mode: "number" }).notNull().default(0),
+  ties: bigint("ties", { mode: "number" }).notNull().default(0),
+  pointDifferential: bigint("point_differential", { mode: "number" }).notNull().default(0),
   // Separate playoff / superbowl tracking (still counted in wins/losses above)
-  playoffWins: integer("playoff_wins").notNull().default(0),
-  playoffLosses: integer("playoff_losses").notNull().default(0),
-  superbowlWins: integer("superbowl_wins").notNull().default(0),
-  superbowlLosses: integer("superbowl_losses").notNull().default(0),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  playoffWins: bigint("playoff_wins", { mode: "number" }).notNull().default(0),
+  playoffLosses: bigint("playoff_losses", { mode: "number" }).notNull().default(0),
+  superbowlWins: bigint("superbowl_wins", { mode: "number" }).notNull().default(0),
+  superbowlLosses: bigint("superbowl_losses", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqPlayerSeason: uniqueIndex("user_records_discord_season_idx").on(t.discordId, t.seasonId),
 }));
 
 // Individual game log for /recentH2H
 export const gameLogTable = pgTable("game_log", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   guildId:  text("guild_id").notNull().default("1476251181524189438"),
   discordId: text("discord_id").notNull(),
-  seasonId: integer("season_id").notNull(),
+  seasonId: bigint("season_id", { mode: "number" }).notNull(),
   result: text("result").notNull(), // "win" | "loss"
-  pointSpread: integer("point_spread").notNull(),
+  pointSpread: bigint("point_spread", { mode: "number" }).notNull(),
   opponentLabel: text("opponent_label"),    // team name or free text
   opponentDiscordId: text("opponent_discord_id"), // null for CPU games; used by rollback to reverse matchup records
   gameType: gameTypeEnum("game_type").notNull().default("regular_season"),
-  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ── All-time per-opponent H2H records (per-guild) ─────────────────────────────
@@ -300,7 +300,7 @@ export const coinTransactionsTable = pgTable("coin_transactions", {
   type: txTypeEnum("type").notNull(),
   description: text("description").notNull(),
   relatedUserId: text("related_user_id"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ── Global savings account ─────────────────────────────────────────────────────
@@ -375,12 +375,12 @@ export const franchiseProcessedGamesTable = pgTable("franchise_processed_games",
 
 // Tracks which players have had a game processed via /franchiseupdate this week (interview eligibility)
 export const franchiseGameParticipantsTable = pgTable("franchise_game_participants", {
-  id:        serial("id").primaryKey(),
-  seasonId:  integer("season_id").notNull(),
+  id:        bigserial("id", { mode: "number" }).primaryKey(),
+  seasonId:  bigint("season_id", { mode: "number" }).notNull(),
   week:      text("week").notNull(),
   discordId: text("discord_id").notNull(),
   gameType:  text("game_type").notNull(), // "h2h" | "cpu"
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqueParticipant: uniqueIndex("franchise_game_participants_unique_idx")
     .on(t.seasonId, t.week, t.discordId),
@@ -388,18 +388,18 @@ export const franchiseGameParticipantsTable = pgTable("franchise_game_participan
 
 // Stores the full regular-season schedule from each franchise ZIP import
 export const franchiseScheduleTable = pgTable("franchise_schedule", {
-  id:           serial("id").primaryKey(),
-  seasonId:     integer("season_id").notNull(),
-  weekIndex:    integer("week_index").notNull(),
-  homeTeamId:   integer("home_team_id").notNull(),
-  awayTeamId:   integer("away_team_id").notNull(),
+  id:           bigserial("id", { mode: "number" }).primaryKey(),
+  seasonId:     bigint("season_id", { mode: "number" }).notNull(),
+  weekIndex:    bigint("week_index", { mode: "number" }).notNull(),
+  homeTeamId:   bigint("home_team_id", { mode: "number" }).notNull(),
+  awayTeamId:   bigint("away_team_id", { mode: "number" }).notNull(),
   homeTeamName: text("home_team_name").notNull(),
   awayTeamName: text("away_team_name").notNull(),
-  homeScore:       integer("home_score"),
-  awayScore:       integer("away_score"),
-  status:          integer("status").notNull().default(0),
+  homeScore:       bigint("home_score", { mode: "number" }),
+  awayScore:       bigint("away_score", { mode: "number" }),
+  status:          bigint("status", { mode: "number" }).notNull().default(0),
   processedGameId: text("processed_game_id"),  // gameId stored in franchise_processed_games for this game
-  importedAt:      timestamp("imported_at").notNull().defaultNow(),
+  importedAt:      timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqueGame: uniqueIndex("franchise_schedule_unique_game_idx")
     .on(t.seasonId, t.weekIndex, t.homeTeamId, t.awayTeamId),
@@ -472,55 +472,55 @@ export const seasonStatTierConfigsTable = pgTable("season_stat_tier_configs", {
 
 // ── Team season stats (offense/defense yards — upserted each franchise ZIP import) ──
 export const teamSeasonStatsTable = pgTable("team_season_stats", {
-  id:         serial("id").primaryKey(),
-  seasonId:   integer("season_id").notNull(),
-  teamId:     integer("team_id").notNull(),
+  id:         bigserial("id", { mode: "number" }).primaryKey(),
+  seasonId:   bigint("season_id", { mode: "number" }).notNull(),
+  teamId:     bigint("team_id", { mode: "number" }).notNull(),
   discordId:  text("discord_id"),           // null if CPU team
   teamName:   text("team_name").notNull().default(""),
-  offYds:     integer("off_yds").notNull().default(0),      // total offensive yards (pass + rush)
-  offPassYds: integer("off_pass_yds").notNull().default(0), // offensive passing yards
-  offRushYds: integer("off_rush_yds").notNull().default(0), // offensive rushing yards
-  offTDs:     integer("off_tds").notNull().default(0),      // points scored (ptsFor fallback)
+  offYds:     bigint("off_yds", { mode: "number" }).notNull().default(0),      // total offensive yards (pass + rush)
+  offPassYds: bigint("off_pass_yds", { mode: "number" }).notNull().default(0), // offensive passing yards
+  offRushYds: bigint("off_rush_yds", { mode: "number" }).notNull().default(0), // offensive rushing yards
+  offTDs:     bigint("off_tds", { mode: "number" }).notNull().default(0),      // points scored (ptsFor fallback)
   offPtsPerGame: real("off_pts_per_game").notNull().default(0), // PPG from MCA (0 = not yet set)
-  defPassYds: integer("def_pass_yds").notNull().default(0),
-  defRushYds: integer("def_rush_yds").notNull().default(0),
-  defTDs:     integer("def_tds").notNull().default(0),      // points allowed (ptsAgainst fallback)
-  teamSacks:  integer("team_sacks").notNull().default(0),   // total sacks by this team's defense
-  teamInts:   integer("team_ints").notNull().default(0),    // total INTs by this team's defense
+  defPassYds: bigint("def_pass_yds", { mode: "number" }).notNull().default(0),
+  defRushYds: bigint("def_rush_yds", { mode: "number" }).notNull().default(0),
+  defTDs:     bigint("def_tds", { mode: "number" }).notNull().default(0),      // points allowed (ptsAgainst fallback)
+  teamSacks:  bigint("team_sacks", { mode: "number" }).notNull().default(0),   // total sacks by this team's defense
+  teamInts:   bigint("team_ints", { mode: "number" }).notNull().default(0),    // total INTs by this team's defense
   offRedZonePct: real("off_redzone_pct").notNull().default(0),  // offensive red zone % (0–100)
   defRedZonePct: real("def_redzone_pct").notNull().default(0),  // defensive red zone % allowed (0–100)
-  defFumblesRec: integer("def_fumbles_rec").notNull().default(0), // fumbles recovered on defense
-  turnoverDiff:  integer("turnover_diff").notNull().default(0),   // season turnover differential (+/-)
-  wins:       integer("wins").notNull().default(0),
-  losses:     integer("losses").notNull().default(0),
+  defFumblesRec: bigint("def_fumbles_rec", { mode: "number" }).notNull().default(0), // fumbles recovered on defense
+  turnoverDiff:  bigint("turnover_diff", { mode: "number" }).notNull().default(0),   // season turnover differential (+/-)
+  wins:       bigint("wins", { mode: "number" }).notNull().default(0),
+  losses:     bigint("losses", { mode: "number" }).notNull().default(0),
   // ── Additional standings data (from MCA /standings payload) ──────────────
-  ties:          integer("ties").notNull().default(0),
-  ptsFor:        integer("pts_for").notNull().default(0),        // total points scored
-  ptsAgainst:    integer("pts_against").notNull().default(0),    // total points allowed
-  homeWins:      integer("home_wins").notNull().default(0),
-  homeLosses:    integer("home_losses").notNull().default(0),
-  homeTies:      integer("home_ties").notNull().default(0),
-  awayWins:      integer("away_wins").notNull().default(0),
-  awayLosses:    integer("away_losses").notNull().default(0),
-  awayTies:      integer("away_ties").notNull().default(0),
-  confWins:      integer("conf_wins").notNull().default(0),
-  confLosses:    integer("conf_losses").notNull().default(0),
-  confTies:      integer("conf_ties").notNull().default(0),
-  divWins:       integer("div_wins").notNull().default(0),
-  divLosses:     integer("div_losses").notNull().default(0),
-  divTies:       integer("div_ties").notNull().default(0),
-  capRoom:       integer("cap_room").notNull().default(0),       // remaining cap space
-  capSpent:      integer("cap_spent").notNull().default(0),      // cap already spent
-  capAvailable:  integer("cap_available").notNull().default(0),  // total available cap
+  ties:          bigint("ties", { mode: "number" }).notNull().default(0),
+  ptsFor:        bigint("pts_for", { mode: "number" }).notNull().default(0),        // total points scored
+  ptsAgainst:    bigint("pts_against", { mode: "number" }).notNull().default(0),    // total points allowed
+  homeWins:      bigint("home_wins", { mode: "number" }).notNull().default(0),
+  homeLosses:    bigint("home_losses", { mode: "number" }).notNull().default(0),
+  homeTies:      bigint("home_ties", { mode: "number" }).notNull().default(0),
+  awayWins:      bigint("away_wins", { mode: "number" }).notNull().default(0),
+  awayLosses:    bigint("away_losses", { mode: "number" }).notNull().default(0),
+  awayTies:      bigint("away_ties", { mode: "number" }).notNull().default(0),
+  confWins:      bigint("conf_wins", { mode: "number" }).notNull().default(0),
+  confLosses:    bigint("conf_losses", { mode: "number" }).notNull().default(0),
+  confTies:      bigint("conf_ties", { mode: "number" }).notNull().default(0),
+  divWins:       bigint("div_wins", { mode: "number" }).notNull().default(0),
+  divLosses:     bigint("div_losses", { mode: "number" }).notNull().default(0),
+  divTies:       bigint("div_ties", { mode: "number" }).notNull().default(0),
+  capRoom:       bigint("cap_room", { mode: "number" }).notNull().default(0),       // remaining cap space
+  capSpent:      bigint("cap_spent", { mode: "number" }).notNull().default(0),      // cap already spent
+  capAvailable:  bigint("cap_available", { mode: "number" }).notNull().default(0),  // total available cap
   seed:          integer("seed"),                                // conference seed (1-7, null if not in playoffs)
   rank:          integer("rank"),                                // overall league rank
   prevRank:      integer("prev_rank"),                           // rank previous week
   playoffStatus: text("playoff_status"),                         // e.g. "IN_THE_HUNT", "CLINCHED", "ELIMINATED"
   winPct:        real("win_pct").notNull().default(0),
-  winLossStreak: integer("win_loss_streak").notNull().default(0), // positive=win streak, negative=loss streak
-  netPts:        integer("net_pts").notNull().default(0),        // ptsFor - ptsAgainst
-  offTotalYds:   integer("off_total_yds").notNull().default(0),  // total offensive yards from standings
-  defTotalYds:   integer("def_total_yds").notNull().default(0),  // total defensive yards allowed
+  winLossStreak: bigint("win_loss_streak", { mode: "number" }).notNull().default(0), // positive=win streak, negative=loss streak
+  netPts:        bigint("net_pts", { mode: "number" }).notNull().default(0),        // ptsFor - ptsAgainst
+  offTotalYds:   bigint("off_total_yds", { mode: "number" }).notNull().default(0),  // total offensive yards from standings
+  defTotalYds:   bigint("def_total_yds", { mode: "number" }).notNull().default(0),  // total defensive yards allowed
   offPassYdsRank:  integer("off_pass_yds_rank"),
   offRushYdsRank:  integer("off_rush_yds_rank"),
   offTotalYdsRank: integer("off_total_yds_rank"),
@@ -529,7 +529,7 @@ export const teamSeasonStatsTable = pgTable("team_season_stats", {
   defTotalYdsRank: integer("def_total_yds_rank"),
   ptsForRank:      integer("pts_for_rank"),
   ptsAgainstRank:  integer("pts_against_rank"),
-  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:  timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqueTeam: uniqueIndex("team_season_stats_unique_idx").on(t.seasonId, t.teamId),
 }));
@@ -786,13 +786,13 @@ export const draftPresenceTable = pgTable("draft_presence", {
 
 // ── Game matchup channels (created per week by /advanceweek, deleted on next advance) ──
 export const gameChannelsTable = pgTable("game_channels", {
-  id:           serial("id").primaryKey(),
-  seasonId:     integer("season_id").notNull(),
-  weekIndex:    integer("week_index").notNull(),
+  id:           bigserial("id", { mode: "number" }).primaryKey(),
+  seasonId:     bigint("season_id", { mode: "number" }).notNull(),
+  weekIndex:    bigint("week_index", { mode: "number" }).notNull(),
   channelId:    text("channel_id").notNull(),
   awayTeamName: text("away_team_name").notNull().default(""),
   homeTeamName: text("home_team_name").notNull().default(""),
-  createdAt:    timestamp("created_at").notNull().defaultNow(),
+  createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ── Trade Block: user-posted trade offers ──────────────────────────────────────
@@ -872,9 +872,9 @@ export const completedTradesTable = pgTable("completed_trades", {
 // Gives us teamId → fullName, nickName, userName so we know who is human vs CPU
 // and which Discord user controls each team, without needing the ZIP file.
 export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
-  id:         serial("id").primaryKey(),
-  seasonId:   integer("season_id").notNull(),
-  teamId:     integer("team_id").notNull(),
+  id:         bigserial("id", { mode: "number" }).primaryKey(),
+  seasonId:   bigint("season_id", { mode: "number" }).notNull(),
+  teamId:     bigint("team_id", { mode: "number" }).notNull(),
   fullName:   text("full_name").notNull(),      // "Las Vegas Raiders"
   nickName:   text("nick_name").notNull(),       // "Raiders"
   conference: text("conference"),               // "AFC" | "NFC" — from MCA conferenceName/conferenceId
@@ -887,11 +887,11 @@ export const franchiseMcaTeamsTable = pgTable("franchise_mca_teams", {
   divName:       text("div_name"),              // e.g. "AFC West"
   offScheme:     text("off_scheme"),            // offensive scheme string from EA
   defScheme:     text("def_scheme"),            // defensive scheme string from EA
-  ovrRating:     integer("ovr_rating"),         // team overall rating
-  primaryColor:  integer("primary_color"),      // primary color as integer
-  secondaryColor: integer("secondary_color"),   // secondary color as integer
-  logoId:        integer("logo_id"),            // EA's internal logo ID
-  updatedAt:  timestamp("updated_at").notNull().defaultNow(),
+  ovrRating:     bigint("ovr_rating", { mode: "number" }),         // team overall rating
+  primaryColor:  bigint("primary_color", { mode: "number" }),      // primary color as integer
+  secondaryColor: bigint("secondary_color", { mode: "number" }),   // secondary color as integer
+  logoId:        bigint("logo_id", { mode: "number" }),            // EA's internal logo ID
+  updatedAt:  timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqueTeam: uniqueIndex("franchise_mca_teams_unique_idx").on(t.seasonId, t.teamId),
 }));
@@ -912,7 +912,7 @@ export const defaultTeamLogosTable = pgTable("default_team_logos", {
 export const payoutConfigTable = pgTable("payout_config", {
   key:         text("key").primaryKey(),
   guildId:     text("guild_id").notNull().default("1476251181524189438"),
-  value:       integer("value").notNull(),
+  value:       bigint("value", { mode: "number" }).notNull(),
   description: text("description").notNull().default(""),
   updatedAt:   timestamp("updated_at").notNull().defaultNow(),
   updatedBy:   text("updated_by"),
@@ -922,11 +922,11 @@ export const payoutConfigTable = pgTable("payout_config", {
 
 // ── Pending polls awaiting expiry + result processing ─────────────────────────
 export const pendingPollsTable = pgTable("pending_polls", {
-  id:                  serial("id").primaryKey(),
+  id:                  bigserial("id", { mode: "number" }).primaryKey(),
   messageId:           text("message_id").notNull(),
   channelId:           text("channel_id").notNull(),
   pollType:            text("poll_type").notNull(),  // "goty" | "loudest" | "heart" | "best_worst" | "worst_worst"
-  seasonId:            integer("season_id").notNull(),
+  seasonId:            bigint("season_id", { mode: "number" }).notNull(),
   expiresAt:           timestamp("expires_at").notNull(),
   processed:           boolean("processed").notNull().default(false),
   processedAt:         timestamp("processed_at"),
@@ -1094,9 +1094,9 @@ export const customPlayerSettingsTable = pgTable("custom_player_settings", {
 
 // ── Custom Players (submitted builds) ─────────────────────────────────────────
 export const customPlayersTable = pgTable("custom_players", {
-  id:                   serial("id").primaryKey(),
+  id:                   bigserial("id", { mode: "number" }).primaryKey(),
   discordId:            text("discord_id").notNull(),
-  seasonId:             integer("season_id"),
+  seasonId:             bigint("season_id", { mode: "number" }),
   position:             text("position").notNull(),
   archetypeName:        text("archetype_name").notNull(),
   devTrait:             text("dev_trait").notNull().default("normal"),  // normal|star|superstar
@@ -1254,7 +1254,7 @@ export const guildChannelsTable = pgTable("guild_channels", {
 // Each row is one EA/gamertag linked to a console. Queried by discordId only
 // so the same IDs surface in every server that user belongs to.
 export const playerEaIdsTable = pgTable("player_ea_ids", {
-  id:        serial("id").primaryKey(),
+  id:        bigserial("id", { mode: "number" }).primaryKey(),
   discordId: text("discord_id").notNull(),
   eaId:      text("ea_id").notNull(),                 // the actual gamertag / EA username
   console:   text("console").notNull(),               // 'pc' | 'ps5' | 'xbox'
