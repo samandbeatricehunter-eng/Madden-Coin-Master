@@ -40,6 +40,7 @@ export function startGameReminderScheduler(client: Client): void {
 }
 
 async function tick(client: Client): Promise<void> {
+  try {
   const now = Date.now();
   // Pull all schedules in a state where reminders are relevant.
   const schedules = await db.select().from(gameSchedulesTable)
@@ -75,6 +76,9 @@ async function tick(client: Client): Promise<void> {
         console.error(`[game-reminders] failed to fire ${k.kind} for sched #${sched.id}:`, err);
       }
     }
+  }
+  } catch (err) {
+    console.error("[game-reminders] tick error (connection or query failed):", err);
   }
 }
 
