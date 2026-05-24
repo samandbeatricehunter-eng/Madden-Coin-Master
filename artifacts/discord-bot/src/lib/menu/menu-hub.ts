@@ -198,6 +198,14 @@ const ROOT_NODES: MenuNode[] = [
   },
 
   {
+    path: "gotw_vote", emoji: "🏆",
+    label: "GOTW Vote",
+    description: "Vote on this week's Game of the Week",
+    visible: MCA_VISIBLE,
+    kind: "action", action: "ac_gotw_vote",
+  },
+
+  {
     path: "standings", emoji: "📊",
     label: "Standings & Stats",
     description: "League standings, user stats, power rankings",
@@ -523,9 +531,10 @@ export function buildAdminCategoryPage(
   switch (catId) {
     case "week": {
       buttons.push(
-        btn("ao_set_week",       "📅 Set Week"),
-        btn("ao_advance_week",   "⏩ Advance Week"),
-        btn("ao_set_season_num", "🔢 Set Season"),
+        btn("ao_set_week",            "📅 Set Week"),
+        btn("ao_advance_week",        "⏩ Advance Week"),
+        btn("ao_set_season_num",      "🔢 Set Season"),
+        btn("ao_advance_period_open", "⏱️ Advance Period", ButtonStyle.Secondary),
       );
       break;
     }

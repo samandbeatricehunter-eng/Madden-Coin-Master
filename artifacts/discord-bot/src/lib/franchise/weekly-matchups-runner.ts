@@ -253,19 +253,16 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
     return;
   }
 
-  try {
-    const cleared = await purgeChannel(targetCh as TextChannel);
-    if (cleared > 0) console.log(`[weekly-runner] Cleared ${cleared} message(s) from matchups channel`);
-  } catch (err) {
-    console.error("[weekly-runner] Failed to clear matchups channel:", err);
-  }
-
-  await (targetCh as TextChannel).send({ embeds: [embed] });
+  // Matchup auto-post has been DISABLED — matchups are stored in the DB and
+  // displayed in per-game private channels instead. The line below intentionally
+  // does nothing with `embed` / `targetCh`, but we keep the channel resolution
+  // above so misconfiguration is still surfaced to the admin.
+  void embed; void targetCh;
 
   // ── Build reply base + send GOTW prompt ───────────────────────────────────
   let baseContent =
-    `✅ Week ${displayWeekNum} matchups posted${matchupsId ? ` to <#${matchupsId}>` : ""}.\n` +
-    `GOTW channel cleared.`;
+    `✅ Week ${displayWeekNum} matchups recorded (auto-post disabled — private channels carry the matchup).\n` +
+    `GOTW seeded.`;
   if (payoutSummary) {
     baseContent += `\n\n**Previous Week GOTW Payout:**\n${payoutSummary}`;
   }

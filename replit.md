@@ -6,6 +6,26 @@ pnpm workspace monorepo using TypeScript. Hosts a Discord economy bot for a Madd
 
 The bot was recently cleaned up to remove all AI/LLM functionality, the Twitter/tweet feature, and most public/admin channel-posting. The slash command surface was collapsed from ~50 commands to a single `/menu` hub that drives everything via buttons and selectors. A new **Commissioner's Office** hub centralizes every pending review (purchases, payouts, interviews, stream/highlight) plus recent history.
 
+### Game Channels & Scheduling (new)
+
+- **No matchup banner / channel post.** Weekly matchups are persisted to DB only; nothing is posted to the matchups channel.
+- **Private channels.** Each game channel allows only the 2 players + the Discord role literally named `Commissioner` + every `economy_users.isAdmin=true` user (and the bot). `@everyone` is denied view.
+- **Advance Period setting** (admin → Week & Season → ⏱️ Advance Period): 24 / 48 / 72 / 96 / 120 hours. Drives the "Next Advance" deadline shown on every game channel header in all 4 zones (CST/PST/EST/AKST). On `Advance Week` the bot stamps `serverSettings.lastAdvanceAt`.
+- **In-channel scheduling state machine** (`lib/handlers/game-scheduling-handlers.ts`, prefix `gs_`):
+  - Pinned header in each game channel: status, "Next Advance" countdown in 4 TZs, buttons `Schedule Game` / `Request Fair Sim` / `Request Force Win`.
+  - Schedule picker: date / 30-min slot / TZ dropdowns; can't land within 1h of the next advance deadline.
+  - Opponent reply: Accept / Counter / Decline+FairSim. Counter re-opens the picker for the other player.
+  - Fair Sim / Force Win: opponent approves, then Commissioner is tagged + bot-admins DMed.
+- **Reminder scheduler** (`lib/scheduling/game-reminders.ts`, 60s tick, dedup via `game_reminder_log`): T-30 / T0 / T+20 / T+60 / T+120. T0 posts "Confirm Game Begun" buttons. T+120 tags Commissioner and flips status to `auto_fair_sim`.
+- **Begun / Finished / Winner.** Both players must confirm Begun; both must confirm Finished; both must confirm winner. Winner confirm triggers GOTW settlement immediately.
+
+### GOTW Voting (replaces Discord polls)
+
+- Old `Poll` API removed. `postGotwToChannel` keeps the same signature but no longer creates a poll — it posts a short announcement pointing users at `/menu → 🏆 GOTW Vote`.
+- New menu tile `🏆 GOTW Vote` opens an ephemeral card with live tallies; users can change their vote any time until the underlying `game_schedules` row flips to `started` (or `scheduledAt` passes).
+- On winner confirmation, every voter who picked the winning team is paid `PAYOUT_KEYS.GOTW_VOTER_PAYOUT`.
+- `poll-checker` scheduler removed from `index.ts`; replaced by `startGameReminderScheduler`.
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces
@@ -159,6 +179,13 @@ Defined in `lib/stats/` helpers. Swap `calcPRScore()` when the user provides the
 - `pending_channel_payouts` — Stream/highlight detections awaiting commissioner review
 - `interview_requests` — Pending interview submissions
 - `payout_requests` / `pending_eos_payouts` — Manual payout requests + end-of-season queue
+- `game_schedules` — One row per private game channel (status, scheduledAt, startedAt, header message id)
+- `game_schedule_proposals` — Player-to-player schedule proposals (date/time/TZ + status)
+- `game_status_confirmations` — Per-player "Begun"/"Finished"/"Winner" confirmations
+- `game_reminder_log` — Dedup table for T-30/T0/T+20/T+60/T+120 reminders
+- `gotw_votes` — In-menu GOTW voter ballots (replaces Discord polls)
+
+`server_settings` gained `advancePeriodHours` (default 72) and `lastAdvanceAt` (stamped on every Advance Week).
 
 Legacy tables still defined in schema for historical data but no longer written/read by code: `guild_tweets`, `league_twitter_*`. Safe to drop at the DB level whenever convenient.
 

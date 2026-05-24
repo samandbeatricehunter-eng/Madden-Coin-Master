@@ -196,24 +196,18 @@ export async function postGotwToChannel(
     if (!channel?.isTextBased()) return null;
     const tc = channel as TextChannel;
 
+    // Discord poll has been replaced with in-menu GOTW voting (see
+    // lib/handlers/gotw-voting-handlers.ts). We still post a short
+    // announcement so the GOTW channel reflects the active matchup, but
+    // there is no poll message — voting happens via /menu → GOTW Vote.
     const announcementMsg = await tc.send({
       content:
         `@everyone\n` +
         `🏈 **Week ${weekNum} Game of the Week!**\n` +
-        `<@${awayDiscordId}> **${awayTeamName}** vs <@${homeDiscordId}> **${homeTeamName}**`,
+        `<@${awayDiscordId}> **${awayTeamName}** vs <@${homeDiscordId}> **${homeTeamName}**\n` +
+        `\n🗳️ Vote via **/menu → 🏆 GOTW Vote**. You can change your vote until the game starts.`,
     });
-
-    const pollMsg = await tc.send({
-      poll: {
-        question: { text: `Who will win Week ${weekNum}'s GOTW?` },
-        answers: [
-          { text: awayTeamName },
-          { text: homeTeamName },
-        ],
-        duration:         4,
-        allowMultiselect: false,
-      } as any,
-    });
+    const pollMsg = { id: "" } as { id: string };
 
     await db.insert(gotwHistoryTable).values({
       seasonId,

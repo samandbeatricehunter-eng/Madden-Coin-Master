@@ -22,7 +22,7 @@ import {
   leagueNewsTable,
   globalUserRecordsTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray, isNotNull, desc, gte } from "drizzle-orm";
+import { eq, and, sql, inArray, isNotNull, desc, gte, ne } from "drizzle-orm";
 import {
   detectH2HBlowout,
   detectCpuScoreAnomaly,
@@ -1988,6 +1988,47 @@ async function reconcileRecordsFromSchedule(
       }
       computed.set(linkedId, rec);
     }
+  }
+
+  // ── T009: Reconcile in-channel game_schedules with imported results ─────────
+  // For every processed H2H game where both players are linked, find the
+  // matching unfinished `game_schedules` row (same season + same player pair,
+  // either orientation) and stamp imported_winner_discord_id + flip status to
+  // completed_imported. If a self-reported winner already differs, log a
+  // mismatch but don't overwrite the self-reported value.
+  try {
+    const { gameSchedulesTable } = await import("@workspace/db");
+    for (const g of dbGames) {
+      if (g.payoutType === "catchup") continue;
+      const hData = teamMap.get(g.homeTeamId);
+      const aData = teamMap.get(g.awayTeamId);
+      if (!hData?.discordId || !aData?.discordId) continue;
+      const homeScore = g.homeScore ?? 0;
+      const awayScore = g.awayScore ?? 0;
+      if (homeScore === awayScore) continue;
+      const importedWinnerId = homeScore > awayScore ? hData.discordId : aData.discordId;
+
+      const matches = await db.select().from(gameSchedulesTable).where(and(
+        eq(gameSchedulesTable.seasonId, season.id),
+        ne(gameSchedulesTable.status,   "completed_imported"),
+      ));
+      const pair = new Set([hData.discordId, aData.discordId]);
+      const match = matches.find((s) => pair.has(s.awayDiscordId) && pair.has(s.homeDiscordId));
+      if (!match) continue;
+
+      if (match.winnerDiscordId && match.winnerDiscordId !== importedWinnerId) {
+        console.warn(`[franchise-processor] winner mismatch for game_schedule #${match.id}: self-reported=${match.winnerDiscordId}, imported=${importedWinnerId}`);
+      }
+      await db.update(gameSchedulesTable)
+        .set({
+          status:                  "completed_imported",
+          importedWinnerDiscordId: importedWinnerId,
+          updatedAt:               new Date(),
+        })
+        .where(eq(gameSchedulesTable.id, match.id));
+    }
+  } catch (reconErr) {
+    console.error("[franchise-processor] game_schedules reconcile failed:", reconErr);
   }
 
   if (computed.size === 0) return [];

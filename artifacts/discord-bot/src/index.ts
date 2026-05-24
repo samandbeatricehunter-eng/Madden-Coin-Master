@@ -15,7 +15,7 @@ import * as guildMemberAdd    from "./events/guildMemberAdd.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 import { startSavingsInterestScheduler } from "./lib/scheduling/savings-interest.js";
-import { startPollChecker }              from "./lib/scheduling/poll-checker.js";
+import { startGameReminderScheduler }    from "./lib/scheduling/game-reminders.js";
 
 // ── Global crash protection ────────────────────────────────────────────────────
 process.on("unhandledRejection", (reason) => {
@@ -79,7 +79,7 @@ if (!isProduction && !devBotEnabled) {
   }
 
   client.once("ready", () => {
-    startPollChecker(client);
+    startGameReminderScheduler(client);
     startSavingsInterestScheduler();
   });
 

@@ -8,7 +8,7 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
-  AttachmentBuilder, ComponentType,
+  AttachmentBuilder, ComponentType, PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -18,7 +18,7 @@ import {
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
   defaultTeamLogosTable, waitlistTable,
   serverSettingsTable, franchiseRostersTable, inventoryTable, legendsTable, customPlayersTable,
-  guildChannelsTable,
+  guildChannelsTable, gameSchedulesTable,
 } from "@workspace/db";
 import { eq, and, sql, ne, desc } from "drizzle-orm";
 import {
@@ -169,6 +169,58 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
       embeds: [buildAdminOpsEmbed(season?.seasonNumber ?? undefined, wkStr)],
       components: buildAdminOpsRows(),
     });
+    return true;
+  }
+
+  // ── Advance Period (24/48/72/96/120h) ───────────────────────────────────────
+  if (id === "ao_advance_period_open") {
+    const settings = await getServerSettings(guildId);
+    const current  = settings.advancePeriodHours ?? 72;
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("⏱️ Advance Period")
+      .setDescription(
+        `How long between each Advance Week?\n\n` +
+        `**Current: ${current}h**\n\n` +
+        `This drives the "Next Advance" deadline shown on every game channel header. ` +
+        `Games can't be scheduled to land within 1h of the deadline.`
+      );
+    const opts = [24, 48, 72, 96, 120];
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      opts.map((h) =>
+        new ButtonBuilder()
+          .setCustomId(`ao_advance_period_set:${h}`)
+          .setLabel(`${h}h`)
+          .setStyle(h === current ? ButtonStyle.Success : ButtonStyle.Secondary),
+      ),
+    );
+    await (interaction as ButtonInteraction).update({ embeds: [embed], components: [row] });
+    return true;
+  }
+
+  if (id.startsWith("ao_advance_period_set:")) {
+    const h = parseInt(id.split(":")[1] ?? "72", 10);
+    if (![24, 48, 72, 96, 120].includes(h)) {
+      await (interaction as ButtonInteraction).reply({ content: "Invalid value.", flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    await db.update(serverSettingsTable)
+      .set({ advancePeriodHours: h, updatedAt: new Date() })
+      .where(eq(serverSettingsTable.guildId, guildId));
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("✅ Advance Period Updated")
+      .setDescription(`Advance Period is now **${h}h**. New game channel headers will reflect the new "Next Advance" deadline.`);
+    const opts = [24, 48, 72, 96, 120];
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      opts.map((opt) =>
+        new ButtonBuilder()
+          .setCustomId(`ao_advance_period_set:${opt}`)
+          .setLabel(`${opt}h`)
+          .setStyle(opt === h ? ButtonStyle.Success : ButtonStyle.Secondary),
+      ),
+    );
+    await (interaction as ButtonInteraction).update({ embeds: [embed], components: [row] });
     return true;
   }
 
@@ -2507,6 +2559,16 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
     .set({ currentWeek: newWeek })
     .where(eq(seasonsTable.id, season.id));
 
+  // ── Stamp last_advance_at on serverSettings (drives game-channel header
+  // "Next Advance" deadline computation) ──────────────────────────────────────
+  try {
+    await db.update(serverSettingsTable)
+      .set({ lastAdvanceAt: new Date() })
+      .where(eq(serverSettingsTable.guildId, guildId));
+  } catch (advErr) {
+    console.error("[admin-operations] Failed to stamp lastAdvanceAt:", advErr);
+  }
+
   const channelLines: string[] = [];
 
   // ── Wipe preseason stats when advancing from Training Camp → Week 1 ─────────
@@ -2807,21 +2869,29 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         const chanName      = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
 
         try {
+          // ── Private channel: deny @everyone, allow the 2 players + Commissioner role + bot-admins ──
+          const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
+          const botAdmins = await db.select({ discordId: usersTable.discordId })
+            .from(usersTable)
+            .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));
+          const overwrites: import("discord.js").OverwriteResolvable[] = [
+            { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: guild.client.user!.id,   allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] },
+          ];
+          if (commRole) overwrites.push({ id: commRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+          if (awayDiscordId && !awayDiscordId.startsWith("unlinked_")) overwrites.push({ id: awayDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+          if (homeDiscordId && !homeDiscordId.startsWith("unlinked_")) overwrites.push({ id: homeDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+          for (const a of botAdmins) {
+            if (a.discordId && a.discordId !== awayDiscordId && a.discordId !== homeDiscordId && !a.discordId.startsWith("unlinked_")) {
+              overwrites.push({ id: a.discordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+            }
+          }
           const newChannel = await guild.channels.create({
             name:   chanName,
             type:   ChannelType.GuildText,
             parent: resolvedCategoryId!,
+            permissionOverwrites: overwrites,
           });
-
-          await newChannel.lockPermissions();
-
-          const awayMention2 = awayDiscordId && !awayDiscordId.startsWith("unlinked_") ? `<@${awayDiscordId}>` : awayProper;
-          const homeMention2 = homeDiscordId && !homeDiscordId.startsWith("unlinked_") ? `<@${homeDiscordId}>` : homeProper;
-          await newChannel.send(
-            `🏈 **${awayProper} vs ${homeProper}** — ${channelWeekDisplayLabel}\n` +
-            `${awayMention2} ${homeMention2}\n` +
-            `Good luck this week!`,
-          );
 
           await db.insert(gameChannelsTable).values({
             seasonId:     season.id,
@@ -2831,53 +2901,38 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
             homeTeamName: homeProper,
           });
 
-          // ── Matchup banner + AI breakdown (fire-and-forget) ───────────────────
-          (async () => {
-            try {
-              const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim()) ?? discordIdToMca.get(awayDiscordId);
-              const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim()) ?? discordIdToMca.get(homeDiscordId);
+          // ── Scheduling header (replaces former matchup banner) ──────────────
+          try {
+            const { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } =
+              await import("./game-scheduling-handlers.js");
+            const { getServerSettings } = await import("../db/server-settings.js");
+            const { nextAdvanceDeadline } = await import("../discord/timezones.js");
 
-              function resolveLogoPath(teamName: string, mca: typeof mcaTeams[0] | undefined): string | null {
-                const key = teamName.toLowerCase().trim();
-                if (mca?.logoUrl) return mca.logoUrl;
-                if (mca?.teamId != null) {
-                  const byId = defaultById.get(mca.teamId);
-                  if (byId) return byId;
-                }
-                const exact = defaultByName.get(key);
-                if (exact) return exact;
-                for (const d of defaultLogos) {
-                  if (key.includes(d.nickName.toLowerCase().trim())) return d.logoUrl;
-                }
-                if (mca?.teamId != null && mca.teamId <= 31) return globalLogoPath(mca.teamId);
-                return null;
-              }
-
-              const awayGcsPath = resolveLogoPath(awayProper, awayMca);
-              const homeGcsPath = resolveLogoPath(homeProper, homeMca);
-
-              if (awayGcsPath && homeGcsPath) {
-                const [awayBuf, homeBuf] = await Promise.all([
-                  resolveLogoBuf(awayGcsPath),
-                  resolveLogoBuf(homeGcsPath),
-                ]);
-                if (awayBuf && homeBuf) {
-                  const bannerBuf  = await buildMatchupBanner(awayBuf, homeBuf);
-                  const attachment = new AttachmentBuilder(bannerBuf, { name: "matchup-banner.png" });
-                  const bannerEmbed = new EmbedBuilder()
-                    .setColor(0x7c3aed)
-                    .setTitle(`${awayProper} @ ${homeProper}`)
-                    .setDescription(`<@${awayDiscordId}> **vs** <@${homeDiscordId}>`)
-                    .setImage("attachment://matchup-banner.png")
-                    .setFooter({ text: channelWeekDisplayLabel });
-                  await newChannel.send({ embeds: [bannerEmbed], files: [attachment] });
-                }
-              }
-
-            } catch (postErr) {
-              console.error(`[admin-operations] Failed to post banner/breakdown for ${chanName}:`, postErr);
-            }
-          })();
+            const sched = await ensureScheduleRow({
+              guildId,
+              channelId:      newChannel.id,
+              seasonId:       season.id,
+              weekIndex,
+              awayDiscordId,
+              homeDiscordId,
+              awayTeamName:   awayProper,
+              homeTeamName:   homeProper,
+              status:         "unscheduled",
+            });
+            const settings  = await getServerSettings(guildId);
+            const deadline  = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
+            const headerMsg = await newChannel.send({
+              content: `<@${awayDiscordId}> <@${homeDiscordId}> — schedule your game using the buttons below.`,
+              embeds:  [buildHeaderEmbed(sched, deadline)],
+              components: [buildHeaderRow(sched)],
+            });
+            await headerMsg.pin().catch(() => {});
+            await db.update(gameSchedulesTable)
+              .set({ headerMessageId: headerMsg.id })
+              .where(eq(gameSchedulesTable.id, sched.id));
+          } catch (hdrErr) {
+            console.error(`[admin-operations] Failed to post scheduling header for ${chanName}:`, hdrErr);
+          }
 
           created++;
         } catch (chErr) {

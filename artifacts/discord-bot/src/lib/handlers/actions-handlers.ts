@@ -878,6 +878,12 @@ export async function handleActionsInteraction(
 
   // ── Row 4: Rankings & Payouts ────────────────────────────────────────────────
 
+  if (id === "ac_gotw_vote") {
+    const { openGotwVote } = await import("./gotw-voting-handlers.js");
+    await openGotwVote(interaction as ButtonInteraction);
+    return true;
+  }
+
   if (id === "ac_seasonpr")     { await handleSeasonPR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_alltimepr")    { await handleAllTimePR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_globalpr")     { await handleGlobalPR(interaction as ButtonInteraction, sess); return true; }

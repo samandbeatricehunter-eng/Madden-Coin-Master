@@ -255,6 +255,20 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── In-channel game scheduling state machine ─────────────────────────────────
+  if (interaction.customId.startsWith("gs_")) {
+    const { handleGsInteraction } = await import("../lib/handlers/game-scheduling-handlers.js");
+    await handleGsInteraction(interaction);
+    return;
+  }
+
+  // ── In-menu GOTW voting (replaces Discord polls) ─────────────────────────────
+  if (interaction.customId.startsWith("gotwv_")) {
+    const { handleGotwvInteraction } = await import("../lib/handlers/gotw-voting-handlers.js");
+    await handleGotwvInteraction(interaction);
+    return;
+  }
+
   // ── Admin troubleshoot panel buttons ─────────────────────────────────────────
   if (action === "ts_repair_records")    { await handleTsRepairRecords(interaction);    return; }
   if (action === "ts_resync_data")       { await handleTsResyncData(interaction);       return; }
@@ -2060,6 +2074,20 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── League Data wizard — all ld_ prefixed select menus ───────────────────────
   if (action?.startsWith("ld_")) {
     await handleLeagueDataSelect(interaction);
+    return;
+  }
+
+  // ── In-channel game scheduling select menus ─────────────────────────────────
+  if (action?.startsWith("gs_")) {
+    const { handleGsInteraction } = await import("../lib/handlers/game-scheduling-handlers.js");
+    await handleGsInteraction(interaction);
+    return;
+  }
+
+  // ── GOTW voting select menus ─────────────────────────────────────────────────
+  if (action?.startsWith("gotwv_")) {
+    const { handleGotwvInteraction } = await import("../lib/handlers/gotw-voting-handlers.js");
+    await handleGotwvInteraction(interaction);
     return;
   }
 
