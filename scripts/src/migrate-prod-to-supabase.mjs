@@ -18,12 +18,46 @@ function logStep(msg) {
 
 async function getColumns(pool) {
   const r = await pool.query(`
-    SELECT table_name, column_name FROM information_schema.columns
+    SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns
     WHERE table_schema='public' ORDER BY table_name, ordinal_position
   `);
   const m = {};
-  for (const row of r.rows) (m[row.table_name] ??= []).push(row.column_name);
+  const types = {};
+  const nullable = {};
+  for (const row of r.rows) {
+    (m[row.table_name] ??= []).push(row.column_name);
+    (types[row.table_name] ??= {})[row.column_name] = row.data_type;
+    (nullable[row.table_name] ??= {})[row.column_name] = row.is_nullable === "YES";
+  }
+  m.__types = types;
+  m.__nullable = nullable;
   return m;
+}
+
+const INT_TYPES = new Set(["bigint", "integer", "smallint"]);
+const FLOAT_TYPES = new Set(["real", "double precision", "numeric"]);
+const JSON_TYPES = new Set(["json", "jsonb"]);
+
+function coerceValue(val, prodType, sbType) {
+  if (val === null || val === undefined) return val;
+  // Float → Int: round
+  if (FLOAT_TYPES.has(prodType) && INT_TYPES.has(sbType)) {
+    const n = typeof val === "number" ? val : parseFloat(val);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  // JSON: always pass as string to avoid pg-node auto-stringify quirks
+  if (JSON_TYPES.has(sbType)) {
+    if (typeof val === "string") return val;
+    try { return JSON.stringify(val); } catch { return null; }
+  }
+  return val;
+}
+
+function placeholderCast(sbType) {
+  // When target is json/jsonb, force-cast the parameter so the server parses the string as JSON.
+  if (sbType === "jsonb") return "::jsonb";
+  if (sbType === "json")  return "::json";
+  return "";
 }
 
 async function getCounts(pool) {
@@ -55,7 +89,7 @@ function quoteIdent(s) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-async function copyTable(table, commonCols, sbClient) {
+async function copyTable(table, commonCols, sbClient, prodTypes, sbTypes) {
   const cols = commonCols.map(quoteIdent).join(",");
   const pkCols = await getTablesInPkOrder(prod, table);
   const orderBy = pkCols.length
@@ -73,8 +107,8 @@ async function copyTable(table, commonCols, sbClient) {
     const params = [];
     const valuesSql = r.rows.map((row, ri) => {
       const ph = commonCols.map((c, ci) => {
-        params.push(row[c]);
-        return `$${ri * commonCols.length + ci + 1}`;
+        params.push(coerceValue(row[c], prodTypes[c], sbTypes[c]));
+        return `$${ri * commonCols.length + ci + 1}${placeholderCast(sbTypes[c])}`;
       });
       return `(${ph.join(",")})`;
     }).join(",");
@@ -125,6 +159,84 @@ async function main() {
     for (const d of drifted) console.log(` - ${d.table}: dropping [${d.onlyProd.join(", ")}]`);
   }
 
+  // === Auto-align Supabase column types to match prod where they differ ===
+  // The Drizzle-pushed Supabase schema disagrees with the actual prod data
+  // shape on some columns. Without this, the copy fails on type mismatches
+  // (e.g. text "system" → bigint). Strategy: ALTER Supabase column types
+  // to match prod.
+  const sbAdminClient = await sb.connect();
+  try {
+    // Only ALTER when the type mismatch would actually fail the copy.
+    // pg handles bigint↔integer, real↔double, timestamp↔timestamptz, and
+    // enum→text natively. The breaking case is text/varchar in prod going
+    // into a non-text column in Supabase (e.g. guild_id = "system" → bigint).
+    const TEXT_TYPES = new Set(["text", "character varying", "character", "varchar"]);
+    const typeFixes = [];
+    for (const p of plan) {
+      const pt = prodCols.__types[p.table] || {};
+      const st = sbCols.__types[p.table] || {};
+      for (const col of p.common) {
+        const prodT = pt[col], sbT = st[col];
+        if (!prodT || !sbT || prodT === sbT) continue;
+        // Need ALTER: prod is text-like, Supabase is non-text-like
+        if (TEXT_TYPES.has(prodT) && !TEXT_TYPES.has(sbT)) {
+          typeFixes.push({ table: p.table, col, prodType: prodT, sbType: sbT, action: "to_text" });
+        }
+        // Supabase is uuid but prod isn't → ALTER Supabase to text (uuid can't accept integers)
+        else if (sbT === "uuid" && prodT !== "uuid") {
+          typeFixes.push({ table: p.table, col, prodType: prodT, sbType: sbT, action: "to_text" });
+        }
+        // Boolean compatibility: prod boolean, supabase text → leave (text accepts "true"/"false")
+        // Boolean compatibility: prod text, supabase boolean → ALTER supabase to text
+      }
+    }
+    if (typeFixes.length) {
+      logStep(`Aligning ${typeFixes.length} column types in Supabase to match prod (text-incompatible only):`);
+      for (const f of typeFixes) {
+        console.log(`  • ${f.table}.${f.col}: ${f.sbType} → text`);
+        try {
+          await sbAdminClient.query(
+            `ALTER TABLE public.${quoteIdent(f.table)} ALTER COLUMN ${quoteIdent(f.col)} TYPE text USING ${quoteIdent(f.col)}::text`,
+          );
+        } catch (e) {
+          console.error(`    ⚠ ALTER failed: ${e.message}`);
+          throw e;
+        }
+      }
+    } else {
+      logStep("No text-incompatible type mismatches to fix.");
+    }
+
+    // Drop NOT NULL on Supabase columns where prod allows null (otherwise valid prod rows can't be inserted).
+    const nullFixes = [];
+    for (const p of plan) {
+      const pn = prodCols.__nullable[p.table] || {};
+      const sn = sbCols.__nullable[p.table] || {};
+      for (const col of p.common) {
+        if (pn[col] === true && sn[col] === false) {
+          nullFixes.push({ table: p.table, col });
+        }
+      }
+    }
+    if (nullFixes.length) {
+      logStep(`Dropping NOT NULL on ${nullFixes.length} Supabase columns (prod allows null):`);
+      for (const f of nullFixes) {
+        console.log(`  • ${f.table}.${f.col}: DROP NOT NULL`);
+        await sbAdminClient.query(
+          `ALTER TABLE public.${quoteIdent(f.table)} ALTER COLUMN ${quoteIdent(f.col)} DROP NOT NULL`,
+        );
+      }
+    }
+
+    if (typeFixes.length || nullFixes.length) {
+      const refreshed = await getColumns(sb);
+      sbCols.__types = refreshed.__types;
+      sbCols.__nullable = refreshed.__nullable;
+    }
+  } finally {
+    sbAdminClient.release();
+  }
+
   // === DESTRUCTIVE OPS BELOW ===
   const sbClient = await sb.connect();
   try {
@@ -150,7 +262,7 @@ async function main() {
     // Copy each table that still needs copying
     for (const p of remaining) {
       const start = Date.now();
-      const copied = await copyTable(p.table, p.common, sbClient);
+      const copied = await copyTable(p.table, p.common, sbClient, prodCols.__types[p.table] || {}, sbCols.__types[p.table] || {});
       const ms = Date.now() - start;
       const status = copied === p.rows ? "✓" : `⚠ expected ${p.rows}`;
       logStep(`  ${status} ${p.table}: ${copied} rows in ${ms}ms`);
