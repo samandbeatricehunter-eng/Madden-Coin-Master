@@ -1,0 +1,61 @@
+
+
+@deployment:
+@deployment:
+You reached the start of the range
+May 24, 2026, 11:17 AM
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at ../../lib/db/src/index.ts (/app/lib/db/src/index.ts:11:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+Node.js v22.22.3
+/app/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 start: `node --enable-source-maps ./dist/index.mjs`
+> @workspace/api-server@0.0.0 start /app/artifacts/api-server
+> node --enable-source-maps ./dist/index.mjs
+/app/lib/db/src/index.ts:11
+  throw new Error(
+Starting Container
+/app/lib/db/src/index.ts:11
+  throw new Error(
+        ^
+    at __init (file:///app/artifacts/api-server/dist/index.mjs:22:56)
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+Node.js v22.22.3
+/app/artifacts/api-server:
+Exit status 1
+> @workspace/api-server@0.0.0 start /app/artifacts/api-server
+/app/lib/db/src/index.ts:11
+  throw new Error(
+        ^
+Error: SUPABASE_DATABASE_URL (preferred) or DATABASE_URL must be set.
+    at ../../lib/db/src/index.ts (/app/lib/db/src/index.ts:11:9)
+    at __init (file:///app/artifacts/api-server/dist/index.mjs:22:56)
+    at <anonymous> (/app/artifacts/api-server/src/lib/franchise-processor.ts:1:1)
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+Node.js v22.22.3
+/app/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 start: `node --enable-source-maps ./dist/index.mjs`
+Exit status 1
+/app/lib/db/src/index.ts:11
+  throw new Error(
+        ^
+    at __init (file:///app/artifacts/api-server/dist/index.mjs:22:56)
+    at <anonymous> (/app/artifacts/api-server/src/lib/franchise-processor.ts:1:1)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+/app/artifacts/api-server:
+Exit status 1
+> @workspace/api-server@0.0.0 start /app/artifacts/api-server
+        ^
+Error: SUPABASE_DATABASE_URL (preferred) or DATABASE_URL must be set.
+    at ../../lib/db/src/index.ts (/app/lib/db/src/index.ts:11:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+/app/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 start: `node --enable-source-maps ./dist/index.mjs`
+> @workspace/api-server@0.0.0 start /app/artifacts/api-server
+New Agent
+Agent usage limit reached
+Upgrade to Pro for 4x more
+100MB
