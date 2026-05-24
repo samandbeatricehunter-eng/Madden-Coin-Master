@@ -728,6 +728,7 @@ export const gotwHistoryTable = pgTable("gotw_history", {
   id:          serial("id").primaryKey(),
   seasonId:    integer("season_id").notNull(),
   weekIndex:   integer("week_index").notNull(),   // 0-based (week 1 = index 0)
+  matchupIndex: integer("matchup_index").notNull().default(0), // 0 for regular season; per-matchup index for playoffs
   discordId1:  text("discord_id_1").notNull(),
   discordId2:  text("discord_id_2").notNull(),
   teamName1:   text("team_name_1").notNull(),
@@ -738,7 +739,7 @@ export const gotwHistoryTable = pgTable("gotw_history", {
   payoutIssuedAt: timestamp("payout_issued_at"),                 // set once GOTW voter payouts have been issued
   createdAt:   timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
-  uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex),
+  uniqueWeek: uniqueIndex("gotw_history_week_idx").on(t.seasonId, t.weekIndex, t.matchupIndex),
 }));
 
 // ── Playoff GOTW polls (one per matchup, multiple per week) ───────────────────
@@ -1038,12 +1039,46 @@ export const gotwVotesTable = pgTable("gotw_votes", {
   id:                serial("id").primaryKey(),
   seasonId:          integer("season_id").notNull(),
   weekIndex:         integer("week_index").notNull(),
+  matchupIndex:      integer("matchup_index").notNull().default(0), // 0 for regular season; per-matchup index for playoffs
   voterId:           text("voter_id").notNull(),
   votedForDiscordId: text("voted_for_discord_id").notNull(),
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:         timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
-  uniqVote: uniqueIndex("gotw_votes_voter_idx").on(t.seasonId, t.weekIndex, t.voterId),
+  uniqVote: uniqueIndex("gotw_votes_voter_idx").on(t.seasonId, t.weekIndex, t.matchupIndex, t.voterId),
+}));
+
+// ── GOTY in-menu voting (replaces Discord poll) ───────────────────────────────
+export const gotyRoundsTable = pgTable("goty_rounds", {
+  seasonId:                integer("season_id").primaryKey(),
+  voteEndsAt:              timestamp("vote_ends_at", { withTimezone: true }).notNull(),
+  status:                  text("status").notNull().default("open"), // "open" | "closed" | "finalized"
+  announcementMessageId:   text("announcement_message_id"),
+  announcementChannelId:   text("announcement_channel_id"),
+  finalizedAt:             timestamp("finalized_at", { withTimezone: true }),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const gotyCandidatesTable = pgTable("goty_candidates", {
+  id:        serial("id").primaryKey(),
+  seasonId:  integer("season_id").notNull(),
+  idx:       integer("idx").notNull(),
+  text:      text("text").notNull(),
+  authorId:  text("author_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniq: uniqueIndex("goty_candidates_uniq").on(t.seasonId, t.idx),
+}));
+
+export const gotyVotesTable = pgTable("goty_votes", {
+  id:          serial("id").primaryKey(),
+  seasonId:    integer("season_id").notNull(),
+  candidateId: integer("candidate_id").notNull(),
+  voterId:     text("voter_id").notNull(),
+  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:   timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniq: uniqueIndex("goty_votes_uniq").on(t.seasonId, t.voterId),
 }));
 
 // ── Pending end-of-season stat payouts (awaiting commissioner approval) ─────────

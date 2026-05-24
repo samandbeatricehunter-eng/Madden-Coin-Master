@@ -502,6 +502,12 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     await handleChannelAssign(interaction as StringSelectMenuInteraction);
     return true;
   }
+  // Direct "set channel for KEY" shortcut (e.g. Comm Office → Set GOTY Channel)
+  if (id.startsWith("ao_ch_pick:")) {
+    const key = id.split(":").slice(1).join(":");
+    await openChannelPickerForKey(interaction as ButtonInteraction, key);
+    return true;
+  }
 
   // ── Troubleshoot hub ──────────────────────────────────────────────────────────
   if (id === "ao_troubleshoot") {
@@ -2026,7 +2032,16 @@ async function handleManualChannelLinkPicker(interaction: ButtonInteraction) {
 }
 
 async function handleManualChannelSelect(interaction: StringSelectMenuInteraction) {
-  const key      = interaction.values[0]!;
+  const key = interaction.values[0]!;
+  await openChannelPickerForKey(interaction, key);
+}
+
+// Opens the per-key channel-picker UI. Reusable from elsewhere (e.g. the
+// Commissioner's Office "Set GOTY Channel" shortcut button).
+export async function openChannelPickerForKey(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  key: string,
+) {
   const keyLabel = MANUAL_LINKABLE.find(k => k.value === key)?.label ?? key;
 
   // Fetch guild text channels

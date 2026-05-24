@@ -52,6 +52,11 @@ export interface MenuCtx {
   isCommissioner: boolean;
   seasonNum?: number;
   weekStr?: string;
+  // Unaddressed-item counts surfaced as "(N)" suffixes on menu labels.
+  commOfficeTotal?: number;     // sum of Commissioner's Office pending items
+  gotwUnvotedCount?: number;    // GOTW matchups the user hasn't voted on
+  gotyUnvotedCount?: number;    // 1 if active GOTY round and user hasn't voted
+  gotyActive?: boolean;         // whether an open GOTY round exists
 }
 
 type MenuBranch        = { kind: "branch";      children: MenuNode[] };
@@ -215,6 +220,14 @@ const ROOT_NODES: MenuNode[] = [
   },
 
   {
+    path: "goty_vote", emoji: "🎮",
+    label: "GOTY Vote",
+    description: "Vote for this season's Game of the Year",
+    visible: (c) => !!c.gotyActive,
+    kind: "action", action: "ac_goty_vote",
+  },
+
+  {
     path: "standings", emoji: "📊",
     label: "Standings & Stats",
     description: "League standings, user stats, power rankings",
@@ -317,10 +330,25 @@ export function buildMenuHubEmbed(
 
 // ── Selector row builders ─────────────────────────────────────────────────────
 
+function labelWithBadge(node: MenuNode, ctx?: MenuCtx): string {
+  let badge = 0;
+  if (ctx) {
+    if (node.path === "gotw_vote") badge = ctx.gotwUnvotedCount ?? 0;
+    else if (node.path === "goty_vote") badge = ctx.gotyUnvotedCount ?? 0;
+  }
+  const base = node.label.substring(0, 100);
+  if (badge > 0) {
+    const suffix = ` (${badge})`;
+    return (base.length + suffix.length > 100 ? base.slice(0, 100 - suffix.length) : base) + suffix;
+  }
+  return base;
+}
+
 function buildSelector(
   placeholder: string,
   options: MenuNode[],
   includeHomeOption: boolean,
+  ctx?: MenuCtx,
 ): ActionRowBuilder<StringSelectMenuBuilder> {
   const select = new StringSelectMenuBuilder()
     .setCustomId("menu_cat")
@@ -329,7 +357,7 @@ function buildSelector(
   for (const n of options) {
     select.addOptions(
       new StringSelectMenuOptionBuilder()
-        .setLabel(n.label.substring(0, 100))
+        .setLabel(labelWithBadge(n, ctx))
         .setValue(n.path)
         .setDescription(n.description.substring(0, 100))
         .setEmoji(n.emoji),
@@ -351,7 +379,7 @@ export function buildMenuHubRows(
   ctx: MenuCtx,
 ): ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] {
   const cats = filterVisible(ROOT_NODES, ctx);
-  return [buildSelector("📂 Select a category…", cats, false)];
+  return [buildSelector("📂 Select a category…", cats, false, ctx)];
 }
 
 // ── Sub-page rendering ────────────────────────────────────────────────────────
@@ -431,12 +459,23 @@ interface CategoryPage {
   rows: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[];
 }
 
-export function buildAdminHubPage(seasonNum?: number, weekStr?: string): CategoryPage {
+export function buildAdminHubPage(
+  seasonNum?: number,
+  weekStr?: string,
+  commOfficeTotal?: number,
+): CategoryPage {
+  const adminLabel = (c: AdminCategoryDef): string => {
+    if (c.id === "commissioner_office" && commOfficeTotal && commOfficeTotal > 0) {
+      return `${c.label} (${commOfficeTotal})`.slice(0, 100);
+    }
+    return c.label.slice(0, 100);
+  };
+
   const embed = goldEmbed({
     title:       "⚙️ League Operations",
     description:
       "Commissioner tools — choose a category to manage your league.\n\n" +
-      ADMIN_CATEGORIES.map((c) => `${c.emoji} **${c.label}** — ${c.description}`).join("\n"),
+      ADMIN_CATEGORIES.map((c) => `${c.emoji} **${adminLabel(c)}** — ${c.description}`).join("\n"),
     seasonNum, weekStr,
     variant: "admin",
   });
@@ -447,7 +486,7 @@ export function buildAdminHubPage(seasonNum?: number, weekStr?: string): Categor
     .addOptions(
       ADMIN_CATEGORIES.map((c) =>
         new StringSelectMenuOptionBuilder()
-          .setLabel(c.label)
+          .setLabel(adminLabel(c))
           .setValue(c.id)
           .setDescription(c.description.substring(0, 100))
           .setEmoji(c.emoji),

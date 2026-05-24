@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import {
   franchiseScheduleTable, franchiseMcaTeamsTable, usersTable,
   userRecordsTable, franchiseProcessedGamesTable,
-  playoffGotwPollsTable, type Season,
+  gotwHistoryTable, type Season,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { purgeChannel, purgeGotwChannel } from "../helpers/gotw-helpers.js";
@@ -180,8 +180,12 @@ export async function runPlayoffMatchupsFlow(
     return `⚠️ ${label} matchups posted, but cannot access GOTW channel for polls.`;
   }
 
-  const tc = gotwCh as TextChannel;
-  let pollsPosted = 0;
+  // GOTW polls are no longer posted to the GOTW channel for playoffs. Each
+  // H2H matchup is seeded into gotw_history so the in-menu GOTW Vote tile
+  // picks it up automatically. Settlement runs per-matchup on winner confirm
+  // (see settleGotwForGame in game-scheduling-handlers.ts).
+  void gotwCh; // intentionally kept to preserve permission check above
+  let seededCount = 0;
 
   for (let i = 0; i < h2hGames.length; i++) {
     const g       = h2hGames[i]!;
@@ -189,58 +193,38 @@ export async function runPlayoffMatchupsFlow(
     const homeId  = teamToDiscord.get(toKey(g.homeTeamName))!;
 
     try {
-      await tc.send({
-        content:
-          `@everyone\n` +
-          `🏆 **${label} Matchup!**\n` +
-          `<@${awayId}> **${g.awayTeamName}** vs <@${homeId}> **${g.homeTeamName}**\n` +
-          `Cast your vote below — **+10 coins** for a correct guess!`,
-      });
-
-      const pollMsg = await tc.send({
-        poll: {
-          question:         { text: `Who will win? ${g.awayTeamName} vs ${g.homeTeamName}` },
-          answers:          [{ text: g.awayTeamName }, { text: g.homeTeamName }],
-          duration:         4,
-          allowMultiselect: false,
-        } as any,
-      });
-
-      await db.insert(playoffGotwPollsTable).values({
+      await db.insert(gotwHistoryTable).values({
         seasonId:     season.id,
-        weekLabel:    weekKey,
         weekIndex:    effectiveWeekIndex,
         matchupIndex: i,
         discordId1:   awayId,
         discordId2:   homeId,
         teamName1:    g.awayTeamName,
         teamName2:    g.homeTeamName,
-        pollMessageId: pollMsg.id,
       }).onConflictDoUpdate({
         target: [
-          playoffGotwPollsTable.seasonId,
-          playoffGotwPollsTable.weekIndex,
-          playoffGotwPollsTable.matchupIndex,
+          gotwHistoryTable.seasonId,
+          gotwHistoryTable.weekIndex,
+          gotwHistoryTable.matchupIndex,
         ],
         set: {
-          discordId1:    awayId,
-          discordId2:    homeId,
-          teamName1:     g.awayTeamName,
-          teamName2:     g.homeTeamName,
-          pollMessageId: pollMsg.id,
+          discordId1:  awayId,
+          discordId2:  homeId,
+          teamName1:   g.awayTeamName,
+          teamName2:   g.homeTeamName,
           payoutIssuedAt: null,
         },
       });
-
-      pollsPosted++;
+      seededCount++;
     } catch (err) {
-      console.error(`[playoff-runner] Failed to post poll for ${g.awayTeamName} vs ${g.homeTeamName}:`, err);
+      console.error(`[playoff-runner] Failed to seed gotw_history for ${g.awayTeamName} vs ${g.homeTeamName}:`, err);
     }
   }
 
   return (
-    `✅ **${label}** — ${pollsPosted}/${h2hGames.length} polls created${gotwChannelId ? ` in <#${gotwChannelId}>` : ""}.\n` +
-    `Matchups posted${matchupsChannelId ? ` to <#${matchupsChannelId}>` : ""}. Payouts issue automatically on next advance.`
+    `✅ **${label}** — ${seededCount}/${h2hGames.length} matchups seeded as in-menu GOTW votes.\n` +
+    `Matchups embed posted${matchupsChannelId ? ` to <#${matchupsChannelId}>` : ""}. ` +
+    `Voters use \`/menu → 🏆 GOTW Vote\`. Payouts settle on each game's winner confirmation.`
   );
 }
 

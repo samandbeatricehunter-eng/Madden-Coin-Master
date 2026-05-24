@@ -269,6 +269,13 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── In-menu GOTY voting (replaces Discord poll) ──────────────────────────────
+  if (interaction.customId.startsWith("gotyv_")) {
+    const { handleGotyvInteraction } = await import("../lib/handlers/goty-voting-handlers.js");
+    await handleGotyvInteraction(interaction);
+    return;
+  }
+
   // ── Admin troubleshoot panel buttons ─────────────────────────────────────────
   if (action === "ts_repair_records")    { await handleTsRepairRecords(interaction);    return; }
   if (action === "ts_resync_data")       { await handleTsResyncData(interaction);       return; }
@@ -1780,41 +1787,6 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── GOTY: commissioner opens winner selection ─────────────────────────────────
-  if (action === "goty_select") {
-    const seasonId = parseInt(secondPart ?? "0", 10);
-    await interaction.deferReply({ ephemeral: true });
-
-    const allUsers = await db.select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable);
-    const teamsWithUsers = allUsers
-      .filter(u => u.team)
-      .sort((a, b) => (a.team ?? "").localeCompare(b.team ?? ""))
-      .slice(0, 25); // Discord select menu max 25
-
-    if (teamsWithUsers.length === 0) {
-      await interaction.editReply({ content: "❌ No users with teams found." });
-      return;
-    }
-
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId(`goty_winners:${seasonId}`)
-      .setPlaceholder("Select 1 or 2 GOTY winners...")
-      .setMinValues(1)
-      .setMaxValues(2)
-      .addOptions(teamsWithUsers.map(u =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(u.team!)
-          .setValue(u.discordId)
-      ));
-
-    await interaction.editReply({
-      content: "Select **1 or 2** GOTY winners. Each will receive coins + 1 free XF promotion.\n*(Select 1 if the other winner's team is now CPU-controlled.)*",
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
-    });
-    return;
-  }
-
   // ── Violation: confirm ──────────────────────────────────────────────────────
   if (action === "violation_confirm") {
     const violationId = parseInt(secondPart ?? "0", 10);
@@ -2163,95 +2135,6 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   // ── Admin: add custom player — player select ───────────────────────────────
   // customId: acp_player:<targetDiscordId>:<seasonId>:<notesEncoded>
   if (action === "acp_player") { await handleAcpPlayerSelect(interaction); return; }
-
-  // ── GOTY: commissioner selected the 2 winners ─────────────────────────────────
-  if (action === "goty_winners") {
-    const seasonId   = parseInt(parts[1] ?? "0", 10);
-    const winnerIds  = interaction.values; // 2 Discord user IDs
-
-    await interaction.deferUpdate();
-
-    const gotyCoins = await getPayoutValue(PAYOUT_KEYS.GOTY_WINNER);
-
-    const winnerLines: string[] = [];
-
-    for (const discordId of winnerIds) {
-      const [userRow] = await db.select({ team: usersTable.team })
-        .from(usersTable).where(eq(usersTable.discordId, discordId)).limit(1);
-      const team = userRow?.team ?? "Unknown";
-
-      if (gotyCoins > 0) {
-        await addBalance(discordId, gotyCoins, interaction.guildId!);
-        await logTransaction(discordId, gotyCoins, "addcoins",
-          `GOTY Award Winner — Season ${seasonId}`, interaction.guildId!, interaction.user.id);
-      }
-
-      winnerLines.push(`🏆 <@${discordId}> (${team})`);
-
-      try {
-        const u = await interaction.client.users.fetch(discordId);
-        await u.send(
-          `🎮 **You've been selected as a Game of the Year Award winner!**\n\n` +
-          `**+${gotyCoins} 🪙 coins** have been added to your balance!\n\n` +
-          `You also receive **1 free XF promotion** for any player on your roster. ` +
-          `This cannot be saved and must be used before the start of the next season. ` +
-          `Coordinate with the commissioner to apply it!`
-        ).catch(() => {});
-      } catch (_) {}
-    }
-
-    // Post to general channel
-    const gotyCount   = winnerIds.length;
-    const gotyNoun    = gotyCount === 1 ? "winner" : "winners";
-    const gotyEach    = gotyCount === 1 ? "The winner receives" : "Each winner receives";
-
-    try {
-      const gotyGeneralChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GENERAL);
-      const generalChannel = gotyGeneralChannelId ? await interaction.client.channels.fetch(gotyGeneralChannelId).catch(() => null) : null;
-      if (generalChannel?.isTextBased()) {
-        const announceEmbed = new EmbedBuilder()
-          .setTitle(`🎮 GAME OF THE YEAR AWARD ${gotyNoun.toUpperCase()}!`)
-          .setColor(Colors.Gold)
-          .setDescription(
-            `Congratulations to this season's **Game of the Year** award ${gotyNoun}!\n\n` +
-            winnerLines.join("\n") + "\n\n" +
-            `${gotyEach} **+${gotyCoins} 🪙** and a **free XF promotion** for any player on their roster.\n` +
-            `⚠️ The XF promotion cannot be saved — it must be used before the start of the next season.`
-          )
-          .setTimestamp();
-        await (generalChannel as TextChannel).send({ content: "@everyone", embeds: [announceEmbed] });
-      }
-    } catch (err) { console.error("Failed to post GOTY announcement:", err); }
-
-    // Clear the GOTY channel to prepare it for next season
-    try {
-      const gotyChannelId = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.GOTY);
-      const gotyChannel = gotyChannelId ? await interaction.client.channels.fetch(gotyChannelId).catch(() => null) : null;
-      if (gotyChannel?.isTextBased()) {
-        const tc = gotyChannel as TextChannel;
-        const msgs = await tc.messages.fetch({ limit: 100 });
-        if (msgs.size > 0) {
-          await tc.bulkDelete(msgs, true).catch(async () => {
-            for (const m of msgs.values()) await m.delete().catch(() => {});
-          });
-        }
-      }
-    } catch (err) { console.error("Failed to clear GOTY channel:", err); }
-
-    // Update the commissioner message to show done state
-    const doneEmbed = new EmbedBuilder()
-      .setTitle("✅ GOTY Winners Selected")
-      .setColor(Colors.Green)
-      .setDescription(winnerLines.join("\n"))
-      .addFields(
-        { name: "Coins Awarded", value: `+${gotyCoins} 🪙 each`, inline: true },
-        { name: "GOTY Channel", value: "Cleared for next season ✅", inline: true },
-      )
-      .setFooter({ text: `Selected by ${interaction.user.username}` })
-      .setTimestamp();
-    await interaction.editReply({ embeds: [doneEmbed], components: [] });
-    return;
-  }
 
   // ── GOTW: admin selected a specific game ─────────────────────────────────────
   if (action === "gotw_select") {

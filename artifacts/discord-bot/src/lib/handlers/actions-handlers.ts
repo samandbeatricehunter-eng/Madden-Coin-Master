@@ -884,6 +884,12 @@ export async function handleActionsInteraction(
     return true;
   }
 
+  if (id === "ac_goty_vote") {
+    const { openGotyVote } = await import("./goty-voting-handlers.js");
+    await openGotyVote(interaction as ButtonInteraction);
+    return true;
+  }
+
   if (id === "ac_seasonpr")     { await handleSeasonPR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_alltimepr")    { await handleAllTimePR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_globalpr")     { await handleGlobalPR(interaction as ButtonInteraction, sess); return true; }

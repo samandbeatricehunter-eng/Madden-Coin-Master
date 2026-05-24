@@ -108,8 +108,8 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   highlight_playoff_payout: { value: 5,   description: "Highlight video — postseason payout per video",                  category: "Activity Payouts" },
   highlight_limit:          { value: 2,   description: "Max paid highlight videos per user per week",                    category: "Activity Payouts" },
   // ── GOTW voter bonuses ────────────────────────────────────────────────────────
-  gotw_regular_bonus: { value: 5,  description: "GOTW correct guess bonus — regular season",     category: "GOTW Bonuses" },
-  gotw_playoff_bonus: { value: 10, description: "GOTW correct guess bonus — playoffs",            category: "GOTW Bonuses" },
+  gotw_regular_bonus: { value: 25, description: "GOTW correct guess bonus — regular season",     category: "GOTW Bonuses" },
+  gotw_playoff_bonus: { value: 25, description: "GOTW correct guess bonus — playoffs",            category: "GOTW Bonuses" },
   // ── POTW bonus ───────────────────────────────────────────────────────────────
   potw_bonus:         { value: 10, description: "Player of the Week winner bonus",                category: "GOTW Bonuses" },
   // ── New member bonus ─────────────────────────────────────────────────────────

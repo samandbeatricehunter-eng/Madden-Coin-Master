@@ -27,6 +27,7 @@ import { getOrCreateActiveSeason, isAdminUser, getOrCreateUser, getSeasonRules }
 import { weekLabel } from "../helpers/week-helpers.js";
 import { buildTransactionsEmbed } from "../discord/user-stats-embed.js";
 import { handleActionsInteraction } from "../handlers/actions-handlers.js";
+import { getCommOfficeCounts, getGotwUnvotedCount, getGotyStatus } from "./notif-counts.js";
 
 const COMMISSIONER_ROLE_NAME = "Commissioner";
 
@@ -43,12 +44,26 @@ async function loadContext(interaction: ButtonInteraction | StringSelectMenuInte
     (member?.permissions.has(PermissionFlagsBits.Administrator) ?? false) || dbAdmin;
   const isCommissioner =
     member?.roles.cache.some((r) => r.name === COMMISSIONER_ROLE_NAME) ?? false;
+
+  // Notification counts — failures must never block menu nav.
+  const [commCounts, gotwUnvoted, goty] = await Promise.all([
+    (isAdmin || isCommissioner)
+      ? getCommOfficeCounts(gid).catch(() => null)
+      : Promise.resolve(null),
+    getGotwUnvotedCount(uid, season.id).catch(() => 0),
+    getGotyStatus(uid, season.id).catch(() => ({ unvoted: 0, active: false })),
+  ]);
+
   return {
     settings,
     isAdmin,
     isCommissioner,
     seasonNum: season.seasonNumber,
     weekStr: weekLabel(season.currentWeek),
+    commOfficeTotal: commCounts?.total ?? 0,
+    gotwUnvotedCount: gotwUnvoted ?? 0,
+    gotyUnvotedCount: goty.unvoted,
+    gotyActive: goty.active,
   };
 }
 
@@ -98,9 +113,10 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     // Commissioner's Office → render the pending-transactions hub directly
     if (value === "commissioner_office") {
       const { buildCommOfficeEmbed, buildCommOfficeRows } = await import("../handlers/pending-inbox-handlers.js");
+      const counts = await getCommOfficeCounts(interaction.guildId!).catch(() => null);
       await interaction.update({
         embeds: [buildCommOfficeEmbed()],
-        components: buildCommOfficeRows() as any,
+        components: buildCommOfficeRows(counts ?? undefined) as any,
         files: [],
       });
       return true;
@@ -128,7 +144,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
-    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr);
+    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr, ctx.commOfficeTotal);
     await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
@@ -150,7 +166,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
-    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr);
+    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr, ctx.commOfficeTotal);
     await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
@@ -215,7 +231,7 @@ export async function handleMenuButton(interaction: ButtonInteraction): Promise<
       await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
       return true;
     }
-    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr);
+    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr, ctx.commOfficeTotal);
     await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }

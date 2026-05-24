@@ -59,24 +59,42 @@ export function buildCommOfficeEmbed(): EmbedBuilder {
       "**📋 Pending Payouts** — User-submitted game payouts (approve / deny / edit)\n" +
       "**🎙️ Pending Interviews** — Post-game interviews (approve / deny / edit)\n" +
       "**🎬 Stream & Highlight Payouts** — Channel-detected media payouts (approve / deny / edit)\n" +
-      "**🧾 Recent History** — Last 25 completed transactions"
+      "**🧾 Recent History** — Last 25 completed transactions\n\n" +
+      "**📺 Set GOTY Channel** — Designate the Game-of-the-Year submission channel.\n" +
+      "> ⚠️ **Required for end-of-season GOTY voting.** If no GOTY channel is set, " +
+      "the bot has nowhere to pull candidate submissions from and **the GOTY vote will not run.**"
     )
     .setFooter({ text: "Actions are immediate. Users receive a DM on approve/deny." })
     .setTimestamp();
 }
 
-export function buildCommOfficeRows(): ActionRowBuilder<ButtonBuilder>[] {
+export interface CommOfficeBadgeCounts {
+  purchases?:       number;
+  payouts?:         number;
+  interviews?:      number;
+  streamHighlight?: number;
+}
+
+function badge(base: string, n?: number): string {
+  if (!n || n <= 0) return base;
+  return `${base} (${n})`;
+}
+
+export function buildCommOfficeRows(
+  counts?: CommOfficeBadgeCounts,
+): ActionRowBuilder<ButtonBuilder>[] {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("co_purchases:0").setLabel("🛒 Pending Purchases").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("co_payouts:0").setLabel("📋 Pending Payouts").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("co_interviews:0").setLabel("🎙️ Pending Interviews").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_purchases:0").setLabel(badge("🛒 Pending Purchases", counts?.purchases)).setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_payouts:0").setLabel(badge("📋 Pending Payouts", counts?.payouts)).setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_interviews:0").setLabel(badge("🎙️ Pending Interviews", counts?.interviews)).setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("co_channel:0").setLabel("🎬 Stream/Highlight").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_channel:0").setLabel(badge("🎬 Stream/Highlight", counts?.streamHighlight)).setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("co_history:0").setLabel("🧾 Recent History").setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ao_ch_pick:goty").setLabel("📺 Set GOTY Channel").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("menu_admin_back").setLabel("↩ Back").setStyle(ButtonStyle.Secondary),
     ),
   ];

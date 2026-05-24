@@ -22,9 +22,36 @@ The bot was recently cleaned up to remove all AI/LLM functionality, the Twitter/
 ### GOTW Voting (replaces Discord polls)
 
 - Old `Poll` API removed. `postGotwToChannel` keeps the same signature but no longer creates a poll — it posts a short announcement pointing users at `/menu → 🏆 GOTW Vote`.
-- New menu tile `🏆 GOTW Vote` opens an ephemeral card with live tallies; users can change their vote any time until the underlying `game_schedules` row flips to `started` (or `scheduledAt` passes).
-- On winner confirmation, every voter who picked the winning team is paid `PAYOUT_KEYS.GOTW_VOTER_PAYOUT`.
-- `poll-checker` scheduler removed from `index.ts`; replaced by `startGameReminderScheduler`.
+- New menu tile `🏆 GOTW Vote` opens an ephemeral card with live tallies. Regular season: one matchup per week. **Playoffs: every H2H game** is its own votable matchup (one `gotw_history` row per game, `matchupIndex` distinguishes them). Users can change their vote any time until the underlying `game_schedules` row flips to `started` (or `scheduledAt` passes).
+- On winner confirmation, every voter who picked the winning team is paid `PAYOUT_KEYS.GOTW_REGULAR_BONUS` (default **25 coins**, both regular season and playoffs — playoff bonus key still exists as an additional on top if configured).
+- `poll-checker` scheduler removed entirely (file deleted); replaced by `startGameReminderScheduler`.
+- Playoff matchups runner (`playoff-matchups-runner.ts`) no longer posts polls or `@everyone` to the GOTW channel — it just upserts `gotw_history` rows so the in-menu vote picks them up.
+
+### GOTY Voting (replaces Discord poll)
+
+- The old wildcard automation that built a historical-records channel and posted a Discord GOTY poll is **gone**. `rebuildHistoricalChannel` / `runOffseasonHistoricalPost` are now no-op stubs that just inform the admin the feature was retired.
+- `runWildcardAutomation` (fires on Week 18 → Wildcard advance) does exactly one thing: seed the in-menu GOTY round.
+  1. Scrape the last 100 messages from the channel mapped to `CHANNEL_KEYS.GOTY`.
+  2. Filter bots / empty / dupes (case-insensitive), truncate each to 200 chars, insert into `goty_candidates`.
+  3. Upsert a `goty_rounds` row with `voteEndsAt = now + 24h`, `status = 'open'`.
+  4. Post a short announcement in the GOTY channel pointing users at `/menu → 🎮 GOTY Vote`.
+- New menu tile **🎮 GOTY Vote** (sibling to GOTW Vote) — only visible while a `goty_rounds` row is `open` for the active season.
+- Set up the GOTY channel via the new **📺 Set GOTY Channel** button inside the Commissioner's Office. If it's not set, the embed shows a warning and the wildcard seed is a no-op.
+
+### EOS Auto-Posts Removed
+
+The end-of-season historical channel and all of its auto-posts have been removed:
+- ❌ Awards channel post, stat-leader posts, PR-bonus channel post, community polls, GOTY Discord poll.
+- ✅ Coin payouts kept: PR bonus payouts still flow into `pending_eos_payouts` via `eos-auto-post.ts` for commissioner approval. End-of-season stat-tier payouts unchanged.
+- ✅ Playoff seeding + bracket logic unchanged.
+
+### Menu Notification Badges
+
+Labels surface unaddressed-item counts as `(N)` suffixes — see `lib/menu/notif-counts.ts`:
+- **Admin hub**: `🏛️ Commissioner's Office (N)` where N = purchases + payouts + interviews + stream/highlight.
+- **Commissioner's Office sub-buttons**: each `(N)` for its own category.
+- **🏆 GOTW Vote (N)** — N = playable matchups for the active season the user hasn't voted on yet.
+- **🎮 GOTY Vote (1)** — present only while an open round exists and the user hasn't voted.
 
 ## Stack
 

@@ -11,6 +11,7 @@ import {
   buildMenuBannerAttachment,
   type MenuCtx,
 } from "../lib/menu/menu-hub.js";
+import { getCommOfficeCounts, getGotwUnvotedCount, getGotyStatus } from "../lib/menu/notif-counts.js";
 
 const COMMISSIONER_ROLE_NAME = "Commissioner";
 
@@ -38,7 +39,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const seasonNum = season.seasonNumber;
   const wkStr     = weekLabel(season.currentWeek);
 
-  const ctx: MenuCtx = { settings, isAdmin, isCommissioner, seasonNum, weekStr: wkStr };
+  const [commCounts, gotwUnvoted, goty] = await Promise.all([
+    (isAdmin || isCommissioner)
+      ? getCommOfficeCounts(gid).catch(() => null)
+      : Promise.resolve(null),
+    getGotwUnvotedCount(uid, season.id).catch(() => 0),
+    getGotyStatus(uid, season.id).catch(() => ({ unvoted: 0, active: false })),
+  ]);
+
+  const ctx: MenuCtx = {
+    settings, isAdmin, isCommissioner, seasonNum, weekStr: wkStr,
+    commOfficeTotal: commCounts?.total ?? 0,
+    gotwUnvotedCount: gotwUnvoted ?? 0,
+    gotyUnvotedCount: goty.unvoted,
+    gotyActive: goty.active,
+  };
 
   if (!user.team && !isAdmin && !isCommissioner) {
     await interaction.editReply({

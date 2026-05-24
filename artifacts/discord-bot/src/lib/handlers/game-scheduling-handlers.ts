@@ -803,11 +803,13 @@ export async function settleGotwForGame(
   // is still NULL. Two simultaneous winner selections would both pass the
   // read-side `if (hist.payoutIssuedAt)` check above; this guarantees only
   // ONE of them advances to the payout loop, eliminating double-payment.
+  // Filter on matchupIndex so each playoff matchup settles independently.
   const claimed = await db.update(gotwHistoryTable)
     .set({ payoutIssuedAt: new Date() })
     .where(and(
-      eq(gotwHistoryTable.seasonId, sched.seasonId),
-      eq(gotwHistoryTable.weekIndex, sched.weekIndex),
+      eq(gotwHistoryTable.seasonId,     sched.seasonId),
+      eq(gotwHistoryTable.weekIndex,    sched.weekIndex),
+      eq(gotwHistoryTable.matchupIndex, hist.matchupIndex),
       isNull(gotwHistoryTable.payoutIssuedAt),
     ))
     .returning({ id: gotwHistoryTable.id });
@@ -816,8 +818,9 @@ export async function settleGotwForGame(
   }
 
   const votes = await db.select().from(gotwVotesTable).where(and(
-    eq(gotwVotesTable.seasonId, sched.seasonId),
-    eq(gotwVotesTable.weekIndex, sched.weekIndex),
+    eq(gotwVotesTable.seasonId,     sched.seasonId),
+    eq(gotwVotesTable.weekIndex,    sched.weekIndex),
+    eq(gotwVotesTable.matchupIndex, hist.matchupIndex),
   ));
   const correct = votes.filter((v) => v.votedForDiscordId === winnerDiscordId);
   const bonus   = await getPayoutValue(PAYOUT_KEYS.GOTW_REGULAR_BONUS, sched.guildId);
