@@ -255,6 +255,8 @@ const ROOT_NODES: MenuNode[] = [
 // ── Tree lookup ───────────────────────────────────────────────────────────────
 
 export const MENU_HOME_VALUE = "__home";
+export const MENU_ADMIN_HOME_VALUE = "__admin_home";
+export const MENU_UNLINKED_HOME_VALUE = "__unlinked_home";
 
 export function getRootNodes(): MenuNode[] {
   return ROOT_NODES;
@@ -430,7 +432,7 @@ export function buildAdminHubPage(seasonNum?: number, weekStr?: string): Categor
 
   const homeSelect = new StringSelectMenuBuilder()
     .setCustomId("menu_cat")
-    .setPlaceholder("🏠 Back to main menu…")
+    .setPlaceholder("🏠 Navigation…")
     .addOptions(
       new StringSelectMenuOptionBuilder()
         .setLabel("Back to Main Menu")
@@ -445,6 +447,43 @@ export function buildAdminHubPage(seasonNum?: number, weekStr?: string): Categor
   ];
 
   return { embed, rows };
+}
+
+/** Selector row used at the bottom of admin sub-pages — replaces the old
+ *  menu_admin_back / menu_back / ac_close button row. */
+function adminSubPageNavRow(): ActionRowBuilder<StringSelectMenuBuilder> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("menu_cat")
+    .setPlaceholder("🧭 Navigation…")
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel("Back to Admin Hub")
+        .setValue(MENU_ADMIN_HOME_VALUE)
+        .setDescription("Return to League Operations")
+        .setEmoji("⬅"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("Back to Main Menu")
+        .setValue(MENU_HOME_VALUE)
+        .setDescription("Return to the top menu")
+        .setEmoji("🏠"),
+    );
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+}
+
+/** Selector row used at the bottom of unlinked sub-pages — replaces the old
+ *  menu_back / ac_close button row. */
+function unlinkedSubPageNavRow(): ActionRowBuilder<StringSelectMenuBuilder> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("menu_unlinked_cat")
+    .setPlaceholder("🧭 Navigation…")
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel("Back to Main Menu")
+        .setValue(MENU_UNLINKED_HOME_VALUE)
+        .setDescription("Return to the top menu")
+        .setEmoji("🏠"),
+    );
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 }
 
 function chunkRows(buttons: ButtonBuilder[]): ActionRowBuilder<ButtonBuilder>[] {
@@ -512,13 +551,7 @@ export function buildAdminCategoryPage(
 
   const rows: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
   for (const r of chunkRows(buttons)) rows.push(r);
-  rows.push(
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("menu_admin_back").setLabel("⬅ Back to Admin").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("menu_back").setLabel("🏠 Main Menu").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
-    ),
-  );
+  rows.push(adminSubPageNavRow());
 
   return { embed, rows };
 }
@@ -612,11 +645,6 @@ export function buildUnlinkedCategoryPage(
   }
   const rows: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
   for (const r of chunkRows(buttons)) rows.push(r);
-  rows.push(
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("menu_back").setLabel("⬅ Back to Menu").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Secondary),
-    ),
-  );
+  rows.push(unlinkedSubPageNavRow());
   return { embed, rows };
 }

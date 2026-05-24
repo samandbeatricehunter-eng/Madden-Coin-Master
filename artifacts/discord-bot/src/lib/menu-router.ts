@@ -16,8 +16,10 @@ import {
   buildMenuHubEmbed, buildMenuHubRows,
   buildBranchPage, buildAdminHubPage, buildAdminCategoryPage,
   buildUnlinkedCategoryPage,
+  buildUnlinkedMenuEmbed, buildUnlinkedMenuRows,
   buildMenuBannerAttachment,
-  findNode, MENU_HOME_VALUE,
+  findNode,
+  MENU_HOME_VALUE, MENU_ADMIN_HOME_VALUE, MENU_UNLINKED_HOME_VALUE,
   type AdminCategoryId, type MenuCtx,
 } from "./menu-hub.js";
 import { getServerSettings } from "./server-settings.js";
@@ -58,8 +60,16 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
   const ctx = await loadContext(interaction);
   const value = interaction.values[0] ?? "";
 
-  // ── Unlinked user flat categories (preserves old buttons inside) ───────────
+  // ── Unlinked user flat categories ─────────────────────────────────────────
   if (id === "menu_unlinked_cat") {
+    if (value === MENU_UNLINKED_HOME_VALUE) {
+      await interaction.update({
+        embeds:     [buildUnlinkedMenuEmbed(ctx.seasonNum, ctx.weekStr)],
+        components: buildUnlinkedMenuRows() as any,
+        files:      [buildMenuBannerAttachment()],
+      });
+      return true;
+    }
     const ok = ["teams", "rosters", "league", "rankings", "rules"] as const;
     type UnlinkedCat = (typeof ok)[number];
     if (!ok.includes(value as UnlinkedCat)) {
@@ -98,6 +108,17 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
       components: buildMenuHubRows(ctx) as any,
       files:      [buildMenuBannerAttachment()],
     });
+    return true;
+  }
+
+  // Back-to-admin-hub option (used from admin sub-page nav selectors)
+  if (value === MENU_ADMIN_HOME_VALUE) {
+    if (!ctx.isAdmin && !ctx.isCommissioner) {
+      await interaction.reply({ content: "❌ Admins or Commissioners only.", ephemeral: true });
+      return true;
+    }
+    const page = buildAdminHubPage(ctx.seasonNum, ctx.weekStr);
+    await interaction.update({ embeds: [page.embed], components: page.rows as any, files: [] });
     return true;
   }
 
