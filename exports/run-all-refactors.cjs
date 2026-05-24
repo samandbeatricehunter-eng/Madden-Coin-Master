@@ -10,10 +10,11 @@
  *   1. cleanup-dead-files.cjs         — archive 15 dead command files
  *   2. fix-arch-and-startup.cjs       — fix 2 startup crashes + create lib/ barrels
  *   3. remove-features.cjs            — remove AI / league-twitter / tweets / interviews
- *   4. refactor-split-actions.cjs     — split actions-handlers.ts into 8 files
- *   5. refactor-split-admin-ops.cjs   — split admin-operations-handlers.ts into 3 files
- *   6. refactor-split-message.cjs     — split messageCreate.ts + move hub builders to lib/
- *   7. fix-remaining-cleanup.cjs      — stub AI block, remove interview import, fix eos/wildcard/season-recap
+ *   4. fix-broken-imports.cjs         — remove all remaining archive-module imports across 6 files
+ *   5. refactor-split-actions.cjs     — split actions-handlers.ts into 8 files
+ *   6. refactor-split-admin-ops.cjs   — split admin-operations-handlers.ts into 3 files
+ *   7. refactor-split-message.cjs     — split messageCreate.ts + move hub builders to lib/
+ *   8. fix-remaining-cleanup.cjs      — stub AI block, remove interview import, fix eos/wildcard/season-recap
  *
  * Each script writes .bak backups before touching any file.
  * If a script fails, the remaining scripts are skipped.
@@ -30,6 +31,7 @@ const SCRIPTS = [
   { file: "cleanup-dead-files.cjs",        desc: "Archive 15 dead command files" },
   { file: "fix-arch-and-startup.cjs",       desc: "Fix startup crashes + create lib/ barrels" },
   { file: "remove-features.cjs",            desc: "Remove AI / league-twitter / tweets / interviews" },
+  { file: "fix-broken-imports.cjs",         desc: "Remove all remaining archive-module imports (6 files)" },
   { file: "refactor-split-actions.cjs",     desc: "Split actions-handlers.ts into 8 files" },
   { file: "refactor-split-admin-ops.cjs",   desc: "Split admin-operations-handlers.ts into 3 files" },
   { file: "refactor-split-message.cjs",     desc: "Split messageCreate.ts + move hub builders" },
