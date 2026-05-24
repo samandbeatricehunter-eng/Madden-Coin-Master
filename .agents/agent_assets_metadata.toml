@@ -42,3 +42,9 @@ id = "954RryMKtDvX61n5f4TTO"
 uri = "file://exports/recbot-refactor.tar.gz"
 type = "unspecified"
 title = "recbot-refactor-analysis.md + cleanup-dead-files.cjs"
+
+[[outputs]]
+id = "H8n9uWD1jmrolbWrJMMLi"
+uri = "file://exports/recbot-fix-scripts.tar.gz"
+type = "unspecified"
+title = "fix-arch-and-startup.cjs + remove-features.cjs"
