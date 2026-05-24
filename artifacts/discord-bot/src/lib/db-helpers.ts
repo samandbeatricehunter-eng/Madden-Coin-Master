@@ -646,11 +646,26 @@ export async function normalizeDefensivePositions(): Promise<void> {
 
   const toSql = (vals: string[]) => vals.map(v => `'${v}'`).join(", ");
 
+  // Legacy one-time migration. The inventory.player_position and
+  // purchases.player_position columns were dropped in some environments
+  // (e.g. fresh Supabase from Drizzle schema). Only run UPDATEs against
+  // tables whose target columns still exist.
+  const colExists = async (table: string, col: string): Promise<boolean> => {
+    const r = await db.execute(sql.raw(
+      `SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' AND column_name='${col}' LIMIT 1`,
+    ));
+    return (r as { rows: unknown[] }).rows.length > 0;
+  };
+
+  const hasLegendsPos = await colExists("legends", "position");
+  const hasInventoryPos = await colExists("inventory", "player_position");
+  const hasPurchasesPos = await colExists("purchases", "player_position");
+
   for (const [newPos, oldSet] of [["OL", OL_SET], ["DL", DL_SET], ["LB", LB_SET], ["DB", DB_SET]] as const) {
     const inClause = toSql(oldSet);
-    await db.execute(sql.raw(`UPDATE legends   SET position        = '${newPos}' WHERE position        IN (${inClause})`));
-    await db.execute(sql.raw(`UPDATE inventory SET player_position = '${newPos}' WHERE player_position IN (${inClause})`));
-    await db.execute(sql.raw(`UPDATE purchases SET player_position = '${newPos}' WHERE player_position IN (${inClause})`));
+    if (hasLegendsPos)   await db.execute(sql.raw(`UPDATE legends   SET position        = '${newPos}' WHERE position        IN (${inClause})`));
+    if (hasInventoryPos) await db.execute(sql.raw(`UPDATE inventory SET player_position = '${newPos}' WHERE player_position IN (${inClause})`));
+    if (hasPurchasesPos) await db.execute(sql.raw(`UPDATE purchases SET player_position = '${newPos}' WHERE player_position IN (${inClause})`));
   }
 
   console.log("✅ Positions normalized (OL / DL / LB / DB)");
