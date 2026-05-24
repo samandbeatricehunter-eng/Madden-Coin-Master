@@ -18,13 +18,18 @@ import {
   EmbedBuilder, AttachmentBuilder,
 } from "discord.js";
 import path from "path";
+import { fileURLToPath } from "url";
 import { THEME, goldEmbed } from "./theme.js";
 import type { ServerSettings } from "./server-settings.js";
 
 // ── Banner image ──────────────────────────────────────────────────────────────
 
 export const MENU_BANNER_FILENAME = "rec-embed-banner.png";
-const MENU_BANNER_PATH = path.join(process.cwd(), "artifacts/discord-bot/assets", MENU_BANNER_FILENAME);
+// Resolve relative to this source file so it works regardless of cwd
+// (dev runs from repo root; prod runs from artifacts/discord-bot).
+// __dirname here is .../artifacts/discord-bot/src/lib at runtime.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MENU_BANNER_PATH = path.resolve(__dirname, "../../assets", MENU_BANNER_FILENAME);
 
 export function buildMenuBannerAttachment(): AttachmentBuilder {
   return new AttachmentBuilder(MENU_BANNER_PATH, { name: MENU_BANNER_FILENAME });
