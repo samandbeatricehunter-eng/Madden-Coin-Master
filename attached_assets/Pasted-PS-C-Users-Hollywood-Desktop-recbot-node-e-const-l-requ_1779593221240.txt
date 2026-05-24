@@ -1,0 +1,61 @@
+PS C:\Users\Hollywood\Desktop\recbot> node -e "const l=require('fs').readFileSync('src/lib/admin-operations-handlers.ts','utf8').split('\n');console.log(l.slice(2320,2380).map((x,i)=>(i+2321)+': '+x).join('\n'))"
+2321:         .setColor(isLast ? Colors.Orange : Colors.Green)
+2322:         .setTitle(`📅 Season Set to ${target} of ${maxSeasons}`)
+2323:         .setDescription(
+2324:           `The active season is now **Season ${target}**.\n\n` +
+2325:           `Season ID: \`${activeSeason?.id ?? "?"}\`` +
+2326:           (isLast ? "\n\n🏁 **This is the final season of the franchise.**" : "")
+2327:         )
+2328:         .setTimestamp(),
+2329:     ],
+2330:     components: [
+2331:       new ActionRowBuilder<ButtonBuilder>().addComponents(
+2332:         new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+2333:         new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+2334:       ),
+2335:     ],
+2336:   });
+2337: }
+2338: 
+2339: 
+2340: import {} from "./admin-week-handlers.js"; // week handlers
+2341: import { buildRulesPages, handleRulesHub, handleRulesSection, handleRulesAdd, handleRulesEdit, handleRulesEditSel, handleRulesDelete, handleRulesPage, handleModalRulesAdd, handleModalRulesEdit, handleModalRulesDelete } from "./admin-rules-handlers.js";
+2342: 
+2343: // ── Set Season Number ──────────────────────────────────────────────────────────
+2344: 
+2345: async function getMaxSeasons(guildId: string): Promise<number> {
+2346:   const [row] = await db.select({ maxSeasons: serverSettingsTable.maxSeasons })
+2347:     .from(serverSettingsTable)
+2348:     .where(eq(serverSettingsTable.guildId, guildId))
+2349:     .limit(1);
+2350:   return row?.maxSeasons ?? 10;
+2351: }
+2352: 
+2353: async function handleSetSeasonNum(interaction: ButtonInteraction) {
+2354:   const guildId   = interaction.guildId!;
+2355:   const [season, maxSeasons] = await Promise.all([
+2356:     getOrCreateActiveSeason(guildId),
+2357:     getMaxSeasons(guildId),
+2358:   ]);
+2359:   const current = season.seasonNumber ?? 1;
+2360: 
+2361:   const options = Array.from({ length: maxSeasons }, (_, i) => i + 1).map(n =>
+2362:     new StringSelectMenuOptionBuilder()
+2363:       .setLabel(`Season ${n}${n === current ? " (current)" : ""}`)
+2364:       .setValue(String(n))
+2365:       .setDefault(n === current),
+2366:   );
+2367: 
+2368:   const select = new StringSelectMenuBuilder()
+2369:     .setCustomId("ao_set_season_num_sel")
+2370:     .setPlaceholder(`Current: Season ${current} of ${maxSeasons}`)
+2371:     .addOptions(options);
+2372: 
+2373:   await interaction.update({
+2374:     embeds: [
+2375:       new EmbedBuilder()
+2376:         .setColor(Colors.Blue)
+2377:         .setTitle("🔢 Set Season Number")
+2378:         .setDescription(
+2379:           `Select the season number to activate.\n\n` +
+2380:           `Current season: **Season ${current} of ${maxSeasons}**\n\n` +
