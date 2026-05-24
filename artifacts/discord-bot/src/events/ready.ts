@@ -13,6 +13,26 @@ export const once = true;
 // Backfills the `team` column on permanent-vault inventory rows that predate
 // the team-stamping feature. Safe to run every startup — it's a no-op once all
 // rows are stamped. Matches discord_id → economy_users.team via a single UPDATE.
+// ── Ensure game_channels.id has a sequence (production DB has bigint with no DEFAULT) ──
+async function ensureGameChannelsSequence(): Promise<void> {
+  try {
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE sequencename = 'game_channels_id_seq') THEN
+          CREATE SEQUENCE game_channels_id_seq;
+          PERFORM setval('game_channels_id_seq', COALESCE((SELECT MAX(id) FROM game_channels), 0) + 1, false);
+        END IF;
+        ALTER TABLE game_channels ALTER COLUMN id SET DEFAULT nextval('game_channels_id_seq');
+      END
+      $$;
+    `);
+    console.log("[startup-migration] game_channels sequence ensured.");
+  } catch (err) {
+    console.error("[startup-migration] Failed to ensure game_channels sequence:", err);
+  }
+}
+
 async function backfillPermanentVaultTeams(): Promise<void> {
   try {
     // Join through seasons so team comes from the same guild the inventory item belongs to.
@@ -208,6 +228,7 @@ export async function execute(client: Client) {
   console.log(`✅ Bot logged in as ${client.user?.tag}`);
 
   // Run data migrations before serving any interactions
+  await ensureGameChannelsSequence();
   await backfillPermanentVaultTeams();
   await seedKnownGuildChannels();
   await autoDiscoverChannelsByName(client);

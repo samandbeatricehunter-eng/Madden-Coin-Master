@@ -234,17 +234,14 @@ async function buildPurchasesPage(
   const raw = await db
     .select({
       purchase: purchasesTable,
-      username: usersTable.discordUsername,
+      username: sql<string | null>`(
+        SELECT discord_username FROM economy_users
+        WHERE discord_id = ${purchasesTable.discordId} AND guild_id = ${guildId}
+        LIMIT 1
+      )`.as("username"),
     })
     .from(purchasesTable)
     .innerJoin(seasonsTable, eq(purchasesTable.seasonId, seasonsTable.id))
-    .leftJoin(
-      usersTable,
-      and(
-        eq(usersTable.discordId, purchasesTable.discordId),
-        eq(usersTable.guildId, guildId),
-      ),
-    )
     .where(guildFilter)
     .orderBy(purchasesTable.createdAt)
     .limit(PAGE_SIZE)
@@ -276,7 +273,7 @@ async function buildPurchasesPage(
           `**User:** <@${p.discordId}>${username ? ` (${username})` : ""}`,
           `**Team:** ${p.teamName ?? "?"}`,
           detailLine,
-          p.notes ? `**Notes:** ${p.notes.slice(0, 80)}` : "",
+          p.notes ? `**Notes:** ${p.notes.slice(0, 500)}` : "",
           `**Submitted:** <t:${Math.floor(new Date(p.createdAt).getTime() / 1000)}:R>`,
         ]
           .filter(Boolean)
@@ -1075,33 +1072,38 @@ export async function handleCommOfficeInteraction(
 
   // ── Selector pages
   if (customId.startsWith("co_payouts:")) {
+    await interaction.deferUpdate();
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildPayoutsPage(guildId, page);
-    await interaction.update({ embeds: [embed], components: rows });
+    await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
   if (customId.startsWith("co_purchases:")) {
+    await interaction.deferUpdate();
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildPurchasesPage(guildId, page);
-    await interaction.update({ embeds: [embed], components: rows });
+    await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
   if (customId.startsWith("co_interviews:")) {
+    await interaction.deferUpdate();
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildInterviewsPage(guildId, page);
-    await interaction.update({ embeds: [embed], components: rows });
+    await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
   if (customId.startsWith("co_channel:")) {
+    await interaction.deferUpdate();
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildChannelPayoutsPage(guildId, page);
-    await interaction.update({ embeds: [embed], components: rows });
+    await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
   if (customId.startsWith("co_history:")) {
+    await interaction.deferUpdate();
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
     const { embed, rows } = await buildHistoryPage(guildId, page);
-    await interaction.update({ embeds: [embed], components: rows });
+    await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
 

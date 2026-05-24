@@ -1,0 +1,127 @@
+  status: 404,
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async handleBuyContractModPlayerPick (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:1238:3)
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508213566707335340/aW50ZXJhY3Rpb246MTUwODIxMzU2NjcwNzMzNTM0MDpKOTJaTk9ja2lYb0NVY3k1UzFqZFVodWo2dHF0ZUVjOVZtOFR5ZWdnQkZwYmVDVGx6dkdrYWY1SndKWUZWUktvMGxtR3pBTjBVUmNBMTRwRHp4VzBLclcyZjc0RXBzbUNUNDJ6a2dvNnVBd3Z6QnJsSkd1UnBtNjZ2amUwMmJ5dA/callback?with_response=false'
+}
+[select] ac_buy_cmpick:: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async StringSelectMenuInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleBuyContractModConfirm (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:1316:5)
+    at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:797:42)
+    at async handleSelectMenu (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2082:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:207:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508213580049285313/aW50ZXJhY3Rpb246MTUwODIxMzU4MDA0OTI4NTMxMzpjQ3p6b1ZwaERkMzJVREc3YXh4MGI3dk1WaWxTeGJnOFJRNklPbnlQUzB4NHI3c3V1SW5CN3RMM0VSenpiaXpSWWwzdnVEUkJzRmFqM0I5VWpxZm1RZURJV1Z1ZExRYWJ0dThLYjUwOFZUeHM5Z3hPcmJQbHczTHRXSUdmbG02Mg/callback?with_response=false'
+}
+}
+[select] menu_cat: DiscordAPIError[10062]: Unknown interaction
+  status: 404,
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+  method: 'POST',
+    at async StringSelectMenuInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+  url: 'https://discord.com/api/v10/interactions/1508213886849912932/aW50ZXJhY3Rpb246MTUwODIxMzg4Njg0OTkxMjkzMjp5NEQzQzRiMEMycjQzc2o5WGlUSG9ndGxiUUlXaU05dDhlU0xUYVZkRmhSZUpNWUhERFZRalF0Z0I2cFdiZkRwZ2Z6WmZkaUJjQkRrSXpnZmhQU20ydmNNcm1PTWZmb1FvNXFoNmVHUkxLQ1ZNb01Gb0oyem9FRDZFcGtscHY4Mg/callback?with_response=false'
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async handleCoins (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:2988:3)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:767:35)
+    at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23)
+    at async handleSelectMenu (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2076:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:207:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+[button] ac_close: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:697:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:314:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508213999324369037/aW50ZXJhY3Rpb246MTUwODIxMzk5OTMyNDM2OTAzNzowbEthUUp1VmhaQ251Wk1Qd3BrRmtzOTc4QmVDWUFqeDZNc1FuTFVHU0pxd0cyYm5FVEpmYVNSTVlqMDV1ZGVBT1RpN3dGUTNCeHFub3dlaHhqaFRzN3drcUpESFl4UG1xd1hTaGw4R0lJcjd6MVJzeGdzRDNRVEVjWlE4NFpxQQ/callback?with_response=false'
+}
+[button] co_purchases:0: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1086:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508214356393984201/aW50ZXJhY3Rpb246MTUwODIxNDM1NjM5Mzk4NDIwMTp5cEtidmprdHpxRGp4NDBIekFmNlFNU21zTkk4UnRsRk5zcTVueEpNak1EVElBZlQ4UDVZR1RPaVFZbGM1b1BPaTI3cFhEZUhpUGh5RTIwTWJhUkJMcUszQ2EwUkJrYWFBWUVCQVpNbjFCR2xiUTlyUTVhZklaUjlLM0VueldyTg/callback?with_response=false'
+}
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: {
+    message: 'Invalid Form Body',
+[button] co_purchases:1: DiscordAPIError[50035]: Invalid Form Body
+    code: 50035,
+data.components[1].components[0].custom_id[COMPONENT_CUSTOM_ID_DUPLICATED]: Component custom id cannot be duplicated
+data.components[1].components[1].custom_id[COMPONENT_CUSTOM_ID_DUPLICATED]: Component custom id cannot be duplicated
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1086:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+    errors: { data: [Object] }
+  },
+  code: 50035,
+  status: 400,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508214485582872656/aW50ZXJhY3Rpb246MTUwODIxNDQ4NTU4Mjg3MjY1NjpYN0c3Mm9MWnZESVBPdVBXVlBqa0pJaTJnUEllUEVHNzR0Tzg5czh4bURBelJlaUt5Vll5N1owcGFnMGloVHpHVU5nYktQOWJkVm4yWHlKYTF1STJwWlZyMDdWWHNyWjY0Qll3Q25hWkpreVBIUm03WFlyN0kwUmg3bnVSNTdaQw/callback?with_response=false'
+}
+[button] co_purchases:1: DiscordAPIError[50035]: Invalid Form Body
+data.components[1].components[0].custom_id[COMPONENT_CUSTOM_ID_DUPLICATED]: Component custom id cannot be duplicated
+data.components[1].components[1].custom_id[COMPONENT_CUSTOM_ID_DUPLICATED]: Component custom id cannot be duplicated
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleCommOfficeInteraction (/app/artifacts/discord-bot/src/lib/handlers/pending-inbox-handlers.ts:1086:5)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:255:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  rawError: {
+    message: 'Invalid Form Body',
+    code: 50035,
+  status: 400,
+    errors: { data: [Object] }
+  },
+  method: 'POST',
+  code: 50035,
+  url: 'https://discord.com/api/v10/interactions/1508214504322891997/aW50ZXJhY3Rpb246MTUwODIxNDUwNDMyMjg5MTk5NzozZkpSRVZzYTZQdDVPa29PNE1wRWpUbWtXZk00TW5vQmhHNkwyQUlVcDBIUjg1S1RNclBSZDdEVVAzN3VYYzY0SXN5QTlMVjFmWktSbUo2T2pocDlhMWtiQXdCSllROXR6QVVtdEJsN1ViWHdkMjgxd1BVM0xtYk5LOHVwcUpDUA/callback?with_response=false'
+}

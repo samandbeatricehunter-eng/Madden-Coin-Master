@@ -945,13 +945,17 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
         permissionOverwrites: overwrites,
       });
 
-      await db.insert(gameChannelsTable).values({
-        seasonId:     schedSeasonId,
-        weekIndex,
-        channelId:    newChannel.id,
-        awayTeamName: awayProper,
-        homeTeamName: homeProper,
-      });
+      try {
+        await db.insert(gameChannelsTable).values({
+          seasonId:     schedSeasonId,
+          weekIndex,
+          channelId:    newChannel.id,
+          awayTeamName: awayProper,
+          homeTeamName: homeProper,
+        });
+      } catch (dbErr) {
+        console.error(`[handlePostGameChannelsModal] game_channels INSERT failed for ${chanName}:`, dbErr);
+      }
       created++;
       results.push(`✅ Created <#${newChannel.id}>`);
 

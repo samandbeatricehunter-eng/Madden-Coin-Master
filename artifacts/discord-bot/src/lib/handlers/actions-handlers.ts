@@ -1177,6 +1177,7 @@ async function handleBuyContractModPosPick(
   sess: ActionsSession,
   type: ContractModType,
 ) {
+  await interaction.deferUpdate();
   const gid      = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
   sess.purchaseType = type;
@@ -1185,7 +1186,7 @@ async function handleBuyContractModPosPick(
   const positions = sortByCanonical([...new Set(rows.map((r: any) => r.position as string).filter(Boolean))]);
 
   if (!positions.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found.")], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found.")], components: [backToHubRow()] });
     return;
   }
 
@@ -1194,7 +1195,7 @@ async function handleBuyContractModPosPick(
     .setPlaceholder("Select your player's position…")
     .addOptions(positions.slice(0, 25).map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
 
-  await interaction.update({
+  await interaction.editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Blue)
       .setTitle(`${CM_EMOJI[type]} ${CM_LABEL[type]} — Step 1`)
       .setDescription("Pick the **position** of the player.")],
@@ -1203,6 +1204,7 @@ async function handleBuyContractModPosPick(
 }
 
 async function handleBuyContractModPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  await interaction.deferUpdate();
   const position = interaction.values[0]!;
   const gid      = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
@@ -1219,7 +1221,7 @@ async function handleBuyContractModPlayerPick(interaction: StringSelectMenuInter
   const filtered = (rows as any[]).filter(r => r.position?.toUpperCase() === position.toUpperCase());
 
   if (!filtered.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No players at position **${position}**.`)], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No players at position **${position}**.`)], components: [backToHubRow()] });
     return;
   }
 
@@ -1235,7 +1237,7 @@ async function handleBuyContractModPlayerPick(interaction: StringSelectMenuInter
       }),
     );
 
-  await interaction.update({
+  await interaction.editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Blue)
       .setTitle(`${CM_EMOJI[type]} ${CM_LABEL[type]} — Step 2`)
       .setDescription(`**Position: ${position}**\nNow pick the player.`)],
@@ -1244,6 +1246,7 @@ async function handleBuyContractModPlayerPick(interaction: StringSelectMenuInter
 }
 
 async function handleBuyContractModConfirm(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  await interaction.deferUpdate();
   const playerId = Number(interaction.values[0]);
   const gid      = interaction.guildId!;
   const seasonId = await getRosterSeasonId(gid);
@@ -1261,7 +1264,7 @@ async function handleBuyContractModConfirm(interaction: StringSelectMenuInteract
     .limit(1);
 
   if (!rows.length) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")], components: [backToHubRow()] });
     return;
   }
 
@@ -1313,7 +1316,7 @@ async function handleBuyContractModConfirm(interaction: StringSelectMenuInteract
       `❌ **Insufficient coins.** You need **${cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.\n\n` +
       `**${sess.selectedPlayerName}** (${sess.selectedPlayerPos})`,
     );
-    await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
     return;
   }
   if (used >= cap) {
@@ -1321,7 +1324,7 @@ async function handleBuyContractModConfirm(interaction: StringSelectMenuInteract
       `❌ **Season cap reached.** You've used all ${cap} ${CM_LABEL[type]} slots this season.\n\n` +
       `**${sess.selectedPlayerName}** (${sess.selectedPlayerPos})`,
     );
-    await interaction.update({ embeds: [embed], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [embed], components: [backToHubRow()] });
     return;
   }
 
@@ -1329,15 +1332,16 @@ async function handleBuyContractModConfirm(interaction: StringSelectMenuInteract
     new ButtonBuilder().setCustomId("ac_buy_cm_confirm").setLabel(`✅ Confirm ${CM_LABEL[type]}`).setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Cancel").setStyle(ButtonStyle.Secondary),
   );
-  await interaction.update({ embeds: [embed], components: [row] });
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 async function handleBuyContractModExecute(interaction: ButtonInteraction, sess: ActionsSession) {
+  await interaction.deferUpdate();
   const gid  = interaction.guildId!;
   const type = (sess.purchaseType ?? "contract_extension") as ContractModType;
 
   if (!sess.selectedPlayerId || !sess.selectedPlayerName) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start over.")], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start over.")], components: [backToHubRow()] });
     return;
   }
 
@@ -1369,11 +1373,11 @@ async function handleBuyContractModExecute(interaction: ButtonInteraction, sess:
   const used = usedMap[type];
 
   if (used >= cap) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Season cap reached. You've used all ${cap} ${CM_LABEL[type]} slots this season.`)], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Season cap reached. You've used all ${cap} ${CM_LABEL[type]} slots this season.`)], components: [backToHubRow()] });
     return;
   }
   if (user.balance < cost) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
 
@@ -1396,7 +1400,7 @@ async function handleBuyContractModExecute(interaction: ButtonInteraction, sess:
             ne(purchasesTable.status, "refunded"),
           ));
         if ((row?.count ?? 0) >= careerCap) {
-          await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.selectedPlayerName}** has reached the career cap of **${careerCap}** ${CM_LABEL[type]}(s) in this franchise.`)], components: [backToHubRow()] });
+          await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.selectedPlayerName}** has reached the career cap of **${careerCap}** ${CM_LABEL[type]}(s) in this franchise.`)], components: [backToHubRow()] });
           return;
         }
       }
@@ -1442,7 +1446,7 @@ async function handleBuyContractModExecute(interaction: ButtonInteraction, sess:
     costPer:        cost,
   });
 
-  await interaction.update({
+  await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(Colors.Yellow)
       .setTitle(`⏳ ${CM_LABEL[type]} Submitted`)
@@ -2958,6 +2962,7 @@ async function handleWagerSend(interaction: ButtonInteraction, sess: ActionsSess
 // ── Coins ─────────────────────────────────────────────────────────────────────
 
 async function handleCoins(interaction: ButtonInteraction, sess: ActionsSession) {
+  await interaction.deferUpdate();
   const gid  = interaction.guildId!;
   const user = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
 
@@ -2985,7 +2990,7 @@ async function handleCoins(interaction: ButtonInteraction, sess: ActionsSession)
     new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
 
-  await interaction.update({ embeds: [embed], components: [row] });
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 async function handleBankTransfer(interaction: ButtonInteraction, sess: ActionsSession) {
