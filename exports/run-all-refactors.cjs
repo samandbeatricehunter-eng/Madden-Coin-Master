@@ -13,6 +13,7 @@
  *   4. refactor-split-actions.cjs     — split actions-handlers.ts into 8 files
  *   5. refactor-split-admin-ops.cjs   — split admin-operations-handlers.ts into 3 files
  *   6. refactor-split-message.cjs     — split messageCreate.ts + move hub builders to lib/
+ *   7. fix-remaining-cleanup.cjs      — stub AI block, remove interview import, fix eos/wildcard/season-recap
  *
  * Each script writes .bak backups before touching any file.
  * If a script fails, the remaining scripts are skipped.
@@ -32,6 +33,7 @@ const SCRIPTS = [
   { file: "refactor-split-actions.cjs",     desc: "Split actions-handlers.ts into 8 files" },
   { file: "refactor-split-admin-ops.cjs",   desc: "Split admin-operations-handlers.ts into 3 files" },
   { file: "refactor-split-message.cjs",     desc: "Split messageCreate.ts + move hub builders" },
+  { file: "fix-remaining-cleanup.cjs",      desc: "Stub AI block, remove interview import, fix eos/wildcard/season-recap" },
 ];
 
 const BAR = "─".repeat(70);

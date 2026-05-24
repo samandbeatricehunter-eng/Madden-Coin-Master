@@ -1,0 +1,312 @@
+# REC BOT REBUILD / SUPABASE MIGRATION PROJECT
+
+You are helping rebuild and stabilize a large production Discord bot for a Madden Connected Franchise (CFM) league system called the REC League.
+
+The current project is a migration from:
+- an old Replit-based bot/database structure
+TO:
+- a new TypeScript Discord bot
+- Supabase/Postgres backend
+- selector-driven Discord UI system
+
+The current codebase is partially migrated and contains:
+- stale handlers
+- dead references
+- duplicated routing systems
+- partial menu rewrites
+- schema drift between code and database
+
+Your job is to help COMPLETE and STABILIZE the rebuild, not create unrelated abstractions.
+
+---
+
+# CORE GOALS
+
+The goals are:
+
+1. Convert the entire `/menu` system from button-based navigation to selector-menu based navigation.
+2. Every embed/menu should use REC League banner embeds consistently.
+3. Every submenu should include:
+   - a Back button
+   OR
+   - a selector option to navigate back
+4. Finish `/new-server-setup`
+5. Build full user/team linking workflow
+6. Build game scheduling system
+7. Fully stabilize Supabase production schema
+8. Remove dead legacy routing safely
+9. Preserve all existing production workflows wherever possible
+
+DO NOT redesign the app architecture unnecessarily.
+
+---
+
+# UI / UX REQUIREMENTS
+
+The UI style should follow this pattern:
+
+- Main `/menu`
+  - selector menu only
+  - no back button needed here
+
+- Every submenu:
+  - selector navigation
+  - REC League banner embed
+  - Back button OR Back selector option
+
+- Avoid giant button grids
+- Prefer:
+  - StringSelectMenuBuilder
+  - embeds
+  - organized categories
+
+All interaction flows must:
+- deferReply/deferUpdate correctly
+- avoid interaction failed errors
+- avoid duplicate replies
+- properly route modals/select menus/buttons
+
+---
+
+# CURRENT MAJOR SYSTEMS
+
+## 1. NEW SERVER SETUP
+
+Current command:
+`/new-server-setup`
+
+Current completed steps:
+- commissioner selection
+- rules setup
+- season/week setup
+- advance schedule setup
+
+MISSING:
+- team ownership linking
+- user ↔ franchise linking
+- EA account mapping
+- league activation finalization
+
+Desired workflow:
+
+/new-server-setup
+↓
+Select Commissioners
+↓
+Configure League State
+↓
+Configure Advance Schedule
+↓
+Import League Data
+↓
+Generate Team Records
+↓
+Link Discord Users To Teams
+↓
+Verify Team Ownership
+↓
+Finalize League Activation
+
+---
+
+# 2. TEAM LINKING SYSTEM
+
+Need:
+- team claim workflow
+- commissioner approval workflow
+- franchise ownership mapping
+
+Goal:
+Correctly link:
+user ↔ team ↔ franchise ↔ EA identity
+
+This routing is required for:
+- schedules
+- payouts
+- standings
+- game channels
+- imports
+- power rankings
+- statistics
+
+---
+
+# 3. GAME SCHEDULING SYSTEM
+
+Need:
+- private game scheduling channels
+- one channel per matchup
+- auto permissions for only:
+  - two users
+  - commissioners
+  - bot
+
+Features:
+- propose times
+- accept/reject proposals
+- admin intervention requests
+- force win requests
+- scheduling logs
+
+Desired DB structure:
+- game_channels
+- game_schedule_proposals
+- game_admin_requests
+
+Each game channel should:
+- auto archive/delete after advance
+- preserve logs if configured
+- link to matchup/week
+
+---
+
+# 4. SUPABASE MIGRATION
+
+Current backend:
+Supabase/Postgres
+
+Need:
+- production-safe schema
+- no duplicate key failures
+- stable foreign keys
+- no stale tables
+- no orphaned records
+
+Critical tables include:
+- economy_users
+- teams
+- franchises
+- schedules
+- games
+- game_channels
+- rules
+- server_settings
+- seasons
+- imports
+- import_snapshots
+
+Goal:
+All production data should transition smoothly from old system to Supabase.
+
+DO NOT create duplicate competing tables unless absolutely necessary.
+
+---
+
+# 5. IMPORT SYSTEM
+
+The bot imports Madden Companion App data directly.
+
+Need:
+- raw import snapshot storage
+- parsing pipeline
+- season/week tracking
+- franchise generation
+- user/team mapping
+
+Current imports should:
+- detect current season
+- detect current week
+- generate/update teams
+- generate/update schedules
+- update standings
+
+---
+
+# 6. ROUTING / INTERACTION PROBLEMS
+
+Current major issue:
+`interactionCreate.ts` has become overloaded.
+
+It currently contains:
+- old menu routing
+- new menu routing
+- stale handlers
+- duplicated interaction handling
+- dead references
+
+Goal:
+STABILIZE FIRST.
+
+Priority order:
+1. remove crashes
+2. restore navigation
+3. restore handlers
+4. restore workflows
+5. clean architecture later
+
+Do NOT aggressively refactor unless necessary for stability.
+
+---
+
+# IMPORTANT TECH STACK
+
+- TypeScript
+- Discord.js
+- Drizzle ORM
+- Supabase/Postgres
+- Node.js
+- tsx runtime
+
+---
+
+# IMPORTANT DEVELOPMENT RULES
+
+1. DO NOT MINIFY GENERATED CODE.
+   - readable formatting only
+
+2. DO NOT CREATE PLACEHOLDER IMPLEMENTATIONS.
+   - production-ready logic preferred
+
+3. DO NOT REMOVE WORKING LEGACY FEATURES
+   unless confirmed obsolete.
+
+4. DO NOT CREATE DUPLICATE ROUTING SYSTEMS.
+
+5. ALWAYS CHECK:
+   - imports
+   - handler references
+   - interaction reply flow
+   - modal/select/button routing
+   - DB schema compatibility
+
+6. Any selector/button/modal added MUST:
+   - have matching handler routing
+   - avoid interaction failed states
+
+7. Prefer patching existing workflows over replacing them entirely.
+
+---
+
+# CURRENT PRIMARY OBJECTIVES
+
+IN ORDER:
+
+1. Stabilize `/menu`
+2. Finish `/new-server-setup`
+3. Add team linking
+4. Finish scheduling channels
+5. Stabilize Supabase schema
+6. Complete import routing
+7. Remove dead legacy routing safely
+
+---
+
+# FINAL GOAL
+
+The final product should be:
+
+- production-ready
+- selector-driven
+- stable under live league usage
+- scalable for multiple leagues
+- fully Supabase-backed
+- easy for commissioners to operate
+- capable of supporting:
+  - schedules
+  - economy
+  - standings
+  - media
+  - imports
+  - power rankings
+  - franchise management
+  - game operations
