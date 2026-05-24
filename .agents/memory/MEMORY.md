@@ -1,2 +1,3 @@
 - [Replit DATABASE_URL is reserved](replit-database-url.md) — Replit-managed; agents can't add/overwrite it. Use a separate name (e.g. SUPABASE_DATABASE_URL) and prefer it in code.
 - [Discord bot menu hub architecture](discord-menu-hub.md) — /menu uses selector-based navigation; `menu_*` IDs handled by menu-router, action buttons keep `ac_`/`ao_` prefixes so existing handlers route them.
+- [Cross-DB row copy pitfalls](cross-db-copy-pitfalls.md) — INSERT-based copier between drifted Postgres schemas: param cap, resume mode, narrow auto-ALTER, JSON cast, float→int coercion.
