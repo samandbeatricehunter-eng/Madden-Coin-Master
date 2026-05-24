@@ -2921,8 +2921,18 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
             });
             const settings  = await getServerSettings(guildId);
             const deadline  = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
+            // Resolve server nicknames so both players are tagged AND named.
+            const awayMember = awayDiscordId && !awayDiscordId.startsWith("unlinked_")
+              ? await guild.members.fetch(awayDiscordId).catch(() => null) : null;
+            const homeMember = homeDiscordId && !homeDiscordId.startsWith("unlinked_")
+              ? await guild.members.fetch(homeDiscordId).catch(() => null) : null;
+            const awayTag = awayMember ? `<@${awayDiscordId}> (@${awayMember.displayName})` : awayProper;
+            const homeTag = homeMember ? `<@${homeDiscordId}> (@${homeMember.displayName})` : homeProper;
             const headerMsg = await newChannel.send({
-              content: `<@${awayDiscordId}> <@${homeDiscordId}> — schedule your game using the buttons below.`,
+              content:
+                `🏈 **${awayProper} @ ${homeProper}** — ${channelWeekDisplayLabel}\n` +
+                `${awayTag}  vs  ${homeTag}\n` +
+                `Schedule your game using the buttons below. Good luck!`,
               embeds:  [buildHeaderEmbed(sched, deadline)],
               components: [buildHeaderRow(sched)],
             });

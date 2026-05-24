@@ -113,6 +113,7 @@ export function buildHeaderRow(sched: typeof gameSchedulesTable.$inferSelect): A
     scheduleBtn,
     new ButtonBuilder().setCustomId(`gs_fairsim:${sid}`).setLabel("⚖️ Request Fair Sim").setStyle(ButtonStyle.Secondary).setDisabled(isLocked),
     new ButtonBuilder().setCustomId(`gs_forcewin:${sid}`).setLabel("🏳️ Request Force Win").setStyle(ButtonStyle.Secondary).setDisabled(isLocked),
+    new ButtonBuilder().setCustomId(`gs_mark_done:${sid}`).setLabel("✅ Mark Completed").setStyle(ButtonStyle.Success).setDisabled(isLocked),
   );
 }
 
@@ -238,6 +239,7 @@ export async function handleGsInteraction(
       if (action === "gs_req_reject")      return await handleReqReject(interaction, sid);
       if (action === "gs_begun")           return await handleBegun(interaction, sid);
       if (action === "gs_finished")        return await handleFinished(interaction, sid);
+      if (action === "gs_mark_done")       return await handleMarkDone(interaction, sid);
     }
     if (interaction.isStringSelectMenu()) {
       if (action === "gs_pick_day"  || action === "gs_pick_time" || action === "gs_pick_tz")
@@ -653,6 +655,39 @@ async function handleFinished(interaction: ButtonInteraction, sid: number): Prom
   return true;
 }
 
+// ── "Mark Completed" fallback (commish / bot-admin / either player) ──────────
+// Use this when players forgot to schedule / confirm Begun & Finished but the
+// game was actually played. Opens an ephemeral winner picker; selecting a
+// winner flips status=finished, settles GOTW, and refreshes the header.
+// Includes a "No Contest" option that closes the schedule without picking a
+// winner (handy if both players agreed to drop the game entirely).
+async function handleMarkDone(interaction: ButtonInteraction, sid: number): Promise<boolean> {
+  const sched = await loadSchedule(sid);
+  if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
+  const uid = interaction.user.id;
+  const isPlayer = uid === sched.awayDiscordId || uid === sched.homeDiscordId;
+  const isElevated = await isCommish(interaction.member as GuildMember | null, sched.guildId, uid);
+  if (!isPlayer && !isElevated) {
+    await interaction.reply({ content: "❌ Only the two players or a commissioner can mark this completed.", ephemeral: true });
+    return true;
+  }
+
+  const sel = new StringSelectMenuBuilder()
+    .setCustomId(`gs_winner:${sid}`)
+    .setPlaceholder("🏆 Pick the winner (or No Contest)")
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel(`${sched.awayTeamName} (away) wins`).setValue(sched.awayDiscordId),
+      new StringSelectMenuOptionBuilder().setLabel(`${sched.homeTeamName} (home) wins`).setValue(sched.homeDiscordId),
+      new StringSelectMenuOptionBuilder().setLabel("No Contest — close without a winner").setValue("__nocontest__"),
+    );
+  await interaction.reply({
+    content: `✅ Mark this matchup completed.\nPicking a winner will settle GOTW payouts immediately. "No Contest" just closes the schedule.`,
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sel)],
+    ephemeral: true,
+  });
+  return true;
+}
+
 async function handleWinnerSelect(interaction: StringSelectMenuInteraction, sid: number): Promise<boolean> {
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
@@ -665,6 +700,20 @@ async function handleWinnerSelect(interaction: StringSelectMenuInteraction, sid:
   }
   if (sched.status === "finished" && sched.winnerDiscordId) {
     await interaction.reply({ content: "Already settled.", ephemeral: true });
+    return true;
+  }
+
+  // "No Contest" path — close the schedule with no winner, no GOTW settlement.
+  if (winnerId === "__nocontest__") {
+    await db.update(gameSchedulesTable).set({
+      status: "finished", winnerDiscordId: null, finishedAt: new Date(), updatedAt: new Date(),
+    }).where(eq(gameSchedulesTable.id, sid));
+    await interaction.update({ components: [], content: "✅ Marked completed (No Contest)." }).catch(() => {});
+    await tagCommissioner(
+      interaction.channel as TextChannel,
+      `🏁 **Matchup closed — No Contest** by <@${uid}> for <@${sched.awayDiscordId}> vs <@${sched.homeDiscordId}>.\n_No GOTW payouts settled._`,
+    );
+    await refreshHeader(interaction.client, (await loadSchedule(sid))!);
     return true;
   }
 
