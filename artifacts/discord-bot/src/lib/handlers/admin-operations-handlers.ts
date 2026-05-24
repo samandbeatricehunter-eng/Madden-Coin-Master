@@ -52,6 +52,8 @@ import { buildLeagueDataMainMenu } from "./league-data-handlers.js";
 import { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "../db/server-settings.js";
 import { setGuildChannel } from "../db/db-helpers.js";
 import { rebuildHistoricalChannel } from "../franchise/wildcard-automation.js";
+import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
+import { nextAdvanceDeadline } from "../discord/timezones.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -864,18 +866,31 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     const chanName = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
 
     try {
+      // ── Permission overwrites: deny @everyone, allow bot + Commissioner role + both players + bot-admins ──
+      const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
+      const botAdmins = await db.select({ discordId: usersTable.discordId })
+        .from(usersTable)
+        .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));
+      const overwrites: import("discord.js").OverwriteResolvable[] = [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: guild.client.user!.id,   allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] },
+      ];
+      if (commRole) overwrites.push({ id: commRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+      if (awayDiscordId && !awayDiscordId.startsWith("unlinked_")) overwrites.push({ id: awayDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+      if (homeDiscordId && !homeDiscordId.startsWith("unlinked_")) overwrites.push({ id: homeDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+      for (const a of botAdmins) {
+        if (a.discordId && a.discordId !== awayDiscordId && a.discordId !== homeDiscordId && !a.discordId.startsWith("unlinked_")) {
+          overwrites.push({ id: a.discordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+        }
+      }
+
       const newChannel = await guild.channels.create({
         name:   chanName,
         type:   ChannelType.GuildText,
         parent: matchupCategory.id,
+        permissionOverwrites: overwrites,
       });
-      await newChannel.lockPermissions();
-      const awayMention = awayDiscordId && !awayDiscordId.startsWith("unlinked_") ? `<@${awayDiscordId}>` : awayProper;
-      const homeMention = homeDiscordId && !homeDiscordId.startsWith("unlinked_") ? `<@${homeDiscordId}>` : homeProper;
-      await newChannel.send(
-        `🏈 **${awayProper} vs ${homeProper}** — ${displayLabel}\n` +
-        `${awayMention} ${homeMention}\nGood luck this week!`,
-      );
+
       await db.insert(gameChannelsTable).values({
         seasonId:     schedSeasonId,
         weekIndex,
@@ -886,38 +901,42 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
       created++;
       results.push(`✅ Created <#${newChannel.id}>`);
 
-      // Fire-and-forget: matchup banner only
-      const awayMca = teamToMca.get(g.awayTeamName.toLowerCase().trim()) ?? discordIdToMca.get(awayDiscordId);
-      const homeMca = teamToMca.get(g.homeTeamName.toLowerCase().trim()) ?? discordIdToMca.get(homeDiscordId);
-      const awayGcsPath = resolveLogoPath(awayProper, awayMca);
-      const homeGcsPath = resolveLogoPath(homeProper, homeMca);
-      const awayMentionBanner = !awayDiscordId.startsWith("unlinked_") ? `<@${awayDiscordId}>` : awayProper;
-      const homeMentionBanner = !homeDiscordId.startsWith("unlinked_") ? `<@${homeDiscordId}>` : homeProper;
-
-      (async () => {
-        try {
-          if (awayGcsPath && homeGcsPath) {
-            const [awayBuf, homeBuf] = await Promise.all([resolveLogoBuf(awayGcsPath), resolveLogoBuf(homeGcsPath)]);
-            if (awayBuf && homeBuf) {
-              const bannerBuf  = await buildMatchupBanner(awayBuf, homeBuf);
-              const attachment = new AttachmentBuilder(bannerBuf, { name: "matchup-banner.png" });
-              await newChannel.send({
-                embeds: [
-                  new EmbedBuilder()
-                    .setColor(0x7c3aed)
-                    .setTitle(`${awayProper} @ ${homeProper}`)
-                    .setDescription(`${awayMentionBanner} **vs** ${homeMentionBanner}`)
-                    .setImage("attachment://matchup-banner.png")
-                    .setFooter({ text: displayLabel }),
-                ],
-                files: [attachment],
-              });
-            }
-          }
-        } catch (err) {
-          console.error(`[handlePostGameChannelsModal] Banner error for ${chanName}:`, err);
-        }
-      })();
+      // ── Scheduling header ──────────────────────────────────────────────────
+      try {
+        const sched = await ensureScheduleRow({
+          guildId,
+          channelId:    newChannel.id,
+          seasonId:     season.id,
+          weekIndex,
+          awayDiscordId,
+          homeDiscordId,
+          awayTeamName: awayProper,
+          homeTeamName: homeProper,
+          status:       "unscheduled",
+        });
+        const settings = await getServerSettings(guildId);
+        const deadline = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
+        const awayMember = awayDiscordId && !awayDiscordId.startsWith("unlinked_")
+          ? await guild.members.fetch(awayDiscordId).catch(() => null) : null;
+        const homeMember = homeDiscordId && !homeDiscordId.startsWith("unlinked_")
+          ? await guild.members.fetch(homeDiscordId).catch(() => null) : null;
+        const awayTag = awayMember ? `<@${awayDiscordId}> (@${awayMember.displayName})` : awayProper;
+        const homeTag = homeMember ? `<@${homeDiscordId}> (@${homeMember.displayName})` : homeProper;
+        const headerMsg = await newChannel.send({
+          content:
+            `🏈 **${awayProper} @ ${homeProper}** — ${displayLabel}\n` +
+            `${awayTag}  vs  ${homeTag}\n` +
+            `Schedule your game using the buttons below. Good luck!`,
+          embeds:     [buildHeaderEmbed(sched, deadline)],
+          components: [buildHeaderRow(sched)],
+        });
+        await headerMsg.pin().catch(() => {});
+        await db.update(gameSchedulesTable)
+          .set({ headerMessageId: headerMsg.id })
+          .where(eq(gameSchedulesTable.id, sched.id));
+      } catch (hdrErr) {
+        console.error(`[handlePostGameChannelsModal] Failed to post scheduling header for ${chanName}:`, hdrErr);
+      }
     } catch (err) {
       console.error(`[handlePostGameChannelsModal] Channel creation error for ${chanName}:`, err);
       results.push(`❌ Failed to create channel for **${awayProper} vs ${homeProper}**`);
@@ -2916,13 +2935,8 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
             homeTeamName: homeProper,
           });
 
-          // ── Scheduling header (replaces former matchup banner) ──────────────
+          // ── Scheduling header ────────────────────────────────────────────────
           try {
-            const { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } =
-              await import("./game-scheduling-handlers.js");
-            const { getServerSettings } = await import("../db/server-settings.js");
-            const { nextAdvanceDeadline } = await import("../discord/timezones.js");
-
             const sched = await ensureScheduleRow({
               guildId,
               channelId:      newChannel.id,
