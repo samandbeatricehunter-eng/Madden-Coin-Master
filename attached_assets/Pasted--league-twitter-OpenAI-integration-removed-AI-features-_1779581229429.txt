@@ -1,0 +1,119 @@
+[league-twitter] OpenAI integration removed — AI features disabled.
+✅ Status server on :8090
+Database initialization failed — continuing without DB: DrizzleQueryError: Failed query: UPDATE inventory SET player_position = 'OL' WHERE player_position IN ('LT', 'LG', 'C', 'RG', 'RT')
+params: 
+    at NodePgPreparedQuery.queryWithCache (C:\Users\Hollywood\Desktop\recbot\node_modules\src\pg-core\session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async normalizeDefensivePositions (C:\Users\Hollywood\Desktop\recbot\src\lib\db-helpers.ts:632:5)
+    at async init (C:\Users\Hollywood\Desktop\recbot\src\index.ts:147:5) {
+  query: "UPDATE inventory SET player_position = 'OL' WHERE player_position IN ('LT', 'LG', 'C', 'RG', 'RT')",
+  params: [],
+  cause: error: column "player_position" does not exist
+      at C:\Users\Hollywood\Desktop\recbot\node_modules\pg-pool\index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (C:\Users\Hollywood\Desktop\recbot\node_modules\src\node-postgres\session.ts:149:14)
+      at async NodePgPreparedQuery.queryWithCache (C:\Users\Hollywood\Desktop\recbot\node_modules\src\pg-core\session.ts:71:12)
+      at async normalizeDefensivePositions (C:\Users\Hollywood\Desktop\recbot\src\lib\db-helpers.ts:632:5)
+      at async init (C:\Users\Hollywood\Desktop\recbot\src\index.ts:147:5) {
+    length: 115,
+    severity: 'ERROR',
+    code: '42703',
+    detail: undefined,
+    hint: undefined,
+    position: '51',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '3716',
+    routine: 'errorMissingColumn'
+  }
+}
+✅ League Twitter ready (tweets fire on /advanceweek, not on a timer)
+✅ Bot logged in as RECbot#5114
+(node:41724) DeprecationWarning: The ready event has been renamed to clientReady to distinguish it from the gateway READY event and will only emit under that name in v15. Please use clientReady instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[startup-migration] Failed to backfill permanent vault teams: DrizzleQueryError: Failed query: 
+      UPDATE inventory
+      SET    team = u.team
+      FROM   economy_users u
+      JOIN   seasons s ON s.id = inventory.season_id AND s.guild_id = u.guild_id
+      WHERE  inventory.discord_id      = u.discord_id
+        AND  inventory.team            IS NULL
+        AND  inventory.legend_category = 'permanent'
+        AND  u.team                    IS NOT NULL
+        AND  u.team                    != ''
+    
+params: 
+    at NodePgPreparedQuery.queryWithCache (C:\Users\Hollywood\Desktop\recbot\node_modules\src\pg-core\session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async backfillPermanentVaultTeams (C:\Users\Hollywood\Desktop\recbot\src\events\ready.ts:20:20)
+    at async Module.execute (C:\Users\Hollywood\Desktop\recbot\src\events\ready.ts:211:3) {
+  query: '\n' +
+    '      UPDATE inventory\n' +
+    '      SET    team = u.team\n' +
+    '      FROM   economy_users u\n' +
+    '      JOIN   seasons s ON s.id = inventory.season_id AND s.guild_id = u.guild_id\n' +
+    '      WHERE  inventory.discord_id      = u.discord_id\n' +
+    '        AND  inventory.team            IS NULL\n' +
+    "        AND  inventory.legend_category = 'permanent'\n" +
+    '        AND  u.team                    IS NOT NULL\n' +
+    "        AND  u.team                    != ''\n" +
+    '    ',
+  params: [],
+  cause: error: invalid reference to FROM-clause entry for table "inventory"
+      at C:\Users\Hollywood\Desktop\recbot\node_modules\pg-pool\index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (C:\Users\Hollywood\Desktop\recbot\node_modules\src\node-postgres\session.ts:149:14)
+      at async NodePgPreparedQuery.queryWithCache (C:\Users\Hollywood\Desktop\recbot\node_modules\src\pg-core\session.ts:71:12)
+      at async backfillPermanentVaultTeams (C:\Users\Hollywood\Desktop\recbot\src\events\ready.ts:20:20)
+      at async Module.execute (C:\Users\Hollywood\Desktop\recbot\src\events\ready.ts:211:3) {
+    length: 233,
+    severity: 'ERROR',
+    code: '42P01',
+    detail: 'There is an entry for table "inventory", but it cannot be referenced from this part of the query.',
+    hint: undefined,
+    position: '114',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '3640',
+    routine: 'errorMissingRTE'
+  }
+}
+[co-comm-migration] The R.E.C. League (Real Elite Competition): Could not delete Co-Commissioner role: DiscordAPIError[50013]: Missing Permissions
+    at handleErrors (C:\Users\Hollywood\Desktop\recbot\node_modules\@discordjs\rest\src\lib\handlers\Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async SequentialHandler.runRequest (C:\Users\Hollywood\Desktop\recbot\node_modules\@discordjs\rest\src\lib\handlers\SequentialHandler.ts:417:20)
+    at async SequentialHandler.queueRequest (C:\Users\Hollywood\Desktop\recbot\node_modules\@discordjs\rest\src\lib\handlers\SequentialHandler.ts:169:11)
+    at async _REST.request (C:\Users\Hollywood\Desktop\recbot\node_modules\@discordjs\rest\src\lib\REST.ts:210:20)
+    at async RoleManager.delete (C:\Users\Hollywood\Desktop\recbot\node_modules\discord.js\src\managers\RoleManager.js:313:5)
+    at async Role.delete (C:\Users\Hollywood\Desktop\recbot\node_modules\discord.js\src\structures\Role.js:462:5)
+    at async migrateCoCommissioners (C:\Users\Hollywood\Desktop\recbot\src\events\ready.ts:196:7)
+    at async Module.execute (C:\Users\Hollywood\Desktop\recbot\src\events\ready.ts:212:3) {
+  requestBody: { files: undefined, json: undefined },
+  rawError: { message: 'Missing Permissions', code: 50013 },
+  code: 50013,
+  status: 403,
+  method: 'DELETE',
+  url: 'https://discord.com/api/v10/guilds/1476251181524189438/roles/1476989045874753760'
+}
+[co-comm-migration] The R.E.C. League (Real Elite Competition): Done. 0 user(s) migrated. Co-Commissioner role deleted.
+[comm-sync] Hollywood Hunter's server: Hollywood Hunter → Hollywood Hunter (Commissioner)
+🔄 Registering slash commands for 2 guild(s) on startup...
+✅ [register-commands] 2 commands registered for guild 1476251181524189438
+✅ Commands registered: The R.E.C. League (Real Elite Competition) (1476251181524189438)
+✅ [register-commands] 2 commands registered for guild 1506713925792567380
+✅ Commands registered: Hollywood Hunter's server (1506713925792567380)
+(node:41724) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.

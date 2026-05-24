@@ -36,3 +36,9 @@ id = "TbAlOSEKNLGglxvyJvBtB"
 uri = "file://exports/fix-routing-bugs.tar.gz"
 type = "unspecified"
 title = "fix-routing-bugs.cjs v2 — Run from project root"
+
+[[outputs]]
+id = "954RryMKtDvX61n5f4TTO"
+uri = "file://exports/recbot-refactor.tar.gz"
+type = "unspecified"
+title = "recbot-refactor-analysis.md + cleanup-dead-files.cjs"
