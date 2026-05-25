@@ -2255,10 +2255,14 @@ function rollTrainingAttrs(
     (!posFilter || posFilter.has(a)) &&
     (playerAttrs[a] ?? 0) < 99,
   );
-  const pool = eligible.length > 0 ? eligible : allAttrs;
+
+  // If every eligible attribute is already capped, return an empty roll instead
+  // of falling back to the full attribute list. Falling back can create invalid
+  // +points rows for attributes already at 99.
+  if (eligible.length === 0) return [];
 
   // Weighted selection without replacement
-  const remaining        = pool.slice();
+  const remaining        = eligible.slice();
   const remainingWeights = remaining.map(a => (boostSet && boostSet.has(a) ? boostMult : 1.0));
   const results: string[] = [];
   const n = Math.min(count, remaining.length);
@@ -2685,14 +2689,37 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     const attrCount   = rollAttrCount(tier);
     // 🎲 Step 2 — Roll which attributes (weighted by goal, without replacement, excludes 99s)
     const rolledAttrs = rollTrainingAttrs(goal, playerAttrs, sess.trainingPlayerPos ?? "", attrCount);
-    // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max)
+    // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max).
+    // If the roll would push an attribute over 99, reduce the applied boost to
+    // exactly the amount needed to reach 99. Example: 97 + rolled 4 becomes +2.
     type TrainingResult = { attr: string; before: number | null; after: number | null; points: number };
-    const results: TrainingResult[] = rolledAttrs.map(attr => {
-      const before = playerAttrs[attr] !== undefined ? playerAttrs[attr]! : null;
-      const points = rollTierPoints(meta.points, before ?? 0);
-      const after  = before !== null ? before + points : null;
-      return { attr, before, after, points };
-    });
+    const results: TrainingResult[] = rolledAttrs
+      .map(attr => {
+        const before = playerAttrs[attr] !== undefined ? Number(playerAttrs[attr]) : null;
+        const rolledPoints = rollTierPoints(meta.points, before ?? 0);
+        if (before === null) {
+          return { attr, before, after: null, points: rolledPoints };
+        }
+
+        const after = Math.min(99, before + rolledPoints);
+        const appliedPoints = Math.max(0, after - before);
+        return { attr, before, after, points: appliedPoints };
+      })
+      .filter(r => r.points > 0);
+
+    if (results.length === 0) {
+      await interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("Training Package Not Available")
+          .setDescription(
+            `❌ **${sess.trainingPlayerName}** has no eligible ${sess.trainingPlayerPos ?? "position"} attributes below the 99 cap for this training package.\n\n` +
+            "No coins were deducted.",
+          )],
+        components: [backToHubRow()],
+      });
+      return;
+    }
 
     const resultLines = results.map(r =>
       r.before !== null
