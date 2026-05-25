@@ -99,18 +99,14 @@ const ROOT_NODES: MenuNode[] = [
       {
         path: "coaches.press", emoji: "🎙️",
         label: "Press Conference",
-        description: "Submit a post-game press conference",
+        description: "Trash talk your opponent or do a general interview — earn coins",
         kind: "action", action: "ac_interview",
       },
       {
         path: "coaches.rivalries", emoji: "⚔️",
         label: "Rivalries",
-        description: "Track H2H rivalries (coming soon)",
-        kind: "placeholder",
-        body:
-          "**Rivalries** will track your head-to-head matchups against other " +
-          "coaches — wins, losses, and rivalry-defining games.\n\n" +
-          "🚧 This feature is not built yet. Check back soon!",
+        description: "Your top 4 H2H rivals — series record, rating, trash-talk boost",
+        kind: "action", action: "ac_rivalries",
       },
       {
         path: "coaches.trainers", emoji: "🏋️",

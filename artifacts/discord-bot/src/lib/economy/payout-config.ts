@@ -85,7 +85,12 @@ export const PAYOUT_KEYS = {
   // ── Stat reimport safe mode (1 = active, 0 = disabled) ───────────────────────
   STAT_SAFE_MODE: "stat.safe_mode",
   // ── Member activity payouts ──────────────────────────────────────────────────
-  INTERVIEW_PAYOUT:    "interview_payout",      // coins per interview submission (default 10)
+  INTERVIEW_PAYOUT:    "interview_payout",      // coins per interview submission (default 10) — legacy
+  // ── Press Conference payouts (new) ───────────────────────────────────────────
+  PRESS_GENERAL_PAYOUT:    "press_general_payout",    // coins for a General Interview press conf (default 25)
+  PRESS_TRASH_PAYOUT:      "press_trash_payout",      // coins for each side of a Trash Talk press conf (default 40)
+  // ── Rivalry game payouts ────────────────────────────────────────────────────
+  RIVALRY_GAME_BONUS:      "rivalry_game_bonus",      // coins to each participant in a rivalry game on settle (default 20)
 } as const;
 
 export type PayoutKey = (typeof PAYOUT_KEYS)[keyof typeof PAYOUT_KEYS];
@@ -196,7 +201,12 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   // ── Stat reimport safe mode ────────────────────────────────────────────────────
   "stat.safe_mode":    { value: 0,   description: "Stat reimport safe mode (1 = active — EOS payouts blocked)",       category: "System"            },
   // ── Member activity payouts ───────────────────────────────────────────────────
-  interview_payout:    { value: 10,  description: "Coins awarded per approved interview submission",                    category: "Activity Payouts"  },
+  interview_payout:        { value: 10, description: "Coins awarded per approved interview submission (legacy)",                       category: "Activity Payouts" },
+  // ── Press Conference payouts (new) ───────────────────────────────────────────
+  press_general_payout:    { value: 25, description: "Coins for a completed General Interview press conference",                       category: "Activity Payouts" },
+  press_trash_payout:      { value: 40, description: "Coins each side earns for a completed Trash Talk press conference + reply",      category: "Activity Payouts" },
+  // ── Rivalry game payout ─────────────────────────────────────────────────────
+  rivalry_game_bonus:      { value: 20, description: "Coins each participant earns when a rivalry-tagged H2H game is settled",         category: "Game Payouts"     },
 };
 
 // Cache key: "${guildId}:${payoutKey}" for per-guild isolation. Short TTL so

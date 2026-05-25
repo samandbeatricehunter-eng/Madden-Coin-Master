@@ -779,7 +779,16 @@ export async function handleActionsInteraction(
   if (id === "ac_purchase")     { await handlePurchaseMenu(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_wager")        { await handleWagerStart(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_coins")        { await handleCoins(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_interview")    { await handleInterview(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_interview")    {
+    const { handleAcPressOpen } = await import("./press-conference-handlers.js");
+    await handleAcPressOpen(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ac_rivalries")    {
+    const { handleAcRivalries } = await import("./rivalries-handlers.js");
+    await handleAcRivalries(interaction as ButtonInteraction);
+    return true;
+  }
 
   // Purchase sub-buttons
   if (id === "ac_buy_agereset") { await handleBuyAgeResetPosPick(interaction as ButtonInteraction, sess); return true; }

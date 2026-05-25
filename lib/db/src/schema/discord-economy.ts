@@ -1101,6 +1101,34 @@ export const gameReminderLogTable = pgTable("game_reminder_log", {
   uniqKind: uniqueIndex("game_reminder_unique_idx").on(t.scheduleId, t.kind),
 }));
 
+// ── Press Conferences (replaces interview flow) ───────────────────────────────
+// One row per user per week — the unique index enforces "one press conf per
+// user per week regardless of type" (Trash Talk OR General, not both).
+// Trash Talk rows carry an opponentId + statement + opponentReply; General
+// rows leave opponentId/statement/opponentReply null.
+export const pressConferencesTable = pgTable("press_conferences", {
+  id:              serial("id").primaryKey(),
+  guildId:         text("guild_id").notNull(),
+  seasonId:        integer("season_id").notNull(),
+  weekKey:         text("week_key").notNull(),       // matches seasons.currentWeek when submitted
+  weekIndex:       integer("week_index").notNull(),  // canonical numeric (0-17 regular; 1018-1022 playoff sentinels)
+  userId:          text("user_id").notNull(),
+  type:            text("type").notNull(),           // "trash_talk" | "general"
+  opponentId:      text("opponent_id"),              // null for general
+  questions:       json("questions").$type<string[]>().notNull(),
+  answers:         json("answers").$type<string[]>().notNull(),
+  statement:       text("statement"),                // trash talk only
+  opponentReply:   text("opponent_reply"),
+  opponentReplyAt: timestamp("opponent_reply_at", { withTimezone: true }),
+  messageId:       text("message_id"),               // main #general post
+  replyMessageId:  text("reply_message_id"),         // opponent reply post
+  paidUserAt:      timestamp("paid_user_at", { withTimezone: true }),
+  paidOpponentAt:  timestamp("paid_opponent_at", { withTimezone: true }),
+  createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqWeekly: uniqueIndex("press_conf_weekly_idx").on(t.guildId, t.seasonId, t.weekKey, t.userId),
+}));
+
 // ── Bot-managed GOTW votes (replaces Discord poll) ────────────────────────────
 export const gotwVotesTable = pgTable("gotw_votes", {
   id:                serial("id").primaryKey(),

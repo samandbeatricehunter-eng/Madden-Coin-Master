@@ -839,13 +839,52 @@ async function handleWinnerSelect(interaction: StringSelectMenuInteraction, sid:
   // Settle GOTW for THIS matchup (if this game is the GOTW)
   const settled = await settleGotwForGame(interaction.client, sched, winnerId);
 
+  // Rivalry bonus — paid per-side, each player only earns if the OPPONENT is
+  // currently in THEIR personal top-4 rivalries (i.e. opponent has 3+ prior
+  // H2H games and ranks among the top 4). Dynamically imported to keep the
+  // scheduling handler free of an extra hard dependency on the rivalries
+  // module.
+  const rivalryBonusNotes = await settleRivalryBonus(sched).catch(() => null);
+
   await interaction.update({ components: [] }).catch(() => {});
   await tagCommissioner(
     interaction.channel as TextChannel,
-    `🏁 **Final** — Winner: <@${winnerId}>.\n${settled ? settled : "_(not a GOTW match)_"}\n*Imported score will reconcile this when the franchise ZIP is processed.*`,
+    `🏁 **Final** — Winner: <@${winnerId}>.\n${settled ? settled : "_(not a GOTW match)_"}` +
+    (rivalryBonusNotes ? `\n${rivalryBonusNotes}` : "") +
+    `\n*Imported score will reconcile this when the franchise ZIP is processed.*`,
   );
   await refreshHeader(interaction.client, (await loadSchedule(sid))!);
   return true;
+}
+
+/**
+ * Per-side rivalry-game bonus. Each player earns the RIVALRY_GAME_BONUS coin
+ * payout only if the OTHER player is currently in their top-4 rivalries —
+ * matching the product rule "users should only get paid the 20 coins if that
+ * week's matchup is one of their top 4 rivalries". Returns a human-readable
+ * note for the commissioner tag, or null if nobody qualified.
+ */
+async function settleRivalryBonus(
+  sched: typeof gameSchedulesTable.$inferSelect,
+): Promise<string | null> {
+  if (!sched.awayDiscordId || !sched.homeDiscordId) return null;
+  const { isOpponentTopRival } = await import("../economy/rivalries.js");
+  const bonus = await getPayoutValue(PAYOUT_KEYS.RIVALRY_GAME_BONUS, sched.guildId);
+  const sides: Array<{ a: string; b: string }> = [
+    { a: sched.awayDiscordId, b: sched.homeDiscordId },
+    { a: sched.homeDiscordId, b: sched.awayDiscordId },
+  ];
+  const paid: string[] = [];
+  for (const { a, b } of sides) {
+    const qualifies = await isOpponentTopRival(sched.guildId, a, b, 4);
+    if (!qualifies) continue;
+    await addBalance(a, bonus, sched.guildId);
+    await logTransaction(a, bonus, "addcoins",
+      `Rivalry game bonus vs <@${b}> (Week ${sched.weekIndex + 1})`, sched.guildId, "auto");
+    paid.push(`<@${a}>`);
+  }
+  if (paid.length === 0) return null;
+  return `⚔️ **Rivalry bonus** — +${bonus} coins to ${paid.join(", ")} (opponent is in top-4 rivals).`;
 }
 
 // ── Settle GOTW payouts when a GOTW game finishes ─────────────────────────────

@@ -263,6 +263,15 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Press Conference (pc_pick, pc_open_modal, pc_reply) ──────────────────────
+  if (interaction.customId.startsWith("pc_")) {
+    const pc = await import("../lib/handlers/press-conference-handlers.js");
+    if (interaction.customId.startsWith("pc_pick:"))       { await pc.handlePcPick(interaction);       return; }
+    if (interaction.customId.startsWith("pc_open_modal:")) { await pc.handlePcOpenModal(interaction);  return; }
+    if (interaction.customId.startsWith("pc_reply:"))      { await pc.handlePcReplyClick(interaction); return; }
+    return;
+  }
+
   // ── In-menu GOTW voting (replaces Discord polls) ─────────────────────────────
   if (interaction.customId.startsWith("gotwv_")) {
     const { handleGotwvInteraction } = await import("../lib/handlers/gotw-voting-handlers.js");
@@ -2355,6 +2364,14 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);
     if (handled) return;
+  }
+
+  // ── Press Conference modal submissions (pc_modal:*, pc_reply_modal:*) ────────
+  if (interaction.customId.startsWith("pc_")) {
+    const pc = await import("../lib/handlers/press-conference-handlers.js");
+    if (interaction.customId.startsWith("pc_modal:"))        { await pc.handlePcModalSubmit(interaction);       return; }
+    if (interaction.customId.startsWith("pc_reply_modal:"))  { await pc.handlePcReplyModalSubmit(interaction);  return; }
+    return;
   }
 
   // ── Admin Operations hub — dispatch all ao_ prefixed modal submissions ─────────
