@@ -133,14 +133,26 @@ async function refreshHeader(client: Client, sched: typeof gameSchedulesTable.$i
 }
 
 // ── Allowed-day options based on advance deadline ─────────────────────────────
+// A calendar day (in CST, the canonical league time) is offered if at least
+// one of its time-picker slots falls more than 1h before the next advance
+// deadline. The earliest selectable slot is 4:00 PM CST (see timeOptions()),
+// so a day qualifies whenever 4:00 PM CST on that day is < deadline - 1h.
+// This guarantees "Tomorrow" appears whenever any tomorrow-evening slot is
+// still legal — even on tight 24h advance periods — while per-slot validation
+// at confirm time still rejects any individual time that lands too close to
+// the deadline.
 function dayOptions(deadlineAt: Date, periodHours: number): StringSelectMenuOptionBuilder[] {
-  // Allow up to floor((deadline - 1h - now) / 24h) days, capped at 7 (Discord limit is 25, but UX-wise stop at 7).
-  const maxMs = deadlineAt.getTime() - 60 * 60 * 1000 - Date.now();
-  if (maxMs <= 0) return [];
-  const maxDays = Math.min(7, Math.floor(maxMs / (24 * 60 * 60 * 1000)) + 1);
+  const FIRST_SLOT_MIN = 16 * 60; // 4:00 PM CST — earliest option in timeOptions()
+  const deadlineCutoff = deadlineAt.getTime() - 60 * 60 * 1000;
+  if (deadlineCutoff <= Date.now()) return [];
   const out: StringSelectMenuOptionBuilder[] = [];
-  for (let d = 0; d < Math.max(1, maxDays); d++) {
-    // Label is the date in CST for the picker user (CST chosen as canonical league time).
+  for (let d = 0; d < 7; d++) {
+    const earliestSlot = buildDateInTz(d, FIRST_SLOT_MIN, "CST").getTime();
+    // For today, "earliest slot" may already be in the past — still allow
+    // today as long as the deadline itself hasn't passed; per-slot validation
+    // filters out individual slots that no longer fit.
+    if (d > 0 && earliestSlot >= deadlineCutoff) break;
+    // Label is the date in CST for the picker user.
     const sample = buildDateInTz(d, 12 * 60, "CST"); // noon-CST sample for label
     const label = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric",
@@ -397,11 +409,21 @@ async function handlePickChange(interaction: StringSelectMenuInteraction, sid: n
 
 async function handleSchedConfirm(interaction: ButtonInteraction, sid: number): Promise<boolean> {
   const uid = interaction.user.id;
-  const state = pickers.get(pkey(uid, sid));
+  // ── Atomic claim of the picker state ──────────────────────────────────────
+  // iOS / mobile clients commonly fire two taps for one touch. Both clicks
+  // arrive as separate interactions (so interaction.id dedup can't catch
+  // them) and both pass the validation gate before the first one finishes
+  // its async work — resulting in two duplicate Schedule Proposal posts.
+  // Snapshot + delete the picker state SYNCHRONOUSLY here so the second
+  // click immediately fails the "pick all three values" check below.
+  const key = pkey(uid, sid);
+  const state = pickers.get(key);
   if (!state || state.day == null || state.minute == null || !state.tz) {
     await interaction.reply({ content: "❌ Pick all three values first.", ephemeral: true });
     return true;
   }
+  pickers.delete(key);
+
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule disappeared.", ephemeral: true }); return true; }
 
@@ -431,7 +453,6 @@ async function handleSchedConfirm(interaction: ButtonInteraction, sid: number): 
   const [proposal] = await db.insert(gameScheduleProposalsTable).values({
     scheduleId: sid, proposerId: uid, proposedAt, tz: state.tz, status: "pending",
   }).returning();
-  pickers.delete(pkey(uid, sid));
 
   const opponentId = uid === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
 
