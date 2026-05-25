@@ -5,7 +5,7 @@ import {
   serverSettingsTable,
   coinTransactionsTable,
 } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Client } from "discord.js";
 
 const BPS_DENOM = 10_000;
@@ -144,9 +144,6 @@ export async function runLuxuryTaxForGuild(
   if (!settings.luxuryTaxEnabled) {
     return { ...baseSummary(), skippedReason: "disabled" };
   }
-  if (!opts.force && settings.luxuryTaxLastSeasonId === seasonId) {
-    return { ...baseSummary(), skippedReason: "already ran for this season" };
-  }
 
   // Economy gate (defense in depth — main entry point also gates) — never
   // tax a guild without the minimum active+linked user count.
@@ -182,7 +179,34 @@ export async function runLuxuryTaxForGuild(
   let perBeneficiary = 0;
   let remainder      = 0;
 
+  let claimedSeason = false;
+
   await db.transaction(async (tx) => {
+    // 0) Atomic season claim — only the first concurrent caller for THIS
+    //    season succeeds. Unforced re-runs for the same season short-circuit
+    //    here without touching balances; --force callers (admin "Run Now")
+    //    bypass the gate via opts.force.
+    const claimWhere = opts.force
+      ? eq(serverSettingsTable.guildId, guildId)
+      : and(
+          eq(serverSettingsTable.guildId, guildId),
+          // Use a SQL fragment so the OR is evaluated atomically with the UPDATE.
+          sql`(${serverSettingsTable.luxuryTaxLastSeasonId} IS NULL OR ${serverSettingsTable.luxuryTaxLastSeasonId} <> ${seasonId})`,
+        );
+    const claimed = await tx.update(serverSettingsTable)
+      .set({
+        luxuryTaxLastSeasonId: seasonId,
+        luxuryTaxLastRunAt:    new Date(),
+        updatedAt:             new Date(),
+      })
+      .where(claimWhere)
+      .returning({ id: serverSettingsTable.id });
+    if (claimed.length === 0) {
+      // Someone else already claimed this season — exit without mutating.
+      return;
+    }
+    claimedSeason = true;
+
     // 1) Tax pool
     for (const u of wealthy) {
       const excess = u.combined - threshold;
@@ -237,12 +261,11 @@ export async function runLuxuryTaxForGuild(
       }
     }
 
-    // 3) Stamp idempotency + last-run summary (inside the same tx, so a
-    //    rollback drops it and a retry can run again cleanly)
+    // 3) Stamp last-run summary (idempotency claim happened in step 0; if
+    //    anything before here throws, the tx rolls back and the stamp is
+    //    released so the next advance can retry cleanly).
     await tx.update(serverSettingsTable)
       .set({
-        luxuryTaxLastSeasonId:         seasonId,
-        luxuryTaxLastRunAt:            new Date(),
         luxuryTaxLastTaxedCount:       taxed.length,
         luxuryTaxLastPoolAmount:       poolAmount,
         luxuryTaxLastBeneficiaryCount: beneficiaries.length,
@@ -251,6 +274,10 @@ export async function runLuxuryTaxForGuild(
       })
       .where(eq(serverSettingsTable.guildId, guildId));
   });
+
+  if (!claimedSeason) {
+    return { ...baseSummary(), skippedReason: "already ran for this season" };
+  }
 
   // 4) Best-effort DMs (no failures should roll back the tax math above)
   if (client) {

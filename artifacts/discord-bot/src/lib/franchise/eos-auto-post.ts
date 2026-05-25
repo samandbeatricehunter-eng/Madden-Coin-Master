@@ -537,20 +537,33 @@ function rollFiveD10(): number {
 }
 
 async function stampRebalanceTax(seasonId: number): Promise<void> {
-  // Pull every pending row for this season; sort by totalCoins desc with
-  // RNG tiebreak. Top 4 get rebalance_taxed=true, rebalance_tax_amount=ceil(5%).
-  const rows = await db.select().from(pendingEosPayoutsTable)
-    .where(eq(pendingEosPayoutsTable.seasonId, seasonId));
+  // Idempotent re-stamp: clear any prior stamps for this season FIRST, then
+  // re-pick exactly TOP_N. Wrapped in a transaction so a re-run can't leave
+  // >4 rows taxed for the season (which would over-fund the rebalance pool).
+  await db.transaction(async (tx) => {
+    await tx.update(pendingEosPayoutsTable)
+      .set({ rebalanceTaxed: false, rebalanceTaxAmount: 0 })
+      .where(and(
+        eq(pendingEosPayoutsTable.seasonId, seasonId),
+        eq(pendingEosPayoutsTable.rebalanceTaxed, true),
+      ));
 
-  if (rows.length === 0) return;
+    // Only stamp rows that are still claimable for tax (status pending).
+    // Approved rows have already had their tax applied & deposited into the
+    // pool; re-stamping them would double-bill the user on subsequent re-runs.
+    const rows = await tx.select().from(pendingEosPayoutsTable)
+      .where(and(
+        eq(pendingEosPayoutsTable.seasonId, seasonId),
+        eq(pendingEosPayoutsTable.status, "pending"),
+      ));
+    if (rows.length === 0) return;
 
-  // Group by totalCoins to detect ties at the cutoff bucket.
-  rows.sort((a, b) => b.totalCoins - a.totalCoins);
+    rows.sort((a, b) => b.totalCoins - a.totalCoins);
 
-  const TOP_N = 4;
-  const taxedIds: number[] = [];
-  let i = 0;
-  while (taxedIds.length < TOP_N && i < rows.length) {
+    const TOP_N = 4;
+    const taxedIds: number[] = [];
+    let i = 0;
+    while (taxedIds.length < TOP_N && i < rows.length) {
     const bucketCoins = rows[i]!.totalCoins;
     const bucket: typeof rows = [];
     while (i < rows.length && rows[i]!.totalCoins === bucketCoins) {
@@ -590,17 +603,18 @@ async function stampRebalanceTax(seasonId: number): Promise<void> {
     }
   }
 
-  // Stamp each taxed row.
-  for (const id of taxedIds) {
-    const row = rows.find(r => r.id === id);
-    if (!row) continue;
-    const taxAmount = Math.ceil(row.totalCoins * 0.05);
-    await db.update(pendingEosPayoutsTable)
-      .set({ rebalanceTaxed: true, rebalanceTaxAmount: taxAmount })
-      .where(eq(pendingEosPayoutsTable.id, id));
-  }
+    // Stamp each taxed row (inside same tx).
+    for (const id of taxedIds) {
+      const row = rows.find(r => r.id === id);
+      if (!row) continue;
+      const taxAmount = Math.ceil(row.totalCoins * 0.05);
+      await tx.update(pendingEosPayoutsTable)
+        .set({ rebalanceTaxed: true, rebalanceTaxAmount: taxAmount })
+        .where(eq(pendingEosPayoutsTable.id, id));
+    }
 
-  console.log(
-    `[eos-auto-post] Stamped rebalance tax on ${taxedIds.length} top payout(s) for season ${seasonId}`,
-  );
+    console.log(
+      `[eos-auto-post] Stamped rebalance tax on ${taxedIds.length} top payout(s) for season ${seasonId}`,
+    );
+  });
 }

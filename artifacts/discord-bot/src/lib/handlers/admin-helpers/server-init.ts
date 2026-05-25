@@ -449,7 +449,7 @@ async function execute(interaction: ChatInputCommandInteraction): Promise<void> 
               {
                 name: "5️⃣  Configure End-of-Season Payouts",
                 value: "Set coin prizes for champion, runner-up, playoff teams, and stat milestones.\n" +
-                       "```/admin-setpayouts```  ·  ```/admin-set-stat-tiers```",
+                       "```/admin-setpayouts```  (stat tiers are hardwired in code)",
               },
               {
                 name: "6️⃣  Link Managers to Their NFL Teams",

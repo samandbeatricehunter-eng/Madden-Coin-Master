@@ -1416,17 +1416,10 @@ async function handleButton(interaction: ButtonInteraction) {
         "**Set EOS payout amounts:**\n" +
         "```/admin-payout```\n" +
         "Set values for: Champion, Runner-up, 3rd place, Playoff appearance, Regular season wins, etc.\n\n" +
-        "**Set stat-based XP tiers:**\n" +
-        "```/admin-set-stat-tiers```\n" +
-        "Define thresholds for QB/HB/WR/TE/DEF stats that earn bonus coins each week.\n\n" +
-        "**Preview what EOS payouts would look like right now:**\n" +
-        "```/admin-eos-testrun```\n" +
-        "Dry-run the payout calculation — nothing is actually paid out.\n\n" +
-        "**Run EOS payouts at season end:**\n" +
-        "```/endofseasonpayout```\n" +
-        "Distributes all coins based on standings, stats, and milestone tiers.\n\n" +
-        "**View current payout tier settings:**\n" +
-        "```/view-payout-tiers```",
+        "**Stat-tier bonuses are hardwired** in `lib/economy/stat-categories.ts` — " +
+        "no admin configuration needed.\n\n" +
+        "Open `/menu` → 💰 Payouts to edit flat EOS payouts, or 🏛️ Commissioner's Office " +
+        "to approve / edit each user's end-of-season payout when the season advances.",
       )
       .setFooter({ text: "Payout Guide • /initialize-server setup" });
     await interaction.followUp({ ephemeral: true, embeds: [embed] });

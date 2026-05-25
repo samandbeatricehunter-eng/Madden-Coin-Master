@@ -20,7 +20,6 @@ import {
   autoPilotRequestsTable, ruleViolationsTable,
   playerEaIdsTable, customPlayersTable,
   playerSeasonStatsTable, waitlistTable, payoutConfigTable,
-  seasonStatTierConfigsTable,
   positionalTrainersTable, trainerRollLogTable,
 } from "@workspace/db";
 import {
@@ -226,15 +225,33 @@ function sortByCanonical(positions: string[]): string[] {
   });
 }
 
-// ── Keys that are displayed elsewhere (page 1/bio) and should NOT appear on the attributes page ──
+// ── Keys that are displayed elsewhere (page 1/bio/labelled sections) and should NOT appear in the page-3 "Other" dump ──
 const ATTR_PAGE_SKIP = new Set([
+  // Page 1 bio
   "height", "heightInches", "weight",
   "throwAcc", "throwAccuracy", "throwAccRating", "throwAccuracyRating",
-  "handedness", "throwingHand", "playerHandedness",
   "college", "collegeName", "playerCollege",
-  "conf", "confidence", "confRating", "confidenceRating", // shown on page 1 bio section
-  // contract / financial — shown separately if non-zero, not in raw attr dump
-  "desiredBonus", "contractBonus", "signingBonus", "contractSalary", "capHit",
+  "conf", "confidence", "confRating", "confidenceRating",
+  // Page 1 contract block
+  "contractLength", "contractYearsLeft", "contractYear",
+  "contractSalary", "salary",
+  "contractBonus", "signingBonus", "desiredBonus",
+  "capHit", "capReleaseNetSavings", "capReleasePenalty", "capReleaseNetPenalty",
+  "desiredSalary", "desiredLength",
+  // Page 3 labelled bio / draft / grades / status / scheme — handled by their own sections
+  "birthDay", "birthMonth", "birthYear",
+  "homeTown", "homeState",
+  "rookieYear", "yearsPro",
+  "draftPick", "draftRound",
+  "physicalGrade", "intangibleGrade", "productionGrade", "durabilityGrade", "sizeGrade", "legacyScore",
+  "isActive", "isFreeAgent", "isOnIR", "isOnPracticeSquad",
+  "injuryType", "injuryLength", "skillPoints", "reSignStatus",
+  "playerSchemeOvr", "teamSchemeOvr", "runStyle",
+  "handedness", "throwingHand", "playerHandedness",
+  // Internal IDs — not useful to display
+  "portraitId", "presentationId", "playerId", "rosterId", "playerIndex", "teamId",
+  "playerBestOvr", "overall", "ovr", "bestOverall",
+  "experiencePoints", "xpTotal", "xp",
 ]);
 
 // ── Player trait system ────────────────────────────────────────────────────────
@@ -417,6 +434,136 @@ function buildCardBackRow(): ActionRowBuilder<ButtonBuilder> {
 type RosterRow  = typeof franchiseRostersTable.$inferSelect;
 type StatsRow   = typeof playerSeasonStatsTable.$inferSelect;
 
+// ── Helpers for labelled page sections ───────────────────────────────────────
+function fmtMoney(v: unknown): string | null {
+  const n = Number(v);
+  if (!isFinite(n) || n === 0) return null;
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(n) >= 1_000)     return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${n.toLocaleString()}`;
+}
+function fmtBirthDate(d?: unknown, m?: unknown, y?: unknown): string | null {
+  const dd = Number(d), mm = Number(m), yy = Number(y);
+  if (!yy || !mm || !dd) return null;
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${MONTHS[mm - 1] ?? mm}/${dd}/${yy}`;
+}
+function fmtBool(v: unknown): boolean { return Number(v) === 1 || v === true || v === "true"; }
+
+function buildContractField(roster: RosterRow, attrs: Record<string, number | string>): { name: string; value: string; inline: boolean } | null {
+  const lines: string[] = [];
+  // Years remaining
+  if (roster.contractYearsLeft != null) {
+    const yrs = roster.contractYearsLeft;
+    const total = attrs["contractLength"];
+    const yrsStr = yrs <= 0 ? "Free Agent"
+      : yrs === 1 ? "Contract Year (final)"
+      : `${yrs} yrs remaining${total ? ` of ${Number(total)}` : ""}`;
+    lines.push(`**Years:** ${yrsStr}`);
+  } else if (attrs["contractLength"]) {
+    lines.push(`**Length:** ${Number(attrs["contractLength"])} yrs`);
+  }
+  const sal = fmtMoney(attrs["contractSalary"] ?? attrs["salary"]);
+  const bonus = fmtMoney(attrs["contractBonus"] ?? attrs["signingBonus"]);
+  const cap   = fmtMoney(attrs["capHit"]);
+  if (sal)   lines.push(`**Salary:** ${sal}/yr`);
+  if (bonus) lines.push(`**Signing Bonus:** ${bonus}`);
+  if (cap)   lines.push(`**Cap Hit:** ${cap}`);
+  const relSave = fmtMoney(attrs["capReleaseNetSavings"]);
+  const relPen  = fmtMoney(attrs["capReleasePenalty"] ?? attrs["capReleaseNetPenalty"]);
+  if (relSave) lines.push(`**Cap Released — Savings:** ${relSave}`);
+  if (relPen)  lines.push(`**Cap Released — Dead Money:** ${relPen}`);
+  const dSal = fmtMoney(attrs["desiredSalary"]);
+  const dBon = fmtMoney(attrs["desiredBonus"]);
+  const dLen = attrs["desiredLength"] != null ? Number(attrs["desiredLength"]) : null;
+  if (dSal || dBon || dLen) {
+    const want = [
+      dLen ? `${dLen} yrs` : null,
+      dSal ? `${dSal}/yr` : null,
+      dBon ? `${dBon} bonus` : null,
+    ].filter(Boolean).join(" · ");
+    if (want) lines.push(`**Desired:** ${want}`);
+  }
+  if (lines.length === 0) return null;
+  return { name: "📋 Contract Details", value: lines.join("\n"), inline: false };
+}
+
+function buildBioField(attrs: Record<string, number | string>): { name: string; value: string; inline: boolean } | null {
+  const lines: string[] = [];
+  const dob = fmtBirthDate(attrs["birthDay"], attrs["birthMonth"], attrs["birthYear"]);
+  if (dob) lines.push(`**Born:** ${dob}`);
+  const home = attrs["homeTown"] != null ? String(attrs["homeTown"]).trim() : "";
+  const state = attrs["homeState"];
+  if (home || state != null) {
+    const parts: string[] = [];
+    if (home) parts.push(home);
+    if (state != null) parts.push(`State ${Number(state)}`);
+    lines.push(`**Hometown:** ${parts.join(", ")}`);
+  }
+  const rookie = attrs["rookieYear"];
+  const ypro   = attrs["yearsPro"];
+  if (rookie) lines.push(`**Rookie Year:** ${Number(rookie)}`);
+  if (ypro != null) lines.push(`**Years Pro:** ${Number(ypro)}`);
+  if (lines.length === 0) return null;
+  return { name: "👤 Bio", value: lines.join("\n"), inline: true };
+}
+
+function buildDraftField(attrs: Record<string, number | string>): { name: string; value: string; inline: boolean } | null {
+  const rnd  = attrs["draftRound"] != null ? Number(attrs["draftRound"]) : null;
+  const pick = attrs["draftPick"]  != null ? Number(attrs["draftPick"])  : null;
+  if (rnd == null && pick == null) return null;
+  const lines: string[] = [];
+  if (rnd != null && pick != null) {
+    if (rnd === 0 || pick === 0) lines.push("Undrafted");
+    else lines.push(`**Round ${rnd}**, Pick ${pick}`);
+  } else if (rnd != null) {
+    lines.push(rnd === 0 ? "Undrafted" : `**Round ${rnd}**`);
+  } else if (pick != null) {
+    lines.push(pick === 0 ? "Undrafted" : `Pick ${pick}`);
+  }
+  return { name: "🎯 Draft", value: lines.join("\n"), inline: true };
+}
+
+function buildGradesField(attrs: Record<string, number | string>): { name: string; value: string; inline: boolean } | null {
+  const g = (k: string) => { const v = attrs[k]; return v != null && Number(v) > 0 ? Number(v) : null; };
+  const pairs: string[] = [];
+  const phys = g("physicalGrade"); if (phys != null) pairs.push(`Physical **${phys}**`);
+  const intg = g("intangibleGrade"); if (intg != null) pairs.push(`Intangible **${intg}**`);
+  const prod = g("productionGrade"); if (prod != null) pairs.push(`Production **${prod}**`);
+  const dur  = g("durabilityGrade"); if (dur  != null) pairs.push(`Durability **${dur}**`);
+  const size = g("sizeGrade"); if (size != null) pairs.push(`Size **${size}**`);
+  const lgc  = g("legacyScore"); if (lgc  != null) pairs.push(`Legacy **${lgc}**`);
+  if (pairs.length === 0) return null;
+  return { name: "⭐ Scout Grades", value: pairs.join("  ·  "), inline: false };
+}
+
+function buildStatusField(attrs: Record<string, number | string>): { name: string; value: string; inline: boolean } | null {
+  const flags: string[] = [];
+  if (fmtBool(attrs["isOnIR"]))            flags.push("🏥 On IR");
+  if (fmtBool(attrs["isOnPracticeSquad"])) flags.push("🟡 Practice Squad");
+  if (fmtBool(attrs["isFreeAgent"]))       flags.push("🆓 Free Agent");
+  const injLen = attrs["injuryLength"] != null ? Number(attrs["injuryLength"]) : 0;
+  if (injLen > 0) flags.push(`🤕 Injury Length: ${injLen} wk${injLen === 1 ? "" : "s"}`);
+  const skill = attrs["skillPoints"] != null ? Number(attrs["skillPoints"]) : 0;
+  if (skill > 0) flags.push(`🆙 Skill Points: ${skill}`);
+  const resign = attrs["reSignStatus"] != null ? Number(attrs["reSignStatus"]) : null;
+  if (resign != null && resign !== 0) flags.push(`📝 Re-sign Status: ${resign}`);
+  if (flags.length === 0) return null;
+  return { name: "🩹 Status", value: flags.join("\n"), inline: false };
+}
+
+function buildSchemeField(attrs: Record<string, number | string>): { name: string; value: string; inline: boolean } | null {
+  const pairs: string[] = [];
+  const ps = attrs["playerSchemeOvr"] != null ? Number(attrs["playerSchemeOvr"]) : null;
+  const ts = attrs["teamSchemeOvr"]   != null ? Number(attrs["teamSchemeOvr"])   : null;
+  const rs = attrs["runStyle"]        != null ? Number(attrs["runStyle"])        : null;
+  if (ps != null && ps > 0) pairs.push(`Player Scheme OVR **${ps}**`);
+  if (ts != null && ts > 0) pairs.push(`Team Scheme OVR **${ts}**`);
+  if (rs != null) pairs.push(`Run Style **${rs}**`);
+  if (pairs.length === 0) return null;
+  return { name: "⚙️ Scheme", value: pairs.join("  ·  "), inline: false };
+}
+
 function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, seasonNum: number): EmbedBuilder[] {
   const fullName  = `${roster.firstName} ${roster.lastName}`;
   const jersey    = roster.jerseyNum != null ? `#${roster.jerseyNum}` : "";
@@ -430,11 +577,6 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
   const portrait  = roster.portraitUrl ?? eaPortraitUrl(roster.playerId);
 
   // ── Bio helpers ────────────────────────────────────────────────────────────
-  const contractStr = roster.contractYearsLeft == null ? "Unknown"
-    : roster.contractYearsLeft <= 0 ? "Free Agent"
-    : roster.contractYearsLeft === 1 ? "Contract Year"
-    : `${roster.contractYearsLeft} yrs remaining`;
-
   const rawH = attrs["height"] ?? attrs["heightInches"];
   const heightIn = rawH != null ? Number(rawH) : NaN;
   const heightStr = !isNaN(heightIn) && heightIn > 0 ? `${Math.floor(heightIn / 12)}'${heightIn % 12}"` : null;
@@ -464,7 +606,7 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
     }
   }
 
-  // ── Page 1: Bio + Season Stats ─────────────────────────────────────────────
+  // ── Page 1: Bio + Contract + Season Stats ──────────────────────────────────
   const p1 = new EmbedBuilder()
     .setColor(Colors.Blue)
     .setTitle(title)
@@ -474,16 +616,15 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
       { name: "Age",        value: roster.age != null ? String(roster.age) : "—", inline: true },
       { name: "Jersey",     value: jersey || "—",                                  inline: true },
       { name: "Dev Trait",  value: devBadgeVal ? `${devBadgeVal} ${devLabel}` : devLabel, inline: true },
-      { name: "Contract",   value: contractStr,                                    inline: true },
     );
   if (physLine)   p1.addFields({ name: "Height / Weight", value: physLine,   inline: true });
   if (collegeStr) p1.addFields({ name: "College",         value: collegeStr, inline: true });
   const rawConf = attrs["conf"] ?? attrs["confidence"];
   const confVal = rawConf != null ? Number(rawConf) : NaN;
   if (!isNaN(confVal) && confVal > 0) p1.addFields({ name: "🧠 Confidence", value: String(confVal), inline: true });
-  const rawBonus = attrs["desiredBonus"] ?? attrs["contractBonus"] ?? attrs["signingBonus"];
-  const bonusVal = rawBonus != null ? Number(rawBonus) : NaN;
-  if (!isNaN(bonusVal) && bonusVal > 0) p1.addFields({ name: "💰 Desired Bonus", value: `$${bonusVal.toLocaleString()}`, inline: true });
+
+  const contractField = buildContractField(roster, attrs);
+  if (contractField) p1.addFields(contractField);
 
   // Stats section on page 1
   if (statLines.length) {
@@ -491,11 +632,11 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
       p1.addFields({ name: stTitle, value: line, inline: false });
     }
   } else {
-    p1.addFields({ name: "Season Stats", value: "*No stats recorded yet this season.*", inline: false });
+    p1.addFields({ name: "📊 Season Stats", value: "*No stats recorded yet this season.*", inline: false });
   }
   p1.setFooter({ text: `Page 1/${TOTAL} · Season ${seasonNum} · ${roster.position} · ID ${roster.playerId}` });
 
-  // ── Page 2: Abilities ─────────────────────────────────────────────────────
+  // ── Page 2: Abilities + Traits ────────────────────────────────────────────
   const p2 = new EmbedBuilder()
     .setColor(Colors.Green)
     .setTitle(title)
@@ -510,8 +651,15 @@ function buildPlayerCardPages(roster: RosterRow, stats: StatsRow | undefined, se
       const lines = abilities.superstar.map(a => `${DEV_EMOJI.superstar} ${a}`);
       p2.addFields({ name: "Superstar Abilities", value: lines.join("\n"), inline: false });
     }
+  } else if (roster.devTrait >= 2) {
+    // Superstar/X-Factor player but no abilities data — likely missing from MCA export
+    p2.addFields({
+      name: "💥 Abilities",
+      value: "*Ability data not present in this season's roster import.*\n*Re-export from MCA Companion with the abilities option enabled.*",
+      inline: false,
+    });
   } else {
-    p2.addFields({ name: "💥 Abilities", value: "*No active abilities.*", inline: false });
+    p2.addFields({ name: "💥 Abilities", value: "*No active abilities (Normal/Star dev trait).*", inline: false });
   }
   const traitText = renderTraitSection(attrs);
   p2.addFields({ name: "🧠 Traits", value: traitText ?? "*No active traits.*", inline: false });

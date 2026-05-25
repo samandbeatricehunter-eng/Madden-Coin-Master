@@ -11,7 +11,7 @@ import {
   h2hMatchupRecordsTable, franchiseProcessedGamesTable,
   globalUserRecordsTable, franchiseScheduleTable,
   franchiseMcaTeamsTable, coinTransactionsTable,
-  seasonStatTierConfigsTable, interviewRequestsTable,
+  interviewRequestsTable,
 } from "@workspace/db";
 import { eq, and, sql, isNotNull, isNull, desc, inArray } from "drizzle-orm";
 import {
