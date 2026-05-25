@@ -30,6 +30,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   Guild,
+  TextChannel,
   Client,
 } from "discord.js";
 import axios from "axios";
@@ -72,7 +73,7 @@ import {
   type TokenInfo,
 } from "../ea/ea-client.js";
 
-import { isAdminUser } from "../db/db-helpers.js";
+import { isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 
 // ── In-memory pending sessions (multi-league selection flow) ──────────────────
 type PendingSession = {
@@ -1003,10 +1004,25 @@ export async function handleLeagueDataSelect(interaction: StringSelectMenuIntera
 // Adapted from admin-ea-export.ts exportWeek() — no interaction dependency.
 
 function getApiBase(): string {
-  if (process.env["API_BASE_URL"]) return process.env["API_BASE_URL"];
-  const domain = (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim() ?? "";
-  if (!domain) throw new Error("API_BASE_URL (or REPLIT_DOMAINS) is not set — cannot reach API server");
-  return `https://${domain}/api`;
+  const raw = process.env["MADDEN_API_BASE_URL"] ?? process.env["API_BASE_URL"] ?? "";
+  const cleaned = raw.trim().replace(/\/+$/, "");
+
+  if (!cleaned) {
+    throw new Error("MADDEN_API_BASE_URL is not set — cannot reach the API server from the Discord bot service");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(cleaned);
+  } catch {
+    throw new Error(`MADDEN_API_BASE_URL is not a valid URL: ${cleaned}`);
+  }
+
+  if (!/^https?:$/.test(parsed.protocol)) {
+    throw new Error(`MADDEN_API_BASE_URL must start with http:// or https://: ${cleaned}`);
+  }
+
+  return cleaned.endsWith("/api") ? cleaned : `${cleaned}/api`;
 }
 
 function getWebhookKey(): string {
@@ -1024,8 +1040,11 @@ async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; 
     });
     return { ok: res.status >= 200 && res.status < 300, status: res.status, body: res.data };
   } catch (err: any) {
-    console.error("[ld/postToApi]", err?.message);
-    return { ok: false, status: 0 };
+    const msg = err?.message ?? String(err);
+    const code = err?.code ? ` code=${err.code}` : "";
+    const cause = err?.cause?.message ? ` cause=${err.cause.message}` : "";
+    console.error(`[ld/postToApi] ${msg}${code}${cause} url=${url}`);
+    return { ok: false, status: 0, body: { error: msg } };
   }
 }
 
@@ -1298,13 +1317,9 @@ export async function runWeekImport(ctx: {
   // is visible. Detect EA's error-envelope shape directly from stats.schedules
   // so we can distinguish "EA outage" from "legitimately empty week" (e.g. a
   // bye-only week or a week with no fixtures yet).
-  const schedCount        = Number(schedRes.body?.scheduleCount ?? 0);
-  const schedGames        = Number(schedRes.body?.gamesProcessed ?? 0);
-  const schedDuplicate    = Number(schedRes.body?.gamesDuplicate ?? 0);
-  const schedCpuVsCpu     = Number(schedRes.body?.gamesCpuVsCpu ?? 0);
-  const schedUnregistered = Number(schedRes.body?.gamesUnregistered ?? 0);
-  const schedMessage      = String(schedRes.body?.message ?? "");
-  const schedPayload      = stats.schedules as any;
+  const schedCount   = Number(schedRes.body?.scheduleCount ?? 0);
+  const schedGames   = Number(schedRes.body?.gamesProcessed ?? 0);
+  const schedPayload = stats.schedules as any;
   const isEaError    = schedPayload && typeof schedPayload === "object" && "error" in schedPayload;
   let schedSuffix: string;
   if (isEaError) {
@@ -1416,14 +1431,6 @@ export async function runWeekImport(ctx: {
       { name: "📊 Player & Team Stats", value: statsLines.join("\n") || "none" },
       { name: "🏈 Roster Sync",         value: rosterSummary },
       { name: "📅 Season Schedule",      value: weekType === "pre" ? "⏭ Skipped (preseason)" : schedSkipped ? "⏭ Skipped (Super Bowl — no next round)" : schedulesSynced > 0 ? `✅ Next round schedule stored (${schedSyncLabel})` : "⚠️ Schedule sync failed (non-fatal)" },
-      { name: "🧪 Import Diagnostics",    value: [
-        `Schedule rows stored: **${schedCount}**`,
-        `Games processed for payouts: **${schedGames}**`,
-        `Duplicates skipped: **${schedDuplicate}**`,
-        `CPU-vs-CPU skipped: **${schedCpuVsCpu}**`,
-        `Unregistered skipped: **${schedUnregistered}**`,
-        schedMessage ? `Processor message: ${schedMessage}` : null,
-      ].filter(Boolean).join("\n") || "No diagnostics returned." },
       { name: "Result",                  value: overallOk
         ? "✅ All data imported successfully"
         : `⚠️ ${successCount}/${results.length} stats ok · ${rostersAllOk ? "rosters ok" : "roster errors"}`,
@@ -1439,9 +1446,20 @@ export async function runWeekImport(ctx: {
       .setStyle(ButtonStyle.Secondary),
   );
 
-  // Import summaries are intentionally kept in the interaction embed only.
-  // They should not auto-post to an import/commissioner channel. Commissioners
-  // can review import state through the menu-driven import result view.
+  // ── Post to IMPORT_LOG channel (silent, non-fatal) ─────────────────────────
+  try {
+    const client = guild?.client;
+    if (client) {
+      const importChannelId =
+        await getGuildChannel(guildId, CHANNEL_KEYS.IMPORT_LOG)
+        ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER_LOG)
+        ?? await getGuildChannel(guildId, CHANNEL_KEYS.COMMISSIONER);
+      if (importChannelId) {
+        const ch = await client.channels.fetch(importChannelId).catch(() => null);
+        if (ch?.isTextBased()) await (ch as TextChannel).send({ embeds: [embed] }).catch(console.error);
+      }
+    }
+  } catch { /* non-fatal */ }
 
   await editReply({ embeds: [embed], components: [returnRow] });
 }

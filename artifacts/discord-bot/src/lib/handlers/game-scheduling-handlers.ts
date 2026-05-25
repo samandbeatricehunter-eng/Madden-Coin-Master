@@ -25,7 +25,7 @@ import {
   coinTransactionsTable, usersTable,
 } from "@workspace/db";
 import { eq, and, inArray, isNull } from "drizzle-orm";
-import { addBalance, logTransaction, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
+import { isAdminUser, addBalance, logTransaction, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
 import { getServerSettings } from "../db/server-settings.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
 import {
@@ -34,6 +34,14 @@ import {
 } from "../discord/timezones.js";
 
 export const COMMISSIONER_ROLE_NAME = "Commissioner";
+
+// ── Auth ───────────────────────────────────────────────────────────────────────
+async function isCommish(member: GuildMember | null, guildId: string, discordId: string): Promise<boolean> {
+  if (!member) return false;
+  if (member.roles.cache.some((r) => r.name.toLowerCase() === COMMISSIONER_ROLE_NAME.toLowerCase())) return true;
+  if (await isAdminUser(discordId, guildId)) return true;
+  return false;
+}
 
 async function loadSchedule(scheduleId: number) {
   const [row] = await db.select().from(gameSchedulesTable).where(eq(gameSchedulesTable.id, scheduleId)).limit(1);
@@ -258,9 +266,10 @@ export async function handleGsInteraction(
   //   gs_pick_*               — ephemeral picker only the opener can see.
   //   gs_sched_confirm/cancel — same ephemeral picker.
   //
-  // Proposal-keyed actions carry a PROPOSAL id, not a schedule id, so resolve
-  // those via game_schedule_proposals first. Request approval/reject IDs are
-  // schedule-keyed: gs_req_approve:<scheduleId>|<kind>|<requesterId>.
+  // For proposal-keyed actions (gs_accept / gs_counter / gs_decline), the
+  // custom_id carries a PROPOSAL id, not a schedule id, so we resolve via the
+  // proposal first. Fair Sim / Force Win approval ids carry scheduleId|kind|requesterId,
+  // so those must stay schedule-keyed.
   const EPHEMERAL_PICKER = new Set(["gs_pick_day", "gs_pick_time", "gs_pick_tz", "gs_sched_confirm", "gs_sched_cancel"]);
   const PROPOSAL_KEYED   = new Set(["gs_accept", "gs_counter", "gs_decline"]);
 
@@ -401,48 +410,50 @@ async function handlePickChange(interaction: StringSelectMenuInteraction, sid: n
 
 async function handleSchedConfirm(interaction: ButtonInteraction, sid: number): Promise<boolean> {
   const uid = interaction.user.id;
-  if (!claimGsAction(uid, sid, "sched_confirm")) {
-    await interaction.reply({ content: "⏳ Already sending your schedule proposal — give it a moment.", ephemeral: true }).catch(() => {});
-    return true;
-  }
-  try {
-  // ── Atomic claim of the picker state ──────────────────────────────────────
-  // iOS / mobile clients commonly fire two taps for one touch. Both clicks
-  // arrive as separate interactions (so interaction.id dedup can't catch
-  // them) and both pass the validation gate before the first one finishes
-  // its async work — resulting in two duplicate Schedule Proposal posts.
-  // Snapshot + delete the picker state SYNCHRONOUSLY here so the second
-  // click immediately fails the "pick all three values" check below.
   const key = pkey(uid, sid);
   const state = pickers.get(key);
+
   if (!state || state.day == null || state.minute == null || !state.tz) {
     await interaction.reply({ content: "❌ Pick all three values first.", ephemeral: true });
     return true;
   }
+
+  // Acknowledge immediately so Discord does not expire the interaction while we
+  // write the proposal, post in-channel, and refresh the header. The previous
+  // version did all DB/channel work first and then called interaction.update(),
+  // which produced DiscordAPIError[10062]: Unknown interaction on Railway.
+  await interaction.deferUpdate();
+
+  // Atomic claim of the picker state. If mobile/iOS double-submits, the second
+  // click sees no picker state and exits before posting a duplicate proposal.
   pickers.delete(key);
 
+  const fail = async (content: string) => {
+    await interaction.editReply({ content, embeds: [], components: [] }).catch(async () => {
+      await interaction.followUp({ content, ephemeral: true }).catch(() => {});
+    });
+  };
+
   const sched = await loadSchedule(sid);
-  if (!sched) { await interaction.reply({ content: "Schedule disappeared.", ephemeral: true }); return true; }
+  if (!sched) { await fail("❌ Schedule disappeared."); return true; }
 
   const proposedAt = buildDateInTz(state.day, state.minute, state.tz);
   const settings = await getServerSettings(sched.guildId);
   const deadline = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
 
   if (proposedAt.getTime() > deadline.getTime() - 60 * 60 * 1000) {
-    await interaction.reply({
-      content:
-        "❌ That time is within 1 hour of the next advance deadline.\n" +
-        `Deadline: ${formatAllZonesInline(deadline)}`,
-      ephemeral: true,
-    });
+    await fail(
+      "❌ That time is within 1 hour of the next advance deadline.\n" +
+      `Deadline: ${formatAllZonesInline(deadline)}`,
+    );
     return true;
   }
   if (proposedAt.getTime() < Date.now() + 5 * 60 * 1000) {
-    await interaction.reply({ content: "❌ Pick a time at least 5 minutes from now.", ephemeral: true });
+    await fail("❌ Pick a time at least 5 minutes from now.");
     return true;
   }
 
-  // Cancel any prior open proposal for this schedule
+  // Cancel any prior open proposal for this schedule.
   await db.update(gameScheduleProposalsTable)
     .set({ status: "cancelled" })
     .where(and(eq(gameScheduleProposalsTable.scheduleId, sid), eq(gameScheduleProposalsTable.status, "pending")));
@@ -472,11 +483,8 @@ async function handleSchedConfirm(interaction: ButtonInteraction, sid: number): 
   await db.update(gameSchedulesTable).set({ status: "pending", updatedAt: new Date() }).where(eq(gameSchedulesTable.id, sid));
   await refreshHeader(interaction.client, (await loadSchedule(sid))!);
 
-  await interaction.update({ content: "✅ Proposal sent.", embeds: [], components: [] });
+  await interaction.editReply({ content: "✅ Proposal sent.", embeds: [], components: [] }).catch(() => {});
   return true;
-  } finally {
-    releaseGsAction(uid, sid, "sched_confirm");
-  }
 }
 
 // ── Accept / Counter / Decline ───────────────────────────────────────────────
@@ -637,7 +645,6 @@ async function postFairSimRequest(
 // the second tap finds the key held, replies "already submitted" ephemerally,
 // and returns without posting. Released in finally.
 const IN_FLIGHT_GS_ACTIONS = new Set<string>();
-const GS_ACTION_COOLDOWN_MS = 5000;
 function claimGsAction(uid: string, sid: number, kind: string): boolean {
   const k = `${uid}|${sid}|${kind}`;
   if (IN_FLIGHT_GS_ACTIONS.has(k)) return false;
@@ -645,8 +652,7 @@ function claimGsAction(uid: string, sid: number, kind: string): boolean {
   return true;
 }
 function releaseGsAction(uid: string, sid: number, kind: string): void {
-  const k = `${uid}|${sid}|${kind}`;
-  setTimeout(() => IN_FLIGHT_GS_ACTIONS.delete(k), GS_ACTION_COOLDOWN_MS).unref?.();
+  IN_FLIGHT_GS_ACTIONS.delete(`${uid}|${sid}|${kind}`);
 }
 
 async function handleFairSimRequest(interaction: ButtonInteraction, sid: number): Promise<boolean> {
@@ -712,8 +718,9 @@ async function handleReqApprove(interaction: ButtonInteraction, sid: number): Pr
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
 
-  // Authorize: only the opponent of the requester may approve. Commissioners
-  // and admins do not bypass game-channel buttons.
+  // Authorize: ONLY the opponent of the requester can approve. Commissioners
+  // and admins do not bypass game-channel buttons; overrides belong in the
+  // Commissioner’s Office, not inside the players' matchup channel.
   const opponentId = requesterId === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
   const isOpponent = interaction.user.id === opponentId;
   if (!isOpponent) {
@@ -744,7 +751,7 @@ async function handleReqReject(interaction: ButtonInteraction, sid: number): Pro
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const tail = interaction.customId.split(":")[1] ?? "";
   const [, kind, requesterId] = tail.split("|");
-  // Symmetric with handleReqApprove: only the opponent may reject.
+  // Symmetric with handleReqApprove: only the opponent can reject.
   const opponentId = requesterId === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
   const isOpponent = interaction.user.id === opponentId;
   if (!isOpponent) {
@@ -832,7 +839,7 @@ async function handleFinished(interaction: ButtonInteraction, sid: number): Prom
         new StringSelectMenuOptionBuilder().setLabel(`${sched.homeTeamName} (home)`).setValue(sched.homeDiscordId),
       );
     await (interaction.channel as TextChannel).send({
-      content: `🏁 **Game finished** — both players confirmed.\nEither player: select the winner below to settle GOTW payouts.`,
+      content: `🏁 **Game finished** — both players confirmed.\nA player or commissioner: select the winner below to settle GOTW payouts.`,
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sel)],
     });
   }
@@ -844,7 +851,7 @@ async function handleFinished(interaction: ButtonInteraction, sid: number): Prom
   return true;
 }
 
-// ── "Mark Completed" fallback (either player only) ───────────────────────────
+// ── "Mark Completed" fallback (either player only) ──────────────────────────
 // Use this when players forgot to schedule / confirm Begun & Finished but the
 // game was actually played. Opens an ephemeral winner picker; selecting a
 // winner flips status=finished, settles GOTW, and refreshes the header.
@@ -856,7 +863,7 @@ async function handleMarkDone(interaction: ButtonInteraction, sid: number): Prom
   const uid = interaction.user.id;
   const isPlayer = uid === sched.awayDiscordId || uid === sched.homeDiscordId;
   if (!isPlayer) {
-    await interaction.reply({ content: "❌ Only the two players in this matchup can mark it completed.", ephemeral: true });
+    await interaction.reply({ content: "❌ Only the two players can mark this completed.", ephemeral: true });
     return true;
   }
 
