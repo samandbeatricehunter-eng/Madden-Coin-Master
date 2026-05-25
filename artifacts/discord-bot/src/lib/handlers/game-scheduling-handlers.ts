@@ -690,25 +690,14 @@ async function handleBegun(interaction: ButtonInteraction, sid: number): Promise
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const uid = interaction.user.id;
-  const isPlayer = uid === sched.awayDiscordId || uid === sched.homeDiscordId;
-  const isElevated = await isCommish(interaction.member as GuildMember | null, sched.guildId, uid);
-  if (!isPlayer && !isElevated) {
-    await interaction.reply({ content: "❌ Only the two players or a commissioner can confirm.", ephemeral: true });
+  // Strict participant-only — matches the dispatcher gate. Commish/admin do
+  // NOT bypass; if a stuck game needs an override, escalate via Commissioner's
+  // Office, not by clicking buttons in someone else's channel.
+  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+    await interaction.reply({ content: "🚫 Only the two players in this matchup can confirm.", ephemeral: true });
     return true;
   }
-
-  // Commissioner / bot-admin override: record both players' confirmations in
-  // one shot so the T+120 "Override: Mark Begun" button works as intended.
-  if (!isPlayer && isElevated) {
-    await db.insert(gameStatusConfirmationsTable)
-      .values([
-        { scheduleId: sid, discordId: sched.awayDiscordId, kind: "begun" },
-        { scheduleId: sid, discordId: sched.homeDiscordId, kind: "begun" },
-      ])
-      .onConflictDoNothing();
-  } else {
-    await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "begun" }).onConflictDoNothing();
-  }
+  await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "begun" }).onConflictDoNothing();
 
   const confirms = await db.select().from(gameStatusConfirmationsTable)
     .where(and(eq(gameStatusConfirmationsTable.scheduleId, sid), eq(gameStatusConfirmationsTable.kind, "begun")));
@@ -747,23 +736,12 @@ async function handleFinished(interaction: ButtonInteraction, sid: number): Prom
   const sched = await loadSchedule(sid);
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const uid = interaction.user.id;
-  const isPlayer = uid === sched.awayDiscordId || uid === sched.homeDiscordId;
-  const isElevated = await isCommish(interaction.member as GuildMember | null, sched.guildId, uid);
-  if (!isPlayer && !isElevated) {
-    await interaction.reply({ content: "❌ Only the two players or a commissioner can confirm.", ephemeral: true });
+  // Strict participant-only — same policy as handleBegun.
+  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+    await interaction.reply({ content: "🚫 Only the two players in this matchup can confirm.", ephemeral: true });
     return true;
   }
-
-  if (!isPlayer && isElevated) {
-    await db.insert(gameStatusConfirmationsTable)
-      .values([
-        { scheduleId: sid, discordId: sched.awayDiscordId, kind: "finished" },
-        { scheduleId: sid, discordId: sched.homeDiscordId, kind: "finished" },
-      ])
-      .onConflictDoNothing();
-  } else {
-    await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "finished" }).onConflictDoNothing();
-  }
+  await db.insert(gameStatusConfirmationsTable).values({ scheduleId: sid, discordId: uid, kind: "finished" }).onConflictDoNothing();
 
   const confirms = await db.select().from(gameStatusConfirmationsTable)
     .where(and(eq(gameStatusConfirmationsTable.scheduleId, sid), eq(gameStatusConfirmationsTable.kind, "finished")));
@@ -830,9 +808,9 @@ async function handleWinnerSelect(interaction: StringSelectMenuInteraction, sid:
   if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const winnerId = interaction.values[0]!;
   const uid = interaction.user.id;
-  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId
-      && !(await isCommish(interaction.member as GuildMember | null, sched.guildId, uid))) {
-    await interaction.reply({ content: "❌ Only the two players or a commissioner can pick the winner.", ephemeral: true });
+  // Strict participant-only — matches the dispatcher gate and the begun/finished policy.
+  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+    await interaction.reply({ content: "🚫 Only the two players in this matchup can pick the winner.", ephemeral: true });
     return true;
   }
   if (sched.status === "finished" && sched.winnerDiscordId) {

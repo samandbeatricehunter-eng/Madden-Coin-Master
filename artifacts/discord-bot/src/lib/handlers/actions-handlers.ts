@@ -21,7 +21,13 @@ import {
   playerEaIdsTable, customPlayersTable,
   playerSeasonStatsTable, waitlistTable, payoutConfigTable,
   seasonStatTierConfigsTable,
+  positionalTrainersTable, trainerRollLogTable,
 } from "@workspace/db";
+import {
+  TRAINER_TIERS, pricePerWeek, quoteHire,
+  type TrainerTier, type TrainerFocus,
+} from "../economy/positional-trainer.js";
+import { getInflationBpsForGuild } from "../economy/inflation.js";
 import { eq, and, or, desc, asc, sql, isNotNull, isNull, ne, sum, max, inArray, notInArray } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
@@ -110,6 +116,14 @@ interface ActionsSession {
   trainingPlayerName?: string;
   trainingPlayerPos?: string;
   trainingPlayerOvr?: number;
+  // positional trainer hire flow
+  trainerTier?: TrainerTier;
+  trainerFocus?: TrainerFocus;
+  trainerPlayerId?: number;
+  trainerPlayerName?: string;
+  trainerPlayerPos?: string;
+  trainerPlayerOvr?: number;
+  trainerWeeks?: number;
   // standings flow
   standingsConf?: "AFC" | "NFC" | "ALL";
   // rules view flow
@@ -790,6 +804,19 @@ export async function handleActionsInteraction(
   }
   if (id.startsWith("ac_buy_training_goal:"))  { await handleBuyTrainingConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_buy_training_execute")        { await handleBuyTrainingExecute(interaction as ButtonInteraction, sess); return true; }
+
+  // Positional trainer hire flow
+  if (id === "ac_hire_trainer")             { await handleHireTrainerStart(interaction as ButtonInteraction, sess); return true; }
+  if (id.startsWith("ac_ht_tier:")) {
+    const tier = id.split(":")[1] as TrainerTier;
+    if (tier in TRAINER_TIERS) { await handleHireTrainerPosPick(interaction as ButtonInteraction, sess, tier); return true; }
+  }
+  if (id === "ac_ht_pos")                   { await handleHireTrainerPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ht_player")                { await handleHireTrainerFocusPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ht_focus")                 { await handleHireTrainerWeeksPick(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ht_weeks")                 { await handleHireTrainerConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_ht_confirm")               { await handleHireTrainerExecute(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_my_trainers")              { await handleMyTrainers(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_contract_ext")  { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "contract_extension"); return true; }
   if (id === "ac_buy_salary_red")    { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "salary_reduction"); return true; }
   if (id === "ac_buy_bonus_red")     { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "bonus_reduction"); return true; }
@@ -2385,6 +2412,30 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
     const used  = (stats as any)[meta.seasonStatKey] as number ?? 0;
     if (used >= meta.limit) {
       await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)], components: [backToHubRow()] });
+      return;
+    }
+  }
+
+  // Mutual exclusion: block training package if this player already has any
+  // trainer (active or expired) this season under this user.
+  if (sess.trainingPlayerName) {
+    const [conflict] = await db.select({ id: positionalTrainersTable.id, status: positionalTrainersTable.status })
+      .from(positionalTrainersTable)
+      .where(and(
+        eq(positionalTrainersTable.guildId,        gid),
+        eq(positionalTrainersTable.seasonId,       season.id),
+        eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+        eq(positionalTrainersTable.playerName,     sess.trainingPlayerName),
+      ))
+      .limit(1);
+    if (conflict) {
+      await interaction.update({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+          `❌ **${sess.trainingPlayerName}** already has a positional trainer this season ` +
+          `(status: ${conflict.status}). Training Packages and Trainers are mutually exclusive per player per season.`,
+        )],
+        components: [backToHubRow()],
+      });
       return;
     }
   }
@@ -7034,6 +7085,479 @@ async function handleSchedule(interaction: ButtonInteraction, sess: ActionsSessi
         new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("ac_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
       ) as ActionRowBuilder<any>,
+    ],
+  });
+}
+
+// ── Positional Trainer hire flow ─────────────────────────────────────────────
+
+function weeksLeftInRegularSeason(currentWeek: string | null | undefined): number {
+  const w = (currentWeek ?? "").toLowerCase();
+  if (w === "preseason" || w === "training_camp" || w === "" ) return 18;
+  const n = parseInt(currentWeek ?? "", 10);
+  if (!isNaN(n) && n >= 1 && n <= 18) return 18 - n + 1;
+  return 0;
+}
+
+async function handleHireTrainerStart(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid    = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(gid);
+  const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+
+  // Reset session
+  sess.trainerTier = undefined;
+  sess.trainerFocus = undefined;
+  sess.trainerPlayerId = undefined;
+  sess.trainerPlayerName = undefined;
+  sess.trainerPlayerPos = undefined;
+  sess.trainerWeeks = undefined;
+
+  const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
+  if (weeksLeft <= 0) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
+        .setDescription("❌ The regular season is over. Trainers can only be hired during the regular season (or in preseason / training camp).")],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  // Per-user trainersHired cap check
+  const stats = await getSeasonStats(interaction.user.id, season.id);
+  const hired = (stats as any).trainersHired as number ?? 0;
+  const HIRE_CAP = 2;
+  if (hired >= HIRE_CAP) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
+        .setDescription(`❌ You have already hired the maximum of **${HIRE_CAP} trainers** this season.`)],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const inflBps = await getInflationBpsForGuild(gid);
+  const gold    = quoteHire("gold",   1, inflBps);
+  const silver  = quoteHire("silver", 1, inflBps);
+  const bronze  = quoteHire("bronze", 1, inflBps);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_ht_tier:gold")
+      .setLabel(`🥇 Gold — ${gold.perWeek}/wk`).setStyle(ButtonStyle.Primary)
+      .setDisabled(user.balance < gold.perWeek),
+    new ButtonBuilder().setCustomId("ac_ht_tier:silver")
+      .setLabel(`🥈 Silver — ${silver.perWeek}/wk`).setStyle(ButtonStyle.Primary)
+      .setDisabled(user.balance < silver.perWeek),
+    new ButtonBuilder().setCustomId("ac_ht_tier:bronze")
+      .setLabel(`🥉 Bronze — ${bronze.perWeek}/wk`).setStyle(ButtonStyle.Primary)
+      .setDisabled(user.balance < bronze.perWeek),
+  );
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0x8b5cf6)
+      .setTitle("🏋️ Hire Positional Trainer — Step 1 of 5")
+      .setDescription([
+        "Hire a personal trainer to roll **random attribute boosts** on one of your players each week.",
+        "",
+        `**🥇 Gold**   — base **${(TRAINER_TIERS.gold.baseChanceBps   / 100).toFixed(0)}%** hit · up to 2 boosts/hit · ${gold.perWeek}/wk`,
+        `**🥈 Silver** — base **${(TRAINER_TIERS.silver.baseChanceBps / 100).toFixed(0)}%** hit · 1 boost/hit · ${silver.perWeek}/wk`,
+        `**🥉 Bronze** — base **${(TRAINER_TIERS.bronze.baseChanceBps / 100).toFixed(0)}%** hit · 1 boost/hit · ${bronze.perWeek}/wk`,
+        "",
+        "Cooldown reduces the hit chance for **2 weeks** after each successful roll.",
+        `Per-player season caps: **Speed +3**, **Strength/COD/Accel/Agility +4** (combined with Training Packages).`,
+        "",
+        `**Your balance:** ${user.balance.toLocaleString()} coins · **Hires used:** ${hired}/${HIRE_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
+      ].join("\n"))],
+    components: [row, cancelRow()],
+  });
+}
+
+async function handleHireTrainerPosPick(interaction: ButtonInteraction, sess: ActionsSession, tier: TrainerTier) {
+  sess.trainerTier = tier;
+  const gid = interaction.guildId!;
+  const rosterSeasonId = await getRosterSeasonId(gid);
+
+  const rows = await getRosterRows(interaction as any, rosterSeasonId, { position: franchiseRostersTable.position });
+  const positions = sortByCanonical([...new Set((rows as any[]).map(r => r.position as string).filter(Boolean))]);
+
+  if (!positions.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No roster data found. Run a franchise export first.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ht_pos")
+    .setPlaceholder("Select position…")
+    .addOptions(positions.slice(0, 25).map(p => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6)
+      .setTitle("🏋️ Hire Positional Trainer — Step 2 of 5")
+      .setDescription(`**Tier:** ${TRAINER_TIERS[tier].label}\n\nPick the **position** of the player you want trained.`)],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+async function handleHireTrainerPlayerPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const position = interaction.values[0]!;
+  const gid      = interaction.guildId!;
+  const rosterSeasonId = await getRosterSeasonId(gid);
+
+  const rows = await getRosterRows(interaction as any, rosterSeasonId, {
+    playerId:  franchiseRostersTable.playerId,
+    firstName: franchiseRostersTable.firstName,
+    lastName:  franchiseRostersTable.lastName,
+    overall:   franchiseRostersTable.overall,
+    devTrait:  franchiseRostersTable.devTrait,
+    position:  franchiseRostersTable.position,
+  });
+  const filtered = (rows as any[]).filter(r => r.position?.toUpperCase() === position.toUpperCase());
+
+  if (!filtered.length) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ No players at position **${position}**.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ht_player")
+    .setPlaceholder("Select a player…")
+    .addOptions(filtered.slice(0, 25).map(r =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${r.firstName} ${r.lastName} — OVR ${r.overall} ${DEV_LABEL[r.devTrait] ?? ""}`.trim())
+        .setValue(`${r.playerId}|${r.firstName} ${r.lastName}|${position}|${r.overall}`),
+    ));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6)
+      .setTitle("🏋️ Hire Positional Trainer — Step 2 of 5")
+      .setDescription(`**Position: ${position}**\nPick the specific player to train.`)],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const parts = interaction.values[0]!.split("|");
+  sess.trainerPlayerId   = Number(parts[0]);
+  sess.trainerPlayerName = parts[1] ?? "";
+  sess.trainerPlayerPos  = parts[2] ?? "";
+  sess.trainerPlayerOvr  = Number(parts[3] ?? 0);
+
+  const gid    = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(gid);
+
+  // Mutual exclusion: block if this player has any existing trainer or training package this season under this user.
+  const [trConflict] = await db.select({ status: positionalTrainersTable.status })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId,        gid),
+      eq(positionalTrainersTable.seasonId,       season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.playerName,     sess.trainerPlayerName!),
+    ))
+    .limit(1);
+  if (trConflict) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+        `❌ **${sess.trainerPlayerName}** already has a trainer this season (status: ${trConflict.status}). Only one trainer per player per season.`,
+      )],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+  const [pkgConflict] = await db.select({ id: purchasesTable.id })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.discordId,  interaction.user.id),
+      eq(purchasesTable.seasonId,   season.id),
+      eq(purchasesTable.playerName, sess.trainerPlayerName!),
+      inArray(purchasesTable.purchaseType, ["training_gold","training_silver","training_bronze"]),
+      ne(purchasesTable.status, "refunded"),
+    ))
+    .limit(1);
+  if (pkgConflict) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+        `❌ **${sess.trainerPlayerName}** already had a Training Package this season. Training Packages and Trainers are mutually exclusive per player per season.`,
+      )],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_ht_focus")
+    .setPlaceholder("Choose a training focus…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("⚡ Speed").setDescription("Bias rolls toward speed/agility/movement attrs").setValue("speed"),
+      new StringSelectMenuOptionBuilder().setLabel("💪 Power").setDescription("Bias rolls toward strength/power attrs").setValue("power"),
+      new StringSelectMenuOptionBuilder().setLabel("⚖️ Balanced").setDescription("Even chance across all eligible attrs").setValue("balanced"),
+      new StringSelectMenuOptionBuilder().setLabel("🎯 Position-focused").setDescription("Heavy bias toward this position's core attrs").setValue("position"),
+    ]);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6)
+      .setTitle("🏋️ Hire Positional Trainer — Step 3 of 5")
+      .setDescription(
+        `**Tier:** ${TRAINER_TIERS[sess.trainerTier!].label}\n` +
+        `**Player:** ${sess.trainerPlayerName} (${sess.trainerPlayerPos}) — OVR ${sess.trainerPlayerOvr}\n\n` +
+        "Pick the **training focus** — biases which attributes the weekly lottery favors."
+      )],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+async function handleHireTrainerWeeksPick(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const focus = interaction.values[0] as TrainerFocus;
+  sess.trainerFocus = focus;
+
+  const gid    = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(gid);
+  const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const infl   = await getInflationBpsForGuild(gid);
+
+  if (!sess.trainerTier || !sess.trainerPlayerName) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const weeksLeft   = weeksLeftInRegularSeason(season.currentWeek);
+  const perWeek     = quoteHire(sess.trainerTier, 1, infl).perWeek;
+  const maxAfford   = Math.floor(user.balance / Math.max(1, perWeek));
+  const maxWeeks    = Math.max(1, Math.min(weeksLeft, maxAfford, 18));
+
+  if (maxAfford < 1) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+        `❌ Insufficient coins. You need at least **${perWeek}** coins for 1 week of ${TRAINER_TIERS[sess.trainerTier].label}, but you only have **${user.balance}**.`,
+      )],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+
+  const opts: StringSelectMenuOptionBuilder[] = [];
+  for (let w = 1; w <= maxWeeks; w++) {
+    opts.push(new StringSelectMenuOptionBuilder()
+      .setLabel(`${w} week${w !== 1 ? "s" : ""} — ${(perWeek * w).toLocaleString()} coins`)
+      .setValue(String(w)));
+    if (opts.length >= 25) break;
+  }
+
+  const menu = new StringSelectMenuBuilder().setCustomId("ac_ht_weeks").setPlaceholder("How many weeks?").addOptions(opts);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6)
+      .setTitle("🏋️ Hire Positional Trainer — Step 4 of 5")
+      .setDescription(
+        `**Tier:** ${TRAINER_TIERS[sess.trainerTier].label} — **${perWeek.toLocaleString()} coins/week** (inflation applied)\n` +
+        `**Player:** ${sess.trainerPlayerName} (${sess.trainerPlayerPos})\n` +
+        `**Focus:** ${focus}\n` +
+        `**Your balance:** ${user.balance.toLocaleString()} coins\n` +
+        `**Regular-season weeks left:** ${weeksLeft}\n\n` +
+        "Cost is **paid upfront** for the whole contract. Refunds are not issued at season end.",
+      )],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
+  });
+}
+
+async function handleHireTrainerConfirm(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const weeks = parseInt(interaction.values[0]!, 10);
+  if (!sess.trainerTier || !sess.trainerFocus || !sess.trainerPlayerName || !weeks) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
+    return;
+  }
+  sess.trainerWeeks = weeks;
+
+  const gid  = interaction.guildId!;
+  const infl = await getInflationBpsForGuild(gid);
+  const q    = quoteHire(sess.trainerTier, weeks, infl);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6)
+      .setTitle("🏋️ Hire Positional Trainer — Step 5 of 5 · Confirm")
+      .setDescription([
+        `**Tier:** ${TRAINER_TIERS[sess.trainerTier].label}`,
+        `**Player:** ${sess.trainerPlayerName} (${sess.trainerPlayerPos})`,
+        `**Focus:** ${sess.trainerFocus}`,
+        `**Weeks:** ${weeks}`,
+        `**Per-week cost:** ${q.perWeek.toLocaleString()} coins`,
+        `**Total cost:** **${q.total.toLocaleString()} coins** (paid upfront)`,
+        "",
+        "Click **Confirm Hire** to deduct coins and start the contract. The first roll happens on the next **Advance Week**.",
+      ].join("\n"))],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_ht_confirm").setLabel(`✅ Confirm Hire — ${q.total.toLocaleString()} coins`).setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("ac_hub").setLabel("✖ Cancel").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid    = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(gid);
+
+  if (!sess.trainerTier || !sess.trainerFocus || !sess.trainerPlayerName || !sess.trainerWeeks) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
+    return;
+  }
+
+  // Re-validate everything (race-safe).
+  const user      = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const stats     = await getSeasonStats(interaction.user.id, season.id);
+  const hired     = (stats as any).trainersHired as number ?? 0;
+  const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
+  const infl      = await getInflationBpsForGuild(gid);
+  const q         = quoteHire(sess.trainerTier, sess.trainerWeeks, infl);
+
+  if (hired >= 2) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ You have already hired the maximum of 2 trainers this season.")], components: [backToHubRow()] });
+    return;
+  }
+  if (sess.trainerWeeks > weeksLeft) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Only **${weeksLeft}** regular-season weeks remain — you picked ${sess.trainerWeeks}.`)], components: [backToHubRow()] });
+    return;
+  }
+  if (user.balance < q.total) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. Need **${q.total.toLocaleString()}**, have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  // Re-check mutual exclusion at execute time (both trainer + training package).
+  const [trConflict] = await db.select({ id: positionalTrainersTable.id })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId,        gid),
+      eq(positionalTrainersTable.seasonId,       season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.playerName,     sess.trainerPlayerName),
+    ))
+    .limit(1);
+  if (trConflict) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already has a trainer this season.`)], components: [backToHubRow()] });
+    return;
+  }
+  const [pkgConflict2] = await db.select({ id: purchasesTable.id })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.discordId,  interaction.user.id),
+      eq(purchasesTable.seasonId,   season.id),
+      eq(purchasesTable.playerName, sess.trainerPlayerName),
+      inArray(purchasesTable.purchaseType, ["training_gold","training_silver","training_bronze"]),
+      ne(purchasesTable.status, "refunded"),
+    ))
+    .limit(1);
+  if (pkgConflict2) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already had a Training Package this season — trainers and packages are mutually exclusive per player per season.`)], components: [backToHubRow()] });
+    return;
+  }
+
+  const currentWeekNum = parseInt(season.currentWeek ?? "0", 10);
+  const hireWeekIndex  = !isNaN(currentWeekNum) && currentWeekNum >= 1 && currentWeekNum <= 18
+    ? currentWeekNum - 1 : -1;
+
+  // Deduct (atomic: deductBalance does balance > amount check in SQL and returns false if it didn't apply).
+  const debited = await deductBalance(interaction.user.id, q.total, gid);
+  if (!debited) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Coin debit failed — your balance changed during checkout. Please try again.`)], components: [backToHubRow()] });
+    return;
+  }
+  await logTransaction(
+    interaction.user.id, -q.total, "purchase",
+    `Positional Trainer ${TRAINER_TIERS[sess.trainerTier].label} — ${sess.trainerPlayerName} — ${sess.trainerFocus} focus — ${sess.trainerWeeks} wks`,
+    gid,
+  );
+
+  await db.insert(positionalTrainersTable).values({
+    guildId:        gid,
+    ownerDiscordId: interaction.user.id,
+    seasonId:       season.id,
+    playerId:       sess.trainerPlayerId != null ? String(sess.trainerPlayerId) : null,
+    playerName:     sess.trainerPlayerName,
+    playerPos:      sess.trainerPlayerPos ?? "",
+    tier:           sess.trainerTier,
+    focus:          sess.trainerFocus,
+    weeksTotal:     sess.trainerWeeks,
+    weeksRemaining: sess.trainerWeeks,
+    weeklyCost:     q.perWeek,
+    totalCost:      q.total,
+    hireWeekIndex,
+    status:         "active",
+  });
+
+  await db.update(seasonStatsTable)
+    .set({ trainersHired: sql`${seasonStatsTable.trainersHired} + 1` })
+    .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Green)
+      .setTitle("🏋️ Trainer Hired!")
+      .setDescription(
+        `**${TRAINER_TIERS[sess.trainerTier].label}** trainer hired for **${sess.trainerPlayerName}** (${sess.trainerPlayerPos}) — ${sess.trainerWeeks} weeks, **${q.total.toLocaleString()} coins** deducted.\n\n` +
+        `The first roll lands on the next **Advance Week**. You'll be DM'd with each tick's result.\n\n` +
+        `Check progress any time under **My Trainers**.`,
+      )],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("📋 My Trainers").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSession) {
+  const gid    = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(gid);
+
+  const trainers = await db.select().from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId,        gid),
+      eq(positionalTrainersTable.seasonId,       season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+    ))
+    .orderBy(desc(positionalTrainersTable.hiredAt));
+
+  if (trainers.length === 0) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
+        .setDescription("You have no trainers this season. Hire one from **Hire Positional Trainer** in the Coaches Office.")],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Trainer").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+    });
+    return;
+  }
+
+  const sections: string[] = [];
+  for (const t of trainers) {
+    const logs = await db.select().from(trainerRollLogTable)
+      .where(eq(trainerRollLogTable.trainerId, t.id))
+      .orderBy(desc(trainerRollLogTable.weekIndex))
+      .limit(5);
+    const logLines = logs.length === 0
+      ? "  _No rolls yet — first tick lands on the next Advance Week._"
+      : logs.map(l => `  • **W${l.weekIndex + 1}** — ${l.hit ? "✅" : "❌"} ${l.reason}`).join("\n");
+    const statusBadge = t.status === "active" ? "🟢 Active" : "⏹ Expired";
+    sections.push(
+      `**${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}** — ${t.playerName} (${t.playerPos}) · ${statusBadge}\n` +
+      `Focus: **${t.focus}** · Weeks: **${t.weeksRemaining}/${t.weeksTotal}** · Spent: **${t.totalCost.toLocaleString()} coins**\n` +
+      `Recent rolls:\n${logLines}`,
+    );
+  }
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
+      .setDescription(sections.join("\n\n").slice(0, 4000))],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Another").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+      ),
     ],
   });
 }

@@ -199,18 +199,22 @@ const DEFAULTS: Record<PayoutKey, { value: number; description: string; category
   interview_payout:    { value: 10,  description: "Coins awarded per approved interview submission",                    category: "Activity Payouts"  },
 };
 
-// Cache key: "${guildId}:${payoutKey}" for per-guild isolation
-const cache = new Map<string, number>();
+// Cache key: "${guildId}:${payoutKey}" for per-guild isolation. Short TTL so
+// out-of-band DB edits (manual SQL, scripts) propagate without a bot restart.
+const CACHE_TTL_MS = 60_000;
+const cache = new Map<string, { value: number; expiresAt: number }>();
 
 export async function getPayoutValue(key: PayoutKey, guildId: string = PRIMARY_GUILD_ID): Promise<number> {
   const cacheKey = `${guildId}:${key}`;
-  if (cache.has(cacheKey)) return cache.get(cacheKey)!;
+  const hit = cache.get(cacheKey);
+  const now = Date.now();
+  if (hit && hit.expiresAt > now) return hit.value;
   const [row] = await db.select({ value: payoutConfigTable.value })
     .from(payoutConfigTable)
     .where(and(eq(payoutConfigTable.guildId, guildId), eq(payoutConfigTable.key, key)))
     .limit(1);
   const value = row?.value ?? DEFAULTS[key].value;
-  cache.set(cacheKey, value);
+  cache.set(cacheKey, { value, expiresAt: now + CACHE_TTL_MS });
   return value;
 }
 
@@ -222,7 +226,7 @@ export async function setPayoutValue(key: PayoutKey, value: number, updatedBy: s
       target: [payoutConfigTable.guildId, payoutConfigTable.key],
       set: { value, updatedBy, updatedAt: new Date() },
     });
-  cache.set(`${guildId}:${key}`, value);
+  cache.set(`${guildId}:${key}`, { value, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 export async function getAllPayoutConfig(guildId: string = PRIMARY_GUILD_ID): Promise<Map<PayoutKey, number>> {

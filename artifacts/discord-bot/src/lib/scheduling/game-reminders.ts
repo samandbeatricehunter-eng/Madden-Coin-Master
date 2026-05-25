@@ -142,14 +142,14 @@ async function fireReminder(
   if (kind === "t+120") {
     const role = tc.guild.roles.cache.find((r) => r.name.toLowerCase() === COMMISSIONER_ROLE_NAME.toLowerCase());
     const commPing = role ? `<@&${role.id}>` : "**Commissioner**";
+    // Strict participant-only policy: no override button here. If the
+    // commissioner needs to step in, they resolve it from the Commissioner's
+    // Office, not by clicking buttons inside someone else's game channel.
     await tc.send({
       content:
         `${commPing}\n🚩 **No-show: 2 hours past scheduled start.**\n` +
         `Players: <@${sched.awayDiscordId}> & <@${sched.homeDiscordId}>\n` +
         `Defaulting to **Fair Sim**.`,
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId(`gs_begun:${sched.id}`).setLabel("Override: Mark Begun").setStyle(ButtonStyle.Secondary),
-      )],
     });
     await db.update(gameSchedulesTable)
       .set({ status: "auto_fair_sim", updatedAt: new Date() })

@@ -25,7 +25,7 @@ async function handleStreamPost(message: Message): Promise<void> {
     const guildId     = message.guildId!;
     const season      = await getOrCreateActiveSeason(guildId);
     const currentWeek = (season as any).currentWeek ?? "1";
-    const streamPayout = await getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT);
+    const streamPayout = await getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT, guildId);
 
     // Dedup: one pending/approved stream payout per user per season+week
     const [existing] = await db
@@ -70,9 +70,10 @@ async function handleHighlightPost(message: Message): Promise<void> {
     const season          = await getOrCreateActiveSeason(guildId);
     const currentWeek     = (season as any).currentWeek ?? "1";
     const isPlayoffWeek   = PLAYOFF_WEEKS_SET.has(currentWeek);
-    const highlightLimit  = await getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT);
+    const highlightLimit  = await getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT, guildId);
     const highlightPayout = await getPayoutValue(
       isPlayoffWeek ? PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT : PAYOUT_KEYS.HIGHLIGHT_PAYOUT,
+      guildId,
     );
 
     const [countRow] = await db

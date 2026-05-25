@@ -16,6 +16,14 @@
 // them (the hire was already paid for). All rolls are logged with a human-readable
 // reason so owners can see why a tick missed (base miss / cooldown / capped out).
 
+import type { Client } from "discord.js";
+import { db } from "@workspace/db";
+import {
+  positionalTrainersTable, trainerRollLogTable, trainerPlayerSeasonCapsTable,
+  franchiseRostersTable,
+} from "@workspace/db";
+import { and, eq, sql } from "drizzle-orm";
+
 export type TrainerTier  = "gold" | "silver" | "bronze";
 export type TrainerFocus = "speed" | "power" | "balanced" | "position";
 
@@ -189,4 +197,285 @@ export function rollOneTick(args: {
     reason: `Hit (${(chanceBps / 100).toFixed(0)}% chance) → ${summary}`,
     boosts,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default focus-biased attribute lottery — mirrors the Training Package roll.
+// Kept here so positional-trainer.ts is self-contained for the weekly tick.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TRAINER_SPEED_BOOST_SET = new Set([
+  "Speed", "Acceleration", "Agility", "Change of Direction",
+  "Juke Move", "Spin Move", "Release",
+  "Pass Block Finesse", "Run Block Finesse", "Finesse Moves",
+  "Pursuit", "Man Coverage", "Zone Coverage", "Kick/Punt Return",
+]);
+const TRAINER_POWER_BOOST_SET = new Set([
+  "Strength", "Trucking", "Stiff Arm", "Break Tackle",
+  "Hit Power", "Throwing Power", "Power Moves",
+  "Pass Block Power", "Run Block Power",
+  "Lead Block", "Impact Blocking", "Block Shedding", "Tackling",
+]);
+const TRAINER_POS_FOCUS_SETS: Record<string, Set<string>> = {
+  QB:    new Set(["Throwing Power","Short Accuracy","Medium Accuracy","Deep Accuracy","Throw on the Run","Throw Under Pressure","Break Sack","Play Action"]),
+  HB:    new Set(["Carrying","BC Vision","Break Tackle","Trucking","Stiff Arm","Spin Move","Juke Move"]),
+  FB:    new Set(["Carrying","Break Tackle","Trucking","Stiff Arm","Lead Block","Impact Blocking"]),
+  WR:    new Set(["Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release"]),
+  TE:    new Set(["Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release","Lead Block","Impact Blocking"]),
+  LT:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  LG:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  C:     new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  RG:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  RT:    new Set(["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"]),
+  LEDGE: new Set(["Block Shedding","Finesse Moves","Power Moves","Pursuit","Tackling","Hit Power"]),
+  REDGE: new Set(["Block Shedding","Finesse Moves","Power Moves","Pursuit","Tackling","Hit Power"]),
+  DT:    new Set(["Block Shedding","Finesse Moves","Power Moves","Pursuit","Tackling","Hit Power"]),
+  MIKE:  new Set(["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit","Play Recognition","Man Coverage","Zone Coverage"]),
+  WILL:  new Set(["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit","Play Recognition","Man Coverage","Zone Coverage"]),
+  SAM:   new Set(["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit","Play Recognition","Man Coverage","Zone Coverage"]),
+  CB:    new Set(["Man Coverage","Zone Coverage","Press","Play Recognition","Tackling","Hit Power","Pursuit"]),
+  FS:    new Set(["Man Coverage","Zone Coverage","Press","Play Recognition","Tackling","Hit Power","Pursuit"]),
+  SS:    new Set(["Man Coverage","Zone Coverage","Press","Play Recognition","Tackling","Hit Power","Pursuit"]),
+  K:     new Set(["Kicking Power","Kicking Accuracy"]),
+  P:     new Set(["Kicking Power","Kicking Accuracy"]),
+  LS:    new Set(["Long Snap"]),
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Weekly tick orchestrator — iterates every active trainer in a season and
+// applies one roll. Idempotent on (trainerId, weekIndex) via trainer_roll_log.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function expireAllActiveTrainersForSeason(
+  guildId: string,
+  seasonId: number,
+): Promise<number> {
+  const res = await db.update(positionalTrainersTable)
+    .set({ status: "expired", expiredAt: new Date() })
+    .where(and(
+      eq(positionalTrainersTable.guildId,  guildId),
+      eq(positionalTrainersTable.seasonId, seasonId),
+      eq(positionalTrainersTable.status,   "active"),
+    ))
+    .returning({ id: positionalTrainersTable.id });
+  return res.length;
+}
+
+export interface WeeklyTickSummary {
+  ticked:  number;
+  hits:    number;
+  misses:  number;
+  expired: number;
+  skipped: number;
+}
+
+export async function runWeeklyTrainerTick(args: {
+  client:           Client;
+  guildId:          string;
+  seasonId:         number;
+  rosterSeasonId:   number;
+  currentWeekIndex: number;
+}): Promise<WeeklyTickSummary> {
+  const summary: WeeklyTickSummary = { ticked: 0, hits: 0, misses: 0, expired: 0, skipped: 0 };
+
+  const active = await db.select().from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId,  args.guildId),
+      eq(positionalTrainersTable.seasonId, args.seasonId),
+      eq(positionalTrainersTable.status,   "active"),
+    ));
+
+  for (const t of active) {
+    // Idempotency CLAIM: atomically reserve this (trainer, week) before doing
+    // anything mutating. Insert a placeholder log row; if a concurrent ticker
+    // already claimed it, the unique index returns nothing and we skip.
+    let claimed: { id: number }[] = [];
+    try {
+      claimed = await db.insert(trainerRollLogTable).values({
+        trainerId:        t.id,
+        weekIndex:        args.currentWeekIndex,
+        hit:              false,
+        chanceAppliedBps: 0,
+        reason:           "pending",
+        boosts:           [],
+      }).onConflictDoNothing().returning({ id: trainerRollLogTable.id });
+    } catch (err) {
+      console.error("[positional-trainer] tick claim insert failed", { trainerId: t.id, err });
+      continue;
+    }
+    if (claimed.length === 0) { summary.skipped++; continue; }
+    const claimedLogId = claimed[0]!.id;
+
+    // Per-trainer isolation: never let one bad trainer skip the rest.
+    try {
+    // Find the player's roster row in the current roster season.
+    let rosterRow: { id: number; attributes: Record<string, number> | null } | null = null;
+    if (t.playerId) {
+      const rows = await db.select({
+        id:         franchiseRostersTable.id,
+        attributes: franchiseRostersTable.attributes,
+      }).from(franchiseRostersTable)
+        .where(and(
+          eq(franchiseRostersTable.seasonId, args.rosterSeasonId),
+          eq(franchiseRostersTable.playerId, parseInt(t.playerId, 10)),
+        ))
+        .limit(1);
+      rosterRow = (rows[0] as any) ?? null;
+    }
+    if (!rosterRow) {
+      const fullName = t.playerName.split(" ");
+      const first = fullName[0] ?? "";
+      const last  = fullName.slice(1).join(" ");
+      const rows = await db.select({
+        id:         franchiseRostersTable.id,
+        attributes: franchiseRostersTable.attributes,
+      }).from(franchiseRostersTable)
+        .where(and(
+          eq(franchiseRostersTable.seasonId,  args.rosterSeasonId),
+          eq(franchiseRostersTable.firstName, first),
+          eq(franchiseRostersTable.lastName,  last),
+          eq(franchiseRostersTable.position,  t.playerPos),
+        ))
+        .limit(1);
+      rosterRow = (rows[0] as any) ?? null;
+    }
+
+    const attrs: Record<string, number> = (rosterRow?.attributes as any) ?? {};
+
+    // Load (or seed) caps row.
+    let [capsRow] = await db.select().from(trainerPlayerSeasonCapsTable)
+      .where(and(
+        eq(trainerPlayerSeasonCapsTable.guildId,    args.guildId),
+        eq(trainerPlayerSeasonCapsTable.seasonId,   args.seasonId),
+        eq(trainerPlayerSeasonCapsTable.playerName, t.playerName),
+      ))
+      .limit(1);
+    if (!capsRow) {
+      const [inserted] = await db.insert(trainerPlayerSeasonCapsTable).values({
+        guildId:    args.guildId,
+        seasonId:   args.seasonId,
+        playerName: t.playerName,
+      }).returning();
+      capsRow = inserted!;
+    }
+
+    const tick = rollOneTick({
+      tier:             t.tier as TrainerTier,
+      focus:            t.focus as TrainerFocus,
+      playerPos:        t.playerPos,
+      playerAttrs:      attrs,
+      caps:             capsRow as TrainerCapsRow,
+      lastHitWeekIndex: t.lastHitWeekIndex,
+      currentWeekIndex: args.currentWeekIndex,
+      pickAttrs:        defaultPickAttrs,
+    });
+
+    summary.ticked++;
+    if (tick.hit) summary.hits++; else summary.misses++;
+
+    // Apply boosts to roster JSON + caps row.
+    if (tick.hit && rosterRow) {
+      const nextAttrs = { ...attrs };
+      const capsDelta = { speedGain: 0, strengthGain: 0, codGain: 0, accelGain: 0, agilityGain: 0 };
+      for (const b of tick.boosts) {
+        if (b.after !== null) nextAttrs[b.attr] = b.after;
+        const field = applyCapDelta(b.attr, b.points, capsDelta as TrainerCapsRow);
+        if (field) (capsRow as any)[field] = (capsRow as any)[field] + b.points;
+      }
+      await db.update(franchiseRostersTable)
+        .set({ attributes: nextAttrs })
+        .where(eq(franchiseRostersTable.id, rosterRow.id));
+      await db.update(trainerPlayerSeasonCapsTable)
+        .set({
+          speedGain:    (capsRow as any).speedGain,
+          strengthGain: (capsRow as any).strengthGain,
+          codGain:      (capsRow as any).codGain,
+          accelGain:    (capsRow as any).accelGain,
+          agilityGain:  (capsRow as any).agilityGain,
+        })
+        .where(eq(trainerPlayerSeasonCapsTable.id, capsRow.id));
+    }
+
+    // Finalize the previously-claimed log row with the actual roll result.
+    await db.update(trainerRollLogTable)
+      .set({
+        hit:              tick.hit,
+        chanceAppliedBps: tick.chanceAppliedBps,
+        reason:           tick.reason,
+        boosts:           tick.boosts,
+      })
+      .where(eq(trainerRollLogTable.id, claimedLogId));
+
+    const nextRemaining = Math.max(0, t.weeksRemaining - 1);
+    const willExpire    = nextRemaining <= 0;
+    await db.update(positionalTrainersTable)
+      .set({
+        weeksRemaining:   nextRemaining,
+        lastHitWeekIndex: tick.hit ? args.currentWeekIndex : t.lastHitWeekIndex,
+        ...(willExpire ? { status: "expired", expiredAt: new Date() } : {}),
+      })
+      .where(eq(positionalTrainersTable.id, t.id));
+    if (willExpire) summary.expired++;
+
+    // DM owner with the tick result.
+    try {
+      const user = await args.client.users.fetch(t.ownerDiscordId);
+      const wkLabel = `Week ${args.currentWeekIndex + 1}`;
+      const tail    = willExpire
+        ? `\n\n⏹ Trainer contract complete — **${t.weeksTotal} weeks** delivered.`
+        : `\n\nWeeks remaining: **${nextRemaining}/${t.weeksTotal}**`;
+      const body = tick.hit
+        ? `🏋️ **Trainer Tick — ${t.playerName} (${t.playerPos})** — ${wkLabel}\n${tick.reason}${tail}`
+        : `🏋️ **Trainer Tick — ${t.playerName} (${t.playerPos})** — ${wkLabel}\n${tick.reason}${tail}`;
+      await user.send(body).catch(() => {});
+    } catch { /* ignore DM failures */ }
+    } catch (perTrainerErr) {
+      console.error("[positional-trainer] per-trainer tick error", { trainerId: t.id, err: perTrainerErr });
+    }
+  }
+
+  return summary;
+}
+
+/** Default lottery — weighted draw from the player's own non-99 attributes.
+ *  Focus matches: speed/power = 1.5x weight; position = 2x weight. */
+export function defaultPickAttrs(
+  count:       number,
+  focus:       TrainerFocus,
+  pos:         string,
+  attrs:       Record<string, number>,
+): string[] {
+  const posKey = pos.toUpperCase();
+  const boostSet = focus === "speed"    ? TRAINER_SPEED_BOOST_SET
+                 : focus === "power"    ? TRAINER_POWER_BOOST_SET
+                 : focus === "position" ? (TRAINER_POS_FOCUS_SETS[posKey] ?? null)
+                 : null;
+  const boostMult = focus === "position" ? 2.0 : 1.5;
+
+  const pool: string[] = [];
+  for (const [a, v] of Object.entries(attrs)) {
+    if (a === "Height" || a === "Weight") continue;
+    if (typeof v !== "number") continue;
+    if (v >= 99) continue;
+    pool.push(a);
+  }
+  if (pool.length === 0) return [];
+
+  const remaining = pool.slice();
+  const weights   = remaining.map(a => (boostSet && boostSet.has(a) ? boostMult : 1.0));
+  const out: string[] = [];
+  const n = Math.min(count, remaining.length);
+  for (let i = 0; i < n; i++) {
+    const total = weights.reduce((s, w) => s + w, 0);
+    let rng = Math.random() * total;
+    let sel = remaining.length - 1;
+    for (let j = 0; j < remaining.length; j++) {
+      rng -= weights[j]!;
+      if (rng <= 0) { sel = j; break; }
+    }
+    out.push(remaining[sel]!);
+    remaining.splice(sel, 1);
+    weights.splice(sel, 1);
+  }
+  return out;
 }

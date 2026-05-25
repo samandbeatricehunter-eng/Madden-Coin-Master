@@ -113,14 +113,18 @@ const ROOT_NODES: MenuNode[] = [
           "🚧 This feature is not built yet. Check back soon!",
       },
       {
-        path: "coaches.trainers", emoji: "🧑‍🏫",
-        label: "Hire Positional Trainers",
-        description: "Hire trainers (coming soon)",
-        kind: "placeholder",
-        body:
-          "**Positional Trainers** will let you hire specialists to boost a " +
-          "position group across your roster.\n\n" +
-          "🚧 This feature is not built yet. Check back soon!",
+        path: "coaches.trainers", emoji: "🏋️",
+        label: "Hire Positional Trainer",
+        description: "Hire a weekly trainer for a specific player",
+        visible: ECO_VISIBLE,
+        kind: "action", action: "ac_hire_trainer",
+      },
+      {
+        path: "coaches.my_trainers", emoji: "📋",
+        label: "My Trainers",
+        description: "View active trainers + recent roll history",
+        visible: ECO_VISIBLE,
+        kind: "action", action: "ac_my_trainers",
       },
       {
         path: "coaches.buy_train", emoji: "🎓",

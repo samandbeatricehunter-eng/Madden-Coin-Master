@@ -49,7 +49,8 @@ import { runNewServerInit, runExistingServerInit } from "./admin-helpers/server-
 import { registerCommandsForGuild } from "../discord/register-commands.js";
 import { buildLeagueDataMainMenu } from "./league-data-handlers.js";
 import { getServerSettings, buildSettingsEmbed, buildSettingsRows } from "../db/server-settings.js";
-import { setGuildChannel } from "../db/db-helpers.js";
+import { setGuildChannel, getRosterSeasonId } from "../db/db-helpers.js";
+import { runWeeklyTrainerTick, expireAllActiveTrainersForSeason } from "../economy/positional-trainer.js";
 import { rebuildHistoricalChannel } from "../franchise/wildcard-automation.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
 import { nextAdvanceDeadline } from "../discord/timezones.js";
@@ -2931,6 +2932,45 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   }
 
   const channelLines: string[] = [];
+
+  // ── Positional Trainer weekly tick (one roll per active trainer per advance) ─
+  // Fires when leaving a regular-season week (1..18). The "currentWeekIndex"
+  // used for cooldown math is the week we're leaving.
+  const oldWeekNumForTrainer = parseInt(season.currentWeek ?? "0", 10);
+  if (!isNaN(oldWeekNumForTrainer) && oldWeekNumForTrainer >= 1 && oldWeekNumForTrainer <= 18) {
+    try {
+      const rosterSeasonId = await getRosterSeasonId(guildId);
+      const tickSummary = await runWeeklyTrainerTick({
+        client:           interaction.client,
+        guildId,
+        seasonId:         season.id,
+        rosterSeasonId,
+        currentWeekIndex: oldWeekNumForTrainer - 1,
+      });
+      if (tickSummary.ticked > 0) {
+        channelLines.push(
+          `🏋️ Trainer ticks (W${oldWeekNumForTrainer}): ${tickSummary.hits} hit / ${tickSummary.misses} miss` +
+          (tickSummary.expired > 0 ? ` · ${tickSummary.expired} contract(s) completed` : "") +
+          (tickSummary.skipped > 0 ? ` · ${tickSummary.skipped} already ticked` : ""),
+        );
+      }
+    } catch (err) {
+      console.error("[admin-operations] Trainer weekly tick error:", err);
+    }
+  }
+
+  // ── Regular-season-end auto-expire — any remaining active trainers are
+  // closed out when entering wildcard (paid upfront, no refund). ──────────────
+  if (newWeek === "wildcard") {
+    try {
+      const expired = await expireAllActiveTrainersForSeason(guildId, season.id);
+      if (expired > 0) {
+        channelLines.push(`🏋️ Auto-expired **${expired}** positional trainer contract(s) (end of regular season).`);
+      }
+    } catch (err) {
+      console.error("[admin-operations] Trainer wildcard expire error:", err);
+    }
+  }
 
   // ── Wipe preseason stats when advancing from Training Camp → Week 1 ─────────
   let preseasonWipeNote = "";
