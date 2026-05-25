@@ -100,7 +100,7 @@ const ROOT_NODES: MenuNode[] = [
         path: "coaches.press", emoji: "🎙️",
         label: "Press Conference",
         description: "Trash talk your opponent or do a general interview — earn coins",
-        kind: "action", action: "ac_interview",
+        kind: "action", action: "ac_press_open",
       },
       {
         path: "coaches.rivalries", emoji: "⚔️",
