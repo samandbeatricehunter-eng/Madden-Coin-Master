@@ -72,3 +72,9 @@ id = "OB0Wk00pJiZ0ivNbwpIVR"
 uri = "file://exports/stream-monitor-cleaned.tar.gz"
 type = "unspecified"
 title = "stream-monitor.ts (cleaned) — replace your local file with this"
+
+[[outputs]]
+id = "AZYkmWR4IIvHtyhvVam4d"
+uri = "file://attached_assets/league_announcement.md"
+type = "text"
+title = "League Announcement — Bot Update"
