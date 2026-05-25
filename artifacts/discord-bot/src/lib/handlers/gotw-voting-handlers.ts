@@ -24,22 +24,120 @@ import { db } from "@workspace/db";
 import {
   gotwHistoryTable, gotwVotesTable, gameSchedulesTable, seasonsTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { getOrCreateActiveSeason, PRIMARY_GUILD_ID } from "../db/db-helpers.js";
 
-async function loadActiveMatchups(guildId: string): Promise<typeof gotwHistoryTable.$inferSelect[]> {
+/** Map the season's current week string → gotw_history.weekIndex convention.
+ *  Regular season: "1".."18" → 0..17. Playoffs use canonical sentinels. */
+function currentWeekIndexFor(currentWeek: string | null | undefined): number | null {
+  const w = (currentWeek ?? "").toLowerCase().trim();
+  const n = parseInt(w, 10);
+  if (!isNaN(n) && n >= 1 && n <= 18) return n - 1;
+  if (w === "wildcard")   return 1018;
+  if (w === "divisional") return 1019;
+  if (w === "conference") return 1020;
+  if (w === "superbowl")  return 1022;
+  return null; // training_camp / offseason / preseason → no GOTW
+}
+
+async function loadActiveMatchups(guildId: string): Promise<{
+  rows: typeof gotwHistoryTable.$inferSelect[];
+  currentWeekIndex: number | null;
+  currentWeekRaw: string | null;
+}> {
   const season = await getOrCreateActiveSeason(guildId);
-  // Find the highest weekIndex with any GOTW row, then return ALL matchups for it.
-  const [recent] = await db.select({ weekIndex: gotwHistoryTable.weekIndex })
-    .from(gotwHistoryTable)
-    .where(eq(gotwHistoryTable.seasonId, season.id))
-    .orderBy(desc(gotwHistoryTable.weekIndex))
-    .limit(1);
-  if (!recent) return [];
-  return db.select().from(gotwHistoryTable).where(and(
-    eq(gotwHistoryTable.seasonId, season.id),
-    eq(gotwHistoryTable.weekIndex, recent.weekIndex),
+  const wkIdx  = currentWeekIndexFor(season.currentWeek);
+  if (wkIdx == null) {
+    return { rows: [], currentWeekIndex: null, currentWeekRaw: season.currentWeek ?? null };
+  }
+  // Anchor on the season's ACTUAL current week — not the highest seeded week —
+  // so a stale gotw_history row from a previous week doesn't get surfaced.
+  const rows = await db.select().from(gotwHistoryTable).where(and(
+    eq(gotwHistoryTable.seasonId,  season.id),
+    eq(gotwHistoryTable.weekIndex, wkIdx),
   )).orderBy(gotwHistoryTable.matchupIndex);
+  return { rows, currentWeekIndex: wkIdx, currentWeekRaw: season.currentWeek ?? null };
+}
+
+// ── Voting record (wins / losses) ──────────────────────────────────────────────
+// Settled matchups = gotw_history rows whose game_schedules.winnerDiscordId is set.
+// A vote is a "win" if the voter picked the player who became winnerDiscordId.
+
+type RecordRow = { voterId: string; wins: number; losses: number };
+
+async function computeVoterRecordGlobal(voterId: string): Promise<{ wins: number; losses: number }> {
+  const res = await db.execute(sql`
+    SELECT
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  s.winner_discord_id)::int AS wins,
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> s.winner_discord_id)::int AS losses
+    FROM gotw_votes v
+    JOIN gotw_history h
+      ON h.season_id    = v.season_id
+     AND h.week_index   = v.week_index
+     AND h.matchup_index = v.matchup_index
+    JOIN game_schedules s
+      ON s.season_id  = v.season_id
+     AND s.week_index = v.week_index
+     AND ((s.away_discord_id = h.discord_id_1 AND s.home_discord_id = h.discord_id_2)
+       OR (s.away_discord_id = h.discord_id_2 AND s.home_discord_id = h.discord_id_1))
+    WHERE s.winner_discord_id IS NOT NULL
+      AND v.voter_id = ${voterId}
+  `);
+  const row: any = (res as any).rows?.[0] ?? (res as any)[0] ?? {};
+  return { wins: Number(row.wins ?? 0), losses: Number(row.losses ?? 0) };
+}
+
+async function computeTopVotersForGuild(guildId: string, limit = 5): Promise<RecordRow[]> {
+  const res = await db.execute(sql`
+    SELECT
+      v.voter_id AS voter_id,
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  s.winner_discord_id)::int AS wins,
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> s.winner_discord_id)::int AS losses
+    FROM gotw_votes v
+    JOIN gotw_history h
+      ON h.season_id    = v.season_id
+     AND h.week_index   = v.week_index
+     AND h.matchup_index = v.matchup_index
+    JOIN game_schedules s
+      ON s.season_id  = v.season_id
+     AND s.week_index = v.week_index
+     AND ((s.away_discord_id = h.discord_id_1 AND s.home_discord_id = h.discord_id_2)
+       OR (s.away_discord_id = h.discord_id_2 AND s.home_discord_id = h.discord_id_1))
+    JOIN seasons se ON se.id = v.season_id
+    WHERE s.winner_discord_id IS NOT NULL
+      AND se.guild_id = ${guildId}
+    GROUP BY v.voter_id
+    ORDER BY wins DESC, losses ASC, voter_id ASC
+    LIMIT ${limit}
+  `);
+  const rows: any[] = (res as any).rows ?? (res as any) ?? [];
+  return rows.map(r => ({ voterId: String(r.voter_id), wins: Number(r.wins ?? 0), losses: Number(r.losses ?? 0) }));
+}
+
+function fmtRecord(wins: number, losses: number): string {
+  const total = wins + losses;
+  if (total === 0) return "_no settled votes yet_";
+  const pct = ((wins / total) * 100).toFixed(1);
+  return `**${wins}** W – **${losses}** L  (${pct}%)`;
+}
+
+async function buildRecordEmbed(guildId: string, voterId: string): Promise<EmbedBuilder> {
+  const [mine, top] = await Promise.all([
+    computeVoterRecordGlobal(voterId),
+    computeTopVotersForGuild(guildId, 5),
+  ]);
+  const lines: string[] = [];
+  lines.push(`**📊 Your lifetime record (all servers):** ${fmtRecord(mine.wins, mine.losses)}`);
+  lines.push("");
+  lines.push("**🏅 Top 5 voters on this server**");
+  if (top.length === 0) {
+    lines.push("_No settled votes yet._");
+  } else {
+    top.forEach((r, i) => {
+      lines.push(`${["🥇","🥈","🥉","4️⃣","5️⃣"][i] ?? `${i + 1}.`} <@${r.voterId}> — ${fmtRecord(r.wins, r.losses)}`);
+    });
+  }
+  return new EmbedBuilder().setColor(Colors.Blurple).setTitle("Voting Records").setDescription(lines.join("\n"));
 }
 
 async function findMatchedSchedule(hist: typeof gotwHistoryTable.$inferSelect): Promise<typeof gameSchedulesTable.$inferSelect | null> {
@@ -123,11 +221,22 @@ function weekLabelFor(weekIndex: number): string {
 async function buildView(guildId: string, voterId: string, pickedMatchupIndex?: number): Promise<{
   embeds: EmbedBuilder[]; components: ActionRowBuilder<StringSelectMenuBuilder>[]; content?: string;
 }> {
-  const matchups = await loadActiveMatchups(guildId);
+  const recordEmbed = await buildRecordEmbed(guildId, voterId);
+  const { rows: matchups, currentWeekIndex, currentWeekRaw } = await loadActiveMatchups(guildId);
+
   if (matchups.length === 0) {
+    const weekStr = currentWeekIndex != null ? weekLabelFor(currentWeekIndex)
+      : (currentWeekRaw ? currentWeekRaw : "current week");
     return {
-      embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("🏆 GOTW Vote")
-        .setDescription("No Game of the Week is currently set.")],
+      embeds: [
+        new EmbedBuilder().setColor(Colors.Greyple).setTitle(`🏆 GOTW Vote — ${weekStr}`)
+          .setDescription(
+            currentWeekIndex == null
+              ? "No Game of the Week is available during this part of the season."
+              : `No Game of the Week has been seeded for **${weekStr}** yet. Ask a Commissioner to post this week's GOTW.`,
+          ),
+        recordEmbed,
+      ],
       components: [],
     };
   }
@@ -135,9 +244,10 @@ async function buildView(guildId: string, voterId: string, pickedMatchupIndex?: 
   const weekIndex = matchups[0]!.weekIndex;
   const weekLabelText = weekLabelFor(weekIndex);
 
-  // Only one matchup → render directly.
+  // Only one matchup → render directly + append record card.
   if (matchups.length === 1) {
-    return buildSingleMatchupView(matchups[0]!, voterId, weekLabelText);
+    const single = await buildSingleMatchupView(matchups[0]!, voterId, weekLabelText);
+    return { embeds: [...single.embeds, recordEmbed], components: single.components };
   }
 
   // Multiple matchups (playoffs) → show picker. If a matchup is selected,
@@ -204,6 +314,8 @@ async function buildView(guildId: string, voterId: string, pickedMatchupIndex?: 
     }
   }
 
+  embeds.push(recordEmbed);
+
   return { embeds, components };
 }
 
@@ -265,7 +377,7 @@ export async function handleGotwvInteraction(
       });
 
       // If we're in multi-matchup mode, keep the picker selection visible.
-      const matchups = await loadActiveMatchups(guildId);
+      const { rows: matchups } = await loadActiveMatchups(guildId);
       const view = matchups.length > 1
         ? await buildView(guildId, voterId, matchupIndex)
         : await buildView(guildId, voterId);
