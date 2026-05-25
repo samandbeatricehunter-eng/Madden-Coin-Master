@@ -1,0 +1,129 @@
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'plancat.c',
+    line: '943',
+    routine: 'infer_arbiter_indexes'
+  }
+}
+[gs] handler error: DiscordAPIError[40060]: Interaction has already been acknowledged.
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.reply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:193:22)
+    at async handleScheduleClick (/app/artifacts/discord-bot/src/lib/handlers/game-scheduling-handlers.ts:352:3)
+    at async handleGsInteraction (/app/artifacts/discord-bot/src/lib/handlers/game-scheduling-handlers.ts:268:51)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:262:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: [], json: { type: 4, data: [Object] } },
+  rawError: {
+    message: 'Interaction has already been acknowledged.',
+    code: 40060
+  },
+  code: 40060,
+  status: 400,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508283126500036718/aW50ZXJhY3Rpb246MTUwODI4MzEyNjUwMDAzNjcxODo2YjZkM0JXeWY0ZU05VjMxVmtib20wNEVQTXJKSnA1eUxzNTZoRXdNclJOYlNGZ2tudWlaeW1odXhHY2FyYWdWQ1NkdnY5UTBmbXJoVHlWcE5UNjRpMzNvUUFkbzQ1emR0RHlZdHpOSkVjNHdUWDl0VnpiUHUwMmx6WjJMckd2aA/callback?with_response=false'
+}
+Error executing command menu: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ChatInputCommandInteraction.deferReply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:122:22)
+    at async Module.execute (/app/artifacts/discord-bot/src/commands/actions.ts:26:3)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:185:7) {
+  requestBody: { files: undefined, json: { type: 5, data: [Object] } },
+  rawError: { message: 'Unknown interaction', code: 10062 },
+  code: 10062,
+  status: 404,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508283308453396520/aW50ZXJhY3Rpb246MTUwODI4MzMwODQ1MzM5NjUyMDpLUDQxTWk4V0JNekl5M2J3QmI2V0t6YjJLVXJOd2poajJENmRlMnVjOUhiNHRBdEV1b3NseEc4dkM2TEtBRUY5S0dtRkg5ZUh2QlU5RkJjbHhEekZ2UlRRT0FpRHdQOW5YVVFKbHR5M3Nsb3hIMTVoVmdjNmh0WDhzbGQ3YmgwdA/callback?with_response=false'
+}
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+[select] menu_cat: DrizzleQueryError: Failed query: select "discord_id", "discord_username", "team" from "economy_users" where ("economy_users"."guild_id" = $1 and "economy_users"."discord_id" = ANY(($2)))
+    ... 4 lines matching cause stack trace ...
+params: 1493688089883971735,1037925434123358258
+    at NodePgPreparedQuery.queryWithCache (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:73:11)
+    at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async handleSelectMenu (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2085:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:207:11) {
+  query: 'select "discord_id", "discord_username", "team" from "economy_users" where ("economy_users"."guild_id" = $1 and "economy_users"."discord_id" = ANY(($2)))',
+  params: [ '1493688089883971735', '1037925434123358258' ],
+  cause: error: malformed array literal: "1037925434123358258"
+      at /app/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11
+    severity: 'ERROR',
+    code: '22P02',
+    detail: 'Array value must start with "{" or dimension information.',
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+      at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+    where: "unnamed portal parameter $2 = '...'",
+      at async NodePgPreparedQuery.queryWithCache (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+    schema: undefined,
+      at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+    table: undefined,
+      at async Promise.all (index 0)
+      at async getRivalsForUser (/app/artifacts/discord-bot/src/lib/economy/rivalries.ts:102:35)
+      at async handleAcRivalries (/app/artifacts/discord-bot/src/lib/handlers/rivalries-handlers.ts:31:18)
+      at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:789:5)
+      at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23) {
+    length: 199,
+}
+    line: '262',
+    routine: 'array_in'
+  }
+    dataType: undefined,
+    constraint: undefined,
+    file: 'arrayfuncs.c',
+    column: undefined,
+  code: 10062,
+  status: 404,
+  method: 'POST',
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+  url: 'https://discord.com/api/v10/interactions/1508283628910547085/aW50ZXJhY3Rpb246MTUwODI4MzYyODkxMDU0NzA4NTp5QUkzdGhnamcydnNNZHFqMHhZdnFSVHNkWnp2NUY4SGtuc3NaRnRKb05PbmhKUUtWS2NFTWtEVmt2UVExWTI2bHdSTTMzMThLdENQSXlGaHBXN1RCWHBteUFYU3pNUFN4RlJ4SFVsbURuNE84REVsWk1nYmpBd0N2blJjMDhwOA/callback?with_response=false'
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.deferUpdate (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:305:22)
+    at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:721:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  requestBody: { files: undefined, json: { type: 6 } },
+    ... 4 lines matching cause stack trace ...
+    at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23)
+    at async handleSelectMenu (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2085:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:207:11) {
+  query: 'select "discord_id", "discord_username", "team" from "economy_users" where ("economy_users"."guild_id" = $1 and "economy_users"."discord_id" = ANY(($2)))',
+  params: [ '1493688089883971735', '1037925434123358258' ],
+  cause: error: malformed array literal: "1037925434123358258"
+      at /app/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[select] menu_cat: DrizzleQueryError: Failed query: select "discord_id", "discord_username", "team" from "economy_users" where ("economy_users"."guild_id" = $1 and "economy_users"."discord_id" = ANY(($2)))
+params: 1493688089883971735,1037925434123358258
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+    code: '22P02',
+    detail: 'Array value must start with "{" or dimension information.',
+    hint: undefined,
+    internalPosition: undefined,
+      at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:161:13)
+    internalQuery: undefined,
+    where: "unnamed portal parameter $2 = '...'",
+      at async NodePgPreparedQuery.queryWithCache (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:154:19)
+    schema: undefined,
+    table: undefined,
+      at async getRivalsForUser (/app/artifacts/discord-bot/src/lib/economy/rivalries.ts:102:35)
+      at async handleAcRivalries (/app/artifacts/discord-bot/src/lib/handlers/rivalries-handlers.ts:31:18)
+      at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23) {
+    length: 199,
+    file: 'arrayfuncs.c',
+    line: '262',
+    routine: 'array_in'
+  }
+    column: undefined,
+    constraint: undefined,

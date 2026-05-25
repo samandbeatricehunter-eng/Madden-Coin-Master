@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { gameLogTable, usersTable } from "@workspace/db";
-import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, ne, inArray } from "drizzle-orm";
 import { trashTalkCountsForUser } from "./press-conference.js";
 
 // Minimum all-time H2H games for an opponent to qualify as a "rival".
@@ -105,7 +105,7 @@ export async function getRivalsForUser(
       username:  usersTable.discordUsername,
       team:      usersTable.team,
     }).from(usersTable)
-      .where(and(eq(usersTable.guildId, guildId), sql`${usersTable.discordId} = ANY(${oppIds})`)),
+      .where(and(eq(usersTable.guildId, guildId), inArray(usersTable.discordId, oppIds))),
     trashTalkCountsForUser(guildId, userId, oppIds),
   ]);
   const nameMap = new Map(nameRows.map(r => [r.discordId, r] as const));

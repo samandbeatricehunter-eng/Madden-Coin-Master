@@ -190,48 +190,39 @@ export async function postGotwToChannel(
   combinedScore: number,
   guildId:       string = PRIMARY_GUILD_ID,
 ): Promise<{ announcementId: string; pollId: string } | null> {
+  // weekNum is part of the logged context but no longer used for a channel post.
+  void weekNum;
   try {
-    const gotwId = await getGuildChannel(guildId, CHANNEL_KEYS.GOTW);
-    const channel = gotwId ? await client.channels.fetch(gotwId).catch(() => null) : null;
-    if (!channel?.isTextBased()) return null;
-    const tc = channel as TextChannel;
-
-    // Discord poll has been replaced with in-menu GOTW voting (see
-    // lib/handlers/gotw-voting-handlers.ts). We still post a short
-    // announcement so the GOTW channel reflects the active matchup, but
-    // there is no poll message — voting happens via /menu → GOTW Vote.
-    const announcementMsg = await tc.send({
-      content:
-        `@everyone\n` +
-        `🏈 **Week ${weekNum} Game of the Week!**\n` +
-        `<@${awayDiscordId}> **${awayTeamName}** vs <@${homeDiscordId}> **${homeTeamName}**\n` +
-        `\n🗳️ Vote via **/menu → 🏆 GOTW Vote**. You can change your vote until the game starts.`,
-    });
-
+    // Channel announcement intentionally removed — GOTW is surfaced only via
+    // /menu → 🏆 GOTW Vote. We still seed gotw_history so the menu picks up
+    // the matchup. The unique index on (season_id, week_index, matchup_index)
+    // requires all three columns in the conflict target.
     await db.insert(gotwHistoryTable).values({
       seasonId,
       weekIndex,
-      discordId1:           awayDiscordId,
-      discordId2:           homeDiscordId,
-      teamName1:            awayTeamName,
-      teamName2:            homeTeamName,
-      combinedScore:        Math.floor(combinedScore),
-      announcementMessageId: announcementMsg.id,
+      matchupIndex:          0,
+      discordId1:            awayDiscordId,
+      discordId2:            homeDiscordId,
+      teamName1:             awayTeamName,
+      teamName2:             homeTeamName,
+      combinedScore:         Math.floor(combinedScore),
+      announcementMessageId: null,
     }).onConflictDoUpdate({
-      target: [gotwHistoryTable.seasonId, gotwHistoryTable.weekIndex],
+      target: [gotwHistoryTable.seasonId, gotwHistoryTable.weekIndex, gotwHistoryTable.matchupIndex],
       set: {
         discordId1:            awayDiscordId,
         discordId2:            homeDiscordId,
         teamName1:             awayTeamName,
         teamName2:             homeTeamName,
         combinedScore:         Math.floor(combinedScore),
-        announcementMessageId: announcementMsg.id,
+        announcementMessageId: null,
       },
     });
 
-    return { announcementId: announcementMsg.id, pollId: "" };
+    void client; void guildId;
+    return { announcementId: "", pollId: "" };
   } catch (err) {
-    console.error("[gotw-helpers] Failed to post GOTW:", err);
+    console.error("[gotw-helpers] Failed to seed GOTW history:", err);
     return null;
   }
 }
