@@ -463,40 +463,57 @@ router.post("/madden/:leagueKey/:platform/:leagueId/team/:teamId/roster", valida
 // ── /week/:weekType/:weekNum/scores — game results + payouts ─────────────────
 // Fallback endpoint — MCA primarily uses /week/:weekType/:weekNum/schedules, but some
 // versions also fire /scores. Supports both regular season and playoffs.
+// IMPORTANT: this endpoint must also sync franchise_schedule scores before
+// processing payouts. Without that, games can be paid/processed while the
+// in-bot season schedule still shows them as Upcoming.
 router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scores", validateKey, async (req, res) => {
   const weekNum  = parseInt(String(req.params["weekNum"]  ?? "0"), 10);
   const weekType = String(req.params["weekType"] ?? "reg").toLowerCase();
   const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
   const guildId  = String(req.query["guildId"] ?? "");
   saveMcaPayload(`mca/week-${weekType}-${weekNum}-scores.json`, req.body);
-  res.status(200).json({ status: "received" });
 
-  console.log(`[mca/week${weekNum}/scores] Received (weekType=${weekType}), processing payouts...`);
-  const [result, channels] = await Promise.all([
-    processWeekScores(req.body, weekNum, weekType, leagueId, false, guildId).catch(err => ({
+  console.log(`[mca/week${weekNum}/scores] Received (weekType=${weekType}), syncing schedule scores and processing payouts...`);
+
+  try {
+    const [scheduleCount, channels] = await Promise.all([
+      syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
+      resolveLeagueChannels(leagueId),
+    ]);
+    const { commCh, genCh } = channels;
+
+    const result = await processWeekScores(req.body, weekNum, weekType, leagueId, false, guildId).catch(err => ({
       ok: false, message: String(err),
       gamesProcessed: 0, gamesDuplicate: 0, gamesCpuVsCpu: 0, gamesUnregistered: 0,
       payoutLines: [] as string[], milestoneLines: [] as string[],
       resultLines: [] as string[], unregisteredLines: [] as string[],
       reconciliationLines: [] as string[], violations: [] as ViolationRecord[],
       weekNum, seasonId: 0, catchupMode: false,
-    })),
-    resolveLeagueChannels(leagueId),
-  ]);
-  const { commCh, genCh } = channels;
+    }));
 
-  const scoresRoundLabel = weekLabel(weekType, weekNum);
+    console.log(`[mca/week${weekNum}/scores] Result: ${result.message} | scheduleCount=${scheduleCount} processed=${result.gamesProcessed} dupes=${result.gamesDuplicate}`);
 
-  if (!result.ok) {
-    console.error(`[mca/week${weekNum}/scores] Processing failed:`, result.message);
-    return;
+    if (commCh && result.violations.length > 0) {
+      const scoresRoundLabel = weekLabel(weekType, weekNum);
+      await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
+    }
+
+    void genCh;
+
+    return res.status(200).json({
+      ok:              result.ok,
+      status:          "processed",
+      scheduleCount,
+      gamesProcessed:  result.gamesProcessed,
+      gamesDuplicate:  result.gamesDuplicate,
+      gamesCpuVsCpu:   result.gamesCpuVsCpu,
+      gamesUnregistered: result.gamesUnregistered,
+      message:         result.message,
+    });
+  } catch (err) {
+    console.error(`[mca/week${weekNum}/scores] Error:`, err);
+    return res.status(500).json({ ok: false, status: "error", scheduleCount: 0, gamesProcessed: 0, message: String(err) });
   }
-
-  if (commCh && result.violations.length > 0) {
-    await postViolationMessages(result.violations, scoresRoundLabel, result.seasonId, commCh).catch(() => {});
-  }
-
-  void genCh;
 });
 
 // ── /news — EA in-game CFM news feed ─────────────────────────────────────────

@@ -7,6 +7,10 @@ out-tsc
 *.tsbuildinfo
 .expo
 .expo-shared
+echo .env>>.gitignore
+echo .env.*>>.gitignore
+echo artifacts/*/.env>>.gitignore
+echo artifacts/*/.env.*>>.gitignore
 
 # dependencies
 node_modules
@@ -47,3 +51,8 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+.env
+.env.*
+artifacts/*/.env
+artifacts/*/.env.*

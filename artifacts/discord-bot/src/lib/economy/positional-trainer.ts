@@ -12,17 +12,18 @@
 //      and respecting per-player per-season method caps:
 //        Speed +3, Strength +4, COD +4, Acceleration +4, Agility +4.
 //
-// Boosts apply automatically — the bot does not ask the commissioner to approve
-// them (the hire was already paid for). All rolls are logged with a human-readable
-// reason so owners can see why a tick missed (base miss / cooldown / capped out).
+// Successful boosts are logged and queued as $0 pending Attribute purchases so
+// commissioners can apply/confirm them through Commissioner's Office → Pending
+// Purchases. The weekly roll does not directly mutate roster attributes.
 
 import type { Client } from "discord.js";
 import { db } from "@workspace/db";
 import {
   positionalTrainersTable, trainerRollLogTable, trainerPlayerSeasonCapsTable,
-  franchiseRostersTable,
+  franchiseRostersTable, purchasesTable,
 } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { ATTRIBUTES } from "../constants.js";
 
 export type TrainerTier  = "gold" | "silver" | "bronze";
 export type TrainerFocus = "speed" | "power" | "balanced" | "position";
@@ -241,6 +242,37 @@ const TRAINER_POS_FOCUS_SETS: Record<string, Set<string>> = {
   LS:    new Set(["Long Snap"]),
 };
 
+const _A = (...attrs: string[]) => new Set(attrs);
+const SHARED_ATHLETE   = ["Speed","Acceleration","Agility","Strength","Awareness","Change of Direction","Jumping","Stamina","Toughness","Injury"] as const;
+const SHARED_COVERAGE  = ["Tackling","Hit Power","Pursuit","Play Recognition","Man Coverage","Zone Coverage","Press"] as const;
+const SHARED_DLINE     = ["Tackling","Hit Power","Block Shedding","Finesse Moves","Power Moves","Pursuit"] as const;
+const SHARED_OL_BLOCKS = ["Pass Blocking","Pass Block Power","Pass Block Finesse","Run Blocking","Run Block Power","Run Block Finesse","Lead Block","Impact Blocking"] as const;
+
+const TRAINER_POS_ATTRS: Record<string, Set<string>> = {
+  QB:    _A(...SHARED_ATHLETE, "Throwing Power","Short Accuracy","Medium Accuracy","Deep Accuracy","Throw on the Run","Throw Under Pressure","Break Sack","Play Action"),
+  HB:    _A(...SHARED_ATHLETE, "Carrying","BC Vision","Break Tackle","Trucking","Stiff Arm","Spin Move","Juke Move","Catching","Catch in Traffic","Kick/Punt Return"),
+  FB:    _A(...SHARED_ATHLETE, "Carrying","Break Tackle","Trucking","Stiff Arm","Catching","Catch in Traffic",...SHARED_OL_BLOCKS),
+  WR:    _A(...SHARED_ATHLETE, "Carrying","Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release","Kick/Punt Return"),
+  TE:    _A(...SHARED_ATHLETE, "Carrying","Catching","Catch in Traffic","Spectacular Catch","Short Route Running","Medium Route Running","Deep Route Running","Release",...SHARED_OL_BLOCKS),
+  LT:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  LG:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  C:     _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  RG:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  RT:    _A(...SHARED_ATHLETE, ...SHARED_OL_BLOCKS),
+  LEDGE: _A(...SHARED_ATHLETE, ...SHARED_DLINE),
+  REDGE: _A(...SHARED_ATHLETE, ...SHARED_DLINE),
+  DT:    _A(...SHARED_ATHLETE, ...SHARED_DLINE),
+  WILL:  _A(...SHARED_ATHLETE, ...SHARED_DLINE, "Play Recognition","Man Coverage","Zone Coverage"),
+  MIKE:  _A(...SHARED_ATHLETE, ...SHARED_DLINE, "Play Recognition","Man Coverage","Zone Coverage"),
+  SAM:   _A(...SHARED_ATHLETE, ...SHARED_DLINE, "Play Recognition","Man Coverage","Zone Coverage"),
+  CB:    _A(...SHARED_ATHLETE, "Catching",...SHARED_COVERAGE,"Kick/Punt Return"),
+  FS:    _A(...SHARED_ATHLETE, "Catching",...SHARED_COVERAGE),
+  SS:    _A(...SHARED_ATHLETE, "Catching",...SHARED_COVERAGE),
+  K:     _A("Kicking Power","Kicking Accuracy","Stamina","Toughness","Injury"),
+  P:     _A("Kicking Power","Kicking Accuracy","Stamina","Toughness","Injury"),
+  LS:    _A("Strength","Awareness","Long Snap","Stamina","Toughness","Injury"),
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Weekly tick orchestrator — iterates every active trainer in a season and
 // applies one roll. Idempotent on (trainerId, weekIndex) via trainer_roll_log.
@@ -373,18 +405,16 @@ export async function runWeeklyTrainerTick(args: {
     summary.ticked++;
     if (tick.hit) summary.hits++; else summary.misses++;
 
-    // Apply boosts to roster JSON + caps row.
-    if (tick.hit && rosterRow) {
-      const nextAttrs = { ...attrs };
-      const capsDelta = { speedGain: 0, strengthGain: 0, codGain: 0, accelGain: 0, agilityGain: 0 };
+    // Queue successful boosts for commissioner review instead of mutating the
+    // roster JSON directly. Pending Purchases is the operational source for
+    // commissioners applying in-game upgrades.
+    let pendingPurchaseId: number | null = null;
+    if (tick.hit && tick.boosts.length > 0) {
       for (const b of tick.boosts) {
-        if (b.after !== null) nextAttrs[b.attr] = b.after;
-        const field = applyCapDelta(b.attr, b.points, capsDelta as TrainerCapsRow);
+        const field = applyCapDelta(b.attr, b.points, capsRow as TrainerCapsRow);
         if (field) (capsRow as any)[field] = (capsRow as any)[field] + b.points;
       }
-      await db.update(franchiseRostersTable)
-        .set({ attributes: nextAttrs })
-        .where(eq(franchiseRostersTable.id, rosterRow.id));
+
       await db.update(trainerPlayerSeasonCapsTable)
         .set({
           speedGain:    (capsRow as any).speedGain,
@@ -394,6 +424,28 @@ export async function runWeeklyTrainerTick(args: {
           agilityGain:  (capsRow as any).agilityGain,
         })
         .where(eq(trainerPlayerSeasonCapsTable.id, capsRow.id));
+
+      const attrSummary = tick.boosts.map((b) => `${b.attr} +${b.points}`).join(", ");
+      const beforeAfter = tick.boosts.map((b) =>
+        b.before !== null && b.after !== null
+          ? `${b.attr}: ${b.before} → ${b.after} (+${b.points})`
+          : `${b.attr} +${b.points}`,
+      ).join("; ");
+
+      const parsedPlayerId = t.playerId ? parseInt(t.playerId, 10) : NaN;
+      const [purchase] = await db.insert(purchasesTable).values({
+        discordId:      t.ownerDiscordId,
+        seasonId:       args.seasonId,
+        purchaseType:   "attribute",
+        playerName:     t.playerName,
+        playerPosition: t.playerPos,
+        attributeName:  attrSummary,
+        cost:           0,
+        status:         "pending",
+        notes:          `Positional Trainer weekly roll — Week ${args.currentWeekIndex + 1} — ${TRAINER_TIERS[t.tier as TrainerTier].label} ${t.focus} focus — ${beforeAfter}`,
+        eaFranchiseId:  Number.isNaN(parsedPlayerId) ? null : parsedPlayerId,
+      }).returning({ id: purchasesTable.id });
+      pendingPurchaseId = purchase?.id ?? null;
     }
 
     // Finalize the previously-claimed log row with the actual roll result.
@@ -425,8 +477,12 @@ export async function runWeeklyTrainerTick(args: {
         ? `\n\n⏹ Trainer contract complete — **${t.weeksTotal} weeks** delivered.`
         : `\n\nWeeks remaining: **${nextRemaining}/${t.weeksTotal}**`;
       const body = tick.hit
-        ? `🏋️ **Trainer Tick — ${t.playerName} (${t.playerPos})** — ${wkLabel}\n${tick.reason}${tail}`
-        : `🏋️ **Trainer Tick — ${t.playerName} (${t.playerPos})** — ${wkLabel}\n${tick.reason}${tail}`;
+        ? `🏋️ **Trainer Tick — ${t.playerName} (${t.playerPos})** — ${wkLabel}
+${tick.reason}
+
+📋 Queued in **Commissioner's Office → Pending Purchases**${pendingPurchaseId ? ` as #${pendingPurchaseId}` : ""} for approval/application.${tail}`
+        : `🏋️ **Trainer Tick — ${t.playerName} (${t.playerPos})** — ${wkLabel}
+${tick.reason}${tail}`;
       await user.send(body).catch(() => {});
     } catch { /* ignore DM failures */ }
     } catch (perTrainerErr) {
@@ -451,14 +507,13 @@ export function defaultPickAttrs(
                  : focus === "position" ? (TRAINER_POS_FOCUS_SETS[posKey] ?? null)
                  : null;
   const boostMult = focus === "position" ? 2.0 : 1.5;
+  const posFilter = TRAINER_POS_ATTRS[posKey];
+  const allAttrs  = [...ATTRIBUTES] as string[];
 
-  const pool: string[] = [];
-  for (const [a, v] of Object.entries(attrs)) {
-    if (a === "Height" || a === "Weight") continue;
-    if (typeof v !== "number") continue;
-    if (v >= 99) continue;
-    pool.push(a);
-  }
+  const pool = allAttrs.filter((attr) =>
+    (!posFilter || posFilter.has(attr)) &&
+    (attrs[attr] ?? 0) < 99,
+  );
   if (pool.length === 0) return [];
 
   const remaining = pool.slice();
