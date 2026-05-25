@@ -60,6 +60,8 @@ export function buildCommOfficeEmbed(): EmbedBuilder {
       "**🎙️ Pending Interviews** — Post-game interviews (approve / deny / edit)\n" +
       "**🎬 Stream & Highlight Payouts** — Channel-detected media payouts (approve / deny / edit)\n" +
       "**🧾 Recent History** — Last 25 completed transactions\n\n" +
+      "**📣 Set General Chat** — Designate the server's general chat channel. " +
+      "Used for broadcast announcements like the weekly **Advance Week** notice (tags @everyone with the next advance deadline in all 4 time zones).\n" +
       "**📺 Set GOTY Channel** — Designate the Game-of-the-Year submission channel.\n" +
       "> ⚠️ **Required for end-of-season GOTY voting.** If no GOTY channel is set, " +
       "the bot has nowhere to pull candidate submissions from and **the GOTY vote will not run.**"
@@ -94,6 +96,7 @@ export function buildCommOfficeRows(
       new ButtonBuilder().setCustomId("co_history:0").setLabel("🧾 Recent History").setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ao_ch_pick:general").setLabel("📣 Set General Chat").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ao_ch_pick:goty").setLabel("📺 Set GOTY Channel").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("menu_admin_back").setLabel("↩ Back").setStyle(ButtonStyle.Secondary),
     ),

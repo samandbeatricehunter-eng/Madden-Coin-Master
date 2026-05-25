@@ -53,7 +53,7 @@ import { setGuildChannel, getRosterSeasonId } from "../db/db-helpers.js";
 import { runWeeklyTrainerTick, expireAllActiveTrainersForSeason } from "../economy/positional-trainer.js";
 import { rebuildHistoricalChannel } from "../franchise/wildcard-automation.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
-import { nextAdvanceDeadline } from "../discord/timezones.js";
+import { nextAdvanceDeadline, formatAllZones, discordTimestampLong } from "../discord/timezones.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -2923,12 +2923,51 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
 
   // ── Stamp last_advance_at on serverSettings (drives game-channel header
   // "Next Advance" deadline computation) ──────────────────────────────────────
+  const advanceStampedAt = new Date();
   try {
     await db.update(serverSettingsTable)
-      .set({ lastAdvanceAt: new Date() })
+      .set({ lastAdvanceAt: advanceStampedAt })
       .where(eq(serverSettingsTable.guildId, guildId));
   } catch (advErr) {
     console.error("[admin-operations] Failed to stamp lastAdvanceAt:", advErr);
+  }
+
+  // ── Announce the advance to #general — tags @everyone, shows the next
+  // advance deadline in all 4 league time zones. Silent no-op if the guild
+  // hasn't set a General channel (admins can set one in Commissioner's Office). ─
+  try {
+    const settingsForAnnounce = await getServerSettings(guildId);
+    const periodHours = settingsForAnnounce?.advancePeriodHours ?? 72;
+    const generalChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.GENERAL);
+    if (generalChannelId) {
+      const ch = (interaction.client.channels.cache.get(generalChannelId)
+        ?? await interaction.client.channels.fetch(generalChannelId).catch(() => null)) as TextChannel | null;
+      if (ch?.isTextBased()) {
+        const nextDeadline = nextAdvanceDeadline(advanceStampedAt, periodHours);
+        const newWeekPreview = WEEK_SEQUENCE[
+          (season.currentWeek === "training_camp" ? 0 : Math.min((WEEK_SEQUENCE.indexOf(season.currentWeek as any) ?? -1) + 1, WEEK_SEQUENCE.length - 1))
+        ]!;
+        const announceEmbed = new EmbedBuilder()
+          .setColor(Colors.Gold)
+          .setTitle(`📅 League Advanced — Now ${weekLabel(newWeekPreview)}`)
+          .setDescription(
+            `The league has just advanced to **${weekLabel(newWeekPreview)}**.\n` +
+            `**Advance period:** ${periodHours} hours.\n\n` +
+            `**Next Advance:** ${discordTimestampLong(nextDeadline)}`,
+          )
+          .addFields({ name: "🌎 Next Advance — All Time Zones", value: formatAllZones(nextDeadline) })
+          .setTimestamp(advanceStampedAt);
+        await ch.send({
+          content: "@everyone — the league has advanced. ⏱️ Get your games in before the next advance!",
+          embeds:  [announceEmbed],
+          allowedMentions: { parse: ["everyone"] },
+        }).catch(err => console.error("[admin-operations] Advance announce send failed:", err));
+      }
+    } else {
+      console.log(`[admin-operations] No GENERAL channel linked for guild ${guildId} — skipping advance announcement.`);
+    }
+  } catch (annErr) {
+    console.error("[admin-operations] Advance announcement error:", annErr);
   }
 
   const channelLines: string[] = [];
