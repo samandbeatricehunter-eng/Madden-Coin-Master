@@ -25,6 +25,19 @@ function fmtDiff(pd: number): string {
   return pd >= 0 ? `+${pd.toLocaleString()}` : `${pd.toLocaleString()}`;
 }
 
+function renderTxnDate(createdAt: Date | string | number | null | undefined): string {
+  const date = createdAt instanceof Date ? createdAt : new Date(createdAt ?? "");
+  const ms = date.getTime();
+
+  // Discord renders epoch timestamps as 12/31/69 or 1/1/70 depending on timezone.
+  // Those values usually mean the DB row has a missing/zero timestamp, not a real transaction date.
+  if (!Number.isFinite(ms) || ms <= new Date("2000-01-01T00:00:00.000Z").getTime()) {
+    return "`Date missing`";
+  }
+
+  return `<t:${Math.floor(ms / 1000)}:d>`;
+}
+
 /** Three paginated EmbedBuilders for a user's profile. */
 export async function buildUserProfilePages(
   uid: string,
@@ -225,7 +238,7 @@ export async function buildUserProfilePages(
   if (lastTxns.length) {
     const txLines = lastTxns.map(t => {
       const sign = t.amount >= 0 ? "+" : "";
-      const ts   = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:d>`;
+      const ts   = renderTxnDate(t.createdAt);
       return `${ts} **${sign}${t.amount.toLocaleString()}** — ${t.description}`;
     });
     p3.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
@@ -321,7 +334,7 @@ export async function buildTransactionsEmbed(
   if (lastTxns.length) {
     const txLines = lastTxns.map(t => {
       const sign = t.amount >= 0 ? "+" : "";
-      const ts   = `<t:${Math.floor(new Date(t.createdAt).getTime() / 1000)}:d>`;
+      const ts   = renderTxnDate(t.createdAt);
       return `${ts} **${sign}${t.amount.toLocaleString()}** — ${t.description}`;
     });
     embed.addFields({ name: "📋 Last 10 Transactions", value: txLines.join("\n"), inline: false });
