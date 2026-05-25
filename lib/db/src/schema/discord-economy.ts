@@ -345,6 +345,8 @@ export const txTypeEnum = pgEnum("tx_type", [
   "savings_deposit",
   "savings_withdraw",
   "savings_interest",
+  "luxury_tax_charge",
+  "luxury_tax_payout",
 ]);
 
 export const coinTransactionsTable = pgTable("coin_transactions", {
@@ -1036,6 +1038,21 @@ export const serverSettingsTable = pgTable("server_settings", {
   inflationMedianBalance:   integer("inflation_median_balance").notNull().default(0),
   inflationSampleSize:      integer("inflation_sample_size").notNull().default(0),
   inflationComputedAt:      timestamp("inflation_computed_at", { withTimezone: true }),
+  // ── End-of-regular-season Luxury Tax ──────────────────────────────────────
+  // Charges wealthy users (wallet + savings ≥ threshold) a flat % of the
+  // amount above the threshold; pools the total across the guild and
+  // redistributes evenly to the bottom 50% by combined wealth.
+  // Runs once per season at the Week 18 → Wildcard advance, gated by
+  // luxuryTaxLastSeasonId so a re-advance can't double-charge.
+  luxuryTaxEnabled:               boolean("luxury_tax_enabled").notNull().default(true),
+  luxuryTaxThreshold:             integer("luxury_tax_threshold").notNull().default(5000),
+  luxuryTaxRateBps:               integer("luxury_tax_rate_bps").notNull().default(700),  // 7.00%
+  luxuryTaxLastSeasonId:          integer("luxury_tax_last_season_id"),
+  luxuryTaxLastRunAt:             timestamp("luxury_tax_last_run_at", { withTimezone: true }),
+  luxuryTaxLastTaxedCount:        integer("luxury_tax_last_taxed_count").notNull().default(0),
+  luxuryTaxLastPoolAmount:        integer("luxury_tax_last_pool_amount").notNull().default(0),
+  luxuryTaxLastBeneficiaryCount:  integer("luxury_tax_last_beneficiary_count").notNull().default(0),
+  luxuryTaxLastPerBeneficiary:    integer("luxury_tax_last_per_beneficiary").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

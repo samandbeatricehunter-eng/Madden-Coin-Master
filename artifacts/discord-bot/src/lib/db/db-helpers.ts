@@ -248,7 +248,7 @@ export async function isAdminUser(discordId: string, guildId: string): Promise<b
 export async function logTransaction(
   discordId: string,
   amount: number,
-  type: "purchase" | "purchase_refund" | "addcoins" | "removecoins" | "sendcoins_sent" | "sendcoins_received" | "season_adjustment" | "setbalance" | "savings_deposit" | "savings_withdraw" | "savings_interest",
+  type: "purchase" | "purchase_refund" | "addcoins" | "removecoins" | "sendcoins_sent" | "sendcoins_received" | "season_adjustment" | "setbalance" | "savings_deposit" | "savings_withdraw" | "savings_interest" | "luxury_tax_charge" | "luxury_tax_payout",
   description: string,
   guildId: string,
   relatedUserId?: string,

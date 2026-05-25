@@ -22,7 +22,7 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, ne, desc, inArray } from "drizzle-orm";
 import {
-  getOrCreateActiveSeason, addBalance, logTransaction,
+  getOrCreateActiveSeason, getActiveSeason, addBalance, logTransaction,
   getGuildChannel, CHANNEL_KEYS,
   getOrSeedRules, setRules, getAllSections,
   getScheduleSeasonId,
@@ -478,6 +478,36 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
   }
   if (id === "ao_modal_inflation_range") {
     await handleInflationRangeSubmit(interaction as ModalSubmitInteraction);
+    return true;
+  }
+
+  // ── Luxury Tax panel ──────────────────────────────────────────────────────────
+  if (id === "ao_luxury_tax") {
+    await handleLuxuryTaxPanel(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_luxury_tax_toggle") {
+    await handleLuxuryTaxToggle(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_luxury_tax_threshold") {
+    await handleLuxuryTaxThresholdModal(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_luxury_tax_rate") {
+    await handleLuxuryTaxRateModal(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_luxury_tax_run") {
+    await handleLuxuryTaxRunNow(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id === "ao_modal_luxury_tax_threshold") {
+    await handleLuxuryTaxThresholdSubmit(interaction as ModalSubmitInteraction);
+    return true;
+  }
+  if (id === "ao_modal_luxury_tax_rate") {
+    await handleLuxuryTaxRateSubmit(interaction as ModalSubmitInteraction);
     return true;
   }
 
@@ -1846,11 +1876,14 @@ async function handleServerSettingsHub(interaction: ButtonInteraction) {
     new ButtonBuilder().setCustomId("ao_server_features").setLabel("🎛️ Server Features").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_server_setup").setLabel("🔧 Server Setup").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_inflation").setLabel("📈 Economy Inflation").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_luxury_tax").setLabel("📉 Luxury Tax").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
 
-  await (interaction as any).update({ embeds: [embed], components: [row] });
+  await (interaction as any).update({ embeds: [embed], components: [row, row2] });
 }
 
 // ── Economy Inflation Panel ────────────────────────────────────────────────────
@@ -2026,6 +2059,181 @@ export async function handleInflationRangeSubmit(interaction: any) {
   const { recomputeInflationForGuild } = await import("../economy/inflation.js");
   await recomputeInflationForGuild(interaction.guildId!);
   return interaction.reply({ content: `✅ Multiplier range set to **${minRaw.toFixed(2)}x – ${maxRaw.toFixed(2)}x**. Recomputed.`, ephemeral: true });
+}
+
+// ── Luxury Tax Panel ──────────────────────────────────────────────────────────
+
+async function handleLuxuryTaxPanel(interaction: ButtonInteraction) {
+  const guildId  = interaction.guildId!;
+  const settings = await getServerSettings(guildId);
+
+  const enabled       = settings.luxuryTaxEnabled ?? true;
+  const threshold     = settings.luxuryTaxThreshold ?? 5000;
+  const rateBps       = settings.luxuryTaxRateBps ?? 700;
+  const lastSeasonId  = settings.luxuryTaxLastSeasonId;
+  const lastRunAt     = settings.luxuryTaxLastRunAt;
+  const lastTaxed     = settings.luxuryTaxLastTaxedCount ?? 0;
+  const lastPool      = settings.luxuryTaxLastPoolAmount ?? 0;
+  const lastBenef     = settings.luxuryTaxLastBeneficiaryCount ?? 0;
+  const lastPer       = settings.luxuryTaxLastPerBeneficiary ?? 0;
+
+  const lastRunStr = lastRunAt
+    ? `<t:${Math.floor(new Date(lastRunAt).getTime() / 1000)}:R> (season #${lastSeasonId ?? "?"})`
+    : "never";
+
+  const embed = new EmbedBuilder()
+    .setColor(enabled ? Colors.Green : Colors.Grey)
+    .setTitle("📉 Luxury Tax")
+    .setDescription(
+      "End-of-regular-season wealth redistribution. Fires automatically when " +
+      "the league advances **Week 18 → Wildcard** (idempotent per season).\n\n" +
+      "**Who pays:** users whose **wallet + savings** combined is at or above " +
+      "the threshold.\n" +
+      "**How much:** the rate is charged only on the **excess above the " +
+      "threshold** — first from savings, then wallet.\n" +
+      "**Who receives:** the pool is split equally among the **bottom 50% of " +
+      "non-wealthy users by combined wealth**.\n\n" +
+      "Both sides get a DM with the breakdown.",
+    )
+    .addFields(
+      { name: "Status",         value: enabled ? "✅ **Enabled**" : "⏸️ **Disabled**", inline: true },
+      { name: "Threshold",      value: `${threshold.toLocaleString()} coins (combined)`, inline: true },
+      { name: "Tax Rate",       value: `${(rateBps / 100).toFixed(2)}% of excess`, inline: true },
+      { name: "Last Run",       value: lastRunStr, inline: false },
+      { name: "Last — Taxed",   value: `${lastTaxed} user${lastTaxed === 1 ? "" : "s"}`, inline: true },
+      { name: "Last — Pool",    value: `${lastPool.toLocaleString()} coins`, inline: true },
+      { name: "Last — Payout",  value: `${lastPer.toLocaleString()} × ${lastBenef}`, inline: true },
+    )
+    .setFooter({ text: "Auto-runs on Week 18 → Wildcard advance" });
+
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_luxury_tax_toggle")
+      .setLabel(enabled ? "⏸️ Disable" : "▶️ Enable")
+      .setStyle(enabled ? ButtonStyle.Secondary : ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ao_luxury_tax_threshold")
+      .setLabel("🎯 Set Threshold").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_luxury_tax_rate")
+      .setLabel("📐 Set Rate").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_luxury_tax_run")
+      .setLabel("⚡ Run Now (Test)").setStyle(ButtonStyle.Danger),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ao_server_settings").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
+  );
+
+  await (interaction as any).update({ embeds: [embed], components: [row1, row2] });
+}
+
+async function handleLuxuryTaxToggle(interaction: ButtonInteraction) {
+  const guildId  = interaction.guildId!;
+  const settings = await getServerSettings(guildId);
+  await db.update(serverSettingsTable)
+    .set({ luxuryTaxEnabled: !(settings.luxuryTaxEnabled ?? true), updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, guildId));
+  return handleLuxuryTaxPanel(interaction);
+}
+
+async function handleLuxuryTaxThresholdModal(interaction: ButtonInteraction) {
+  const settings = await getServerSettings(interaction.guildId!);
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_luxury_tax_threshold")
+    .setTitle("Set Luxury Tax Threshold");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("threshold")
+        .setLabel("Threshold (wallet + savings combined)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(String(settings.luxuryTaxThreshold ?? 5000))
+        .setPlaceholder("e.g. 5000 — users at or above this amount are taxed")
+        .setRequired(true),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleLuxuryTaxRateModal(interaction: ButtonInteraction) {
+  const settings = await getServerSettings(interaction.guildId!);
+  const modal = new ModalBuilder()
+    .setCustomId("ao_modal_luxury_tax_rate")
+    .setTitle("Set Luxury Tax Rate");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("rate")
+        .setLabel("Tax rate as a percentage (e.g. 7 for 7%)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(((settings.luxuryTaxRateBps ?? 700) / 100).toFixed(2))
+        .setPlaceholder("e.g. 7 — applied only to coins above the threshold")
+        .setRequired(true),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+export async function handleLuxuryTaxThresholdSubmit(interaction: any) {
+  const raw   = interaction.fields.getTextInputValue("threshold").trim();
+  const value = Math.max(1, Math.round(Number(raw)));
+  if (!Number.isFinite(value)) {
+    return interaction.reply({ content: "❌ Invalid number.", ephemeral: true });
+  }
+  await db.update(serverSettingsTable)
+    .set({ luxuryTaxThreshold: value, updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, interaction.guildId!));
+  return interaction.reply({
+    content: `✅ Luxury tax threshold set to **${value.toLocaleString()}** coins (wallet + savings combined).`,
+    ephemeral: true,
+  });
+}
+
+export async function handleLuxuryTaxRateSubmit(interaction: any) {
+  const raw     = Number(interaction.fields.getTextInputValue("rate").trim());
+  if (!Number.isFinite(raw) || raw <= 0 || raw >= 100) {
+    return interaction.reply({ content: "❌ Rate must be a percentage between 0 and 100.", ephemeral: true });
+  }
+  const rateBps = Math.round(raw * 100);
+  await db.update(serverSettingsTable)
+    .set({ luxuryTaxRateBps: rateBps, updatedAt: new Date() })
+    .where(eq(serverSettingsTable.guildId, interaction.guildId!));
+  return interaction.reply({
+    content: `✅ Luxury tax rate set to **${raw.toFixed(2)}%** of the amount above the threshold.`,
+    ephemeral: true,
+  });
+}
+
+async function handleLuxuryTaxRunNow(interaction: ButtonInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+  const guildId = interaction.guildId!;
+  const season  = await getActiveSeason(guildId);
+  if (!season) {
+    return interaction.editReply({ content: "❌ No active season for this guild." });
+  }
+  const { runLuxuryTaxForGuild } = await import("../economy/luxury-tax.js");
+  try {
+    // Does NOT pass force:true — the season-id gate stays active so this
+    // button can't accidentally double-tax the server mid-season. If the
+    // tax has already run for the current season, the runner returns
+    // `skippedReason: "already ran for this season"` and we surface it.
+    const summary = await runLuxuryTaxForGuild(interaction.client, guildId, season.id);
+    if (!summary.ran) {
+      return interaction.editReply({
+        content:
+          `ℹ️ Luxury tax did not run for season #${season.id}: **${summary.skippedReason ?? "unknown reason"}**.\n` +
+          `To re-run for the same season you must clear \`luxury_tax_last_season_id\` directly in the DB.`,
+      });
+    }
+    return interaction.editReply({
+      content:
+        `✅ **Luxury Tax run (season #${season.id})**\n` +
+        `Threshold: ${summary.threshold.toLocaleString()} | Rate: ${(summary.rateBps / 100).toFixed(2)}%\n` +
+        `Taxed: **${summary.taxedCount}** user${summary.taxedCount === 1 ? "" : "s"} → pool **${summary.poolAmount.toLocaleString()}** coins\n` +
+        `Redistributed: **${summary.perBeneficiary.toLocaleString()}** coins × **${summary.beneficiaryCount}** users` +
+        (summary.remainder > 0 ? ` (${summary.remainder} coin remainder)` : ""),
+    });
+  } catch (err) {
+    return interaction.editReply({ content: `❌ Luxury tax run failed: ${err}` });
+  }
 }
 
 async function handleServerFeaturesHub(interaction: ButtonInteraction) {
@@ -3508,14 +3716,41 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         );
       }
 
-      // 3. Wildcard automation (in-game awards, season PR, GOTY poll, etc.)
+      // 3. End-of-regular-season Luxury Tax (idempotent per season)
+      try {
+        const { runLuxuryTaxForGuild } = await import("../economy/luxury-tax.js");
+        const summary = await runLuxuryTaxForGuild(interaction.client, guildId, season.id);
+        console.log("[admin-operations] Luxury tax result:", summary);
+        if (summary.ran && summary.taxedCount > 0) {
+          await postCommissionerNotice(
+            interaction.client, guildId,
+            `📉 **Luxury Tax — Season ${season.seasonNumber}**\n` +
+            `Charged **${summary.taxedCount}** wealthy user${summary.taxedCount === 1 ? "" : "s"} ` +
+            `(${(summary.rateBps / 100).toFixed(2)}% on excess over ` +
+            `${summary.threshold.toLocaleString()} coins combined).\n` +
+            `Pool: **${summary.poolAmount.toLocaleString()}** coins → ` +
+            `**${summary.perBeneficiary.toLocaleString()}** coins each to ` +
+            `**${summary.beneficiaryCount}** bottom-half users` +
+            (summary.remainder > 0 ? ` (${summary.remainder} coin remainder uncollected).` : "."),
+          );
+        }
+      } catch (err) {
+        console.error("[admin-operations] Luxury tax error:", err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **Luxury Tax Failed**\nEnd-of-regular-season luxury tax threw an error: ${err}.\n` +
+          "Coin balances may be partially adjusted — check the Luxury Tax panel and Recent History.",
+        );
+      }
+
+      // 4. Wildcard automation (in-game awards, season PR, GOTY poll, etc.)
       try {
         await runWildcardAutomation(interaction.client, season.id, season.seasonNumber, interaction.guild);
       } catch (err) {
         console.error("[admin-operations] Wildcard automation error:", err);
       }
 
-      // 4. Playoff matchup embeds + GOTW polls
+      // 5. Playoff matchup embeds + GOTW polls
       try {
         const matchupSummary = await runPlayoffMatchupsFlow(interaction.client, season, "wildcard", guildId);
         console.log("[admin-operations] Wildcard matchups:", matchupSummary);

@@ -2,6 +2,7 @@
 - [Discord bot menu hub architecture](discord-menu-hub.md) — /menu uses selector-based navigation; `menu_*` IDs handled by menu-router, action buttons keep `ac_`/`ao_` prefixes so existing handlers route them.
 - [Cross-DB row copy pitfalls](cross-db-copy-pitfalls.md) — INSERT-based copier between drifted Postgres schemas: param cap, resume mode, narrow auto-ALTER, JSON cast, float→int coercion.
 - [Drizzle vs Postgres drift cleanup](drizzle-supabase-drift-cleanup.md) — drizzle-kit push silently leaves drift; always programmatic-diff, bucket by risk, align Drizzle to DB for cosmetic / DB to Drizzle for correctness.
+- [Economy mutation atomicity](economy-mutation-atomicity.md) — wrap balance + ledger + idempotency stamp in one `db.transaction`; admin "Run Now" buttons must respect the season gate, not bypass it.
 - [Discord interaction redelivery](discord-interaction-redelivery.md) — gateway redelivers same interactionCreate on reconnect; channel-posting handlers must dedup by interaction.id or one click posts N times.
 - [Drizzle inArray vs sql ANY](drizzle-inarray-vs-sql-any.md) — `sql\`${col} = ANY(${jsArr})\`` serializes a JS array as a single string param ("malformed array literal"); always use `inArray(col, jsArr)`.
 - [Game channel button gates](game-channel-button-gates.md) — `gs_*` buttons are strictly 2-player; proposal-keyed actions resolve schedule via proposal; use atomic UPDATE+delete-message on resolve.
