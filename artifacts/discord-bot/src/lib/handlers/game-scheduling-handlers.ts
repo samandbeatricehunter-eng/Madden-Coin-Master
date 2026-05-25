@@ -629,38 +629,72 @@ async function postFairSimRequest(
   await (interaction.channel as TextChannel).send({ content: `<@${opponentId}>`, embeds: [embed], components: [row] });
 }
 
+// ── In-flight guard for one-shot channel-posting actions ──────────────────────
+// iOS / mobile clients commonly fire two taps for one touch. Both arrive as
+// genuine separate interactions (different interaction.id), so the redelivery
+// dedup at the dispatcher can't catch them. Each handler that posts to the
+// channel claims an (uid, sid, kind) key SYNCHRONOUSLY before its first await;
+// the second tap finds the key held, replies "already submitted" ephemerally,
+// and returns without posting. Released in finally.
+const IN_FLIGHT_GS_ACTIONS = new Set<string>();
+function claimGsAction(uid: string, sid: number, kind: string): boolean {
+  const k = `${uid}|${sid}|${kind}`;
+  if (IN_FLIGHT_GS_ACTIONS.has(k)) return false;
+  IN_FLIGHT_GS_ACTIONS.add(k);
+  return true;
+}
+function releaseGsAction(uid: string, sid: number, kind: string): void {
+  IN_FLIGHT_GS_ACTIONS.delete(`${uid}|${sid}|${kind}`);
+}
+
 async function handleFairSimRequest(interaction: ButtonInteraction, sid: number): Promise<boolean> {
-  const sched = await loadSchedule(sid);
-  if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const uid = interaction.user.id;
-  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
-    await interaction.reply({ content: "❌ Only the two players can request Fair Sim.", ephemeral: true });
+  if (!claimGsAction(uid, sid, "fairsim")) {
+    await interaction.reply({ content: "⏳ Already submitting your Fair Sim request — give it a moment.", ephemeral: true }).catch(() => {});
     return true;
   }
-  await postFairSimRequest(interaction, sched, uid, "Manual request from the in-channel button.");
-  await interaction.reply({ content: "✅ Fair Sim request posted in channel.", ephemeral: true });
-  return true;
+  try {
+    const sched = await loadSchedule(sid);
+    if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
+    if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+      await interaction.reply({ content: "❌ Only the two players can request Fair Sim.", ephemeral: true });
+      return true;
+    }
+    await postFairSimRequest(interaction, sched, uid, "Manual request from the in-channel button.");
+    await interaction.reply({ content: "✅ Fair Sim request posted in channel.", ephemeral: true });
+    return true;
+  } finally {
+    releaseGsAction(uid, sid, "fairsim");
+  }
 }
 
 async function handleForceWinRequest(interaction: ButtonInteraction, sid: number): Promise<boolean> {
-  const sched = await loadSchedule(sid);
-  if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
   const uid = interaction.user.id;
-  if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
-    await interaction.reply({ content: "❌ Only the two players can request Force Win.", ephemeral: true });
+  if (!claimGsAction(uid, sid, "forcewin")) {
+    await interaction.reply({ content: "⏳ Already submitting your Force Win request — give it a moment.", ephemeral: true }).catch(() => {});
     return true;
   }
-  const opponentId = uid === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
-  const embed = new EmbedBuilder().setColor(Colors.Red)
-    .setTitle("🏳️ Force Win Requested")
-    .setDescription(`<@${uid}> requests a **Force Win**.\n<@${opponentId}> — approve or reject?`);
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`gs_req_approve:${sid}|forcewin|${uid}`).setLabel("✅ Approve Force Win").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`gs_req_reject:${sid}|forcewin|${uid}`).setLabel("❌ Reject").setStyle(ButtonStyle.Danger),
-  );
-  await (interaction.channel as TextChannel).send({ content: `<@${opponentId}>`, embeds: [embed], components: [row] });
-  await interaction.reply({ content: "✅ Force Win request posted in channel.", ephemeral: true });
-  return true;
+  try {
+    const sched = await loadSchedule(sid);
+    if (!sched) { await interaction.reply({ content: "Schedule missing.", ephemeral: true }); return true; }
+    if (uid !== sched.awayDiscordId && uid !== sched.homeDiscordId) {
+      await interaction.reply({ content: "❌ Only the two players can request Force Win.", ephemeral: true });
+      return true;
+    }
+    const opponentId = uid === sched.awayDiscordId ? sched.homeDiscordId : sched.awayDiscordId;
+    const embed = new EmbedBuilder().setColor(Colors.Red)
+      .setTitle("🏳️ Force Win Requested")
+      .setDescription(`<@${uid}> requests a **Force Win**.\n<@${opponentId}> — approve or reject?`);
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`gs_req_approve:${sid}|forcewin|${uid}`).setLabel("✅ Approve Force Win").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`gs_req_reject:${sid}|forcewin|${uid}`).setLabel("❌ Reject").setStyle(ButtonStyle.Danger),
+    );
+    await (interaction.channel as TextChannel).send({ content: `<@${opponentId}>`, embeds: [embed], components: [row] });
+    await interaction.reply({ content: "✅ Force Win request posted in channel.", ephemeral: true });
+    return true;
+  } finally {
+    releaseGsAction(uid, sid, "forcewin");
+  }
 }
 
 async function tagCommissioner(ch: TextChannel, body: string): Promise<void> {
