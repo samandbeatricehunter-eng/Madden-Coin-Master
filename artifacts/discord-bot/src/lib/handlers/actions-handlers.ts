@@ -779,7 +779,10 @@ export async function handleActionsInteraction(
   if (id === "ac_purchase")     { await handlePurchaseMenu(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_wager")        { await handleWagerStart(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_coins")        { await handleCoins(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_interview")    {
+  // Accept both the new `ac_press_open` ID emitted by the current menu hub
+  // and the legacy `ac_interview` ID still bound in older message components
+  // sitting in chat history. Both route to the same press-conference entry.
+  if (id === "ac_press_open" || id === "ac_interview") {
     const { handleAcPressOpen } = await import("./press-conference-handlers.js");
     await handleAcPressOpen(interaction as ButtonInteraction);
     return true;
