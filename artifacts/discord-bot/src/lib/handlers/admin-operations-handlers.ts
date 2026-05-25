@@ -1017,13 +1017,15 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     }
 
     try {
-      // ── Permission overwrites: deny @everyone, allow bot + Commissioner role + both players + bot-admins ──
+      // ── Permission overwrites: PUBLIC channel — @everyone can view by default.
+      // Explicit allow overwrites for bot + Commissioner role + both players +
+      // bot-admins remain so they retain send/manage perms even if guild defaults
+      // for @everyone are tightened. ──
       const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
       const botAdmins = await db.select({ discordId: usersTable.discordId })
         .from(usersTable)
         .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));
       const overwrites: import("discord.js").OverwriteResolvable[] = [
-        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
         { id: guild.client.user!.id,   allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] },
       ];
       if (commRole) overwrites.push({ id: commRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
@@ -3324,13 +3326,15 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         const chanName      = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
 
         try {
-          // ── Private channel: deny @everyone, allow the 2 players + Commissioner role + bot-admins ──
+          // ── Public channel: @everyone can view by default. Explicit allow
+          // overwrites for bot + Commissioner role + both players + bot-admins
+          // remain so they retain send/manage perms even if guild defaults for
+          // @everyone are tightened. ──
           const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
           const botAdmins = await db.select({ discordId: usersTable.discordId })
             .from(usersTable)
             .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));
           const overwrites: import("discord.js").OverwriteResolvable[] = [
-            { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
             { id: guild.client.user!.id,   allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] },
           ];
           if (commRole) overwrites.push({ id: commRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
