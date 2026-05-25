@@ -2670,26 +2670,72 @@ function resolveAbilities(p: any): PlayerAbilities | null {
   const devTrait = Number(p.devTrait ?? p.devTraitId ?? p.playerDevTrait ?? 0);
   if (devTrait < 2) return null;  // Normal/Star — no abilities to track
 
+  // EA Madden 26 MCA Blaze export shape (confirmed via live probe):
+  //   signatureSlotList: [
+  //     { isEmpty, locked, ovrThreshold, signatureAbility: {
+  //         signatureTitle, signatureDescription, signatureLogoId, rank, isPassive, ... } },
+  //     ...
+  //   ]
+  // Slots are position-templated; ovrThreshold gates which the player has actually unlocked.
+  // For X-Factor (devTrait>=3), the highest-ovrThreshold unlocked slot is the Zone ability.
+  // Legacy MCA fallbacks below remain for older EA versions.
+
+  const slotList = Array.isArray(p.signatureSlotList) ? p.signatureSlotList : null;
+  if (slotList && slotList.length > 0) {
+    const playerOvr = Number(p.playerBestOvr ?? p.overall ?? p.overallRating ?? 0);
+    type Unlocked = { title: string; threshold: number };
+    const unlocked: Unlocked[] = [];
+    for (const slot of slotList) {
+      if (!slot || slot.isEmpty) continue;
+      const ab = slot.signatureAbility;
+      if (!ab || typeof ab !== "object") continue;
+      const title = typeof ab.signatureTitle === "string" ? ab.signatureTitle.trim() : "";
+      if (!title) continue;
+      const threshold = Number(slot.ovrThreshold ?? 0);
+      if (playerOvr > 0 && threshold > 0 && threshold > playerOvr) continue;
+      unlocked.push({ title, threshold });
+    }
+    if (unlocked.length > 0) {
+      const result: PlayerAbilities = {};
+      if (devTrait >= 3) {
+        // X-Factor: top-threshold slot = zone ability, remainder = superstar abilities
+        unlocked.sort((a, b) => b.threshold - a.threshold);
+        const top = unlocked[0]!;
+        result.zone = top.title;
+        const rest = unlocked.slice(1).map(u => u.title);
+        if (rest.length > 0) result.superstar = rest;
+      } else {
+        // Superstar (devTrait=2): all unlocked slots are superstar abilities
+        result.superstar = unlocked.map(u => u.title);
+      }
+      return result;
+    }
+  }
+
+  // ── Legacy fallbacks for older EA versions ──────────────────────────────────
   const result: PlayerAbilities = {};
 
-  // Helper: extract a single ability name from an item (string, object, or nested)
   const extractName = (item: any): string | null => {
     if (!item) return null;
     if (typeof item === "string") return item.trim() || null;
     if (typeof item === "object") {
-      const n = item.abilityName ?? item.name ?? item.label ?? item.displayName
-        ?? item.abilityId ?? item.id ?? item.ability ?? null;
+      // Madden 26 nested shape: { signatureAbility: { signatureTitle: "..." } }
+      if (item.signatureAbility && typeof item.signatureAbility === "object") {
+        const st = item.signatureAbility.signatureTitle;
+        if (typeof st === "string" && st.trim()) return st.trim();
+      }
+      const n = item.signatureTitle ?? item.abilityName ?? item.name ?? item.label
+        ?? item.displayName ?? item.abilityId ?? item.id ?? item.ability ?? null;
       if (n && typeof n === "string") return n.trim() || null;
-      // Handle nested { ability: { name: "..." } }
       if (item.ability && typeof item.ability === "object") {
-        const nn = item.ability.name ?? item.ability.abilityName ?? item.ability.id ?? null;
+        const nn = item.ability.name ?? item.ability.abilityName ?? item.ability.id
+          ?? item.ability.signatureTitle ?? null;
         if (nn && typeof nn === "string") return nn.trim() || null;
       }
     }
     return null;
   };
 
-  // Helper: flatten an array-or-single-item into names
   const extractNames = (raw: any): string[] => {
     const names: string[] = [];
     const items = Array.isArray(raw) ? raw : [raw];
@@ -2700,10 +2746,7 @@ function resolveAbilities(p: any): PlayerAbilities | null {
     return names;
   };
 
-  // ── Zone ability (X-Factor only) ────────────────────────────────────────────
-  // Possible field names from EA MCA API (Madden 24-26):
   const zoneRaw =
-    p.signatureSlotList       ??   // array of {abilityId, ...} or plain string
     p.playerZoneAbility       ??
     p.zoneAbility             ??
     p.signatureAbilityName    ??
@@ -2726,30 +2769,26 @@ function resolveAbilities(p: any): PlayerAbilities | null {
     }
   }
 
-  // ── Superstar / active abilities ────────────────────────────────────────────
-  // Possible field names (Madden 24-26, all known variants):
   const activeRaw =
-    p.activeAbilityList       ??   // most common in Madden 25/26
+    p.activeAbilityList       ??
     p.playerAbilityList       ??
     p.abilitiesSlotList       ??
     p.abilitySlotList         ??
     p.superstarAbilityList    ??
     p.ssAbilityList           ??
-    p.playerAbilities         ??   // sometimes a sub-object with .superstar / .abilities
-    p.abilities               ??   // plain array
-    p.packageAbility          ??   // single ability as fallback
+    p.playerAbilities         ??
+    p.abilities               ??
+    p.packageAbility          ??
     p.superstarAbility        ??
     null;
 
   if (activeRaw != null) {
-    // Handle nested object like { superstar: [...], zone: "..." }
     if (!Array.isArray(activeRaw) && typeof activeRaw === "object" && activeRaw !== null) {
       const sub = activeRaw.superstar ?? activeRaw.abilities ?? activeRaw.abilityList ?? activeRaw.list ?? null;
       if (sub != null) {
         const names = extractNames(sub);
         if (names.length) result.superstar = names;
       } else {
-        // Try to extract a single name from the object itself
         const n = extractName(activeRaw);
         if (n) result.superstar = [n];
       }
@@ -2759,24 +2798,6 @@ function resolveAbilities(p: any): PlayerAbilities | null {
     }
   }
 
-  // Debug log: if devTrait >= 2 but we still couldn't find abilities, log the player's keys
-  // so we can add any new MCA field names in the future.
-  if (!result.zone && !result.superstar) {
-    const knownAbilKeys = new Set([
-      "signatureSlotList","playerZoneAbility","zoneAbility","signatureAbilityName","signatureAbility",
-      "playerSignatureAbility","xFactorZoneAbility","xfactorZoneAbility","zoneAbilityName",
-      "activeAbilityList","playerAbilityList","abilitiesSlotList","abilitySlotList",
-      "superstarAbilityList","ssAbilityList","playerAbilities","abilities","packageAbility","superstarAbility",
-    ]);
-    const abilityFields = Object.keys(p).filter(k => knownAbilKeys.has(k) || k.toLowerCase().includes("abilit") || k.toLowerCase().includes("zone") || k.toLowerCase().includes("signature"));
-    if (abilityFields.length > 0) {
-      console.warn(`[abilities] devTrait=${devTrait} player=${p.firstName} ${p.lastName} — found ability-related keys but couldn't extract: ${abilityFields.join(", ")}`);
-    } else {
-      console.info(`[abilities] devTrait=${devTrait} player=${p.firstName} ${p.lastName} — no ability fields found in payload. Keys: ${Object.keys(p).slice(0, 20).join(", ")}`);
-    }
-  }
-
-  // Only store if we found something
   return (result.zone || (result.superstar && result.superstar.length > 0)) ? result : null;
 }
 

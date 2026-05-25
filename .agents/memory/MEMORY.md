@@ -10,3 +10,4 @@
 - [NULL-PK rows from serial drift](null-pk-rows-from-serial-drift.md) — purchases with NULL id charge wallets but can't be refunded via UI; every list/count must filter `isNotNull(id)`, repair = refund + delete + decrement season_stats in one tx.
 - [payout_config PK is on key only](payout-config-pk-drift.md) — DB has `PRIMARY KEY (key)` even though Drizzle code targets `[guildId, key]` on conflict; effectively single-guild until the constraint is widened.
 - [Top-N stamping idempotency](top-n-stamping-idempotency.md) — pre-approval "tax the top-N" stampers must clear prior stamps + filter to still-pending rows in one tx, or reruns leave >N rows taxed and over-fund the pool.
+- [EA M26 abilities shape](ea-m26-abilities-shape.md) — abilities live at `signatureSlotList[].signatureAbility.signatureTitle`; slots are position-templated, gated by `ovrThreshold`; for X-Factor (devTrait>=3) the top-threshold unlocked slot is the Zone ability.
