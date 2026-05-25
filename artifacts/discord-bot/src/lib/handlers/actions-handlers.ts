@@ -156,6 +156,9 @@ interface ActionsSession {
 const sessions = new Map<string, ActionsSession>();
 const SESSION_TTL_MS = 15 * 60 * 1000;
 
+// Prevent duplicate charging when Discord redelivers or a user double-clicks the training confirm button.
+const trainingExecuteLocks = new Set<string>();
+
 function sessionKey(guildId: string, userId: string) {
   return `${guildId}:${userId}`;
 }
@@ -2553,137 +2556,245 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
   const gid  = interaction.guildId!;
   const tier = sess.trainingTier as TrainingTier | undefined;
   const goal = sess.trainingGoal ?? "balanced";
-  if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
+  const lockKey = [
+    "training",
+    gid,
+    interaction.user.id,
+    tier ?? "missing-tier",
+    sess.trainingPlayerId ?? "missing-player-id",
+    sess.trainingPlayerName ?? "missing-player-name",
+    goal,
+  ].join(":");
+
+  if (trainingExecuteLocks.has(lockKey)) {
+    await interaction.deferUpdate().catch(() => null);
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setDescription("⏳ This training package purchase is already being processed. Please wait a moment.")],
+      components: [backToHubRow()],
+    }).catch(() => null);
     return;
   }
 
-  const meta   = TRAINING_TIERS[tier];
-  const season = await getOrCreateActiveSeason(gid);
-  const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  trainingExecuteLocks.add(lockKey);
 
-  if (user.balance < meta.cost) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
-    return;
-  }
+  try {
+    await interaction.deferUpdate();
 
-  if (meta.limit < 999 && meta.seasonStatKey) {
-    const stats = await getSeasonStats(interaction.user.id, season.id);
-    const used  = (stats as any)[meta.seasonStatKey] as number ?? 0;
-    if (used >= meta.limit) {
-      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)], components: [backToHubRow()] });
-      return;
-    }
-  }
-
-  // Mutual exclusion: block training package if this player already has any
-  // trainer (active or expired) this season under this user.
-  if (sess.trainingPlayerName) {
-    const [conflict] = await db.select({ id: positionalTrainersTable.id, status: positionalTrainersTable.status })
-      .from(positionalTrainersTable)
-      .where(and(
-        eq(positionalTrainersTable.guildId,        gid),
-        eq(positionalTrainersTable.seasonId,       season.id),
-        eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
-        eq(positionalTrainersTable.playerName,     sess.trainingPlayerName),
-      ))
-      .limit(1);
-    if (conflict) {
-      await interaction.update({
-        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-          `❌ **${sess.trainingPlayerName}** already has a positional trainer this season ` +
-          `(status: ${conflict.status}). Training Packages and Trainers are mutually exclusive per player per season.`,
-        )],
+    if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")],
         components: [backToHubRow()],
       });
       return;
     }
-  }
 
-  // Fetch player attributes first so we can filter 99-capped attrs from the lottery pool
-  let playerAttrs: Record<string, number> = {};
-  if (sess.trainingPlayerId) {
-    const seasonId   = await getRosterSeasonId(gid);
-    const rosterRows = await db.select({ attributes: franchiseRostersTable.attributes })
-      .from(franchiseRostersTable)
+    const meta   = TRAINING_TIERS[tier];
+    const season = await getOrCreateActiveSeason(gid);
+    const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+
+    // Idempotency guard against a double-click / interaction redelivery that already
+    // inserted a pending purchase for this exact package a few seconds ago.
+    const duplicateCutoff = new Date(Date.now() - 2 * 60 * 1000);
+    const [recentDuplicate] = await db.select({ id: purchasesTable.id })
+      .from(purchasesTable)
       .where(and(
-        eq(franchiseRostersTable.seasonId, seasonId),
-        eq(franchiseRostersTable.playerId, sess.trainingPlayerId),
+        eq(purchasesTable.discordId,    interaction.user.id),
+        eq(purchasesTable.seasonId,     season.id),
+        eq(purchasesTable.purchaseType, meta.purchaseType),
+        eq(purchasesTable.playerName,   sess.trainingPlayerName),
+        eq(purchasesTable.status,       "pending"),
+        sql`${purchasesTable.createdAt} >= ${duplicateCutoff}`,
       ))
       .limit(1);
-    playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
+
+    if (recentDuplicate) {
+      await interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Yellow)
+          .setTitle("🎓 Training Package Already Submitted")
+          .setDescription(
+            `A pending **${meta.label} Training Package** for **${sess.trainingPlayerName}** was already created moments ago.\n\n` +
+            "No additional coins were deducted.",
+          )],
+        components: [backToHubRow()],
+      });
+      return;
+    }
+
+    if (user.balance < meta.cost) {
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)],
+        components: [backToHubRow()],
+      });
+      return;
+    }
+
+    if (meta.limit < 999 && meta.seasonStatKey) {
+      const stats = await getSeasonStats(interaction.user.id, season.id);
+      const used  = (stats as any)[meta.seasonStatKey] as number ?? 0;
+      if (used >= meta.limit) {
+        await interaction.editReply({
+          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)],
+          components: [backToHubRow()],
+        });
+        return;
+      }
+    }
+
+    // Mutual exclusion: block training package if this player already has any
+    // trainer (active or expired) this season under this user.
+    if (sess.trainingPlayerName) {
+      const [conflict] = await db.select({ id: positionalTrainersTable.id, status: positionalTrainersTable.status })
+        .from(positionalTrainersTable)
+        .where(and(
+          eq(positionalTrainersTable.guildId,        gid),
+          eq(positionalTrainersTable.seasonId,       season.id),
+          eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+          eq(positionalTrainersTable.playerName,     sess.trainingPlayerName),
+        ))
+        .limit(1);
+      if (conflict) {
+        await interaction.editReply({
+          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+            `❌ **${sess.trainingPlayerName}** already has a positional trainer this season ` +
+            `(status: ${conflict.status}). Training Packages and Trainers are mutually exclusive per player per season.`,
+          )],
+          components: [backToHubRow()],
+        });
+        return;
+      }
+    }
+
+    // Fetch player attributes first so we can filter 99-capped attrs from the lottery pool.
+    let playerAttrs: Record<string, number> = {};
+    if (sess.trainingPlayerId) {
+      const seasonId   = await getRosterSeasonId(gid);
+      const rosterRows = await db.select({ attributes: franchiseRostersTable.attributes })
+        .from(franchiseRostersTable)
+        .where(and(
+          eq(franchiseRostersTable.seasonId, seasonId),
+          eq(franchiseRostersTable.playerId, sess.trainingPlayerId),
+        ))
+        .limit(1);
+      playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
+    }
+
+    // 🎲 Step 1 — Roll how many attributes are upgraded (tier-biased, higher tier → more attrs)
+    const attrCount   = rollAttrCount(tier);
+    // 🎲 Step 2 — Roll which attributes (weighted by goal, without replacement, excludes 99s)
+    const rolledAttrs = rollTrainingAttrs(goal, playerAttrs, sess.trainingPlayerPos ?? "", attrCount);
+    // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max)
+    type TrainingResult = { attr: string; before: number | null; after: number | null; points: number };
+    const results: TrainingResult[] = rolledAttrs.map(attr => {
+      const before = playerAttrs[attr] !== undefined ? playerAttrs[attr]! : null;
+      const points = rollTierPoints(meta.points, before ?? 0);
+      const after  = before !== null ? before + points : null;
+      return { attr, before, after, points };
+    });
+
+    const resultLines = results.map(r =>
+      r.before !== null
+        ? `• **${r.attr}:** ${r.before} → **${r.after}** (+${r.points})`
+        : `• +${r.points} ${r.attr}`,
+    );
+    const beforeAfterText  = `**${results.length} attribute${results.length !== 1 ? "s" : ""} upgraded:**\n${resultLines.join("\n")}`;
+    const attrNamesSummary = results.map(r => `${r.attr} +${r.points}`).join(", ");
+
+    // Mutate balances + audit + pending purchase in one transaction so a partial
+    // failure cannot charge coins without also creating the pending purchase row.
+    const [inserted] = await db.transaction(async (tx) => {
+      await tx.update(usersTable)
+        .set({ balance: sql`${usersTable.balance} - ${meta.cost}` })
+        .where(and(eq(usersTable.discordId, interaction.user.id), eq(usersTable.guildId, gid)));
+
+      await tx.insert(coinTransactionsTable).values({
+        discordId:   interaction.user.id,
+        guildId:     gid,
+        amount:      -meta.cost,
+        type:        "purchase",
+        description: `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — ${attrNamesSummary}`,
+      });
+
+      const purchaseRows = await tx.insert(purchasesTable).values({
+        discordId:      interaction.user.id,
+        seasonId:       season.id,
+        purchaseType:   meta.purchaseType,
+        playerName:     sess.trainingPlayerName,
+        playerPosition: sess.trainingPlayerPos ?? "",
+        attributeName:  attrNamesSummary,
+        cost:           meta.cost,
+        status:         "pending",
+        notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${attrNamesSummary}`,
+        teamName:       user.team ?? null,
+        eaFranchiseId:  sess.trainingPlayerId ?? null,
+      }).returning({ id: purchasesTable.id });
+
+      return purchaseRows;
+    });
+
+    if (!inserted?.id) {
+      throw new Error("Training purchase insert did not return a purchase id.");
+    }
+
+    if (meta.seasonStatKey === "trainingGoldPurchased") {
+      await db.update(seasonStatsTable)
+        .set({ trainingGoldPurchased: sql`${seasonStatsTable.trainingGoldPurchased} + 1` })
+        .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+    } else if (meta.seasonStatKey === "trainingSilverPurchased") {
+      await db.update(seasonStatsTable)
+        .set({ trainingSilverPurchased: sql`${seasonStatsTable.trainingSilverPurchased} + 1` })
+        .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+    }
+
+    await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted.id, {
+      playerName:      sess.trainingPlayerName,
+      playerPos:       sess.trainingPlayerPos ?? "",
+      trainingGoal:    goal,
+      trainingResults: beforeAfterText,
+      attributeName:   attrNamesSummary,
+      tier,
+    });
+
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("🎓 Training Package Purchased!")
+        .setDescription(
+          `**${meta.label} Training Package** purchased for **${sess.trainingPlayerName}** (${sess.trainingPlayerPos})!\n\n` +
+          `🎲 **Lottery Result:** ${beforeAfterText}\n\n` +
+          `Your commissioner has been notified and this is now listed in **Commissioner's Office → Pending Purchases**. ` +
+          `**${meta.cost.toLocaleString()} coins** deducted.`,
+        )],
+      components: [backToHubRow()],
+    });
+  } catch (err) {
+    console.error("[training-package] execute failed", err);
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("Training Package Error")
+          .setDescription("❌ Something went wrong while processing this training package. No further action was taken after the failure point. Check Railway logs.")],
+        components: [backToHubRow()],
+      }).catch(() => null);
+    } else {
+      await interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("Training Package Error")
+          .setDescription("❌ Something went wrong while processing this training package. Check Railway logs.")],
+        components: [backToHubRow()],
+        ephemeral: true,
+      }).catch(() => null);
+    }
+  } finally {
+    trainingExecuteLocks.delete(lockKey);
   }
-
-  // 🎲 Step 1 — Roll how many attributes are upgraded (tier-biased, higher tier → more attrs)
-  const attrCount   = rollAttrCount(tier);
-  // 🎲 Step 2 — Roll which attributes (weighted by goal, without replacement, excludes 99s)
-  const rolledAttrs = rollTrainingAttrs(goal, playerAttrs, sess.trainingPlayerPos ?? "", attrCount);
-  // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max)
-  type TrainingResult = { attr: string; before: number | null; after: number | null; points: number };
-  const results: TrainingResult[] = rolledAttrs.map(attr => {
-    const before = playerAttrs[attr] !== undefined ? playerAttrs[attr]! : null;
-    const points = rollTierPoints(meta.points, before ?? 0);
-    const after  = before !== null ? before + points : null;
-    return { attr, before, after, points };
-  });
-
-  const resultLines     = results.map(r =>
-    r.before !== null
-      ? `• **${r.attr}:** ${r.before} → **${r.after}** (+${r.points})`
-      : `• +${r.points} ${r.attr}`,
-  );
-  const beforeAfterText  = `**${results.length} attribute${results.length !== 1 ? "s" : ""} upgraded:**\n${resultLines.join("\n")}`;
-  const attrNamesSummary = results.map(r => `${r.attr} +${r.points}`).join(", ");
-
-  await deductBalance(interaction.user.id, meta.cost, gid);
-  await logTransaction(
-    interaction.user.id, -meta.cost, "purchase",
-    `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — ${attrNamesSummary}`, gid,
-  );
-
-  const [inserted] = await db.insert(purchasesTable).values({
-    discordId:      interaction.user.id,
-    seasonId:       season.id,
-    purchaseType:   meta.purchaseType,
-    playerName:     sess.trainingPlayerName,
-    playerPosition: sess.trainingPlayerPos ?? "",
-    attributeName:  attrNamesSummary,
-    cost:           meta.cost,
-    status:         "pending",
-    notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${attrNamesSummary}`,
-  }).returning({ id: purchasesTable.id });
-
-  if (meta.seasonStatKey === "trainingGoldPurchased") {
-    await db.update(seasonStatsTable)
-      .set({ trainingGoldPurchased: sql`${seasonStatsTable.trainingGoldPurchased} + 1` })
-      .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
-  } else if (meta.seasonStatKey === "trainingSilverPurchased") {
-    await db.update(seasonStatsTable)
-      .set({ trainingSilverPurchased: sql`${seasonStatsTable.trainingSilverPurchased} + 1` })
-      .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
-  }
-
-  await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted!.id, {
-    playerName:      sess.trainingPlayerName,
-    playerPos:       sess.trainingPlayerPos ?? "",
-    trainingGoal:    goal,
-    trainingResults: beforeAfterText,
-    attributeName:   attrNamesSummary,
-    tier,
-  });
-
-  await interaction.update({
-    embeds: [new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle("🎓 Training Package Purchased!")
-      .setDescription(
-        `**${meta.label} Training Package** purchased for **${sess.trainingPlayerName}** (${sess.trainingPlayerPos})!\n\n` +
-        `🎲 **Lottery Result:** ${beforeAfterText}\n\n` +
-        `Your commissioner has been notified and will apply this upgrade. **${meta.cost.toLocaleString()} coins** deducted.`,
-      )],
-    components: [backToHubRow()],
-  });
 }
+
+
 
 // ── Wager ─────────────────────────────────────────────────────────────────────
 
