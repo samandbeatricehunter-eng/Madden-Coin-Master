@@ -214,12 +214,31 @@ function pickerComponents(sid: number, state: PickerState, dayOpts: StringSelect
   ];
 }
 
+// ── Idempotency guard ─────────────────────────────────────────────────────────
+// Discord's gateway can redeliver the same interaction event on shard
+// reconnects / brief network blips. Without dedup, one user click can run the
+// handler multiple times — which for channel-posting actions like Force Win
+// means several duplicate posts in the game channel. interaction.id is unique
+// per click, so a short-lived Set of recently-seen ids drops redeliveries.
+const RECENT_GS_INTERACTIONS = new Set<string>();
+const GS_DEDUP_TTL_MS = 5 * 60 * 1000;
+
+function markGsInteractionSeen(interactionId: string): boolean {
+  if (RECENT_GS_INTERACTIONS.has(interactionId)) return false;
+  RECENT_GS_INTERACTIONS.add(interactionId);
+  setTimeout(() => RECENT_GS_INTERACTIONS.delete(interactionId), GS_DEDUP_TTL_MS).unref?.();
+  return true;
+}
+
 // ── Top-level dispatcher (called from interactionCreate.ts) ───────────────────
 export async function handleGsInteraction(
   interaction: ButtonInteraction | StringSelectMenuInteraction,
 ): Promise<boolean> {
   const id = interaction.customId;
   if (!id.startsWith("gs_")) return false;
+
+  // Drop redelivered duplicate events for the same click.
+  if (!markGsInteractionSeen(interaction.id)) return true;
 
   const [action, sidStr] = id.split(":");
   const sid = parseInt(sidStr ?? "0", 10);
