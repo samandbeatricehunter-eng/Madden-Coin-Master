@@ -7110,6 +7110,12 @@ function weeksLeftInRegularSeason(currentWeek: string | null | undefined): numbe
 
 async function handleHireTrainerStart(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid    = interaction.guildId!;
+  // Defer up-front — several DB awaits below can exceed Discord's 3s window
+  // and the menu-router does NOT defer for leaf actions. Without this we hit
+  // a 40060 "already acknowledged" race on slow round-trips.
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferUpdate();
+  }
   const season = await getOrCreateActiveSeason(gid);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
 
@@ -7123,7 +7129,7 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
 
   const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
   if (weeksLeft <= 0) {
-    await interaction.update({
+    await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
         .setDescription("❌ The regular season is over. Trainers can only be hired during the regular season (or in preseason / training camp).")],
       components: [backToHubRow()],
@@ -7136,7 +7142,7 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
   const hired = (stats as any).trainersHired as number ?? 0;
   const HIRE_CAP = 2;
   if (hired >= HIRE_CAP) {
-    await interaction.update({
+    await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
         .setDescription(`❌ You have already hired the maximum of **${HIRE_CAP} trainers** this season.`)],
       components: [backToHubRow()],
@@ -7161,7 +7167,7 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
       .setDisabled(user.balance < bronze.perWeek),
   );
 
-  await interaction.update({
+  await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(0x8b5cf6)
       .setTitle("🏋️ Hire Positional Trainer — Step 1 of 5")

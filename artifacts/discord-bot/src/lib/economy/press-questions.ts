@@ -154,6 +154,7 @@ export const TRASH_TALK_QUESTIONS: readonly string[] = [
   "Be honest — would you ever trust your opponent's QB in a 2-minute drill? Why not?",
   "What's the one thing your opponent has to do this week that they absolutely won't?",
   "How loud do you want it to be in the building when you bury this opponent?",
+  "What's the most generous thing you could say about your opponent — and how much of a stretch is it?",
 ] as const;
 
 export const GENERAL_QUESTIONS: readonly string[] = [
@@ -305,6 +306,8 @@ export const GENERAL_QUESTIONS: readonly string[] = [
   "How do you keep the locker room together when expectations aren't being met?",
   "What's a piece of your coaching philosophy that has never changed?",
   "What's something fans should look forward to from your team the rest of the way?",
+  "What's a small thing this week — practice, meeting, film session — that's setting the tone for the rest of the season?",
+  "If someone wrote the story of your franchise five years from now, what's the chapter title for this season?",
 ] as const;
 
 // Sanity: we ship exactly 150 of each. Misnumbered pools would silently

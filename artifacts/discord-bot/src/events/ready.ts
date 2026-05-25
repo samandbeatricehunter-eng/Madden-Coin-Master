@@ -63,9 +63,10 @@ async function backfillPermanentVaultTeams(): Promise<void> {
     const result = await db.execute(sql`
       UPDATE inventory
       SET    team = u.team
-      FROM   economy_users u
-      JOIN   seasons s ON s.id = inventory.season_id AND s.guild_id = u.guild_id
-      WHERE  inventory.discord_id      = u.discord_id
+      FROM   economy_users u, seasons s
+      WHERE  s.id                      = inventory.season_id
+        AND  s.guild_id                = u.guild_id
+        AND  inventory.discord_id      = u.discord_id
         AND  inventory.team            IS NULL
         AND  inventory.legend_category = 'permanent'
         AND  u.team                    IS NOT NULL
