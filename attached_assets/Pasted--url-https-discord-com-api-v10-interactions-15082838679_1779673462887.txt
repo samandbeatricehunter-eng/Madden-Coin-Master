@@ -1,0 +1,29 @@
+  url: 'https://discord.com/api/v10/interactions/1508283867906445382/aW50ZXJhY3Rpb246MTUwODI4Mzg2NzkwNjQ0NTM4MjpjakFON0dtcVRBTHFRRE84RUVaU0VJV1VGNWdxZFBFMU1XeG1PUkhyTE9MNk5mUkk1V0hnOVRMZGk0dlB0YnVabnd2RVlZSnNmMkx2Wk01b1NRRThxUTk1RHNFYXk1dkVoRDVLUFlHbkJrcHg2YXk3UWdURXc2MG9MYlNBUFhtVQ/callback?with_response=false'
+}
+  url: 'https://discord.com/api/v10/interactions/1508284311692902421/aW50ZXJhY3Rpb246MTUwODI4NDMxMTY5MjkwMjQyMTpZS0x2UXFBUnZZYUVUeXhXM2xpeHp2TXM2S09DTTNJVGdDaHpTQ0JzTnRjNWY5b29XSWFMZ0pIV3dtSHFzTmFxaUlCa3NhcGpsS1E4MDdHMG9YVW90NWJOdW1zdWpjRWs4RlJLZTVpejMwUWdNU29RdzFpNHcyVThHVG5vclpxdQ/callback?with_response=false'
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async handleScheduleClick (/app/artifacts/discord-bot/src/lib/handlers/game-scheduling-handlers.ts:352:3)
+    at async handleGsInteraction (/app/artifacts/discord-bot/src/lib/handlers/game-scheduling-handlers.ts:268:51)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:262:5)
+  rawError: { message: 'Unknown interaction', code: 10062 },
+[gs] handler error: DiscordAPIError[10062]: Unknown interaction
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+  code: 10062,
+}
+[gs] handler error: DiscordAPIError[40060]: Interaction has already been acknowledged.
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async ButtonInteraction.reply (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:193:22)
+    at async handleForceWinRequest (/app/artifacts/discord-bot/src/lib/handlers/game-scheduling-handlers.ts:622:3)
+    at async handleGsInteraction (/app/artifacts/discord-bot/src/lib/handlers/game-scheduling-handlers.ts:275:51)
+    at async handleButton (/app/artifacts/discord-bot/src/events/interactionCreate.ts:262:5)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:196:11) {
+  rawError: {
+    message: 'Interaction has already been acknowledged.',
+    code: 40060
+  },
+  status: 400,
+  method: 'POST',
+  url: 'https://discord.com/api/v10/interactions/1508284347130708108/aW50ZXJhY3Rpb246MTUwODI4NDM0NzEzMDcwODEwODpndnNlOGVveTJKWFc3T1NKM0ZtczZaQ2pFODhLcEFaa2FQWE1ibmZ5ZXBJb2xtb2tKeG9tRUUxZFlPeHlxcWxGaDVJNkFXVDVBUVl3N3V2ZTdONWN1WTdCVExmUlpMbDJvMkJ1UnpIbE9qQzF4QjFoS0p2UVBRdElOcUtDbEJRRQ/callback?with_response=false'
+}
