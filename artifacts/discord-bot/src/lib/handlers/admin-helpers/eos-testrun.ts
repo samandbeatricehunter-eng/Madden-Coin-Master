@@ -22,14 +22,13 @@ import { db } from "@workspace/db";
 import {
   usersTable,
   teamSeasonStatsTable,
-  seasonStatTierConfigsTable,
   playerSeasonStatsTable,
   franchiseScheduleTable,
   playerStatWeekProcessedTable,
 } from "@workspace/db";
 import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
 import { getOrCreateActiveSeason } from "../../db/db-helpers.js";
-import { STAT_CATEGORIES, evaluateTier } from "../../economy/stat-categories.js";
+import { STAT_CATEGORIES, evaluateTier, getTiersByCategory } from "../../economy/stat-categories.js";
 import { getPayoutValue, getAllPayoutConfig, PAYOUT_KEYS } from "../../economy/payout-config.js";
 import { getSeasonRecords, getArticleStandings, type ArticleStanding } from "../../franchise/gcs-fallback.js";
 
@@ -126,17 +125,8 @@ export async function runEosTestRun(ctx: EosRunContext): Promise<void> {
     return;
   }
 
-  // ── 3. Load tier configs ──────────────────────────────────────────────────────
-  const allTierRows = await db.select()
-    .from(seasonStatTierConfigsTable)
-    .where(eq(seasonStatTierConfigsTable.seasonId, seasonId));
-
-  const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
-  for (const row of allTierRows) {
-    let arr = tiersByCategory.get(row.statCategory);
-    if (!arr) { arr = []; tiersByCategory.set(row.statCategory, arr); }
-    arr.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
-  }
+  // ── 3. Tier configs are HARDWIRED — no DB read, no admin override. ──────────
+  const tiersByCategory = getTiersByCategory();
 
   // ── 4. Load all team season stats ────────────────────────────────────────────
   const allTeamStats = await db.select().from(teamSeasonStatsTable)
@@ -282,9 +272,7 @@ export async function runEosTestRun(ctx: EosRunContext): Promise<void> {
   if (!standingsDataAvailable) {
     warnings.push("⚠️ **Missed Playoffs Bonus** — no standings data found. Cannot determine who missed the playoffs.");
   }
-  if (missingCategories.length > 0) {
-    warnings.push(`⚠️ **Stat Tier Bonuses** — tier configs missing for: ${missingCategories.join(", ")}. Run \`/admin-stat-tiers\` to seed.`);
-  }
+  // Stat tier configs are now hardwired — never "missing".
 
   // ── 10. Process each user ─────────────────────────────────────────────────────
   type UserResult = {

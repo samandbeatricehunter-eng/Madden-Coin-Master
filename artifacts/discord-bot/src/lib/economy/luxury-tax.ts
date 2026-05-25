@@ -148,6 +148,14 @@ export async function runLuxuryTaxForGuild(
     return { ...baseSummary(), skippedReason: "already ran for this season" };
   }
 
+  // Economy gate (defense in depth — main entry point also gates) — never
+  // tax a guild without the minimum active+linked user count.
+  const { assertEconomyEligible } = await import("./economy-gate.js");
+  const gate = await assertEconomyEligible(guildId);
+  if (!gate.ok) {
+    return { ...baseSummary(), skippedReason: gate.reason };
+  }
+
   const threshold = settings.luxuryTaxThreshold;
   const rateBps   = settings.luxuryTaxRateBps;
 

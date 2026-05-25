@@ -11,12 +11,12 @@ import {
   purchasesTable, inventoryTable, legendsTable, usersTable,
   interviewRequestsTable, wagersTable,
   franchiseScheduleTable, seasonsTable,
-  pendingEosPayoutsTable, seasonStatTierConfigsTable,
+  pendingEosPayoutsTable,
   pendingChannelPayoutsTable,
   statPaddingViolationsTable, seasonStatsTable,
+  coinTransactionsTable, serverSettingsTable,
 } from "@workspace/db";
 import { CORE_ATTRIBUTES } from "../lib/constants.js";
-import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../lib/economy/stat-categories.js";
 import { pendingCoCommActions, purgeExpiredCoCommActions } from "../lib/handlers/pending-cocomm-actions.js";
 import { executeAdminAction, type AdminActionContext } from "../lib/handlers/admin-actions.js";
 import {
@@ -52,7 +52,7 @@ import {
   handleGotwBonus, handleGotwBonusModal,
   handlePotwBonus, handlePotwBonusModal,
   handleReferral, handleReferralModal,
-  handleEos, handleEosKeySelect, handleEosEditModal, handleEosStatTierModal,
+  handleEos, handleEosKeySelect, handleEosEditModal,
   handleMilestone, handleMilestoneAdd, handleMilestoneEdit, handleMilestoneEditModal,
   handleInterviewPayout, handleInterviewPayoutModal,
 } from "../lib/handlers/admin-payout-handlers.js";
@@ -1580,94 +1580,85 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
-  // ── Admin: seed default stat tiers for a season ───────────────────────────────
-  if (action === "seed_stat_defaults") {
-    const seasonId = parseInt(secondPart ?? "0", 10);
-    if (!seasonId) { await interaction.reply({ content: "❌ Invalid season ID.", ephemeral: true }); return; }
-
-    const adminCheck = await isAdminUser(interaction.user.id, interaction.guildId!).catch(() => false);
-    if (!adminCheck) {
-      await interaction.reply({ content: "❌ Only admins can seed stat tier defaults.", ephemeral: true });
-      return;
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-
-    // Load existing tiers so we don't overwrite customized values
-    const existing = await db.select()
-      .from(seasonStatTierConfigsTable)
-      .where(eq(seasonStatTierConfigsTable.seasonId, seasonId));
-
-    const existingKeys = new Set(existing.map(r => `${r.statCategory}:${r.tier}`));
-
-    const toInsert: { seasonId: number; statCategory: string; tier: number; threshold: number; payout: number; updatedAt: Date }[] = [];
-
-    for (const cat of STAT_CATEGORIES) {
-      const defaults = STAT_TIER_DEFAULTS[cat.key];
-      if (!defaults) continue;
-      defaults.forEach((d, i) => {
-        const tier = i + 1;
-        const key = `${cat.key}:${tier}`;
-        if (!existingKeys.has(key)) {
-          toInsert.push({ seasonId, statCategory: cat.key, tier, threshold: d.threshold, payout: d.payout, updatedAt: new Date() });
-        }
-      });
-    }
-
-    if (toInsert.length === 0) {
-      await interaction.editReply({ content: "✅ All tiers are already configured — nothing to seed." });
-      return;
-    }
-
-    await db.insert(seasonStatTierConfigsTable).values(toInsert).onConflictDoNothing();
-
-    const seededCategories = [...new Set(toInsert.map(r => r.statCategory))];
-    const catLabels = seededCategories.map(key => {
-      const cat = STAT_CATEGORIES.find(c => c.key === key);
-      return cat ? `• **${cat.label}**` : `• ${key}`;
-    });
-
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🌱 Default Stat Tiers Seeded")
-          .setColor(Colors.Green)
-          .setDescription(
-            `Seeded **${toInsert.length} missing tiers** across **${seededCategories.length} categories** for Season ${seasonId}:\n\n` +
-            catLabels.join("\n"),
-          )
-          .setFooter({ text: "Existing custom tiers were not overwritten. Use /admin-set-stat-tier to adjust individual tiers." })
-          .setTimestamp(),
-      ],
-    });
-    return;
-  }
+  // Stat-tier seed admin action retired — tiers are hardwired in
+  // `lib/economy/stat-categories.ts`. The `seed_stat_defaults` button is gone.
 
   // ── EOS payout: commissioner approves ────────────────────────────────────────
   if (action === "eos_approve") {
     const payoutId  = parseInt(secondPart ?? "0", 10);
     await interaction.deferUpdate();
 
-    const [payout] = await db.select().from(pendingEosPayoutsTable)
-      .where(eq(pendingEosPayoutsTable.id, payoutId)).limit(1);
+    // Atomic claim: the UPDATE itself is the gatekeeper — only one concurrent
+    // approval can flip pending→approved. Everything after this point operates
+    // on the row WE claimed. Avoids the precheck-then-update double-pay race.
+    const guildId = interaction.guildId!;
+    let payout: typeof pendingEosPayoutsTable.$inferSelect | undefined;
+    let alreadyProcessed = false;
+    try {
+      await db.transaction(async (tx) => {
+        const claimed = await tx.update(pendingEosPayoutsTable)
+          .set({ status: "approved", approvedBy: interaction.user.id, approvedAt: new Date() })
+          .where(and(
+            eq(pendingEosPayoutsTable.id, payoutId),
+            eq(pendingEosPayoutsTable.status, "pending"),
+          ))
+          .returning();
+        if (claimed.length === 0) { alreadyProcessed = true; return; }
+        payout = claimed[0]!;
 
-    if (!payout) { await interaction.followUp({ content: "❌ Payout not found.", ephemeral: true }); return; }
-    if (payout.status !== "pending") {
-      await interaction.followUp({ content: `⚠️ This payout has already been **${payout.status}**.`, ephemeral: true });
+        // EOS Rebalance Tax: top-4 totalCoins rows are stamped during auto-post.
+        const taxAmount = payout.rebalanceTaxed ? payout.rebalanceTaxAmount : 0;
+        const netPayout = Math.max(0, payout.totalCoins - taxAmount);
+        const discordId = payout.discordId;
+
+        // 1. Credit the user the NET amount (post-tax) atomically.
+        if (netPayout > 0) {
+          await tx.update(usersTable)
+            .set({ balance: sql`${usersTable.balance} + ${netPayout}` })
+            .where(and(eq(usersTable.guildId, guildId), eq(usersTable.discordId, discordId)));
+          await tx.insert(coinTransactionsTable).values({
+            guildId,
+            discordId,
+            amount:      netPayout,
+            type:        "addcoins",
+            description: `EOS Season ${payout.seasonId} payout — approved by ${interaction.user.username}` +
+                         (taxAmount > 0 ? ` (net after 5% rebalance tax of ${taxAmount.toLocaleString()})` : ""),
+            relatedUserId: interaction.user.id,
+          });
+        }
+
+        // 2. If taxed, log the withholding + accumulate it into the guild pool.
+        //    Pool accumulation is ONE atomic UPDATE with a CASE that resets
+        //    when the stored pool belongs to a different season — prevents lost
+        //    updates under concurrent approvals.
+        if (taxAmount > 0) {
+          await tx.insert(coinTransactionsTable).values({
+            guildId,
+            discordId,
+            amount:      -taxAmount,
+            type:        "eos_rebalance_tax",
+            description: `EOS Rebalance Tax — 5% withheld from Season ${payout.seasonId} top-4 payout`,
+            relatedUserId: interaction.user.id,
+          });
+          await tx.update(serverSettingsTable).set({
+            eosRebalancePoolSeasonId: payout.seasonId,
+            eosRebalancePoolAmount: sql`CASE WHEN ${serverSettingsTable.eosRebalancePoolSeasonId} = ${payout.seasonId} THEN COALESCE(${serverSettingsTable.eosRebalancePoolAmount}, 0) + ${taxAmount} ELSE ${taxAmount} END`,
+          }).where(eq(serverSettingsTable.guildId, guildId));
+        }
+      });
+    } catch (err) {
+      console.error("eos_approve transaction failed:", err);
+      await interaction.followUp({ content: "❌ Approval failed — see logs.", ephemeral: true });
+      return;
+    }
+    if (alreadyProcessed || !payout) {
+      await interaction.followUp({ content: "⚠️ This payout has already been processed.", ephemeral: true });
       return;
     }
 
-    // Always use payout.discordId from the DB — authoritative source of truth
-    // regardless of what Discord ID was embedded in the button customId.
     const discordId = payout.discordId;
-
-    await addBalance(discordId, payout.totalCoins, interaction.guildId!);
-    await logTransaction(discordId, payout.totalCoins, "addcoins",
-      `EOS Season ${payout.seasonId} payout — approved by ${interaction.user.username}`,
-      interaction.guildId!, interaction.user.id);
-    await db.update(pendingEosPayoutsTable)
-      .set({ status: "approved", approvedBy: interaction.user.id, approvedAt: new Date() })
-      .where(eq(pendingEosPayoutsTable.id, payoutId));
+    const taxAmount = payout.rebalanceTaxed ? payout.rebalanceTaxAmount : 0;
+    const netPayout = Math.max(0, payout.totalCoins - taxAmount);
 
     type BreakdownItem = { label: string; statValue: number; unit: string; tier: number; coins: number };
     const breakdown = (payout.statBreakdown ?? []) as BreakdownItem[];
@@ -1677,16 +1668,29 @@ async function handleButton(interaction: ButtonInteraction) {
     const teamLabel = payout.teamName ? ` (${payout.teamName})` : "";
 
     // ── Update commissioner embed to "Approved" ────────────────────────────────
+    const commDescLines = [
+      `**Team:** <@${discordId}>${teamLabel}`,
+      `**Season:** ${payout.seasonId}`,
+      ``,
+      `**Stat Breakdown:**`,
+      breakdownLines,
+      ``,
+      `**Gross:** ${payout.totalCoins.toLocaleString()} coins`,
+    ];
+    if (taxAmount > 0) {
+      commDescLines.push(
+        `**Rebalance Tax Withheld (5%):** −${taxAmount.toLocaleString()} coins`,
+        `**Net Awarded:** **${netPayout.toLocaleString()} coins**`,
+      );
+    } else {
+      commDescLines.push(`**Net Awarded:** **${netPayout.toLocaleString()} coins**`);
+    }
+    commDescLines.push(``, `✅ Approved by ${interaction.user.toString()}`);
+
     const eosApprovedEmbed = new EmbedBuilder()
       .setColor(Colors.Green)
       .setTitle("✅ EOS Payout Approved")
-      .setDescription(
-        `**Team:** <@${discordId}>${teamLabel}\n` +
-        `**Season:** ${payout.seasonId}\n\n` +
-        `**Stat Breakdown:**\n${breakdownLines}\n\n` +
-        `**Total Awarded:** ${payout.totalCoins.toLocaleString()} coins\n\n` +
-        `✅ Approved by ${interaction.user.toString()}`,
-      )
+      .setDescription(commDescLines.join("\n"))
       .setFooter({ text: `EOS Payout #${payoutId} • Season ${payout.seasonId}` })
       .setTimestamp();
     await interaction.editReply({
@@ -1696,40 +1700,32 @@ async function handleButton(interaction: ButtonInteraction) {
       )],
     });
 
-    // ── Post to public payouts channel ─────────────────────────────────────────
-    const PAYOUTS_CHANNEL_ID = await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.PAYOUTS);
-    try {
-      const payoutsCh = PAYOUTS_CHANNEL_ID
-        ? await interaction.client.channels.fetch(PAYOUTS_CHANNEL_ID)
-        : null;
-      if (payoutsCh?.isTextBased()) {
-        const publicEmbed = new EmbedBuilder()
-          .setColor(Colors.Gold)
-          .setTitle("🏆 End-of-Season Payout")
-          .setDescription(
-            `<@${discordId}>${teamLabel}\n\n` +
-            `${breakdownLines}\n\n` +
-            `**Total Earned: +${payout.totalCoins.toLocaleString()} 🪙**`,
-          )
-          .setFooter({ text: `Season ${payout.seasonId} • EOS Payout` })
-          .setTimestamp();
-        await (payoutsCh as TextChannel).send({ embeds: [publicEmbed] });
-      }
-    } catch (err) {
-      console.error("[eos_approve] Failed to post to payouts channel:", err);
-    }
-
-    // ── DM the recipient with their full breakdown ──────────────────────────────
+    // ── DM the recipient with their full breakdown (no public channel post) ───
     try {
       const u = await interaction.client.users.fetch(discordId);
+      const dmLines = [
+        `Your Season ${payout.seasonId} payout has been approved!`,
+        ``,
+        `**Stat Breakdown:**`,
+        breakdownLines,
+        ``,
+        `**Gross:** ${payout.totalCoins.toLocaleString()} 🪙`,
+      ];
+      if (taxAmount > 0) {
+        dmLines.push(
+          `**Rebalance Tax Withheld (5%):** −${taxAmount.toLocaleString()} 🪙`,
+          `**Net Added to Balance:** **+${netPayout.toLocaleString()} 🪙**`,
+          ``,
+          `_This 5% rebalancing tax is pooled across the league's top-4 EOS payouts and ` +
+          `redistributed to the bottom-4 wealth users after the Super Bowl._`,
+        );
+      } else {
+        dmLines.push(`**Net Added to Balance:** **+${netPayout.toLocaleString()} 🪙**`);
+      }
       const dmEmbed = new EmbedBuilder()
         .setColor(Colors.Gold)
         .setTitle("🏆 End-of-Season Payout — Approved!")
-        .setDescription(
-          `Your Season ${payout.seasonId} payout has been approved!\n\n` +
-          `**Stat Breakdown:**\n${breakdownLines}\n\n` +
-          `**Total Added to Balance: +${payout.totalCoins.toLocaleString()} 🪙**`,
-        )
+        .setDescription(dmLines.join("\n"))
         .setFooter({ text: "Coins have been added to your balance" })
         .setTimestamp();
       await u.send({ embeds: [dmEmbed] }).catch(() => {});
@@ -2563,8 +2559,12 @@ async function handleModal(interaction: ModalSubmitInteraction) {
       return;
     }
 
+    // If this row was already stamped with rebalance tax (top-4 at auto-post
+    // time), recompute the tax amount to match the edited total — otherwise
+    // the final approval would withhold a stale 5% based on the original.
+    const newTax = payout.rebalanceTaxed ? Math.ceil(newAmount * 0.05) : payout.rebalanceTaxAmount;
     await db.update(pendingEosPayoutsTable)
-      .set({ totalCoins: newAmount })
+      .set({ totalCoins: newAmount, rebalanceTaxAmount: newTax })
       .where(eq(pendingEosPayoutsTable.id, payoutId));
 
     // Update the commissioner message buttons with new amount
@@ -2620,7 +2620,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action === "ap_modal_potwbonus")        { await handlePotwBonusModal(interaction);       return; }
   if (action === "ap_modal_interviewpayout")  { await handleInterviewPayoutModal(interaction); return; }
   if (action === "ap_modal_eos_edit")       { await handleEosEditModal(interaction);        return; }
-  if (action === "ap_modal_eos_stat_tier")  { await handleEosStatTierModal(interaction);    return; }
   if (action === "ap_modal_milestone_edit") { await handleMilestoneEditModal(interaction);  return; }
   if (action === "ap_modal_setpay_channel") { await handleSetPayChannelModal(interaction);  return; }
   if (action === "ap_modal_referral")       { await handleReferralModal(interaction);        return; }

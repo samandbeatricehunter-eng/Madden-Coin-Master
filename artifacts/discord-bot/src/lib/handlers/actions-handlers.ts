@@ -5655,11 +5655,8 @@ async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSes
 
   const season = await getOrCreateActiveSeason(gid);
 
-  const [configMap, tierRows] = await Promise.all([
-    getAllPayoutConfig(gid),
-    db.select().from(seasonStatTierConfigsTable)
-      .where(eq(seasonStatTierConfigsTable.seasonId, season.id)),
-  ]);
+  const configMap = await getAllPayoutConfig(gid);
+  void season; // tiers are hardwired in code — no per-season DB read needed
   const allKeys = getAllPayoutKeys();
 
   // ── Flat payout categories ───────────────────────────────────────────────────
@@ -5680,26 +5677,14 @@ async function handleEosPayouts(interaction: ButtonInteraction, sess: ActionsSes
     if (chunk) embed.addFields({ name: cat, value: chunk.slice(0, 1024), inline: false });
   }
 
-  // ── Stat tier thresholds (passing yards, rushing yards, etc.) ────────────────
-  const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
-  for (const row of tierRows) {
-    if (!tiersByCategory.has(row.statCategory)) tiersByCategory.set(row.statCategory, []);
-    tiersByCategory.get(row.statCategory)!.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
-  }
-  for (const [key, defaults] of Object.entries(STAT_TIER_DEFAULTS)) {
-    if (!tiersByCategory.has(key)) {
-      tiersByCategory.set(key, defaults.map((d, i) => ({ tier: i + 1, threshold: d.threshold, payout: d.payout })));
-    }
-  }
-
+  // ── Stat tier thresholds (hardwired in code, no DB read) ────────────────────
   const dirSym = (dir: string) => dir === "higher" ? "≥" : "≤";
   const statLines: string[] = [];
   for (const cat of STAT_CATEGORIES) {
-    const tiers = tiersByCategory.get(cat.key);
+    const tiers = STAT_TIER_DEFAULTS[cat.key];
     if (!tiers || !tiers.length) continue;
-    const sorted = [...tiers].sort((a, b) => a.tier - b.tier);
     const sym    = dirSym(cat.direction);
-    const tierStr = sorted.map(t => `T${t.tier}:${sym}${t.threshold.toLocaleString()} →${t.payout}c`).join(" | ");
+    const tierStr = tiers.map((t, i) => `T${i + 1}:${sym}${t.threshold.toLocaleString()} →${t.payout}c`).join(" | ");
     statLines.push(`**${cat.label}:** ${tierStr}`);
   }
   if (statLines.length) {

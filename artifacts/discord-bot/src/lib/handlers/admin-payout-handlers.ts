@@ -1853,63 +1853,47 @@ const EOS_PAYOUT_KEYS: Array<{ key: PayoutKey; label: string }> = [
   { key: PAYOUT_KEYS.EOS_MISSED_PLAYOFFS, label: "Missed Playoffs Consolation" },
 ];
 
-const EOS_STAT_TIER_PREFIX = "stat_tier:";
+// Stat-tier admin UI retired — tiers are HARDWIRED in
+// `lib/economy/stat-categories.ts`. The EOS panel shows them read-only via
+// the user-facing payouts viewer; only flat EOS payouts are editable here.
 
 export async function handleEos(interaction: ButtonInteraction): Promise<void> {
   if (!await checkAdmin(interaction)) { await interaction.reply({ content: "❌ Admin only.", ephemeral: true }); return; }
 
   const guildId = interaction.guildId!;
   const config  = await getAllPayoutConfig(guildId);
-  const season  = await getOrCreateActiveSeason(guildId);
-
-  const statTierRows = await db.select()
-    .from(seasonStatTierConfigsTable)
-    .where(eq(seasonStatTierConfigsTable.seasonId, season.id));
-
-  const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
-  for (const row of statTierRows) {
-    let arr = tiersByCategory.get(row.statCategory);
-    if (!arr) { arr = []; tiersByCategory.set(row.statCategory, arr); }
-    arr.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
-  }
 
   const flatBlock = EOS_PAYOUT_KEYS.map(({ key, label }) =>
     `**${label}**: ${config.get(key) ?? 0}`
   ).join("\n");
 
   const tierBlock = STAT_CATEGORIES.map(cat => {
-    const tiers = (tiersByCategory.get(cat.key) ?? []).sort((a, b) => a.tier - b.tier);
+    const tiers = (STAT_TIER_DEFAULTS[cat.key] ?? []);
     const op = cat.direction === "higher" ? "≥" : "≤";
     const tierStr = tiers.length > 0
-      ? tiers.map(t => `T${t.tier}:${op}${t.threshold}→${t.payout}🪙`).join(" ")
-      : "*(defaults not seeded)*";
+      ? tiers.map((t, i) => `T${i + 1}:${op}${t.threshold}→${t.payout}🪙`).join(" ")
+      : "*(no tiers — flat bonus)*";
     return `**${cat.label}**: ${tierStr}`;
   }).join("\n");
 
   const flatOptions = EOS_PAYOUT_KEYS.map(({ key, label }) =>
     new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setValue(key)
   );
-  const tierOptions = STAT_CATEGORIES.map(cat =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(`📊 ${cat.label} (tiered)`.slice(0, 100))
-      .setDescription(`${cat.direction === "higher" ? "Higher" : "Lower"} = better (${cat.unit})`)
-      .setValue(`${EOS_STAT_TIER_PREFIX}${cat.key}`)
-  );
-  const allOptions = [...flatOptions, ...tierOptions].slice(0, 25);
 
   const select = new StringSelectMenuBuilder()
     .setCustomId("ap_eos_key")
-    .setPlaceholder("Select a payout or stat-tier category to edit…")
+    .setPlaceholder("Select a flat EOS payout to edit…")
     .setMinValues(1).setMaxValues(1)
-    .addOptions(allOptions);
+    .addOptions(flatOptions.slice(0, 25));
 
   await interaction.update({
     embeds: [new EmbedBuilder()
       .setColor(0x2d6a4f)
       .setTitle("📊 EOS Payouts & Tiers")
+      .setDescription("Stat tiers are now **hardwired in code** and cannot be edited from Discord — adjust them in `lib/economy/stat-categories.ts` and redeploy.")
       .addFields(
-        { name: "Flat Payouts", value: flatBlock.slice(0, 1024) },
-        { name: "Stat Tier Categories (this season)", value: tierBlock.slice(0, 1024) },
+        { name: "Flat Payouts (editable)", value: flatBlock.slice(0, 1024) },
+        { name: "Stat Tier Categories (read-only)", value: tierBlock.slice(0, 1024) },
       )],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
@@ -1925,50 +1909,6 @@ export async function handleEosKeySelect(interaction: StringSelectMenuInteractio
   const sessionK = sessionKey(interaction.guildId!, interaction.user.id);
   let session = payoutSessions.get(sessionK);
   if (!session) session = { flow: "eos", afcSelected: [], nfcSelected: [] };
-
-  if (value.startsWith(EOS_STAT_TIER_PREFIX)) {
-    const catKey = value.slice(EOS_STAT_TIER_PREFIX.length);
-    const cat = STAT_CATEGORY_MAP.get(catKey);
-    if (!cat) { await interaction.deferUpdate(); return; }
-
-    session.eosStatCategory = catKey;
-    payoutSessions.set(sessionK, session);
-
-    const season = await getOrCreateActiveSeason(interaction.guildId!);
-    const existingRows = await db.select()
-      .from(seasonStatTierConfigsTable)
-      .where(and(
-        eq(seasonStatTierConfigsTable.seasonId, season.id),
-        eq(seasonStatTierConfigsTable.statCategory, catKey),
-      ));
-    const existingByTier = new Map(existingRows.map(r => [r.tier, r]));
-
-    const defaults = STAT_TIER_DEFAULTS[catKey] ?? [];
-    const op = cat.direction === "higher" ? "≥" : "≤";
-
-    const getRow = (tier: number) => existingByTier.get(tier) ?? defaults[tier - 1];
-    const t = (n: number) => { const r = getRow(n); return r ? `${r.threshold}/${r.payout}` : ""; };
-
-    const modal = new ModalBuilder()
-      .setCustomId("ap_modal_eos_stat_tier")
-      .setTitle(`Stat Tiers: ${cat.label.slice(0, 30)}`);
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId("t1").setLabel(`Tier 1 (worst) — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(1))
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId("t2").setLabel(`Tier 2 — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(2))
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId("t3").setLabel(`Tier 3 — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(3))
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId("t4").setLabel(`Tier 4 (best) — format: ${op}threshold/coins`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(t(4))
-      ),
-    );
-    await interaction.showModal(modal);
-    return;
-  }
 
   const key = value as PayoutKey;
   const current = await getPayoutValue(key, interaction.guildId!);
@@ -2007,48 +1947,7 @@ export async function handleEosEditModal(interaction: ModalSubmitInteraction): P
   payoutSessions.delete(sessionK);
 }
 
-export async function handleEosStatTierModal(interaction: ModalSubmitInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-  const sessionK = sessionKey(interaction.guildId!, interaction.user.id);
-  const session  = payoutSessions.get(sessionK);
-  if (!session?.eosStatCategory) { await interaction.editReply({ content: "❌ Session expired." }); return; }
-
-  const catKey = session.eosStatCategory;
-  const cat = STAT_CATEGORY_MAP.get(catKey);
-  if (!cat) { await interaction.editReply({ content: "❌ Invalid category." }); return; }
-
-  const season = await getOrCreateActiveSeason(interaction.guildId!);
-  const changes: string[] = [];
-
-  for (let tier = 1; tier <= 4; tier++) {
-    const raw = interaction.fields.getTextInputValue(`t${tier}`).trim();
-    if (!raw) continue;
-    const parts = raw.split("/");
-    if (parts.length !== 2) { changes.push(`⚠️ Tier ${tier}: invalid format (use threshold/coins)`); continue; }
-    const threshold = parseInt(parts[0]!.trim(), 10);
-    const payout    = parseInt(parts[1]!.trim(), 10);
-    if (isNaN(threshold) || isNaN(payout)) { changes.push(`⚠️ Tier ${tier}: non-numeric value`); continue; }
-
-    await db.insert(seasonStatTierConfigsTable)
-      .values({ seasonId: season.id, statCategory: catKey, tier, threshold, payout })
-      .onConflictDoUpdate({
-        target: [seasonStatTierConfigsTable.seasonId, seasonStatTierConfigsTable.statCategory, seasonStatTierConfigsTable.tier],
-        set: { threshold, payout, updatedAt: new Date() },
-      });
-    const op = cat.direction === "higher" ? "≥" : "≤";
-    changes.push(`✅ ${cat.label} Tier ${tier}: ${op}${threshold} → +${payout} coins`);
-  }
-
-  payoutSessions.delete(sessionK);
-  await interaction.editReply({
-    embeds: [new EmbedBuilder()
-      .setColor(Colors.Green)
-      .setTitle(`✅ Stat Tiers Updated — ${cat.label}`)
-      .setDescription(changes.join("\n") || "No changes made.")
-      .setFooter({ text: `By ${interaction.user.username}` })
-      .setTimestamp()],
-  });
-}
+// handleEosStatTierModal removed — stat tiers are hardwired.
 
 // ── Set Milestone Payouts & Tiers ──────────────────────────────────────────────
 export async function handleMilestone(interaction: ButtonInteraction): Promise<void> {

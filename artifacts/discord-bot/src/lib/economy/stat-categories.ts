@@ -8,8 +8,8 @@ export interface StatCategory {
   jsonFields: string[];
 }
 
-// All configurable end-of-season stat categories.
-// direction "higher" = higher value is better (offensive stats + def sacks/INTs)
+// All end-of-season stat tier categories.
+// direction "higher" = higher value is better (offensive stats + def sacks/INTs/TO diff)
 // direction "lower"  = lower value is better (def yards/pts/redzone allowed)
 export const STAT_CATEGORIES: StatCategory[] = [
   // ── Offense ──────────────────────────────────────────────────────────────────
@@ -103,88 +103,79 @@ export const STAT_CATEGORY_CHOICES = STAT_CATEGORIES.map(c => ({
   value: c.key,
 }));
 
-// ── Default tier configurations (from league settings) ───────────────────────
-// threshold is the qualifying value; tiers are ordered 1→4 (worst→best payout).
+// ── HARDWIRED tier configurations ────────────────────────────────────────────
+// Uniform payouts across every category: T1=50, T2=100, T3=150, T4=250.
+// Tiers are ordered 1→4 (worst→best payout).
 // For "lower" categories (yards/pts allowed, def RZ%), lower threshold = better tier.
+// No admin override — these are the league's locked-in EOS bonus tiers.
+// QB YPA / RB YPC are NOT tiered — they're flat individual bonuses; see
+// PAYOUT_KEYS.EOS_QB_YPA_BONUS / EOS_RB_YPC_BONUS in payout-config.
 export const STAT_TIER_DEFAULTS: Record<string, { threshold: number; payout: number }[]> = {
   off_pass_yds: [
-    { threshold: 4500, payout: 25 },
-    { threshold: 5000, payout: 50 },
-    { threshold: 5500, payout: 75 },
-    { threshold: 6000, payout: 100 },
+    { threshold: 3500, payout: 50  },
+    { threshold: 4250, payout: 100 },
+    { threshold: 4750, payout: 150 },
+    { threshold: 5500, payout: 250 },
   ],
   off_rush_yds: [
-    { threshold: 1750, payout: 25 },
-    { threshold: 2100, payout: 50 },
-    { threshold: 2400, payout: 75 },
-    { threshold: 2750, payout: 100 },
+    { threshold: 1250, payout: 50  },
+    { threshold: 1750, payout: 100 },
+    { threshold: 2100, payout: 150 },
+    { threshold: 2350, payout: 250 },
   ],
   off_pts_per_game: [
-    { threshold: 28, payout: 25 },
-    { threshold: 32, payout: 50 },
-    { threshold: 36, payout: 75 },
-    { threshold: 40, payout: 100 },
+    { threshold: 28, payout: 50  },
+    { threshold: 32, payout: 100 },
+    { threshold: 36, payout: 150 },
+    { threshold: 40, payout: 250 },
   ],
   off_redzone_pct: [
-    { threshold: 68, payout: 25 },
-    { threshold: 74, payout: 50 },
-    { threshold: 80, payout: 75 },
-    { threshold: 86, payout: 100 },
+    { threshold: 50, payout: 50  },
+    { threshold: 60, payout: 100 },
+    { threshold: 70, payout: 150 },
+    { threshold: 80, payout: 250 },
   ],
   def_pass_yds: [
-    { threshold: 4000, payout: 25 },
-    { threshold: 3600, payout: 50 },
-    { threshold: 3200, payout: 75 },
-    { threshold: 2800, payout: 100 },
+    { threshold: 4200, payout: 50  },
+    { threshold: 3800, payout: 100 },
+    { threshold: 3400, payout: 150 },
+    { threshold: 3000, payout: 250 },
   ],
   def_rush_yds: [
-    { threshold: 1800, payout: 25 },
-    { threshold: 1500, payout: 50 },
-    { threshold: 1250, payout: 75 },
-    { threshold: 1000, payout: 100 },
+    { threshold: 1900, payout: 50  },
+    { threshold: 1650, payout: 100 },
+    { threshold: 1400, payout: 150 },
+    { threshold: 1150, payout: 250 },
   ],
   def_pts_allowed: [
-    { threshold: 550, payout: 25 },
-    { threshold: 450, payout: 50 },
-    { threshold: 350, payout: 75 },
-    { threshold: 250, payout: 100 },
-  ],
-  def_sacks: [
-    { threshold: 35, payout: 25 },
-    { threshold: 45, payout: 50 },
-    { threshold: 55, payout: 75 },
-    { threshold: 65, payout: 100 },
-  ],
-  def_ints: [
-    { threshold: 15, payout: 25 },
-    { threshold: 20, payout: 50 },
-    { threshold: 25, payout: 75 },
-    { threshold: 30, payout: 100 },
+    { threshold: 550, payout: 50  },
+    { threshold: 450, payout: 100 },
+    { threshold: 350, payout: 150 },
+    { threshold: 250, payout: 250 },
   ],
   def_redzone_pct: [
-    { threshold: 58, payout: 25 },
-    { threshold: 52, payout: 50 },
-    { threshold: 46, payout: 75 },
-    { threshold: 40, payout: 100 },
+    { threshold: 60, payout: 50  },
+    { threshold: 52, payout: 100 },
+    { threshold: 46, payout: 150 },
+    { threshold: 40, payout: 250 },
+  ],
+  def_sacks: [
+    { threshold: 28, payout: 50  },
+    { threshold: 38, payout: 100 },
+    { threshold: 48, payout: 150 },
+    { threshold: 60, payout: 250 },
+  ],
+  def_ints: [
+    { threshold: 12, payout: 50  },
+    { threshold: 18, payout: 100 },
+    { threshold: 24, payout: 150 },
+    { threshold: 30, payout: 250 },
   ],
   turnover_diff: [
-    { threshold: 3,  payout: 25  },
-    { threshold: 6,  payout: 50  },
-    { threshold: 9,  payout: 75  },
-    { threshold: 12, payout: 100 },
-  ],
-  // Thresholds are integer × 10 (e.g. 70 = 7.0 YPA, 45 = 4.5 YPC)
-  qb_ypa: [
-    { threshold: 70, payout: 25 },
-    { threshold: 75, payout: 50 },
-    { threshold: 80, payout: 75 },
-    { threshold: 85, payout: 100 },
-  ],
-  rb_ypc: [
-    { threshold: 45, payout: 25 },
-    { threshold: 50, payout: 50 },
-    { threshold: 55, payout: 75 },
-    { threshold: 60, payout: 100 },
+    { threshold: 5,  payout: 50  },
+    { threshold: 10, payout: 100 },
+    { threshold: 15, payout: 150 },
+    { threshold: 20, payout: 250 },
   ],
 };
 
@@ -222,4 +213,15 @@ export function extractStat(teamObj: any, fields: string[]): number | null {
     if (v != null && !isNaN(Number(v))) return Number(v);
   }
   return null;
+}
+
+// Build the runtime tiersByCategory map used by EOS auto-post + the user-facing
+// stat-tier viewer. Indexed as tier 1..N with the threshold + payout straight
+// from STAT_TIER_DEFAULTS — no DB read.
+export function getTiersByCategory(): Map<string, { tier: number; threshold: number; payout: number }[]> {
+  const m = new Map<string, { tier: number; threshold: number; payout: number }[]>();
+  for (const [key, tiers] of Object.entries(STAT_TIER_DEFAULTS)) {
+    m.set(key, tiers.map((t, i) => ({ tier: i + 1, threshold: t.threshold, payout: t.payout })));
+  }
+  return m;
 }

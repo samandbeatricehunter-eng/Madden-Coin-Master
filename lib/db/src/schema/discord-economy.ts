@@ -347,6 +347,8 @@ export const txTypeEnum = pgEnum("tx_type", [
   "savings_interest",
   "luxury_tax_charge",
   "luxury_tax_payout",
+  "eos_rebalance_tax",
+  "eos_rebalance_payout",
 ]);
 
 export const coinTransactionsTable = pgTable("coin_transactions", {
@@ -1053,6 +1055,18 @@ export const serverSettingsTable = pgTable("server_settings", {
   luxuryTaxLastPoolAmount:        integer("luxury_tax_last_pool_amount").notNull().default(0),
   luxuryTaxLastBeneficiaryCount:  integer("luxury_tax_last_beneficiary_count").notNull().default(0),
   luxuryTaxLastPerBeneficiary:    integer("luxury_tax_last_per_beneficiary").notNull().default(0),
+  // ── EOS Rebalance Tax ─────────────────────────────────────────────────────
+  // Pool of 5% withheld from each top-4 EOS payout at commissioner approval.
+  // Pool season id is the season the pool is FOR; reset to null after the
+  // SB→Offseason distribution runs. If pool_season_id != active season, the
+  // pool_amount is treated as stale (zero) and a new pool starts.
+  eosRebalancePoolSeasonId:        integer("eos_rebalance_pool_season_id"),
+  eosRebalancePoolAmount:          integer("eos_rebalance_pool_amount").notNull().default(0),
+  eosRebalanceLastSeasonId:        integer("eos_rebalance_last_season_id"),
+  eosRebalanceLastRunAt:           timestamp("eos_rebalance_last_run_at", { withTimezone: true }),
+  eosRebalanceLastPool:            integer("eos_rebalance_last_pool").notNull().default(0),
+  eosRebalanceLastBeneficiaryCount: integer("eos_rebalance_last_beneficiary_count").notNull().default(0),
+  eosRebalanceLastPerBeneficiary:  integer("eos_rebalance_last_per_beneficiary").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -1208,6 +1222,12 @@ export const pendingEosPayoutsTable = pgTable("pending_eos_payouts", {
   approvedBy:              text("approved_by"),
   approvedAt:              timestamp("approved_at"),
   createdAt:               timestamp("created_at").notNull().defaultNow(),
+  // ── EOS Rebalance Tax ─────────────────────────────────────────────────────
+  // Stamped at insert (eos-auto-post) for the top-4 totalCoins rows for the
+  // season. On approval, rebalanceTaxAmount is withheld from totalCoins and
+  // accumulated into server_settings.eosRebalancePoolAmount.
+  rebalanceTaxed:          boolean("rebalance_taxed").notNull().default(false),
+  rebalanceTaxAmount:      integer("rebalance_tax_amount").notNull().default(0),
 });
 
 export type ServerSettings = typeof serverSettingsTable.$inferSelect;

@@ -5,12 +5,13 @@ import {
 import { db } from "@workspace/db";
 import {
   usersTable, teamSeasonStatsTable,
-  seasonStatTierConfigsTable, pendingEosPayoutsTable,
+  pendingEosPayoutsTable,
   playerSeasonStatsTable, franchiseScheduleTable,
 } from "@workspace/db";
 import { eq, and, ne, notLike, desc, isNotNull } from "drizzle-orm";
-import { STAT_CATEGORIES, evaluateTier } from "../economy/stat-categories.js";
+import { STAT_CATEGORIES, evaluateTier, getTiersByCategory } from "../economy/stat-categories.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
+import { assertEconomyEligible } from "../economy/economy-gate.js";
 import { PRIMARY_GUILD_ID, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 import { getArticleStandings, getSeasonRecords } from "./gcs-fallback.js";
 import { computePlayoffSeeds } from "./playoff-seeding.js";
@@ -57,7 +58,14 @@ export async function runEosAutoPost(
   client: Client,
   seasonId: number,
   guildId: string = PRIMARY_GUILD_ID,
-): Promise<{ posted: number; skipped: number; errors: number }> {
+): Promise<{ posted: number; skipped: number; errors: number; skippedReason?: string }> {
+
+  // ── 0. Economy gate — every payout system requires ≥8 active+linked users ───
+  const gate = await assertEconomyEligible(guildId);
+  if (!gate.ok) {
+    console.warn(`[eos-auto-post] Skipped for ${guildId}: ${gate.reason}`);
+    return { posted: 0, skipped: 0, errors: 0, skippedReason: gate.reason };
+  }
 
   // ── 1. Load all registered users for this guild only ─────────────────────────
   const allUsers = await db.select({
@@ -76,17 +84,8 @@ export async function runEosAutoPost(
     return { posted: 0, skipped: 0, errors: 0 };
   }
 
-  // ── 2. Load tier configs for this season ──────────────────────────────────────
-  const allTierRows = await db.select()
-    .from(seasonStatTierConfigsTable)
-    .where(eq(seasonStatTierConfigsTable.seasonId, seasonId));
-
-  const tiersByCategory = new Map<string, { tier: number; threshold: number; payout: number }[]>();
-  for (const row of allTierRows) {
-    let arr = tiersByCategory.get(row.statCategory);
-    if (!arr) { arr = []; tiersByCategory.set(row.statCategory, arr); }
-    arr.push({ tier: row.tier, threshold: row.threshold, payout: row.payout });
-  }
+  // ── 2. Tier configs are HARDWIRED — no DB read, no admin override. ───────────
+  const tiersByCategory = getTiersByCategory();
 
   // ── 3. Load all team season stats for this season ─────────────────────────────
   const allTeamStats = await db.select()
@@ -517,5 +516,91 @@ export async function runEosAutoPost(
     }
   }
 
+  // ── EOS Rebalance Tax: stamp top-4 totalCoins rows with 5% withholding ──────
+  // Withholding actually moves coins at commissioner approval time, but we
+  // mark which rows are taxed up-front so the approval handler doesn't have
+  // to recompute the ranking. Tie-break = 5×d10 sum per user, re-roll on tie.
+  try {
+    await stampRebalanceTax(seasonId);
+  } catch (err) {
+    console.error(`[eos-auto-post] Rebalance-tax stamping failed for season ${seasonId}:`, err);
+  }
+
   return { posted, skipped, errors };
+}
+
+// Sum of 5d10 — RNG tiebreak per league rules.
+function rollFiveD10(): number {
+  let sum = 0;
+  for (let i = 0; i < 5; i++) sum += 1 + Math.floor(Math.random() * 10);
+  return sum;
+}
+
+async function stampRebalanceTax(seasonId: number): Promise<void> {
+  // Pull every pending row for this season; sort by totalCoins desc with
+  // RNG tiebreak. Top 4 get rebalance_taxed=true, rebalance_tax_amount=ceil(5%).
+  const rows = await db.select().from(pendingEosPayoutsTable)
+    .where(eq(pendingEosPayoutsTable.seasonId, seasonId));
+
+  if (rows.length === 0) return;
+
+  // Group by totalCoins to detect ties at the cutoff bucket.
+  rows.sort((a, b) => b.totalCoins - a.totalCoins);
+
+  const TOP_N = 4;
+  const taxedIds: number[] = [];
+  let i = 0;
+  while (taxedIds.length < TOP_N && i < rows.length) {
+    const bucketCoins = rows[i]!.totalCoins;
+    const bucket: typeof rows = [];
+    while (i < rows.length && rows[i]!.totalCoins === bucketCoins) {
+      bucket.push(rows[i]!);
+      i++;
+    }
+    const remaining = TOP_N - taxedIds.length;
+    if (bucket.length <= remaining) {
+      for (const r of bucket) taxedIds.push(r.id);
+      continue;
+    }
+    // Tied bucket straddles the cutoff — roll 5d10 per row, re-roll on continued tie.
+    let pool = bucket.slice();
+    let round = 1;
+    while (taxedIds.length < TOP_N && pool.length > 0) {
+      const rolled = pool.map(r => ({ r, roll: rollFiveD10() }));
+      rolled.sort((a, b) => b.roll - a.roll);
+      const need = TOP_N - taxedIds.length;
+      const cutoffRoll = rolled[need - 1]!.roll;
+      const clearWinners = rolled.filter(x => x.roll > cutoffRoll);
+      const cutoffTied   = rolled.filter(x => x.roll === cutoffRoll);
+      for (const w of clearWinners) taxedIds.push(w.r.id);
+      const stillNeed = TOP_N - taxedIds.length;
+      if (stillNeed <= 0) break;
+      if (cutoffTied.length === stillNeed) {
+        for (const w of cutoffTied) taxedIds.push(w.r.id);
+        break;
+      }
+      pool = cutoffTied.map(x => x.r);
+      round++;
+      if (round > 20) {
+        // Safety vent — astronomically unlikely; pick by id so we always halt.
+        pool.sort((a, b) => a.id - b.id);
+        for (const r of pool.slice(0, stillNeed)) taxedIds.push(r.id);
+        break;
+      }
+    }
+  }
+
+  // Stamp each taxed row.
+  for (const id of taxedIds) {
+    const row = rows.find(r => r.id === id);
+    if (!row) continue;
+    const taxAmount = Math.ceil(row.totalCoins * 0.05);
+    await db.update(pendingEosPayoutsTable)
+      .set({ rebalanceTaxed: true, rebalanceTaxAmount: taxAmount })
+      .where(eq(pendingEosPayoutsTable.id, id));
+  }
+
+  console.log(
+    `[eos-auto-post] Stamped rebalance tax on ${taxedIds.length} top payout(s) for season ${seasonId}`,
+  );
 }

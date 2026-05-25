@@ -3716,32 +3716,9 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         );
       }
 
-      // 3. End-of-regular-season Luxury Tax (idempotent per season)
-      try {
-        const { runLuxuryTaxForGuild } = await import("../economy/luxury-tax.js");
-        const summary = await runLuxuryTaxForGuild(interaction.client, guildId, season.id);
-        console.log("[admin-operations] Luxury tax result:", summary);
-        if (summary.ran && summary.taxedCount > 0) {
-          await postCommissionerNotice(
-            interaction.client, guildId,
-            `📉 **Luxury Tax — Season ${season.seasonNumber}**\n` +
-            `Charged **${summary.taxedCount}** wealthy user${summary.taxedCount === 1 ? "" : "s"} ` +
-            `(${(summary.rateBps / 100).toFixed(2)}% on excess over ` +
-            `${summary.threshold.toLocaleString()} coins combined).\n` +
-            `Pool: **${summary.poolAmount.toLocaleString()}** coins → ` +
-            `**${summary.perBeneficiary.toLocaleString()}** coins each to ` +
-            `**${summary.beneficiaryCount}** bottom-half users` +
-            (summary.remainder > 0 ? ` (${summary.remainder} coin remainder uncollected).` : "."),
-          );
-        }
-      } catch (err) {
-        console.error("[admin-operations] Luxury tax error:", err);
-        await postCommissionerNotice(
-          interaction.client, guildId,
-          `⚠️ **Luxury Tax Failed**\nEnd-of-regular-season luxury tax threw an error: ${err}.\n` +
-          "Coin balances may be partially adjusted — check the Luxury Tax panel and Recent History.",
-        );
-      }
+      // Luxury Tax intentionally NOT run pre-wildcard anymore. It now runs
+      // alongside EOS Rebalance at the SB→Offseason advance — see the
+      // `if (newWeek === "offseason")` block below.
 
       // 4. Wildcard automation (in-game awards, season PR, GOTY poll, etc.)
       try {
@@ -3805,6 +3782,57 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   // ── Offseason historical post + channel wipes + roster carryforward ──────
   if (newWeek === "offseason") {
     (async () => {
+      // ── EOS Rebalance Tax distribution (must run BEFORE Luxury Tax so the
+      //     5% pool is paid out first, not absorbed into the lux-tax pool). ──
+      try {
+        const { runEosRebalanceForGuild } = await import("../economy/eos-rebalance.js");
+        const summary = await runEosRebalanceForGuild(interaction.client, guildId, season.id);
+        console.log("[admin-operations] EOS rebalance result:", summary);
+        if (summary.ran && summary.beneficiaryCount > 0) {
+          await postCommissionerNotice(
+            interaction.client, guildId,
+            `💸 **EOS Rebalance — Season ${season.seasonNumber}**\n` +
+            `Pool: **${summary.pool.toLocaleString()}** coins → ` +
+            `**${summary.perBeneficiary.toLocaleString()}** coins each to ` +
+            `**${summary.beneficiaryCount}** bottom-wealth users (top-4 excluded).`,
+          );
+        }
+      } catch (err) {
+        console.error("[admin-operations] EOS rebalance error:", err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **EOS Rebalance Failed**\nSB→Offseason rebalance threw an error: ${err}.\n` +
+          "Check Recent History — pool may still be intact for a retry.",
+        );
+      }
+
+      // ── Luxury Tax (moved from pre-wildcard, idempotent per season) ─────
+      try {
+        const { runLuxuryTaxForGuild } = await import("../economy/luxury-tax.js");
+        const summary = await runLuxuryTaxForGuild(interaction.client, guildId, season.id);
+        console.log("[admin-operations] Luxury tax result:", summary);
+        if (summary.ran && summary.taxedCount > 0) {
+          await postCommissionerNotice(
+            interaction.client, guildId,
+            `📉 **Luxury Tax — Season ${season.seasonNumber}**\n` +
+            `Charged **${summary.taxedCount}** wealthy user${summary.taxedCount === 1 ? "" : "s"} ` +
+            `(${(summary.rateBps / 100).toFixed(2)}% on excess over ` +
+            `${summary.threshold.toLocaleString()} coins combined).\n` +
+            `Pool: **${summary.poolAmount.toLocaleString()}** coins → ` +
+            `**${summary.perBeneficiary.toLocaleString()}** coins each to ` +
+            `**${summary.beneficiaryCount}** bottom-half users` +
+            (summary.remainder > 0 ? ` (${summary.remainder} coin remainder uncollected).` : "."),
+          );
+        }
+      } catch (err) {
+        console.error("[admin-operations] Luxury tax error:", err);
+        await postCommissionerNotice(
+          interaction.client, guildId,
+          `⚠️ **Luxury Tax Failed**\nPost-SB luxury tax threw an error: ${err}.\n` +
+          "Coin balances may be partially adjusted — check the Luxury Tax panel and Recent History.",
+        );
+      }
+
       try {
         await runOffseasonHistoricalPost(interaction.client, season.id, season.seasonNumber);
       } catch (err) {

@@ -184,7 +184,7 @@ export async function rebuildHistoricalChannel(
     ok: false,
     message:
       "ℹ️ The end-of-season historical-records channel has been retired. " +
-      "Coin payouts (PR bonuses, stat tiers, GOTY winners) now flow through the Commissioner's Office.",
+      "Coin payouts (PR bonuses, EOS stat bonuses, GOTY winners) now flow through the Commissioner's Office.",
   };
 }
 
