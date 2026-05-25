@@ -1,0 +1,79 @@
+    '      SET    team = u.team\n' +
+    '      FROM   economy_users u\n' +
+    '      JOIN   seasons s ON s.id = inventory.season_id AND s.guild_id = u.guild_id\n' +
+    '      WHERE  inventory.discord_id      = u.discord_id\n' +
+    '        AND  inventory.team            IS NULL\n' +
+    "        AND  inventory.legend_category = 'permanent'\n" +
+    '        AND  u.team                    IS NOT NULL\n' +
+    "        AND  u.team                    != ''\n" +
+    '    ',
+  params: [],
+  cause: error: invalid reference to FROM-clause entry for table "inventory"
+      at /app/node_modules/.pnpm/pg-pool@3.13.0_pg@8.20.0/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async <anonymous> (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/node-postgres/session.ts:149:14)
+      at async NodePgPreparedQuery.queryWithCache (/app/node_modules/.pnpm/drizzle-orm@0.45.2_@types+pg@8.18.0_pg@8.20.0/node_modules/src/pg-core/session.ts:71:12)
+      at async backfillPermanentVaultTeams (/app/artifacts/discord-bot/src/events/ready.ts:63:20)
+      at async Module.execute (/app/artifacts/discord-bot/src/events/ready.ts:255:3) {
+    length: 233,
+    severity: 'ERROR',
+    code: '42P01',
+    detail: 'There is an entry for table "inventory", but it cannot be referenced from this part of the query.',
+    hint: undefined,
+    position: '114',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '3640',
+    routine: 'errorMissingRTE'
+  }
+}
+[startup-migration] Known guild channels seeded.
+[co-comm-migration] The R.E.C. League (Real Elite Competition): Could not delete Co-Commissioner role: DiscordAPIError[50013]: Missing Permissions
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async SequentialHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/SequentialHandler.ts:417:20)
+    at async SequentialHandler.queueRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/SequentialHandler.ts:169:11)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async RoleManager.delete (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/managers/RoleManager.js:313:5)
+    at async Role.delete (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/Role.js:462:5)
+    at async migrateCoCommissioners (/app/artifacts/discord-bot/src/events/ready.ts:239:7)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/ready.ts:258:3) {
+  requestBody: { files: undefined, json: undefined },
+  rawError: { message: 'Missing Permissions', code: 50013 },
+(node:87) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+[select] menu_cat: DiscordAPIError[40060]: Interaction has already been acknowledged.
+    at handleErrors (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/Shared.ts:148:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async BurstHandler.runRequest (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/handlers/BurstHandler.ts:144:20)
+    at async _REST.request (/app/node_modules/.pnpm/@discordjs+rest@2.6.1/node_modules/@discordjs/rest/src/lib/REST.ts:210:20)
+    at async StringSelectMenuInteraction.update (/app/node_modules/.pnpm/discord.js@14.25.1/node_modules/discord.js/src/structures/interfaces/InteractionResponses.js:354:22)
+    at async handleHireTrainerStart (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:7164:3)
+  },
+    at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:818:47)
+    at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23)
+  code: 40060,
+    at async handleSelectMenu (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2085:21)
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:207:11) {
+  status: 400,
+  requestBody: { files: [], json: { type: 7, data: [Object] } },
+  method: 'POST',
+  rawError: {
+  url: 'https://discord.com/api/v10/interactions/1508272350209118239/aW50ZXJhY3Rpb246MTUwODI3MjM1MDIwOTExODIzOTp2Tk55NGJhUU56djZBdVFZcHNnNnhqS1N3R2RpeUw1Zk5tcE16OVpyOExXbGtGa24zZ0g3dmZhWG9adVhPWnduS0FYalpwZ3I2NkFwSkFURXVsV3RyN2dRUXpzVFhhYjhxRXFJUERCeDNwN2lEOGd0aWVUVEVyWlJUM1dGczg4YQ/callback?with_response=false'
+    message: 'Interaction has already been acknowledged.',
+}
+    code: 40060
+    at async Module.execute (/app/artifacts/discord-bot/src/events/interactionCreate.ts:207:11)
+[select] menu_cat: Error: TRASH_TALK_QUESTIONS expected 150 entries, got 149
+    at <anonymous> (/app/artifacts/discord-bot/src/lib/economy/press-questions.ts:313:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async handleActionsInteraction (/app/artifacts/discord-bot/src/lib/handlers/actions-handlers.ts:783:35)
+    at async handleMenuSelect (/app/artifacts/discord-bot/src/lib/menu/menu-router.ts:82:23)
+    at async handleSelectMenu (/app/artifacts/discord-bot/src/events/interactionCreate.ts:2085:21)
