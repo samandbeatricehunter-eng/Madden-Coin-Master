@@ -1872,10 +1872,11 @@ async function handleInflationPanel(interaction: ButtonInteraction) {
     .setTitle("📈 Economy Inflation")
     .setDescription(
       "Per-guild price scaling that gently counteracts coin stacking.\n" +
-      "When the median active-user balance rises above the target, every " +
+      "When the median **wallet** balance rises above the target, every " +
       "store price (legends, attrs, dev ups, age resets, custom players, " +
-      "contract mods) scales up proportionally. **Payouts are never inflated** " +
-      "— only what users spend.\n\n" +
+      "contract mods) scales up proportionally. **Savings balances are " +
+      "excluded** — only spendable wallet coins count toward the median. " +
+      "**Payouts are never inflated** — only what users spend.\n\n" +
       "Formula: `multiplier = clamp(√(median / target), min, max)`, " +
       "snapped to the nearest 5%."
     )
