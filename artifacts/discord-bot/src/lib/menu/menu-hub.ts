@@ -79,209 +79,159 @@ const ECO_VISIBLE  = (c: MenuCtx) => !!c.settings.coinEconomy;
 
 const ROOT_NODES: MenuNode[] = [
   {
-    path: "coaches", emoji: "👔",
-    label: "Coaches Office",
-    description: "Rosters, press, training, age, dev",
+    path: "team", emoji: "🏈",
+    label: "Team Hub",
+    description: "Rosters, schedule, team info, press, rivalries",
     visible: MCA_VISIBLE,
     kind: "branch",
     children: [
+      { path: "team.rosters",     emoji: "👥", label: "All Rosters",           description: "Browse any team's roster",              kind: "action", action: "ac_anyroster" },
+      { path: "team.freeagents",  emoji: "🟢", label: "Free Agents",           description: "Browse available free agents",          kind: "action", action: "ac_freeagents" },
+      { path: "team.schedule",    emoji: "📅", label: "Schedule",              description: "View the full season schedule",          kind: "action", action: "ac_schedule" },
+      { path: "team.myteam",      emoji: "📋", label: "My Team",               description: "Open your roster and team card",         kind: "action", action: "ac_myroster" },
+      { path: "team.press",       emoji: "🎙️", label: "Call Press Conference", description: "Answer interview questions and earn coins", kind: "action", action: "ac_press_open" },
+      { path: "team.rivalries",   emoji: "⚔️", label: "Rivalries",             description: "View your top H2H rivalries",            kind: "action", action: "ac_rivalries" },
+    ],
+  },
+
+  {
+    path: "store", emoji: "🛒",
+    label: "Store",
+    description: "Legends, customs, training, dev, age, contracts",
+    visible: ECO_VISIBLE,
+    kind: "branch",
+    children: [
       {
-        path: "coaches.rosters", emoji: "🏈",
-        label: "Rosters & Schedule",
-        description: "My roster, all rosters, schedule",
-        kind: "branch",
-        children: [
-          { path: "coaches.rosters.my",  emoji: "📋", label: "My Roster",   description: "View your team's roster",   kind: "action", action: "ac_myroster" },
-          { path: "coaches.rosters.any", emoji: "👥", label: "All Rosters", description: "Browse any team's roster",  kind: "action", action: "ac_anyroster" },
-          { path: "coaches.rosters.sch", emoji: "📅", label: "Schedule",    description: "Full season schedule",      kind: "action", action: "ac_schedule" },
-        ],
+        path: "store.legends", emoji: "🏆",
+        label: "Legends",
+        description: "Purchase available legends",
+        visible: (c) => ECO_VISIBLE(c) && !!c.settings.legendsEnabled,
+        kind: "action", action: "ac_buy_legend",
       },
       {
-        path: "coaches.press", emoji: "🎙️",
-        label: "Press Conference",
-        description: "Trash talk your opponent or do a general interview — earn coins",
-        kind: "action", action: "ac_press_open",
+        path: "store.customs", emoji: "🎨",
+        label: "Custom Players",
+        description: "Create a custom player",
+        visible: (c) => ECO_VISIBLE(c) && !!c.settings.customSuperstarsEnabled,
+        kind: "action", action: "ac_buy_custom",
       },
       {
-        path: "coaches.rivalries", emoji: "⚔️",
-        label: "Rivalries",
-        description: "Your top 4 H2H rivals — series record, rating, trash-talk boost",
-        kind: "action", action: "ac_rivalries",
-      },
-      {
-        path: "coaches.trainers", emoji: "🏋️",
-        label: "Hire Positional Trainer",
-        description: "Hire a weekly trainer for a specific player",
-        visible: ECO_VISIBLE,
-        kind: "action", action: "ac_hire_trainer",
-      },
-      {
-        path: "coaches.my_trainers", emoji: "📋",
-        label: "My Trainers",
-        description: "View active trainers + recent roll history",
-        visible: ECO_VISIBLE,
-        kind: "action", action: "ac_my_trainers",
-      },
-      {
-        path: "coaches.buy_train", emoji: "🎓",
-        label: "Purchase Training Packages",
-        description: "Bronze/Silver/Gold attribute boosts",
+        path: "store.training", emoji: "🎓",
+        label: "Training Packages",
+        description: "Buy Bronze/Silver/Gold attribute boosts",
         visible: ECO_VISIBLE,
         kind: "action", action: "ac_buy_training",
       },
       {
-        path: "coaches.buy_age", emoji: "🔄",
-        label: "Purchase Age Resets",
+        path: "store.trainers", emoji: "🏋️",
+        label: "Positional Trainers",
+        description: "Hire weekly player trainers or view active trainers",
+        visible: ECO_VISIBLE,
+        kind: "branch",
+        children: [
+          { path: "store.trainers.hire", emoji: "🏋️", label: "Hire Positional Trainer", description: "Hire a weekly trainer for one player", kind: "action", action: "ac_hire_trainer" },
+          { path: "store.trainers.mine", emoji: "📋", label: "My Trainers",              description: "View active trainers and recent rolls", kind: "action", action: "ac_my_trainers" },
+        ],
+      },
+      {
+        path: "store.dev", emoji: "📈",
+        label: "Dev Trait Upgrade",
+        description: "Upgrade a player's dev trait",
+        visible: (c) => ECO_VISIBLE(c) && !!c.settings.devUpgradesEnabled,
+        kind: "action", action: "ac_buy_devup",
+      },
+      {
+        path: "store.age", emoji: "🔄",
+        label: "Age Reset",
         description: "Reset a player's age",
         visible: (c) => ECO_VISIBLE(c) && !!c.settings.ageResetsEnabled,
         kind: "action", action: "ac_buy_agereset",
       },
       {
-        path: "coaches.buy_dev", emoji: "📈",
-        label: "Purchase Dev Ups",
-        description: "Upgrade a player's dev trait",
-        visible: (c) => ECO_VISIBLE(c) && !!c.settings.devUpgradesEnabled,
-        kind: "action", action: "ac_buy_devup",
+        path: "store.contracts", emoji: "📋",
+        label: "Contract Tools",
+        description: "Contract extensions, salary reductions, bonus reductions",
+        visible: ECO_VISIBLE,
+        kind: "branch",
+        children: [
+          {
+            path: "store.contracts.extend", emoji: "📋",
+            label: "Contract Extension",
+            description: "Extend a player's contract",
+            visible: (c) => ECO_VISIBLE(c) && !!(c.settings.contractExtensionsEnabled ?? false),
+            kind: "action", action: "ac_buy_contract_ext",
+          },
+          {
+            path: "store.contracts.salary", emoji: "💵",
+            label: "Salary Reduction",
+            description: "Reduce a player's salary",
+            visible: (c) => ECO_VISIBLE(c) && !!(c.settings.salaryReductionsEnabled ?? false),
+            kind: "action", action: "ac_buy_salary_red",
+          },
+          {
+            path: "store.contracts.bonus", emoji: "🎁",
+            label: "Bonus Reduction",
+            description: "Reduce a player's signing bonus",
+            visible: (c) => ECO_VISIBLE(c) && !!(c.settings.bonusReductionsEnabled ?? false),
+            kind: "action", action: "ac_buy_bonus_red",
+          },
+        ],
       },
     ],
   },
 
   {
-    path: "gm", emoji: "💼",
-    label: "GM's Office",
-    description: "Bank, payouts, contracts, legends, customs",
+    path: "financials", emoji: "🏦",
+    label: "Financials",
+    description: "Wallet, savings, transactions, milestones, wagers",
     visible: ECO_VISIBLE,
     kind: "branch",
     children: [
-      { path: "gm.bank", emoji: "🪙", label: "Bank", description: "Deposit, withdraw, send coins", kind: "action", action: "ac_coins" },
-      {
-        path: "gm.payouts", emoji: "💵",
-        label: "Payouts",
-        description: "Weekly, end-of-season, milestones",
-        kind: "branch",
-        children: [
-          { path: "gm.payouts.wk",  emoji: "📅", label: "Weekly Payouts",        description: "This week's payouts",         kind: "action", action: "ac_weeklypayouts" },
-          { path: "gm.payouts.eos", emoji: "💰", label: "End-of-Season Payouts", description: "End-of-season stat bonuses",  kind: "action", action: "ac_eospayouts" },
-          { path: "gm.payouts.ms",  emoji: "🎯", label: "Milestone Payouts",     description: "Career milestone payouts",    kind: "action", action: "ac_milestonepayouts" },
-        ],
-      },
-      {
-        path: "gm.buy_ce", emoji: "📋",
-        label: "Purchase Contract Extensions",
-        description: "Extend a player's contract",
-        visible: (c) => ECO_VISIBLE(c) && !!(c.settings.contractExtensionsEnabled ?? false),
-        kind: "action", action: "ac_buy_contract_ext",
-      },
-      {
-        path: "gm.buy_sr", emoji: "💵",
-        label: "Purchase Salary Reductions",
-        description: "Reduce a player's salary",
-        visible: (c) => ECO_VISIBLE(c) && !!(c.settings.salaryReductionsEnabled ?? false),
-        kind: "action", action: "ac_buy_salary_red",
-      },
-      {
-        path: "gm.buy_br", emoji: "🎁",
-        label: "Purchase Bonus Reductions",
-        description: "Reduce a player's signing bonus",
-        visible: (c) => ECO_VISIBLE(c) && !!(c.settings.bonusReductionsEnabled ?? false),
-        kind: "action", action: "ac_buy_bonus_red",
-      },
-      {
-        path: "gm.buy_lg", emoji: "🏆",
-        label: "Purchase Legends",
-        description: "Add a legend to your roster",
-        visible: (c) => ECO_VISIBLE(c) && !!c.settings.legendsEnabled,
-        kind: "action", action: "ac_buy_legend",
-      },
-      {
-        path: "gm.buy_cp", emoji: "🎨",
-        label: "Purchase Custom Players",
-        description: "Create a custom player",
-        visible: (c) => ECO_VISIBLE(c) && !!c.settings.customSuperstarsEnabled,
-        kind: "action", action: "ac_buy_custom",
-      },
+      { path: "financials.wallet",       emoji: "💰", label: "Wallet / Savings",  description: "View wallet, savings, and total balance", kind: "action", action: "ac_coins" },
+      { path: "financials.bank",         emoji: "🏦", label: "Bank",              description: "Deposit or withdraw savings",             kind: "action", action: "ac_transfer" },
+      { path: "financials.send",         emoji: "📤", label: "Send Coins",        description: "Send coins to another user",              kind: "action", action: "ac_send_coins_modal" },
+      { path: "financials.transactions", emoji: "🧾", label: "View Transactions", description: "View recent purchases and coin history",    kind: "action", action: "ac_myprofile" },
+      { path: "financials.milestones",   emoji: "🎯", label: "Milestones",        description: "Career milestone payouts",                kind: "action", action: "ac_milestonepayouts" },
+      { path: "financials.wager",        emoji: "⚔️", label: "Wager",             description: "Challenge another user to a coin wager",   visible: (c) => ECO_VISIBLE(c) && !!c.settings.wagerEnabled, kind: "action", action: "ac_wager" },
     ],
   },
 
   {
-    path: "wagers", emoji: "⚔️",
-    label: "Wagers",
-    description: "Challenge another user to a coin wager",
-    visible: (c) => ECO_VISIBLE(c) && !!c.settings.wagerEnabled,
-    kind: "action", action: "ac_wager",
-  },
-
-  {
-    path: "gotw_vote", emoji: "🏆",
-    label: "GOTW Vote",
-    description: "Vote on this week's Game of the Week",
-    visible: MCA_VISIBLE,
-    kind: "action", action: "ac_gotw_vote",
-  },
-
-  {
-    path: "goty_vote", emoji: "🎮",
-    label: "GOTY Vote",
-    description: "Vote for this season's Game of the Year",
-    visible: (c) => !!c.gotyActive,
-    kind: "action", action: "ac_goty_vote",
-  },
-
-  {
-    path: "standings", emoji: "📊",
-    label: "Standings & Stats",
-    description: "League standings, user stats, power rankings",
+    path: "league_center", emoji: "📊",
+    label: "League Center",
+    description: "Standings, user stats, rankings, GOTW/GOTY",
     visible: MCA_VISIBLE,
     kind: "branch",
     children: [
-      {
-        path: "standings.linfo", emoji: "📈",
-        label: "League Info",
-        description: "Standings and any user's stats",
-        kind: "branch",
-        children: [
-          { path: "standings.linfo.stand",    emoji: "📈", label: "Standings",      description: "Current standings",  kind: "action", action: "ac_standings" },
-          { path: "standings.linfo.anystats", emoji: "👤", label: "Any User Stats", description: "Stats for any user", kind: "action", action: "ac_anyuserstats" },
-        ],
-      },
-      {
-        path: "standings.pr", emoji: "🏆",
-        label: "Power Rankings",
-        description: "Season, all-time, global power rankings",
-        kind: "branch",
-        children: [
-          { path: "standings.pr.season",  emoji: "🥇", label: "Season PR",   description: "This season's PR", kind: "action", action: "ac_seasonpr" },
-          { path: "standings.pr.alltime", emoji: "🏆", label: "All-Time PR", description: "All-time PR",      kind: "action", action: "ac_alltimepr" },
-          { path: "standings.pr.global",  emoji: "🌐", label: "Global PR",   description: "Global PR",        kind: "action", action: "ac_globalpr" },
-        ],
-      },
+      { path: "league_center.standings", emoji: "📈", label: "Standings",   description: "Current league standings",                  kind: "action", action: "ac_standings" },
+      { path: "league_center.userstats", emoji: "👤", label: "User Stats",  description: "View any user's stats",                     kind: "action", action: "ac_anyuserstats" },
+      { path: "league_center.seasonpr",  emoji: "🥇", label: "Season PR",   description: "This season's power rankings",              kind: "action", action: "ac_seasonpr" },
+      { path: "league_center.alltimepr", emoji: "🏆", label: "All-Time PR", description: "All-time league power rankings",             kind: "action", action: "ac_alltimepr" },
+      { path: "league_center.globalpr",  emoji: "🌐", label: "Global PR",   description: "Global cross-server power rankings",         kind: "action", action: "ac_globalpr" },
+      { path: "league_center.gotw",      emoji: "🏆", label: "GOTW Vote",   description: "Vote on this week's Game of the Week",      kind: "action", action: "ac_gotw_vote" },
+      { path: "league_center.goty",      emoji: "🎮", label: "GOTY Vote",   description: "Vote for this season's Game of the Year",   visible: (c) => !!c.gotyActive, kind: "action", action: "ac_goty_vote" },
     ],
   },
 
   {
-    path: "leagueinfo", emoji: "📜",
-    label: "League Info",
-    description: "Rules and reports",
-    kind: "branch",
-    children: [
-      {
-        path: "leagueinfo.rules", emoji: "📜",
-        label: "Rules & Reports",
-        description: "View rules, auto-pilot, report a violation",
-        kind: "branch",
-        children: [
-          { path: "leagueinfo.rules.view",   emoji: "📜", label: "View Rules",       description: "Browse league rules",       kind: "action", action: "ac_rules" },
-          { path: "leagueinfo.rules.auto",   emoji: "✈️", label: "Auto-Pilot",       description: "Submit auto-pilot request", kind: "action", action: "ac_autopilot" },
-          { path: "leagueinfo.rules.report", emoji: "🚨", label: "Report Violation", description: "Report a rule violation",   kind: "action", action: "ac_violation" },
-        ],
-      },
-    ],
-  },
-
-  {
-    path: "ops", emoji: "⚙️",
+    path: "league_ops", emoji: "📜",
     label: "League Operations",
-    description: "Commissioner tools",
+    description: "Rules, reports, auto-pilot, teams, commissioner access",
+    kind: "branch",
+    children: [
+      { path: "league_ops.rules",        emoji: "📜", label: "Rules",              description: "Browse league rules",               kind: "action", action: "ac_rules" },
+      { path: "league_ops.report",       emoji: "🚨", label: "Report Violation",   description: "Report a rule violation",           kind: "action", action: "ac_violation" },
+      { path: "league_ops.autopilot",    emoji: "✈️", label: "Request Auto-Pilot", description: "Submit an auto-pilot request",       kind: "action", action: "ac_autopilot" },
+      { path: "league_ops.open_teams",   emoji: "🔴", label: "Open Teams",         description: "View open teams",                   kind: "action", action: "ac_openteams" },
+      { path: "league_ops.active_teams", emoji: "🟢", label: "Active/User Teams",  description: "View active user team assignments", kind: "action", action: "ac_activeteams" },
+      { path: "league_ops.office",       emoji: "🏛️", label: "Commissioner's Office", description: "Open commissioner tools",        kind: "ops" },
+    ],
+  },
+
+  {
+    path: "commissioner", emoji: "⚙️",
+    label: "Commissioner's Office",
+    description: "Pending review, imports, economy, users, store, settings",
     visible: (c) => c.isAdmin || c.isCommissioner,
     kind: "ops",
   },
@@ -333,8 +283,12 @@ export function buildMenuHubEmbed(
 function labelWithBadge(node: MenuNode, ctx?: MenuCtx): string {
   let badge = 0;
   if (ctx) {
-    if (node.path === "gotw_vote") badge = ctx.gotwUnvotedCount ?? 0;
-    else if (node.path === "goty_vote") badge = ctx.gotyUnvotedCount ?? 0;
+    const action = node.kind === "action" ? node.action : "";
+    if (node.path === "league_center.gotw" || action === "ac_gotw_vote") {
+      badge = ctx.gotwUnvotedCount ?? 0;
+    } else if (node.path === "league_center.goty" || action === "ac_goty_vote") {
+      badge = ctx.gotyUnvotedCount ?? 0;
+    }
   }
   const base = node.label.substring(0, 100);
   if (badge > 0) {
@@ -432,8 +386,8 @@ export function buildBranchPage(node: MenuNode, ctx: MenuCtx): MenuPage {
 
 export type AdminCategoryId =
   | "commissioner_office"
-  | "week" | "ao_payouts" | "post" | "league_data"
-  | "user_data" | "store" | "server" | "troubleshoot";
+  | "league_data" | "ao_payouts" | "user_data"
+  | "store" | "server" | "troubleshoot";
 
 interface AdminCategoryDef {
   id: AdminCategoryId;
@@ -443,15 +397,13 @@ interface AdminCategoryDef {
 }
 
 const ADMIN_CATEGORIES: AdminCategoryDef[] = [
-  { id: "commissioner_office", emoji: "🏛️", label: "Commissioner's Office", description: "Pending purchases, payouts, interviews, stream/highlight + recent history" },
-  { id: "week",         emoji: "📅", label: "Week & Season",   description: "Set week, advance week, set season number" },
-  { id: "ao_payouts",   emoji: "💰", label: "Payouts",         description: "All payout management" },
-  { id: "post",         emoji: "📢", label: "Post Content",    description: "Matchups, GOTW, draft lottery" },
-  { id: "league_data",  emoji: "🏈", label: "League Data",     description: "EA connection, imports, season data" },
-  { id: "user_data",    emoji: "👤", label: "User Data",       description: "Manage user economy, records, links" },
-  { id: "store",        emoji: "🏪", label: "Store Settings",  description: "Archetypes, templates, prices, caps" },
-  { id: "server",       emoji: "⚙️", label: "Server Settings", description: "Features, init, rules, admins, waitlist" },
-  { id: "troubleshoot", emoji: "🔧", label: "Troubleshoot",    description: "Repair and maintenance tools" },
+  { id: "commissioner_office", emoji: "🏛️", label: "Pending Review",   description: "Purchases, custom players, payouts, interviews, streams/highlights, history" },
+  { id: "league_data",         emoji: "📥", label: "Import / Advance", description: "Imports, EA connection, week/season controls, matchup posting" },
+  { id: "ao_payouts",          emoji: "💰", label: "Manage Economy",  description: "Payouts, corrections, milestone and EOS payout tools" },
+  { id: "user_data",           emoji: "👤", label: "Manage Users",    description: "User team links, records, balances, account data" },
+  { id: "store",               emoji: "🏪", label: "Manage Store",    description: "Archetypes, templates, prices, caps, store settings" },
+  { id: "server",              emoji: "⚙️", label: "Server Settings", description: "Features, channels, rules, admins, server configuration" },
+  { id: "troubleshoot",        emoji: "🔧", label: "Troubleshoot",    description: "Repair, maintenance, audits, bug reporting" },
 ];
 
 interface CategoryPage {
@@ -472,7 +424,7 @@ export function buildAdminHubPage(
   };
 
   const embed = goldEmbed({
-    title:       "⚙️ League Operations",
+    title:       "⚙️ Commissioner's Office",
     description:
       "Commissioner tools — choose a category to manage your league.\n\n" +
       ADMIN_CATEGORIES.map((c) => `${c.emoji} **${adminLabel(c)}** — ${c.description}`).join("\n"),
@@ -577,12 +529,14 @@ export function buildAdminCategoryPage(
   let buttons: ButtonBuilder[] = [];
 
   switch (catId) {
-    case "week": {
+    case "league_data": {
       buttons.push(
-        btn("ao_set_week",            "📅 Set Week"),
-        btn("ao_advance_week",        "⏩ Advance Week"),
-        btn("ao_set_season_num",      "🔢 Set Season"),
-        btn("ao_advance_period_open", "⏱️ Advance Period", ButtonStyle.Secondary),
+        btn("ao_league_data",         "📥 Import / EA Data",     ButtonStyle.Success),
+        btn("ao_advance_week",        "⏩ Advance Week",         ButtonStyle.Primary),
+        btn("ao_set_week",            "📅 Set Week",             ButtonStyle.Secondary),
+        btn("ao_set_season_num",      "🔢 Set Season",           ButtonStyle.Secondary),
+        btn("ao_post_game_channels",  "🎮 Post Game Channels",  ButtonStyle.Secondary),
+        btn("ao_post_matchups",       "📋 Post Matchups/GOTW",  ButtonStyle.Secondary),
       );
       break;
     }
@@ -590,15 +544,6 @@ export function buildAdminCategoryPage(
       buttons.push(btn("ao_payouts", "💰 Open Payouts Hub", ButtonStyle.Success));
       break;
     }
-    case "post": {
-      buttons.push(
-        btn("ao_post_matchups",       "📋 Matchups/GOTW",     ButtonStyle.Secondary),
-        btn("ao_post_game_channels",  "🎮 Game Channels",     ButtonStyle.Secondary),
-        btn("ao_lottery",             "🎰 Draft Lottery",     ButtonStyle.Secondary),
-      );
-      break;
-    }
-    case "league_data":  buttons.push(btn("ao_league_data",    "🏈 Open League Data Hub",    ButtonStyle.Success)); break;
     case "user_data":    buttons.push(btn("ao_user_data",      "👤 Open User Data Hub",      ButtonStyle.Success)); break;
     case "store":        buttons.push(btn("ao_store_settings", "🏪 Open Store Settings Hub", ButtonStyle.Success)); break;
     case "server":       buttons.push(btn("ao_server_settings","⚙️ Open Server Settings Hub", ButtonStyle.Success)); break;

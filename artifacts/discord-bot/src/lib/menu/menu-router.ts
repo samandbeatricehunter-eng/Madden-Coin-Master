@@ -123,7 +123,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     }
     const validAdmin: AdminCategoryId[] = [
       "commissioner_office",
-      "week", "ao_payouts", "post", "league_data", "user_data", "store", "server", "troubleshoot",
+      "league_data", "ao_payouts", "user_data", "store", "server", "troubleshoot",
     ];
     if (!validAdmin.includes(value as AdminCategoryId)) {
       await interaction.followUp({ content: "❌ Unknown admin option (this menu may have expired).", ephemeral: true });
@@ -190,7 +190,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     const page = buildBranchPage(node, ctx);
     let embeds: any[] = [page.embed];
 
-    if (node.path === "gm") {
+    if (node.path === "financials") {
       try {
         const gid = interaction.guildId!;
         const uid = interaction.user.id;
