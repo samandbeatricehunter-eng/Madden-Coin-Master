@@ -19,7 +19,8 @@ type ReviewKind =
   | "advance_delay"
   | "disputed_finals"
   | "payout_history"
-  | "schedule_attempts";
+  | "schedule_attempts"
+  | "analytics";
 
 function kindLabel(kind: string): string {
   const labels: Record<string, string> = {
@@ -31,6 +32,7 @@ function kindLabel(kind: string): string {
     disputed_finals: "Disputed Finals",
     payout_history: "Stream/Highlight Auto-Payout History",
     schedule_attempts: "Schedule Attempts",
+    analytics: "Gameday Analytics",
   };
   return labels[kind] ?? kind;
 }
@@ -125,6 +127,7 @@ export async function renderCommissionerGamedayReview(interaction: ButtonInterac
       new StringSelectMenuOptionBuilder().setLabel(`Disputed Finals (${disputed})`).setValue("disputed_finals").setEmoji("🏁"),
       new StringSelectMenuOptionBuilder().setLabel(`Schedule Attempts (${schedules})`).setValue("schedule_attempts").setEmoji("🗓️"),
       new StringSelectMenuOptionBuilder().setLabel(`Auto-Payout History (${payouts})`).setValue("payout_history").setEmoji("💰"),
+      new StringSelectMenuOptionBuilder().setLabel("Gameday Analytics").setValue("analytics").setEmoji("📊"),
     ]);
 
   const payload = {
@@ -202,6 +205,38 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
       limit ${pageSize}
       offset ${offset}
     `);
+  } else if (kind === "analytics") {
+    const analyticsRows = await rowsOf<any>(sql`
+      with fw as (
+        select requested_by as discord_id, count(*)::int as fw_requests
+        from gameday_commissioner_requests
+        where guild_id = ${guildId} and request_type = 'force_win'
+        group by requested_by
+      ),
+      disputes as (
+        select submitted_by as discord_id, count(*)::int as disputed_finals
+        from gameday_score_submissions
+        where guild_id = ${guildId} and status = 'disputed'
+        group by submitted_by
+      ),
+      offers as (
+        select proposer_discord_id as discord_id, count(*)::int as offers_sent
+        from gameday_schedule_offers
+        where guild_id = ${guildId}
+        group by proposer_discord_id
+      )
+      select coalesce(fw.discord_id, disputes.discord_id, offers.discord_id) as discord_id,
+             coalesce(fw.fw_requests, 0) as fw_requests,
+             coalesce(disputes.disputed_finals, 0) as disputed_finals,
+             coalesce(offers.offers_sent, 0) as offers_sent
+      from fw
+      full outer join disputes on disputes.discord_id = fw.discord_id
+      full outer join offers on offers.discord_id = coalesce(fw.discord_id, disputes.discord_id)
+      order by fw_requests desc, disputed_finals desc, offers_sent desc
+      limit 10
+    `);
+    rows = analyticsRows;
+    total = analyticsRows.length;
   } else if (kind === "payout_history") {
     const countRows = await rowsOf<{ count: number }>(sql`
       select count(*)::int as count
@@ -272,6 +307,9 @@ function formatReviewRow(kind: string, r: any, n: number): string {
   }
   if (kind === "payout_history") {
     return `**${n}. ${String(r.type).toUpperCase()} payout #${r.id}**\n<@${r.discord_id}> — **${r.amount} coins**\nWeek: ${r.week} · Status: ${r.status}`;
+  }
+  if (kind === "analytics") {
+    return `**${n}. <@${r.discord_id}>**\nFW Requests: **${r.fw_requests}** · Disputed Finals: **${r.disputed_finals}** · Offers Sent: **${r.offers_sent}**`;
   }
   return `**${n}. ${kindLabel(kind)} #${r.id}**\nRequested by: <@${r.requested_by}>${r.opponent_discord_id ? ` vs <@${r.opponent_discord_id}>` : ""}\nReason: ${r.reason ?? "_No reason_"}`;
 }

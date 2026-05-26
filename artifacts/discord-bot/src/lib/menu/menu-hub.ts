@@ -210,6 +210,7 @@ const ROOT_NODES: MenuNode[] = [
       { path: "league_center.globalpr",  emoji: "🌐", label: "Global PR",   description: "Global cross-server power rankings",         kind: "action", action: "ac_globalpr" },
       { path: "league_center.gotw",      emoji: "🏆", label: "GOTW Vote",   description: "Vote on this week's Game of the Week",      kind: "action", action: "ac_gotw_vote" },
       { path: "league_center.goty",      emoji: "🎮", label: "GOTY Vote",   description: "Vote for this season's Game of the Year",   visible: (c) => !!c.gotyActive, kind: "action", action: "ac_goty_vote" },
+      { path: "league_center.poty",      emoji: "🎬", label: "POTY Vote",   description: "Vote for Play of the Year highlights",      kind: "action", action: "ac_poty_vote" },
     ],
   },
 

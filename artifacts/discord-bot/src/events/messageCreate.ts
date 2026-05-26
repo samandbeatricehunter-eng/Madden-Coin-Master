@@ -11,6 +11,7 @@ import {
   logTransaction,
 } from "../lib/db/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/economy/payout-config.js";
+import { promptHighlightNomination } from "../lib/media/play-of-the-year.js";
 
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 const HIGHLIGHT_AUTO_PAYOUT = 50;
@@ -23,6 +24,44 @@ function hasValidUrl(content: string): boolean {
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+
+function isAllowedStreamHost(content: string): boolean {
+  const match = content.match(/https?:\/\/\S+/i);
+  if (!match) return false;
+  try {
+    const url = new URL(match[0]);
+    const host = url.hostname.toLowerCase();
+    return (
+      host.includes("twitch.tv") ||
+      host.includes("youtube.com") ||
+      host.includes("youtu.be") ||
+      host.includes("kick.com") ||
+      host.includes("facebook.com") ||
+      host.includes("xbox.com") ||
+      host.includes("discord.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function isReachableUrl(content: string): Promise<boolean> {
+  const match = content.match(/https?:\/\/\S+/i);
+  if (!match) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(match[0], { method: "HEAD", redirect: "follow", signal: controller.signal });
+    if (res.ok || (res.status >= 300 && res.status < 400)) return true;
+    const getRes = await fetch(match[0], { method: "GET", redirect: "follow", signal: controller.signal });
+    return getRes.ok || (getRes.status >= 300 && getRes.status < 400);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -60,6 +99,10 @@ async function handleGamedayChannelMessage(message: Message): Promise<boolean> {
 
 async function handleStreamPost(message: Message): Promise<void> {
   if (!hasValidUrl(message.content)) return;
+  if (!isAllowedStreamHost(message.content) || !(await isReachableUrl(message.content))) {
+    await dmUser(message, "❌ Your stream link was not paid because it was not a reachable supported stream URL. Supported examples: Twitch, YouTube, Kick, Facebook, Xbox, or Discord links.");
+    return;
+  }
 
   try {
     const guildId = message.guildId!;
@@ -164,8 +207,9 @@ async function handleHighlightPost(message: Message): Promise<void> {
     await reactOk(message);
     await dmUser(
       message,
-      `✅ Your weekly highlight was accepted and **${HIGHLIGHT_AUTO_PAYOUT} coins** were paid automatically.\n\nPlay of the Year nominations will be added in a later update.`,
+      `✅ Your weekly highlight was accepted and **${HIGHLIGHT_AUTO_PAYOUT} coins** were paid automatically.`,
     );
+    await promptHighlightNomination(message);
   } catch (err) {
     console.error("[messageCreate] handleHighlightPost error:", err);
   }

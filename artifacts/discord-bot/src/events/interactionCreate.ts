@@ -270,6 +270,20 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Commissioner gameday review interactions ────────────────────────────────
+  if (interaction.customId.startsWith("gdrev_")) {
+    const { handleCommissionerGamedayReviewInteraction } = await import("../lib/gameday/commissioner-gameday-review.js");
+    await handleCommissionerGamedayReviewInteraction(interaction);
+    return;
+  }
+
+  // ── Play of the Year / highlight interactions ───────────────────────────────
+  if (interaction.customId.startsWith("hlnom_") || interaction.customId.startsWith("poty_")) {
+    const { handleHighlightNominationInteraction } = await import("../lib/media/play-of-the-year.js");
+    await handleHighlightNominationInteraction(interaction);
+    return;
+  }
+
   // ── Press Conference (pc_pick, pc_open_modal, pc_reply) ──────────────────────
   if (interaction.customId.startsWith("pc_")) {
     const pc = await import("../lib/handlers/press-conference-handlers.js");
@@ -323,6 +337,13 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action?.startsWith("menu_")) {
     const handled = await handleMenuButton(interaction);
     if (handled) return;
+  }
+
+  // ── Play of the Year vote action ────────────────────────────────────────────
+  if (action === "ac_poty_vote") {
+    const { renderPotyVote } = await import("../lib/media/play-of-the-year.js");
+    await renderPotyVote(interaction as any);
+    return;
   }
 
   // ── Actions hub — dispatch all ac_ prefixed interactions ─────────────────────
@@ -2067,6 +2088,21 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   if (action?.startsWith("gd_")) {
     const { handleGamedayInteraction } = await import("../lib/gameday/gameday-dashboard.js");
     await handleGamedayInteraction(interaction);
+    return;
+  }
+
+  // ── Commissioner gameday review select menus ────────────────────────────────
+  if (action?.startsWith("gdrev_")) {
+    const { handleCommissionerGamedayReviewInteraction } = await import("../lib/gameday/commissioner-gameday-review.js");
+    await handleCommissionerGamedayReviewInteraction(interaction);
+    return;
+  }
+
+  // ── Play of the Year / highlight select menus ───────────────────────────────
+  if (action?.startsWith("hlnom_") || action?.startsWith("poty_")) {
+    const { handleHighlightNominationInteraction, renderPotyVote } = await import("../lib/media/play-of-the-year.js");
+    if (action === "poty_category") { await renderPotyVote(interaction, interaction.values[0], 0); return; }
+    await handleHighlightNominationInteraction(interaction);
     return;
   }
 
