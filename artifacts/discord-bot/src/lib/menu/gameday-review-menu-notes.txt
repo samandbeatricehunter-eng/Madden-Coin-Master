@@ -1,0 +1,20 @@
+Add to:
+
+/menu
+└─ ⚙️ Commissioner’s Office
+   └─ 🎮 Gameday Review
+
+Recommended routing:
+- comm_gameday_review
+- comm_gameday_review_select
+
+Suggested permissions:
+- Administrator
+- Commissioner role
+
+Recommended future additions:
+- approve/deny buttons
+- bulk close tools
+- matchup quick-jump
+- payout reversal tools
+- import mismatch reconciliation
