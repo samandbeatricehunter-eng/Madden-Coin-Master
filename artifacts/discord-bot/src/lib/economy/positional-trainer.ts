@@ -6,8 +6,9 @@
 //
 // Each week tick (Advance Week), every `active` trainer rolls:
 //   1. Base hit chance per tier, reduced for 2 weeks after a hit (cooldown 1/2).
-//   2. If hit, draws 1-2 boosts (gold can hit 2) using the same focus-weighted
-//      attribute lottery as Training Packages.
+//   2. If hit, draws boosts using the same focus-weighted attribute lottery as
+//      Training Packages. Standard gold can hit 2; 6+ week contracts add a
+//      25% chance at 3 boosts and 15% chance at 2 boosts on successful weeks.
 //   3. Each boost is +1 or +2 (uniform); capped so the attribute won't pass 99,
 //      and respecting per-player per-season method caps:
 //        Speed +3, Strength +4, COD +4, Acceleration +4, Agility +4.
@@ -31,7 +32,7 @@ export type TrainerFocus = "speed" | "power" | "balanced" | "position";
 export interface TrainerTierMeta {
   label:           string;
   yearly:          number;   // yearly base cost in coins
-  baseChanceBps:   number;   // base hit chance (basis points: 6000 = 60%)
+  baseChanceBps:   number;   // base hit chance (basis points: 7000 = 70%)
   cooldown1Bps:    number;   // chance the week after a hit
   cooldown2Bps:    number;   // chance two weeks after a hit
   maxBoostsOnHit:  number;   // max distinct attributes touched in a successful tick
@@ -39,12 +40,16 @@ export interface TrainerTierMeta {
 }
 
 export const TRAINER_TIERS: Record<TrainerTier, TrainerTierMeta> = {
-  gold:   { label: "🥇 Gold",   yearly: 3000, baseChanceBps: 6000, cooldown1Bps: 2500, cooldown2Bps: 4000, maxBoostsOnHit: 2, doubleBoostBps: 5000 },
-  silver: { label: "🥈 Silver", yearly: 2000, baseChanceBps: 4000, cooldown1Bps: 1500, cooldown2Bps: 2500, maxBoostsOnHit: 1, doubleBoostBps: 0    },
-  bronze: { label: "🥉 Bronze", yearly: 1000, baseChanceBps: 2500, cooldown1Bps:  500, cooldown2Bps: 1500, maxBoostsOnHit: 1, doubleBoostBps: 0    },
+  gold:   { label: "🥇 Gold",   yearly: 1400, baseChanceBps: 7000, cooldown1Bps: 4500, cooldown2Bps: 6000, maxBoostsOnHit: 2, doubleBoostBps: 5000 },
+  silver: { label: "🥈 Silver", yearly:  935, baseChanceBps: 5000, cooldown1Bps: 3000, cooldown2Bps: 4000, maxBoostsOnHit: 1, doubleBoostBps: 0    },
+  bronze: { label: "🥉 Bronze", yearly:  470, baseChanceBps: 3500, cooldown1Bps: 2000, cooldown2Bps: 2800, maxBoostsOnHit: 1, doubleBoostBps: 0    },
 };
 
 const REGULAR_SEASON_WEEKS = 18;
+const YOUNG_LOW_OVR_BONUS_BPS = 1000; // +10% for <= 3 years pro and OVR below 85
+const LONG_CONTRACT_MIN_WEEKS = 6;
+const LONG_CONTRACT_TRIPLE_BOOST_BPS = 2500; // 25% chance for 3 boosts on 6+ week trainer contracts
+const LONG_CONTRACT_DOUBLE_BOOST_BPS = 1500; // 15% chance for 2 boosts on 6+ week trainer contracts
 
 /** Per-week base cost before inflation, rounded up to a whole coin. */
 export function pricePerWeek(tier: TrainerTier): number {
@@ -140,23 +145,38 @@ export function rollOneTick(args: {
   caps:             TrainerCapsRow;
   lastHitWeekIndex: number | null;
   currentWeekIndex: number;
+  youngLowOvrBonus?: boolean;
+  longContractMultiBoost?: boolean;
   pickAttrs:        (count: number, focus: TrainerFocus, pos: string, attrs: Record<string, number>) => string[];
   random?:          () => number;  // seam for tests
 }): TrainerTickResult {
-  const rand        = args.random ?? Math.random;
-  const meta        = TRAINER_TIERS[args.tier];
-  const chanceBps   = currentHitChanceBps(args.tier, args.lastHitWeekIndex, args.currentWeekIndex);
-  const rollHitBps  = Math.floor(rand() * 10000);
+  const rand          = args.random ?? Math.random;
+  const meta          = TRAINER_TIERS[args.tier];
+  const baseChanceBps = currentHitChanceBps(args.tier, args.lastHitWeekIndex, args.currentWeekIndex);
+  const chanceBps     = Math.min(10000, baseChanceBps + (args.youngLowOvrBonus ? YOUNG_LOW_OVR_BONUS_BPS : 0));
+  const bonusText     = args.youngLowOvrBonus ? " + young low-OVR bonus" : "";
+  const rollHitBps    = Math.floor(rand() * 10000);
 
   if (rollHitBps >= chanceBps) {
     const reason = args.lastHitWeekIndex != null && (args.currentWeekIndex - args.lastHitWeekIndex) <= 2
-      ? `Missed roll (${(chanceBps / 100).toFixed(0)}% chance — reduced after recent hit)`
-      : `Missed roll (${(chanceBps / 100).toFixed(0)}% base chance)`;
+      ? `Missed roll (${(chanceBps / 100).toFixed(0)}% chance${bonusText} — reduced after recent hit)`
+      : `Missed roll (${(chanceBps / 100).toFixed(0)}% base chance${bonusText})`;
     return { hit: false, chanceAppliedBps: chanceBps, reason, boosts: [] };
   }
 
-  // Decide how many boosts this hit produces (gold can hit 2).
-  const wantBoosts = meta.maxBoostsOnHit > 1 && Math.floor(rand() * 10000) < meta.doubleBoostBps ? 2 : 1;
+  // Decide how many boosts this hit produces.
+  // Standard trainer behavior: gold can naturally land a second boost.
+  // 6+ week contracts add a tier-independent loyalty upside:
+  //   25% chance at 3 boosts, otherwise 15% chance at 2 boosts.
+  let wantBoosts = meta.maxBoostsOnHit > 1 && Math.floor(rand() * 10000) < meta.doubleBoostBps ? 2 : 1;
+  if (args.longContractMultiBoost) {
+    const multiRoll = Math.floor(rand() * 10000);
+    if (multiRoll < LONG_CONTRACT_TRIPLE_BOOST_BPS) {
+      wantBoosts = 3;
+    } else if (multiRoll < LONG_CONTRACT_TRIPLE_BOOST_BPS + LONG_CONTRACT_DOUBLE_BOOST_BPS) {
+      wantBoosts = Math.max(wantBoosts, 2);
+    }
+  }
 
   // Draw candidates from the focus-weighted lottery, then filter/clamp by caps.
   // Over-draw a little so cap-blocked attrs don't leave us short.
@@ -195,7 +215,7 @@ export function rollOneTick(args: {
   return {
     hit: true,
     chanceAppliedBps: chanceBps,
-    reason: `Hit (${(chanceBps / 100).toFixed(0)}% chance) → ${summary}`,
+    reason: `Hit (${(chanceBps / 100).toFixed(0)}% chance${bonusText}) → ${summary}`,
     boosts,
   };
 }
@@ -273,6 +293,21 @@ const TRAINER_POS_ATTRS: Record<string, Set<string>> = {
   LS:    _A("Strength","Awareness","Long Snap","Stamina","Toughness","Injury"),
 };
 
+
+function numericAttr(attrs: Record<string, number>, key: string): number | null {
+  const raw = attrs[key];
+  if (raw == null || Number.isNaN(Number(raw))) return null;
+  return Number(raw);
+}
+
+function youngLowOvrTrainerBonusEligible(args: {
+  attributes: Record<string, number>;
+  overall: number | null;
+}): boolean {
+  const yearsPro = numericAttr(args.attributes, "yearsPro");
+  return yearsPro != null && yearsPro <= 3 && (args.overall ?? 99) < 85;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Weekly tick orchestrator — iterates every active trainer in a season and
 // applies one roll. Idempotent on (trainerId, weekIndex) via trainer_roll_log.
@@ -341,10 +376,11 @@ export async function runWeeklyTrainerTick(args: {
     // Per-trainer isolation: never let one bad trainer skip the rest.
     try {
     // Find the player's roster row in the current roster season.
-    let rosterRow: { id: number; attributes: Record<string, number> | null } | null = null;
+    let rosterRow: { id: number; overall: number | null; attributes: Record<string, number> | null } | null = null;
     if (t.playerId) {
       const rows = await db.select({
         id:         franchiseRostersTable.id,
+        overall:    franchiseRostersTable.overall,
         attributes: franchiseRostersTable.attributes,
       }).from(franchiseRostersTable)
         .where(and(
@@ -360,6 +396,7 @@ export async function runWeeklyTrainerTick(args: {
       const last  = fullName.slice(1).join(" ");
       const rows = await db.select({
         id:         franchiseRostersTable.id,
+        overall:    franchiseRostersTable.overall,
         attributes: franchiseRostersTable.attributes,
       }).from(franchiseRostersTable)
         .where(and(
@@ -399,6 +436,11 @@ export async function runWeeklyTrainerTick(args: {
       caps:             capsRow as TrainerCapsRow,
       lastHitWeekIndex: t.lastHitWeekIndex,
       currentWeekIndex: args.currentWeekIndex,
+      youngLowOvrBonus: youngLowOvrTrainerBonusEligible({
+        attributes: attrs,
+        overall: rosterRow?.overall ?? null,
+      }),
+      longContractMultiBoost: Number(t.weeksTotal ?? 0) >= LONG_CONTRACT_MIN_WEEKS,
       pickAttrs:        defaultPickAttrs,
     });
 

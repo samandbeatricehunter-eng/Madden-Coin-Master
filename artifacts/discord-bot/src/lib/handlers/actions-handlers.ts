@@ -158,6 +158,7 @@ const SESSION_TTL_MS = 15 * 60 * 1000;
 
 // Prevent duplicate charging when Discord redelivers or a user double-clicks the training confirm button.
 const trainingExecuteLocks = new Set<string>();
+const ACTIVE_TRAINER_HIRE_CAP = 2;
 
 function sessionKey(guildId: string, userId: string) {
   return `${guildId}:${userId}`;
@@ -2162,23 +2163,33 @@ async function getActiveTrainingPackageUsage(
   };
 }
 
-async function getActiveTrainingTierUsage(
+async function getActiveTrainingPlayerUsage(
   discordId: string,
   seasonId: number,
-  tier: TrainingTier,
+  playerName: string,
+  playerId?: number | null,
 ): Promise<number> {
-  const purchaseType = TRAINING_TIERS[tier].purchaseType;
-  if (purchaseType === "training_bronze") return 0;
+  const normalizedName = playerName.trim();
+  const baseConditions = [
+    eq(purchasesTable.discordId, discordId),
+    eq(purchasesTable.seasonId, seasonId),
+    inArray(purchasesTable.purchaseType, ["training_gold", "training_silver", "training_bronze"]),
+    inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
+  ];
+
+  const playerConditions = playerId
+    ? [
+        or(
+          eq(purchasesTable.eaFranchiseId, playerId),
+          eq(purchasesTable.playerName, normalizedName),
+        ),
+      ]
+    : [eq(purchasesTable.playerName, normalizedName)];
 
   const rows = await db
     .select({ id: purchasesTable.id })
     .from(purchasesTable)
-    .where(and(
-      eq(purchasesTable.discordId, discordId),
-      eq(purchasesTable.seasonId, seasonId),
-      eq(purchasesTable.purchaseType, purchaseType),
-      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
-    ));
+    .where(and(...baseConditions, ...playerConditions));
 
   return rows.length;
 }
@@ -2433,36 +2444,51 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const trainerUsage = await getActiveTrainerConflicts({
+    guildId: gid,
+    seasonId: season.id,
+    ownerDiscordId: interaction.user.id,
+  });
   const { goldUsed, silverUsed } = await getActiveTrainingPackageUsage(interaction.user.id, season.id);
+  const playerTrainingUsed = await getActiveTrainingPlayerUsage(
+    interaction.user.id,
+    season.id,
+    sess.trainingPlayerName,
+    sess.trainingPlayerId,
+  );
 
-  const goldDisabled   = goldUsed   >= TRAINING_TIERS.gold.limit;
-  const silverDisabled = silverUsed >= TRAINING_TIERS.silver.limit;
+  const playerLimitReached = playerTrainingUsed >= 1;
+  const goldDisabled   = playerLimitReached;
+  const silverDisabled = playerLimitReached;
+  const bronzeDisabled = playerLimitReached;
 
   const tierRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:gold")
-      .setLabel(`🥇 Gold — 1,000 coins (4-5 attrs · up to +4 pts each)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setLabel(`🥇 Gold — 1,000 coins (4-5 attrs · up to +4 pts each)${goldDisabled ? " [PLAYER LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Primary)
       .setDisabled(goldDisabled || user.balance < TRAINING_TIERS.gold.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:silver")
-      .setLabel(`🥈 Silver — 500 coins (3 attrs · up to +2 pts each)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
+      .setLabel(`🥈 Silver — 500 coins (3 attrs · up to +2 pts each)${silverDisabled ? " [PLAYER LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(silverDisabled || user.balance < TRAINING_TIERS.silver.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:bronze")
-      .setLabel("🥉 Bronze — 250 coins (2 attrs · +1 pt each)")
+      .setLabel(`🥉 Bronze — 250 coins (2 attrs · +1 pt each)${bronzeDisabled ? " [PLAYER LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(user.balance < TRAINING_TIERS.bronze.cost),
+      .setDisabled(bronzeDisabled || user.balance < TRAINING_TIERS.bronze.cost),
   );
 
   const lines = [
     `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos}) — OVR ${sess.trainingPlayerOvr}`,
     `**Your balance:** ${user.balance.toLocaleString()} coins`,
     "",
-    `**Gold** — 1,000 coins · 4-5 attrs · up to +4 pts each · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
-    `**Silver** — 500 coins · 3 attrs · up to +2 pts each · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
-    "**Bronze** — 250 coins · 2 attrs · +1 pt each · unlimited",
+    `**Gold** — 1,000 coins · 4-5 attrs · up to +4 pts each`,
+    `**Silver** — 500 coins · 3 attrs · up to +2 pts each`,
+    "**Bronze** — 250 coins · 2 attrs · +1 pt each",
+    `**Player package cap:** ${playerTrainingUsed}/1 active training package used for this player this season`,
+    "_This cap is per player across all tiers. Pending/approved packages count; refunded/denied packages do not._",
     "",
     "Select the tier you want to buy. You'll choose a **training goal** next to bias the roll.",
   ];
@@ -2494,11 +2520,16 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
-  if (meta.limit < 999) {
+  {
     const season = await getOrCreateActiveSeason(gid);
-    const used = await getActiveTrainingTierUsage(interaction.user.id, season.id, tier);
-    if (used >= meta.limit) {
-      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season. Refunded purchases do not count toward this cap.`)], components: [backToHubRow()] });
+    const used = await getActiveTrainingPlayerUsage(
+      interaction.user.id,
+      season.id,
+      sess.trainingPlayerName,
+      sess.trainingPlayerId,
+    );
+    if (used >= 1) {
+      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainingPlayerName}** already has an active training package this season. Refunded purchases do not count toward this cap.`)], components: [backToHubRow()] });
       return;
     }
   }
@@ -2542,7 +2573,8 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
         "💪 **Power** — 50% boost to rolls for strength, power & physical attributes\n" +
         "⚖️ **Balanced** — all attributes equally likely\n" +
         "🎯 **Position Focused** — 100% boost to rolls for this player's core position attributes\n\n" +
-        "_The boost increases the probability, not a guarantee. The result is still a lottery._",
+        "_The boost increases the probability, not a guarantee. The result is still a lottery._\n\n" +
+        "_Each player can receive only **one active Training Package per season total**, regardless of tier. Refunded or denied packages do not count._",
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(goalMenu), cancelRow()],
   });
@@ -2584,7 +2616,7 @@ async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction
         `**Training Goal:** ${goalLabel} — ${goalDesc}\n` +
         `**Cost:** ${meta.cost.toLocaleString()} coins\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n\n` +
-        "The lottery will roll when you confirm. All rolled attribute changes will be posted to your commissioner.",
+        "The lottery will roll when you confirm. All rolled attribute changes will be sent to **Commissioner's Office → Pending Purchases**. Each player can receive only **one active Training Package per season total**, regardless of tier.",
       )],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -2646,9 +2678,9 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
       .where(and(
         eq(purchasesTable.discordId,    interaction.user.id),
         eq(purchasesTable.seasonId,     season.id),
-        eq(purchasesTable.purchaseType, meta.purchaseType),
+        inArray(purchasesTable.purchaseType, ["training_gold", "training_silver", "training_bronze"]),
         eq(purchasesTable.playerName,   sess.trainingPlayerName),
-        eq(purchasesTable.status,       "pending"),
+        inArray(purchasesTable.status,  ACTIVE_TRAINING_PURCHASE_STATUSES),
         sql`${purchasesTable.createdAt} >= ${duplicateCutoff}`,
       ))
       .limit(1);
@@ -2659,7 +2691,7 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
           .setColor(Colors.Yellow)
           .setTitle("🎓 Training Package Already Submitted")
           .setDescription(
-            `A pending **${meta.label} Training Package** for **${sess.trainingPlayerName}** was already created moments ago.\n\n` +
+            `An active training package for **${sess.trainingPlayerName}** already exists.\n\n` +
             "No additional coins were deducted.",
           )],
         components: [backToHubRow()],
@@ -2675,11 +2707,16 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
       return;
     }
 
-    if (meta.limit < 999) {
-      const used = await getActiveTrainingTierUsage(interaction.user.id, season.id, tier);
-      if (used >= meta.limit) {
+    {
+      const used = await getActiveTrainingPlayerUsage(
+        interaction.user.id,
+        season.id,
+        sess.trainingPlayerName,
+        sess.trainingPlayerId,
+      );
+      if (used >= 1) {
         await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season. Refunded purchases do not count toward this cap.`)],
+          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainingPlayerName}** already has an active training package this season. Refunded purchases do not count toward this cap.`)],
           components: [backToHubRow()],
         });
         return;
@@ -7421,6 +7458,60 @@ function weeksLeftInRegularSeason(currentWeek: string | null | undefined): numbe
   return 0;
 }
 
+
+async function getActiveTrainerUsage(
+  guildId: string,
+  seasonId: number,
+  ownerDiscordId: string,
+): Promise<{ activeCount: number; activeForPlayer: number }> {
+  const rows = await db
+    .select({
+      id: positionalTrainersTable.id,
+      playerName: positionalTrainersTable.playerName,
+    })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId, guildId),
+      eq(positionalTrainersTable.seasonId, seasonId),
+      eq(positionalTrainersTable.ownerDiscordId, ownerDiscordId),
+      eq(positionalTrainersTable.status, "active"),
+    ));
+
+  return {
+    activeCount: rows.length,
+    activeForPlayer: 0,
+  };
+}
+
+async function getActiveTrainerConflicts(args: {
+  guildId: string;
+  seasonId: number;
+  ownerDiscordId: string;
+  playerName?: string | null;
+}): Promise<{ activeCount: number; activeForPlayer: number }> {
+  const rows = await db
+    .select({
+      id: positionalTrainersTable.id,
+      playerName: positionalTrainersTable.playerName,
+    })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId, args.guildId),
+      eq(positionalTrainersTable.seasonId, args.seasonId),
+      eq(positionalTrainersTable.ownerDiscordId, args.ownerDiscordId),
+      eq(positionalTrainersTable.status, "active"),
+    ));
+
+  const target = (args.playerName ?? "").trim().toLowerCase();
+
+  return {
+    activeCount: rows.length,
+    activeForPlayer: target
+      ? rows.filter((row) => (row.playerName ?? "").trim().toLowerCase() === target).length
+      : 0,
+  };
+}
+
 async function handleHireTrainerStart(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid    = interaction.guildId!;
   // Defer up-front — several DB awaits below can exceed Discord's 3s window
@@ -7450,14 +7541,15 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
     return;
   }
 
-  // Per-user trainersHired cap check
-  const stats = await getSeasonStats(interaction.user.id, season.id);
-  const hired = (stats as any).trainersHired as number ?? 0;
-  const HIRE_CAP = 2;
-  if (hired >= HIRE_CAP) {
+  if (trainerUsage.activeCount >= ACTIVE_TRAINER_HIRE_CAP) {
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
-        .setDescription(`❌ You have already hired the maximum of **${HIRE_CAP} trainers** this season.`)],
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("🏋️ Hire Positional Trainer")
+        .setDescription(
+          `❌ You already have **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires.\n\n` +
+          "You can hire another trainer after one of your active trainer contracts expires.",
+        )],
       components: [backToHubRow()],
     });
     return;
@@ -7487,14 +7579,20 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
       .setDescription([
         "Hire a personal trainer to roll **random attribute boosts** on one of your players each week.",
         "",
-        `**🥇 Gold**   — base **${(TRAINER_TIERS.gold.baseChanceBps   / 100).toFixed(0)}%** hit · up to 2 boosts/hit · ${gold.perWeek}/wk`,
-        `**🥈 Silver** — base **${(TRAINER_TIERS.silver.baseChanceBps / 100).toFixed(0)}%** hit · 1 boost/hit · ${silver.perWeek}/wk`,
-        `**🥉 Bronze** — base **${(TRAINER_TIERS.bronze.baseChanceBps / 100).toFixed(0)}%** hit · 1 boost/hit · ${bronze.perWeek}/wk`,
+        `**🥇 Gold**   — **${(TRAINER_TIERS.gold.baseChanceBps   / 100).toFixed(0)}%** weekly hit chance · ${gold.perWeek}/wk`,
+        `**🥈 Silver** — **${(TRAINER_TIERS.silver.baseChanceBps / 100).toFixed(0)}%** weekly hit chance · ${silver.perWeek}/wk`,
+        `**🥉 Bronze** — **${(TRAINER_TIERS.bronze.baseChanceBps / 100).toFixed(0)}%** weekly hit chance · ${bronze.perWeek}/wk`,
         "",
-        "Cooldown reduces the hit chance for **2 weeks** after each successful roll.",
-        `Per-player season caps: **Speed +3**, **Strength/COD/Accel/Agility +4** (combined with Training Packages).`,
+        "**Perks:**",
+        "• Young development bonus: players with **3 or fewer years pro** and **under 85 OVR** get **+10%** weekly success chance.",
+        "• Long contract bonus: contracts of **6+ weeks** can spike successful weeks into **3 boosts (25%)** or **2 boosts (15%)**.",
+        "• Cooldown weeks still have good odds, but are reduced for **2 weeks** after a successful roll.",
+        `• Active trainer cap: **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** currently active. You may have up to **${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires at one time.`,
+        "• One active trainer per player at a time. After a trainer expires, you may hire another for that same player.",
         "",
-        `**Your balance:** ${user.balance.toLocaleString()} coins · **Hires used:** ${hired}/${HIRE_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
+        `Per-player season caps still apply: **Speed +3**, **Strength/COD/Accel/Agility +4**.`,
+        "",
+        `**Your balance:** ${user.balance.toLocaleString()} coins · **Active trainers:** ${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
       ].join("\n"))],
     components: [row, cancelRow()],
   });
@@ -7573,20 +7671,28 @@ async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteracti
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
 
-  // Mutual exclusion: block if this player has any existing trainer or training package this season under this user.
-  const [trConflict] = await db.select({ status: positionalTrainersTable.status })
-    .from(positionalTrainersTable)
-    .where(and(
-      eq(positionalTrainersTable.guildId,        gid),
-      eq(positionalTrainersTable.seasonId,       season.id),
-      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
-      eq(positionalTrainersTable.playerName,     sess.trainerPlayerName!),
-    ))
-    .limit(1);
-  if (trConflict) {
+  // Trainer cap checks:
+  // - max 2 active trainers per user at one time
+  // - only 1 active trainer can be attached to a specific player at one time
+  const trainerUsage = await getActiveTrainerConflicts({
+    guildId: gid,
+    seasonId: season.id,
+    ownerDiscordId: interaction.user.id,
+    playerName: sess.trainerPlayerName,
+  });
+  if (trainerUsage.activeCount >= ACTIVE_TRAINER_HIRE_CAP) {
     await interaction.update({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-        `❌ **${sess.trainerPlayerName}** already has a trainer this season (status: ${trConflict.status}). Only one trainer per player per season.`,
+        `❌ You already have **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires. Wait for one to expire before hiring another.`,
+      )],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+  if (trainerUsage.activeForPlayer > 0) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+        `❌ **${sess.trainerPlayerName}** already has an active trainer. You can hire another trainer for this player after the active contract expires.`,
       )],
       components: [backToHubRow()],
     });
@@ -7599,7 +7705,7 @@ async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteracti
       eq(purchasesTable.seasonId,   season.id),
       eq(purchasesTable.playerName, sess.trainerPlayerName!),
       inArray(purchasesTable.purchaseType, ["training_gold","training_silver","training_bronze"]),
-      ne(purchasesTable.status, "refunded"),
+      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
     ))
     .limit(1);
   if (pkgConflict) {
@@ -7628,7 +7734,7 @@ async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteracti
       .setDescription(
         `**Tier:** ${TRAINER_TIERS[sess.trainerTier!].label}\n` +
         `**Player:** ${sess.trainerPlayerName} (${sess.trainerPlayerPos}) — OVR ${sess.trainerPlayerOvr}\n\n` +
-        "Pick the **training focus** — biases which attributes the weekly lottery favors."
+        `Pick the **training focus** — this biases which attributes the weekly lottery favors. You may have up to **${ACTIVE_TRAINER_HIRE_CAP}** active trainers at once, but only **one active trainer per player** at a time. Training Packages cannot be stacked with trainers on the same player.`
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
@@ -7682,7 +7788,7 @@ async function handleHireTrainerWeeksPick(interaction: StringSelectMenuInteracti
         `**Focus:** ${focus}\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n` +
         `**Regular-season weeks left:** ${weeksLeft}\n\n` +
-        "Cost is **paid upfront** for the whole contract. Refunds are not issued at season end.",
+        `Cost is **paid upfront** for the whole contract. Contracts of **6+ weeks** unlock bonus upside on successful rolls: **25% chance for 3 boosts** and **15% chance for 2 boosts**. You may have up to **${ACTIVE_TRAINER_HIRE_CAP}** active trainers at once, with only **one active trainer per player**. Refunds are not issued at season end.`,
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
@@ -7711,7 +7817,9 @@ async function handleHireTrainerConfirm(interaction: StringSelectMenuInteraction
         `**Per-week cost:** ${q.perWeek.toLocaleString()} coins`,
         `**Total cost:** **${q.total.toLocaleString()} coins** (paid upfront)`,
         "",
-        "Click **Confirm Hire** to deduct coins and start the contract. The first roll happens on the next **Advance Week**.",
+        weeks >= 6
+          ? "Click **Confirm Hire** to deduct coins and start the contract. This contract qualifies for the **6+ week bonus**: successful rolls can spike to **3 boosts (25%)** or **2 boosts (15%)**. The first roll happens on the next **Advance Week**."
+          : "Click **Confirm Hire** to deduct coins and start the contract. The first roll happens on the next **Advance Week**.",
       ].join("\n"))],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -7733,16 +7841,9 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
 
   // Re-validate everything (race-safe).
   const user      = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-  const stats     = await getSeasonStats(interaction.user.id, season.id);
-  const hired     = (stats as any).trainersHired as number ?? 0;
   const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
   const infl      = await getInflationBpsForGuild(gid);
   const q         = quoteHire(sess.trainerTier, sess.trainerWeeks, infl);
-
-  if (hired >= 2) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ You have already hired the maximum of 2 trainers this season.")], components: [backToHubRow()] });
-    return;
-  }
   if (sess.trainerWeeks > weeksLeft) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Only **${weeksLeft}** regular-season weeks remain — you picked ${sess.trainerWeeks}.`)], components: [backToHubRow()] });
     return;
@@ -7752,18 +7853,31 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
     return;
   }
 
-  // Re-check mutual exclusion at execute time (both trainer + training package).
-  const [trConflict] = await db.select({ id: positionalTrainersTable.id })
-    .from(positionalTrainersTable)
-    .where(and(
-      eq(positionalTrainersTable.guildId,        gid),
-      eq(positionalTrainersTable.seasonId,       season.id),
-      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
-      eq(positionalTrainersTable.playerName,     sess.trainerPlayerName),
-    ))
-    .limit(1);
-  if (trConflict) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already has a trainer this season.`)], components: [backToHubRow()] });
+  // Re-check trainer caps at execute time:
+  // - max 2 active trainers per user
+  // - only 1 active trainer per player at one time
+  const trainerUsage = await getActiveTrainerConflicts({
+    guildId: gid,
+    seasonId: season.id,
+    ownerDiscordId: interaction.user.id,
+    playerName: sess.trainerPlayerName,
+  });
+  if (trainerUsage.activeCount >= ACTIVE_TRAINER_HIRE_CAP) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+        `❌ You already have **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires. Wait for one to expire before hiring another.`,
+      )],
+      components: [backToHubRow()],
+    });
+    return;
+  }
+  if (trainerUsage.activeForPlayer > 0) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+        `❌ **${sess.trainerPlayerName}** already has an active trainer. You can hire another trainer for this player after the active contract expires.`,
+      )],
+      components: [backToHubRow()],
+    });
     return;
   }
   const [pkgConflict2] = await db.select({ id: purchasesTable.id })
@@ -7773,11 +7887,11 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
       eq(purchasesTable.seasonId,   season.id),
       eq(purchasesTable.playerName, sess.trainerPlayerName),
       inArray(purchasesTable.purchaseType, ["training_gold","training_silver","training_bronze"]),
-      ne(purchasesTable.status, "refunded"),
+      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
     ))
     .limit(1);
   if (pkgConflict2) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already had a Training Package this season — trainers and packages are mutually exclusive per player per season.`)], components: [backToHubRow()] });
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already had a Training Package this season. Training Packages and Trainers are mutually exclusive per player per season.`)], components: [backToHubRow()] });
     return;
   }
 
