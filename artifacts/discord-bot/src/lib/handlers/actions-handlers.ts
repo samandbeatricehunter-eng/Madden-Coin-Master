@@ -2139,6 +2139,50 @@ const TRAINING_TIERS = {
   bronze: { label: "🥉 Bronze", cost: 250,  points: 1, purchaseType: "training_bronze" as const, seasonStatKey: null,                      limit: 999 },
 } as const;
 type TrainingTier = keyof typeof TRAINING_TIERS;
+type ActiveTrainingPurchaseStatus = "pending" | "approved";
+const ACTIVE_TRAINING_PURCHASE_STATUSES: ActiveTrainingPurchaseStatus[] = ["pending", "approved"];
+
+async function getActiveTrainingPackageUsage(
+  discordId: string,
+  seasonId: number,
+): Promise<{ goldUsed: number; silverUsed: number }> {
+  const rows = await db
+    .select({ purchaseType: purchasesTable.purchaseType })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.discordId, discordId),
+      eq(purchasesTable.seasonId, seasonId),
+      inArray(purchasesTable.purchaseType, ["training_gold", "training_silver"]),
+      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
+    ));
+
+  return {
+    goldUsed: rows.filter((r) => r.purchaseType === "training_gold").length,
+    silverUsed: rows.filter((r) => r.purchaseType === "training_silver").length,
+  };
+}
+
+async function getActiveTrainingTierUsage(
+  discordId: string,
+  seasonId: number,
+  tier: TrainingTier,
+): Promise<number> {
+  const purchaseType = TRAINING_TIERS[tier].purchaseType;
+  if (purchaseType === "training_bronze") return 0;
+
+  const rows = await db
+    .select({ id: purchasesTable.id })
+    .from(purchasesTable)
+    .where(and(
+      eq(purchasesTable.discordId, discordId),
+      eq(purchasesTable.seasonId, seasonId),
+      eq(purchasesTable.purchaseType, purchaseType),
+      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
+    ));
+
+  return rows.length;
+}
+
 
 // Attribute pools for weighted lottery (1.5× chance when goal matches)
 const TRAINING_SPEED_ATTRS = new Set([
@@ -2388,11 +2432,8 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
 
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
-  const stats  = await getSeasonStats(interaction.user.id, season.id);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-
-  const goldUsed   = (stats as any)["trainingGoldPurchased"]   as number ?? 0;
-  const silverUsed = (stats as any)["trainingSilverPurchased"] as number ?? 0;
+  const { goldUsed, silverUsed } = await getActiveTrainingPackageUsage(interaction.user.id, season.id);
 
   const goldDisabled   = goldUsed   >= TRAINING_TIERS.gold.limit;
   const silverDisabled = silverUsed >= TRAINING_TIERS.silver.limit;
@@ -2453,12 +2494,11 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
-  if (meta.limit < 999 && meta.seasonStatKey) {
+  if (meta.limit < 999) {
     const season = await getOrCreateActiveSeason(gid);
-    const stats  = await getSeasonStats(interaction.user.id, season.id);
-    const used   = (stats as any)[meta.seasonStatKey] as number ?? 0;
+    const used = await getActiveTrainingTierUsage(interaction.user.id, season.id, tier);
     if (used >= meta.limit) {
-      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)], components: [backToHubRow()] });
+      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season. Refunded purchases do not count toward this cap.`)], components: [backToHubRow()] });
       return;
     }
   }
@@ -2635,12 +2675,11 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
       return;
     }
 
-    if (meta.limit < 999 && meta.seasonStatKey) {
-      const stats = await getSeasonStats(interaction.user.id, season.id);
-      const used  = (stats as any)[meta.seasonStatKey] as number ?? 0;
+    if (meta.limit < 999) {
+      const used = await getActiveTrainingTierUsage(interaction.user.id, season.id, tier);
       if (used >= meta.limit) {
         await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)],
+          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season. Refunded purchases do not count toward this cap.`)],
           components: [backToHubRow()],
         });
         return;
