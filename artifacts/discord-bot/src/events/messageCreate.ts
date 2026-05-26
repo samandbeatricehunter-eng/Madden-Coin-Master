@@ -1,6 +1,6 @@
-import { Events, Message } from "discord.js";
+import { Events, Message, PermissionFlagsBits } from "discord.js";
 import { db } from "@workspace/db";
-import { pendingChannelPayoutsTable } from "@workspace/db";
+import { pendingChannelPayoutsTable, guildChannelsTable } from "@workspace/db";
 import { and, eq, count } from "drizzle-orm";
 import {
   getOrCreateActiveSeason,
@@ -13,6 +13,32 @@ import { getPayoutValue, PAYOUT_KEYS } from "../lib/economy/payout-config.js";
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 
 const TWITCH_URL_RE = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
+
+
+async function isCommissionerOrAdminMessage(message: Message): Promise<boolean> {
+  const member = await message.guild?.members.fetch(message.author.id).catch(() => null);
+  if (!member) return false;
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  return member.roles.cache.some((r) => r.name.toLowerCase() === "commissioner");
+}
+
+async function handleGamedayChannelMessage(message: Message): Promise<boolean> {
+  const guildId = message.guildId ?? PRIMARY_GUILD_ID;
+  const [active] = await db.select({ channelId: guildChannelsTable.channelId })
+    .from(guildChannelsTable)
+    .where(and(
+      eq(guildChannelsTable.guildId, guildId),
+      eq(guildChannelsTable.channelKey, "gameday_active"),
+    ))
+    .limit(1);
+
+  if (!active || active.channelId !== message.channelId) return false;
+  if (await isCommissionerOrAdminMessage(message)) return true;
+
+  await message.delete().catch(() => null);
+  return true;
+}
+
 
 async function reactOk(message: Message): Promise<void> {
   try { await message.react("✅"); } catch { /* ignore */ }
@@ -117,6 +143,8 @@ export const once = false;
 export async function execute(message: Message): Promise<void> {
   if (!message.guild) return;
   if (message.author.bot) return;
+
+  if (await handleGamedayChannelMessage(message)) return;
 
   const guildId = message.guildId ?? PRIMARY_GUILD_ID;
   const [streamCh, highlightsCh] = await Promise.all([
