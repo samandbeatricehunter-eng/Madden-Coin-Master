@@ -25,8 +25,11 @@ import {
   getGuildChannel,
   getOrCreateActiveSeason,
   getScheduleSeasonId,
+  addBalance,
+  logTransaction,
 } from "../db/db-helpers.js";
 import { weekLabel } from "../helpers/week-helpers.js";
+import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
 
 type GamedayContext = {
   guildId: string;
@@ -114,6 +117,31 @@ async function ensureGamedayTables(): Promise<void> {
     create index if not exists gameday_schedule_offers_recipient_idx
     on gameday_schedule_offers(guild_id, recipient_discord_id, status)
   `);
+
+  await db.execute(sql`
+    create table if not exists gameday_matchup_status (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      week_index integer not null,
+      matchup_key text not null,
+      away_discord_id text not null,
+      home_discord_id text not null,
+      away_team_name text not null,
+      home_team_name text not null,
+      away_checked_in boolean not null default false,
+      home_checked_in boolean not null default false,
+      search_advised_by text,
+      invite_requested_by text,
+      begun_by text,
+      begun_at timestamp with time zone,
+      stream_url text,
+      stream_paid_to text,
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now(),
+      unique(guild_id, season_id, week_index, matchup_key)
+    )
+  `);
 }
 
 async function queryOffers(whereSql: any): Promise<OfferRow[]> {
@@ -138,6 +166,57 @@ async function countOffers(whereSql: any): Promise<number> {
 
 async function executeOfferUpdate(q: any): Promise<void> {
   await db.execute(q);
+}
+
+function isValidHttpUrl(value: string | null | undefined): boolean {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function ensureMatchupStatus(ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+  await db.execute(sql`
+    insert into gameday_matchup_status (
+      guild_id, season_id, week_index, matchup_key,
+      away_discord_id, home_discord_id, away_team_name, home_team_name
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey},
+      ${ctx.awayDiscordId}, ${ctx.homeDiscordId}, ${ctx.awayTeamName}, ${ctx.homeTeamName}
+    )
+    on conflict (guild_id, season_id, week_index, matchup_key) do nothing
+  `);
+}
+
+async function getMatchupStatus(ctx: GamedayContext): Promise<any> {
+  await ensureMatchupStatus(ctx);
+  const result = await db.execute(sql`
+    select *
+    from gameday_matchup_status
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+    limit 1
+  `);
+  const rows = ((result as any).rows ?? result) as any[];
+  return rows[0] ?? null;
+}
+
+async function dmOpponent(interaction: ButtonInteraction | ModalSubmitInteraction, ctx: GamedayContext, content: string): Promise<void> {
+  const member = await interaction.guild?.members.fetch(ctx.opponentId).catch(() => null);
+  await member?.send(content).catch(() => null);
+}
+
+async function postPublic(interaction: ButtonInteraction | ModalSubmitInteraction, content: string): Promise<void> {
+  const ch = interaction.channel;
+  if (ch?.isTextBased()) await ch.send({ content }).catch(() => null);
 }
 
 async function getContext(interaction: ChatInputCommandInteraction | ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<GamedayContext | null> {
@@ -235,7 +314,7 @@ function mainRows(activeCount: number, pendingCount: number): ActionRowBuilder<B
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("gd_schedule").setLabel("🗓️ Schedule Game").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("gd_pending").setLabel(`📨 Pending Offers (${pendingCount})`).setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("gd_queue").setLabel("🎮 Game Queue").setStyle(ButtonStyle.Success).setDisabled(true),
+      new ButtonBuilder().setCustomId("gd_queue").setLabel("🎮 Game Queue").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("gd_assist").setLabel("🚨 Assistance").setStyle(ButtonStyle.Danger).setDisabled(true),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -278,7 +357,7 @@ async function renderDashboard(interaction: ChatInputCommandInteraction | Button
     .addFields(
       { name: "Schedule Game", value: `Send proposed times · Manage active offers (**${activeCount}**) · Edit/delete offers`, inline: false },
       { name: `Pending Offers (${pendingCount})`, value: "Accept · Counter · Reject with reason", inline: false },
-      { name: "Game Queue", value: "Coming next: check in/out · message opponent · advise search · request invite · mark begun · submit final", inline: false },
+      { name: "Game Queue", value: "Check in/out · message opponent · advise search · request invite · mark begun with stream link", inline: false },
       { name: "Assistance", value: "Coming later: contact commissioner · flag violation · request FS/FW", inline: false },
     );
 
@@ -801,6 +880,212 @@ async function deleteOffer(interaction: ButtonInteraction, ctx: GamedayContext, 
   });
 }
 
+
+async function showGameQueue(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const status = await getMatchupStatus(ctx);
+  const isAway = ctx.userId === ctx.awayDiscordId;
+  const meChecked = isAway ? status.away_checked_in : status.home_checked_in;
+  const oppChecked = isAway ? status.home_checked_in : status.away_checked_in;
+
+  const begunText = status.begun_at
+    ? `Game marked begun by <@${status.begun_by}> at <t:${Math.floor(new Date(status.begun_at).getTime() / 1000)}:t>.`
+    : "Game has not been marked begun yet.";
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("🎮 Game Queue")
+        .setDescription([
+          `**Matchup:** <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>`,
+          `**Your check-in:** ${meChecked ? "✅ Checked in" : "❌ Not checked in"}`,
+          `**Opponent check-in:** ${oppChecked ? "✅ Checked in" : "❌ Not checked in"}`,
+          `**Status:** ${begunText}`,
+          "",
+          "Use these controls to coordinate gametime actions. Public notices will post for search/invite/start actions.",
+        ].join("\n")),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_checkin").setLabel("✅ Check In").setStyle(ButtonStyle.Success).setDisabled(meChecked),
+        new ButtonBuilder().setCustomId("gd_checkout").setLabel("↩️ Check Out").setStyle(ButtonStyle.Secondary).setDisabled(!meChecked),
+        new ButtonBuilder().setCustomId("gd_msg_opp").setLabel("💬 Message Opponent").setStyle(ButtonStyle.Secondary),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_advise_search").setLabel("🔎 Advise to Search").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("gd_request_invite").setLabel("🎮 Request Invite").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("gd_mark_begun").setLabel("▶️ Mark Game Begun").setStyle(ButtonStyle.Success),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function handleCheckIn(interaction: ButtonInteraction, ctx: GamedayContext, checkedIn: boolean): Promise<void> {
+  await ensureMatchupStatus(ctx);
+  const isAway = ctx.userId === ctx.awayDiscordId;
+  if (isAway) {
+    await db.execute(sql`
+      update gameday_matchup_status
+      set away_checked_in = ${checkedIn}, updated_at = now()
+      where guild_id = ${ctx.guildId} and season_id = ${ctx.season.id} and week_index = ${ctx.weekIndex} and matchup_key = ${ctx.matchupKey}
+    `);
+  } else {
+    await db.execute(sql`
+      update gameday_matchup_status
+      set home_checked_in = ${checkedIn}, updated_at = now()
+      where guild_id = ${ctx.guildId} and season_id = ${ctx.season.id} and week_index = ${ctx.weekIndex} and matchup_key = ${ctx.matchupKey}
+    `);
+  }
+
+  await dmOpponent(
+    interaction,
+    ctx,
+    checkedIn
+      ? `✅ <@${ctx.userId}> has checked in and is ready for your game.`
+      : `↩️ <@${ctx.userId}> has checked out and is no longer marked ready.`,
+  );
+
+  await interaction.reply({
+    ephemeral: true,
+    content: checkedIn ? "✅ You are checked in. Your opponent was notified by DM." : "↩️ You checked out. Your opponent was notified by DM.",
+  });
+}
+
+async function handleAdviseSearch(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureMatchupStatus(ctx);
+  await db.execute(sql`
+    update gameday_matchup_status
+    set search_advised_by = ${ctx.userId}, updated_at = now()
+    where guild_id = ${ctx.guildId} and season_id = ${ctx.season.id} and week_index = ${ctx.weekIndex} and matchup_key = ${ctx.matchupKey}
+  `);
+  await postPublic(interaction, `🔎 <@${ctx.opponentId}> — <@${ctx.userId}> is advising you to search **Play Game** in the franchise menu.`);
+  await interaction.reply({ ephemeral: true, content: "✅ Public search notice posted." });
+}
+
+async function handleRequestInvite(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureMatchupStatus(ctx);
+  await db.execute(sql`
+    update gameday_matchup_status
+    set invite_requested_by = ${ctx.userId}, updated_at = now()
+    where guild_id = ${ctx.guildId} and season_id = ${ctx.season.id} and week_index = ${ctx.weekIndex} and matchup_key = ${ctx.matchupKey}
+  `);
+  await postPublic(interaction, `🎮 <@${ctx.opponentId}> — <@${ctx.userId}> is requesting that you send a game invite from the franchise menu.`);
+  await interaction.reply({ ephemeral: true, content: "✅ Public invite request posted." });
+}
+
+async function showOpponentMessageModal(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId("gd_modal_msg_opp")
+    .setTitle("Message Opponent");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("message")
+        .setLabel("Message")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(800),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleOpponentMessageModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  const message = interaction.fields.getTextInputValue("message").trim();
+  await dmOpponent(interaction, ctx, `💬 Message from <@${ctx.userId}> about your matchup:\n\n${message}`);
+  await interaction.reply({ ephemeral: true, content: "✅ Message sent to your opponent by DM." });
+}
+
+async function showMarkBegunModal(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId("gd_modal_mark_begun")
+    .setTitle("Mark Game Begun");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("stream_url")
+        .setLabel("Stream URL (optional)")
+        .setPlaceholder("https://twitch.tv/yourchannel or leave blank")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(200),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function autoPayStreamIfEligible(interaction: ModalSubmitInteraction, ctx: GamedayContext, streamUrl: string): Promise<number> {
+  if (!isValidHttpUrl(streamUrl)) return 0;
+
+  const payout = await getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT, ctx.guildId);
+
+  const existing = await db.execute(sql`
+    select id
+    from pending_channel_payouts
+    where type = 'stream'
+      and discord_id = ${ctx.userId}
+      and season_id = ${ctx.season.id}
+      and week = ${(ctx.season as any).currentWeek ?? "1"}
+    limit 1
+  `);
+  const rows = ((existing as any).rows ?? existing) as any[];
+  if (rows.length > 0) return 0;
+
+  await db.execute(sql`
+    insert into pending_channel_payouts (
+      type, discord_id, amount, channel_id, message_id, guild_id, season_id, week,
+      status, resolved_at, resolved_by
+    )
+    values (
+      'stream', ${ctx.userId}, ${payout}, ${ctx.channelId}, 'gameday-start', ${ctx.guildId}, ${ctx.season.id}, ${(ctx.season as any).currentWeek ?? "1"},
+      'approved', now(), 'bot:auto'
+    )
+  `);
+
+  await addBalance(ctx.userId, payout, ctx.guildId);
+  await logTransaction(ctx.userId, payout, "payout", `Auto stream payout — ${(ctx.season as any).currentWeek ?? "1"}`, ctx.guildId, "stream");
+  return payout;
+}
+
+async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureMatchupStatus(ctx);
+  const rawUrl = interaction.fields.getTextInputValue("stream_url").trim();
+  if (rawUrl && !isValidHttpUrl(rawUrl)) {
+    await interaction.reply({ ephemeral: true, content: "❌ Invalid stream URL. Use a full valid URL starting with http:// or https://, or leave it blank." });
+    return;
+  }
+
+  const paid = await autoPayStreamIfEligible(interaction, ctx, rawUrl);
+
+  await db.execute(sql`
+    update gameday_matchup_status
+    set begun_by = ${ctx.userId},
+        begun_at = coalesce(begun_at, now()),
+        stream_url = case when ${rawUrl || null}::text is not null then ${rawUrl || null} else stream_url end,
+        stream_paid_to = case when ${paid > 0 ? ctx.userId : null}::text is not null then ${paid > 0 ? ctx.userId : null} else stream_paid_to end,
+        updated_at = now()
+    where guild_id = ${ctx.guildId} and season_id = ${ctx.season.id} and week_index = ${ctx.weekIndex} and matchup_key = ${ctx.matchupKey}
+  `);
+
+  await postPublic(
+    interaction,
+    `▶️ **Game Begun**\n<@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>\nMarked begun by <@${ctx.userId}>.${rawUrl ? `\n📺 Stream: ${rawUrl}` : ""}${paid > 0 ? `\n💰 Stream payout automatically issued: **${paid} coins**.` : ""}`,
+  );
+
+  await interaction.reply({
+    ephemeral: true,
+    content: `✅ Game marked as begun.${paid > 0 ? ` Stream payout issued: ${paid} coins.` : rawUrl ? " Stream was already paid or payout was unavailable." : ""}`,
+  });
+}
+
 export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("gd_")) return false;
 
@@ -813,6 +1098,13 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId === "gd_offer_new") { await showNewOfferModal(interaction); return true; }
     if (interaction.customId === "gd_pending") { await showPendingOffers(interaction, ctx); return true; }
     if (interaction.customId === "gd_manage_offers") { await showManageOffers(interaction, ctx); return true; }
+    if (interaction.customId === "gd_queue") { await showGameQueue(interaction, ctx); return true; }
+    if (interaction.customId === "gd_checkin") { await handleCheckIn(interaction, ctx, true); return true; }
+    if (interaction.customId === "gd_checkout") { await handleCheckIn(interaction, ctx, false); return true; }
+    if (interaction.customId === "gd_advise_search") { await handleAdviseSearch(interaction, ctx); return true; }
+    if (interaction.customId === "gd_request_invite") { await handleRequestInvite(interaction, ctx); return true; }
+    if (interaction.customId === "gd_msg_opp") { await showOpponentMessageModal(interaction); return true; }
+    if (interaction.customId === "gd_mark_begun") { await showMarkBegunModal(interaction); return true; }
 
     if (interaction.customId.startsWith("gd_offer_accept:")) { await acceptOffer(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_offer_reject:")) { await rejectOfferModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
@@ -832,6 +1124,8 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
 
   if (interaction.isModalSubmit()) {
     if (interaction.customId === "gd_modal_offer_new") { await handleNewOfferModal(interaction, ctx); return true; }
+    if (interaction.customId === "gd_modal_msg_opp") { await handleOpponentMessageModal(interaction, ctx); return true; }
+    if (interaction.customId === "gd_modal_mark_begun") { await handleMarkBegunModal(interaction, ctx); return true; }
     if (interaction.customId.startsWith("gd_modal_reject:")) { await handleRejectModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_modal_counter:")) { await handleCounterModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_modal_edit:")) { await handleEditModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }

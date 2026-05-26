@@ -7,13 +7,32 @@ import {
   PRIMARY_GUILD_ID,
   getGuildChannel,
   CHANNEL_KEYS,
+  addBalance,
+  logTransaction,
 } from "../lib/db/db-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../lib/economy/payout-config.js";
 
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
+const HIGHLIGHT_AUTO_PAYOUT = 50;
 
-const TWITCH_URL_RE = /https?:\/\/(?:[\w-]+\.)?twitch\.tv\/\S+/i;
+function hasValidUrl(content: string): boolean {
+  const match = content.match(/https?:\/\/\S+/i);
+  if (!match) return false;
+  try {
+    const url = new URL(match[0]);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
+async function reactOk(message: Message): Promise<void> {
+  try { await message.react("✅"); } catch { /* ignore */ }
+}
+
+async function dmUser(message: Message, content: string): Promise<void> {
+  await message.author.send(content).catch(() => null);
+}
 
 async function isCommissionerOrAdminMessage(message: Message): Promise<boolean> {
   const member = await message.guild?.members.fetch(message.author.id).catch(() => null);
@@ -39,21 +58,15 @@ async function handleGamedayChannelMessage(message: Message): Promise<boolean> {
   return true;
 }
 
-
-async function reactOk(message: Message): Promise<void> {
-  try { await message.react("✅"); } catch { /* ignore */ }
-}
-
 async function handleStreamPost(message: Message): Promise<void> {
-  if (!TWITCH_URL_RE.test(message.content)) return;
+  if (!hasValidUrl(message.content)) return;
 
   try {
-    const guildId     = message.guildId!;
-    const season      = await getOrCreateActiveSeason(guildId);
+    const guildId = message.guildId!;
+    const season = await getOrCreateActiveSeason(guildId);
     const currentWeek = (season as any).currentWeek ?? "1";
     const streamPayout = await getPayoutValue(PAYOUT_KEYS.STREAM_PAYOUT, guildId);
 
-    // Dedup: one pending/approved stream payout per user per season+week
     const [existing] = await db
       .select({ id: pendingChannelPayoutsTable.id })
       .from(pendingChannelPayoutsTable)
@@ -62,24 +75,30 @@ async function handleStreamPost(message: Message): Promise<void> {
         eq(pendingChannelPayoutsTable.discordId, message.author.id),
         eq(pendingChannelPayoutsTable.seasonId, season.id),
         eq(pendingChannelPayoutsTable.week, currentWeek),
-        eq(pendingChannelPayoutsTable.status, "pending"),
       ))
       .limit(1);
 
     if (existing) { await reactOk(message); return; }
 
     await db.insert(pendingChannelPayoutsTable).values({
-      type:      "stream",
+      type: "stream",
       discordId: message.author.id,
-      amount:    streamPayout,
+      amount: streamPayout,
       channelId: message.channelId,
       messageId: message.id,
       guildId,
-      seasonId:  season.id,
-      week:      currentWeek,
+      seasonId: season.id,
+      week: currentWeek,
+      status: "approved",
+      resolvedAt: new Date(),
+      resolvedBy: "bot:auto",
     });
 
+    await addBalance(message.author.id, streamPayout, guildId);
+    await logTransaction(message.author.id, streamPayout, "payout", `Auto stream payout — ${currentWeek}`, guildId, "stream");
+
     await reactOk(message);
+    await dmUser(message, `✅ Your stream link was logged and **${streamPayout} coins** were paid automatically.`);
   } catch (err) {
     console.error("[messageCreate] handleStreamPost error:", err);
   }
@@ -92,46 +111,61 @@ async function handleHighlightPost(message: Message): Promise<void> {
   if (videoAttachments.length === 0) return;
 
   try {
-    const guildId         = message.guildId!;
-    const season          = await getOrCreateActiveSeason(guildId);
-    const currentWeek     = (season as any).currentWeek ?? "1";
-    const isPlayoffWeek   = PLAYOFF_WEEKS_SET.has(currentWeek);
-    const highlightLimit  = await getPayoutValue(PAYOUT_KEYS.HIGHLIGHT_LIMIT, guildId);
-    const highlightPayout = await getPayoutValue(
-      isPlayoffWeek ? PAYOUT_KEYS.HIGHLIGHT_PLAYOFF_PAYOUT : PAYOUT_KEYS.HIGHLIGHT_PAYOUT,
-      guildId,
-    );
+    const guildId = message.guildId!;
+    const season = await getOrCreateActiveSeason(guildId);
+    const currentWeek = (season as any).currentWeek ?? "1";
 
-    const [countRow] = await db
-      .select({ total: count() })
+    if (videoAttachments.length > 1) {
+      await message.delete().catch(() => null);
+      await dmUser(
+        message,
+        "❌ Your highlight post was removed because it included multiple video clips.\n\nOnly **one highlight upload** is allowed per advance week. Please repost the single clip you want to count.",
+      );
+      return;
+    }
+
+    const [existing] = await db
+      .select({ id: pendingChannelPayoutsTable.id })
       .from(pendingChannelPayoutsTable)
       .where(and(
         eq(pendingChannelPayoutsTable.type, "highlight"),
         eq(pendingChannelPayoutsTable.discordId, message.author.id),
         eq(pendingChannelPayoutsTable.seasonId, season.id),
         eq(pendingChannelPayoutsTable.week, currentWeek),
-        eq(pendingChannelPayoutsTable.status, "pending"),
-      ));
+      ))
+      .limit(1);
 
-    const usedSlots = Number(countRow?.total ?? 0);
-    if (usedSlots >= highlightLimit) { await reactOk(message); return; }
-
-    const slotsToCreate = Math.min(videoAttachments.length, highlightLimit - usedSlots);
-
-    for (let i = 0; i < slotsToCreate; i++) {
-      await db.insert(pendingChannelPayoutsTable).values({
-        type:      "highlight",
-        discordId: message.author.id,
-        amount:    highlightPayout,
-        channelId: message.channelId,
-        messageId: message.id,
-        guildId,
-        seasonId:  season.id,
-        week:      currentWeek,
-      });
+    if (existing) {
+      await message.delete().catch(() => null);
+      await dmUser(
+        message,
+        "❌ Your highlight post was removed because you already submitted your weekly highlight for this advance week.\n\nOnly **one highlight upload** is eligible per advance week.",
+      );
+      return;
     }
 
+    await db.insert(pendingChannelPayoutsTable).values({
+      type: "highlight",
+      discordId: message.author.id,
+      amount: HIGHLIGHT_AUTO_PAYOUT,
+      channelId: message.channelId,
+      messageId: message.id,
+      guildId,
+      seasonId: season.id,
+      week: currentWeek,
+      status: "approved",
+      resolvedAt: new Date(),
+      resolvedBy: "bot:auto",
+    });
+
+    await addBalance(message.author.id, HIGHLIGHT_AUTO_PAYOUT, guildId);
+    await logTransaction(message.author.id, HIGHLIGHT_AUTO_PAYOUT, "payout", `Auto highlight payout — ${currentWeek}`, guildId, "highlight");
+
     await reactOk(message);
+    await dmUser(
+      message,
+      `✅ Your weekly highlight was accepted and **${HIGHLIGHT_AUTO_PAYOUT} coins** were paid automatically.\n\nPlay of the Year nominations will be added in a later update.`,
+    );
   } catch (err) {
     console.error("[messageCreate] handleHighlightPost error:", err);
   }
