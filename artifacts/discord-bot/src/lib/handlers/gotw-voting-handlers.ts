@@ -68,8 +68,8 @@ type RecordRow = { voterId: string; wins: number; losses: number };
 async function computeVoterRecordGlobal(voterId: string): Promise<{ wins: number; losses: number }> {
   const res = await db.execute(sql`
     SELECT
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  s.winner_discord_id)::int AS wins,
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> s.winner_discord_id)::int AS losses
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS wins,
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS losses
     FROM gotw_votes v
     JOIN gotw_history h
       ON h.season_id    = v.season_id
@@ -80,7 +80,7 @@ async function computeVoterRecordGlobal(voterId: string): Promise<{ wins: number
      AND s.week_index = v.week_index
      AND ((s.away_discord_id = h.discord_id_1 AND s.home_discord_id = h.discord_id_2)
        OR (s.away_discord_id = h.discord_id_2 AND s.home_discord_id = h.discord_id_1))
-    WHERE s.winner_discord_id IS NOT NULL
+    WHERE coalesce(s.winner_discord_id, s.imported_winner_discord_id) IS NOT NULL
       AND v.voter_id = ${voterId}
   `);
   const row: any = (res as any).rows?.[0] ?? (res as any)[0] ?? {};
@@ -91,8 +91,8 @@ async function computeTopVotersForGuild(guildId: string, limit = 5): Promise<Rec
   const res = await db.execute(sql`
     SELECT
       v.voter_id AS voter_id,
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  s.winner_discord_id)::int AS wins,
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> s.winner_discord_id)::int AS losses
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS wins,
+      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS losses
     FROM gotw_votes v
     JOIN gotw_history h
       ON h.season_id    = v.season_id
@@ -104,7 +104,7 @@ async function computeTopVotersForGuild(guildId: string, limit = 5): Promise<Rec
      AND ((s.away_discord_id = h.discord_id_1 AND s.home_discord_id = h.discord_id_2)
        OR (s.away_discord_id = h.discord_id_2 AND s.home_discord_id = h.discord_id_1))
     JOIN seasons se ON se.id = v.season_id
-    WHERE s.winner_discord_id IS NOT NULL
+    WHERE coalesce(s.winner_discord_id, s.imported_winner_discord_id) IS NOT NULL
       AND se.guild_id = ${guildId}
     GROUP BY v.voter_id
     ORDER BY wins DESC, losses ASC, voter_id ASC

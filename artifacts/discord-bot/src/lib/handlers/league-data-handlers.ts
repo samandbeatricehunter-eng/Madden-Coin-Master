@@ -43,6 +43,8 @@ import {
   playerStatWeekProcessedTable,
   statPaddingViolationsTable,
   franchiseScheduleTable,
+  gameSchedulesTable,
+  gotwHistoryTable,
   globalUserRecordsTable,
   usersTable,
   franchiseRostersTable,
@@ -51,7 +53,7 @@ import {
   legendsTable,
   inventoryTable,
 } from "@workspace/db";
-import { eq, and, sql, isNotNull, ne, inArray } from "drizzle-orm";
+import { eq, and, sql, isNotNull, ne, inArray, or } from "drizzle-orm";
 
 import {
   EA_LOGIN_URL,
@@ -1169,6 +1171,109 @@ async function runRosterSync(token: TokenInfo, eaLeagueId: number, guild?: Guild
   return { summaryLine, allOk: failed.length === 0 };
 }
 
+
+function normalTeamName(value: string | null | undefined): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+async function reconcileImportedGameSchedulesForGotw(args: {
+  guildId: string;
+  weekIndex: number;
+}): Promise<{ updated: number; created: number }> {
+  const [season] = await db.select().from(seasonsTable)
+    .where(and(eq(seasonsTable.guildId, args.guildId), eq(seasonsTable.isActive, true)))
+    .limit(1);
+  if (!season) return { updated: 0, created: 0 };
+
+  const [franchiseRows, gameRows, gotwRows] = await Promise.all([
+    db.select().from(franchiseScheduleTable)
+      .where(and(eq(franchiseScheduleTable.seasonId, season.id), eq(franchiseScheduleTable.weekIndex, args.weekIndex))),
+    db.select().from(gameSchedulesTable)
+      .where(and(eq(gameSchedulesTable.guildId, args.guildId), eq(gameSchedulesTable.seasonId, season.id), eq(gameSchedulesTable.weekIndex, args.weekIndex))),
+    db.select().from(gotwHistoryTable)
+      .where(and(eq(gotwHistoryTable.seasonId, season.id), eq(gotwHistoryTable.weekIndex, args.weekIndex))),
+  ]);
+
+  const gotwByPair = new Map<string, typeof gotwRows[number]>();
+  for (const h of gotwRows) {
+    const names = [normalTeamName(h.teamName1), normalTeamName(h.teamName2)].sort().join("|");
+    gotwByPair.set(names, h);
+  }
+
+  let updated = 0;
+  let created = 0;
+
+  for (const fs of franchiseRows) {
+    const pairKey = [normalTeamName(fs.awayTeamName), normalTeamName(fs.homeTeamName)].sort().join("|");
+    const gotw = gotwByPair.get(pairKey);
+    if (!gotw) continue;
+
+    const awayDiscordId = normalTeamName(fs.awayTeamName) === normalTeamName(gotw.teamName1)
+      ? gotw.discordId1
+      : gotw.discordId2;
+    const homeDiscordId = normalTeamName(fs.homeTeamName) === normalTeamName(gotw.teamName1)
+      ? gotw.discordId1
+      : gotw.discordId2;
+
+    const awayScore = fs.awayScore == null ? null : Number(fs.awayScore);
+    const homeScore = fs.homeScore == null ? null : Number(fs.homeScore);
+    const hasFinalScore = awayScore != null && homeScore != null && awayScore !== homeScore;
+    const winnerDiscordId = hasFinalScore
+      ? (awayScore > homeScore ? awayDiscordId : homeDiscordId)
+      : null;
+
+    const matched = gameRows.find(gs => {
+      const sameNames =
+        (normalTeamName(gs.awayTeamName) === normalTeamName(fs.awayTeamName) && normalTeamName(gs.homeTeamName) === normalTeamName(fs.homeTeamName)) ||
+        (normalTeamName(gs.awayTeamName) === normalTeamName(fs.homeTeamName) && normalTeamName(gs.homeTeamName) === normalTeamName(fs.awayTeamName));
+      const sameIds =
+        (gs.awayDiscordId === awayDiscordId && gs.homeDiscordId === homeDiscordId) ||
+        (gs.awayDiscordId === homeDiscordId && gs.homeDiscordId === awayDiscordId);
+      return sameNames || sameIds;
+    });
+
+    if (matched) {
+      await db.update(gameSchedulesTable).set({
+        awayDiscordId,
+        homeDiscordId,
+        awayTeamName: fs.awayTeamName,
+        homeTeamName: fs.homeTeamName,
+        awayScore,
+        homeScore,
+        importedWinnerDiscordId: winnerDiscordId,
+        winnerDiscordId: winnerDiscordId ?? matched.winnerDiscordId,
+        status: winnerDiscordId ? "completed_imported" : matched.status,
+        finishedAt: winnerDiscordId ? (matched.finishedAt ?? new Date()) : matched.finishedAt,
+        updatedAt: new Date(),
+      }).where(eq(gameSchedulesTable.id, matched.id));
+      updated++;
+      continue;
+    }
+
+    await db.insert(gameSchedulesTable).values({
+      guildId: args.guildId,
+      channelId: `imported-gotw-${season.id}-${args.weekIndex}-${gotw.matchupIndex}-${Date.now()}`,
+      seasonId: Number(season.id),
+      weekIndex: args.weekIndex,
+      awayDiscordId,
+      homeDiscordId,
+      awayTeamName: fs.awayTeamName,
+      homeTeamName: fs.homeTeamName,
+      status: winnerDiscordId ? "completed_imported" : "imported",
+      winnerDiscordId,
+      importedWinnerDiscordId: winnerDiscordId,
+      awayScore,
+      homeScore,
+      finishedAt: winnerDiscordId ? new Date() : null,
+      updatedAt: new Date(),
+    });
+    created++;
+  }
+
+  return { updated, created };
+}
+
+
 export async function runWeekImport(ctx: {
   guildId:      string;
   weekNum:      number;
@@ -1337,6 +1442,20 @@ export async function runWeekImport(ctx: {
     ok:     schedRes.ok && schedCount > 0,
     status: schedRes.status,
   });
+
+  try {
+    const gotwRepair = await reconcileImportedGameSchedulesForGotw({ guildId, weekIndex });
+    if (gotwRepair.updated > 0 || gotwRepair.created > 0) {
+      results.push({
+        name: `GOTW schedule repair (${gotwRepair.updated} updated · ${gotwRepair.created} created)`,
+        ok: true,
+        status: 200,
+      });
+    }
+  } catch (err) {
+    console.warn("[ld/import] GOTW schedule repair failed (non-fatal):", err);
+    results.push({ name: "GOTW schedule repair", ok: false, status: 0 });
+  }
 
   try {
     const newsData = await fetchNewsData(token, eaLeagueId, blazeSession);

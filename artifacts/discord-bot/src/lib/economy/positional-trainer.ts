@@ -4,7 +4,7 @@
 // for N weeks. Cost is paid in full upfront at quote = ceil(yearly/18) * weeks
 // then multiplied by the per-guild economy inflation multiplier.
 //
-// Each week tick (Advance Week), every `active` trainer rolls:
+// Each week tick (Advance Week), every `active` trainer rolls. Cooldown is based on prior successful trainer hits for the same user/player/season, not only the current contract row:
 //   1. Base hit chance per tier, reduced for 2 weeks after a hit (cooldown 1/2).
 //   2. If hit, draws boosts using the same focus-weighted attribute lottery as
 //      Training Packages. Standard gold can hit 2; 6+ week contracts add a
@@ -23,7 +23,7 @@ import {
   positionalTrainersTable, trainerRollLogTable, trainerPlayerSeasonCapsTable,
   franchiseRostersTable, purchasesTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { ATTRIBUTES } from "../constants.js";
 
 export type TrainerTier  = "gold" | "silver" | "bronze";
@@ -308,6 +308,48 @@ function youngLowOvrTrainerBonusEligible(args: {
   return yearsPro != null && yearsPro <= 3 && (args.overall ?? 99) < 85;
 }
 
+
+function trainerPlayerKey(playerId: string | null | undefined, playerName: string): string {
+  return (playerId && String(playerId).trim()) || playerName.trim().toLowerCase();
+}
+
+function isValidTrainerRollAttribute(attr: string): boolean {
+  const key = attr.trim().toLowerCase();
+  if (!key) return false;
+  if (key.includes("trait")) return false;
+  if (key === "height" || key === "weight") return false;
+  return true;
+}
+
+async function getLatestPlayerTrainerHitWeek(args: {
+  guildId: string;
+  seasonId: number;
+  ownerDiscordId: string;
+  playerId?: string | null;
+  playerName: string;
+}): Promise<number | null> {
+  const rows = await db
+    .select({
+      weekIndex: trainerRollLogTable.weekIndex,
+      trainerPlayerId: positionalTrainersTable.playerId,
+      trainerPlayerName: positionalTrainersTable.playerName,
+    })
+    .from(trainerRollLogTable)
+    .innerJoin(positionalTrainersTable, eq(trainerRollLogTable.trainerId, positionalTrainersTable.id))
+    .where(and(
+      eq(positionalTrainersTable.guildId, args.guildId),
+      eq(positionalTrainersTable.seasonId, args.seasonId),
+      eq(positionalTrainersTable.ownerDiscordId, args.ownerDiscordId),
+      eq(trainerRollLogTable.hit, true),
+    ))
+    .orderBy(desc(trainerRollLogTable.weekIndex));
+
+  const target = trainerPlayerKey(args.playerId, args.playerName);
+  const hit = rows.find((row) => trainerPlayerKey(row.trainerPlayerId, row.trainerPlayerName) === target);
+  return hit?.weekIndex ?? null;
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Weekly tick orchestrator — iterates every active trainer in a season and
 // applies one roll. Idempotent on (trainerId, weekIndex) via trainer_roll_log.
@@ -428,13 +470,21 @@ export async function runWeeklyTrainerTick(args: {
       capsRow = inserted!;
     }
 
+    const playerHistoryLastHitWeekIndex = await getLatestPlayerTrainerHitWeek({
+      guildId: args.guildId,
+      seasonId: args.seasonId,
+      ownerDiscordId: t.ownerDiscordId,
+      playerId: t.playerId,
+      playerName: t.playerName,
+    });
+
     const tick = rollOneTick({
       tier:             t.tier as TrainerTier,
       focus:            t.focus as TrainerFocus,
       playerPos:        t.playerPos,
       playerAttrs:      attrs,
       caps:             capsRow as TrainerCapsRow,
-      lastHitWeekIndex: t.lastHitWeekIndex,
+      lastHitWeekIndex: playerHistoryLastHitWeekIndex,
       currentWeekIndex: args.currentWeekIndex,
       youngLowOvrBonus: youngLowOvrTrainerBonusEligible({
         attributes: attrs,
@@ -553,6 +603,7 @@ export function defaultPickAttrs(
   const allAttrs  = [...ATTRIBUTES] as string[];
 
   const pool = allAttrs.filter((attr) =>
+    isValidTrainerRollAttribute(attr) &&
     (!posFilter || posFilter.has(attr)) &&
     (attrs[attr] ?? 0) < 99,
   );

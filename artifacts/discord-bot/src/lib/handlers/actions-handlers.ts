@@ -123,6 +123,7 @@ interface ActionsSession {
   trainerPlayerPos?: string;
   trainerPlayerOvr?: number;
   trainerWeeks?: number;
+  trainerManageId?: number;
   // standings flow
   standingsConf?: "AFC" | "NFC" | "ALL";
   // rules view flow
@@ -981,6 +982,12 @@ export async function handleActionsInteraction(
   if (id === "ac_ht_weeks")                 { await handleHireTrainerConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_ht_confirm")               { await handleHireTrainerExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_my_trainers")              { await handleMyTrainers(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_tr_manage")                 { await handleTrainerManageSelect(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_tr_extend")                 { await handleTrainerExtendStart(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_tr_extend_weeks")           { await handleTrainerExtendExecute(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_tr_focus_change")           { await handleTrainerFocusChangeStart(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_tr_focus_set")              { await handleTrainerFocusChangeExecute(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_tr_fire")                   { await handleTrainerFireExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_contract_ext")  { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "contract_extension"); return true; }
   if (id === "ac_buy_salary_red")    { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "salary_reduction"); return true; }
   if (id === "ac_buy_bonus_red")     { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "bonus_reduction"); return true; }
@@ -7925,7 +7932,8 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
   });
 }
 
-async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSession) {
+
+async function handleMyTrainers(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
 
@@ -7962,20 +7970,257 @@ async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSe
       : logs.map(l => `  • **W${l.weekIndex + 1}** — ${l.hit ? "✅" : "❌"} ${l.reason}`).join("\n");
     const statusBadge = t.status === "active" ? "🟢 Active" : "⏹ Expired";
     sections.push(
-      `**${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}** — ${t.playerName} (${t.playerPos}) · ${statusBadge}\n` +
-      `Focus: **${t.focus}** · Weeks: **${t.weeksRemaining}/${t.weeksTotal}** · Spent: **${t.totalCost.toLocaleString()} coins**\n` +
+      `**#${t.id} · ${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}** — ${t.playerName} (${t.playerPos}) · ${statusBadge}\n` +
+      `Focus: **${t.focus}** · Weeks: **${t.weeksRemaining}/${t.weeksTotal}** · Spent: **${Number(t.totalCost ?? 0).toLocaleString()} coins**\n` +
       `Recent rolls:\n${logLines}`,
     );
   }
 
+  const active = trainers.filter(t => t.status === "active");
+  const components: any[] = [];
+  if (active.length > 0) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("ac_tr_manage")
+      .setPlaceholder("Manage an active trainer…")
+      .addOptions(active.slice(0, 25).map(t =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`#${t.id} · ${t.playerName} · ${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}`)
+          .setDescription(`${t.weeksRemaining}/${t.weeksTotal} weeks left · Focus: ${t.focus}`)
+          .setValue(String(t.id)),
+      ));
+    components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
+  }
+
+  components.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Another").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+    ),
+  );
+
   await interaction.update({
     embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
       .setDescription(sections.join("\n\n").slice(0, 4000))],
+    components,
+  });
+}
+
+async function loadOwnedActiveTrainer(guildId: string, ownerDiscordId: string, trainerId: number) {
+  const [trainer] = await db.select().from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId, guildId),
+      eq(positionalTrainersTable.ownerDiscordId, ownerDiscordId),
+      eq(positionalTrainersTable.id, trainerId),
+      eq(positionalTrainersTable.status, "active"),
+    ))
+    .limit(1);
+  return trainer ?? null;
+}
+
+function trainerManageRows(): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_tr_extend").setLabel("➕ Extend Contract").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ac_tr_focus_change").setLabel("🎯 Change Focus").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_tr_fire").setLabel("🛑 Fire + Refund").setStyle(ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("← Back to My Trainers").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+async function showTrainerManage(interaction: ButtonInteraction | StringSelectMenuInteraction, sess: ActionsSession, trainerId: number) {
+  const gid = interaction.guildId!;
+  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, trainerId);
+  if (!trainer) {
+    const payload = {
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")],
+      components: [backToHubRow()],
+    };
+    if (interaction.isStringSelectMenu()) await interaction.update(payload);
+    else await interaction.update(payload);
+    return;
+  }
+
+  sess.trainerManageId = trainer.id;
+  const perWeek = Math.ceil(Number(trainer.totalCost ?? 0) / Math.max(1, Number(trainer.weeksTotal ?? 1)));
+  const refund = perWeek * Math.max(0, Number(trainer.weeksRemaining ?? 0));
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0x8b5cf6)
+      .setTitle(`🏋️ Manage Trainer #${trainer.id}`)
+      .setDescription([
+        `**Player:** ${trainer.playerName} (${trainer.playerPos})`,
+        `**Tier:** ${TRAINER_TIERS[trainer.tier as TrainerTier]?.label ?? trainer.tier}`,
+        `**Focus:** ${trainer.focus}`,
+        `**Weeks Remaining:** ${trainer.weeksRemaining}/${trainer.weeksTotal}`,
+        `**Refund if fired now:** ${refund.toLocaleString()} coins`,
+        "",
+        "Cooldown is tied to this player’s trainer hit history, so firing/rehiring does **not** reset cooldown.",
+      ].join("\n"))],
+    components: trainerManageRows(),
+  });
+}
+
+async function handleTrainerManageSelect(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const trainerId = Number(interaction.values[0] ?? 0);
+  await showTrainerManage(interaction, sess, trainerId);
+}
+
+async function handleTrainerExtendStart(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  if (!sess.trainerManageId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No trainer selected.")], components: [backToHubRow()] });
+    return;
+  }
+  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
+  if (!trainer) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
+    return;
+  }
+  const season = await getOrCreateActiveSeason(gid);
+  const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
+  const maxAdd = Math.max(0, Math.min(weeksLeft - Number(trainer.weeksRemaining ?? 0), 18));
+  if (maxAdd <= 0) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No additional regular-season weeks are available to extend this trainer.")], components: trainerManageRows() });
+    return;
+  }
+
+  const infl = await getInflationBpsForGuild(gid);
+  const perWeek = quoteHire(trainer.tier as TrainerTier, 1, infl).perWeek;
+  const opts = Array.from({ length: Math.min(maxAdd, 25) }, (_, i) => i + 1).map(w =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(`${w} week${w !== 1 ? "s" : ""} — ${(perWeek * w).toLocaleString()} coins`)
+      .setValue(String(w)),
+  );
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("➕ Extend Trainer Contract")
+      .setDescription(`**${trainer.playerName}** · ${TRAINER_TIERS[trainer.tier as TrainerTier]?.label ?? trainer.tier}\nCurrent: **${trainer.weeksRemaining}/${trainer.weeksTotal}** weeks.\n\nExtending to **6+ total weeks** immediately qualifies this trainer for long-contract boost odds.`)],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder().setCustomId("ac_tr_extend_weeks").setPlaceholder("Choose weeks to add…").addOptions(opts),
+      ),
+      ...trainerManageRows(),
+    ],
+  });
+}
+
+async function handleTrainerExtendExecute(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const addWeeks = Number(interaction.values[0] ?? 0);
+  if (!sess.trainerManageId || !addWeeks) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Extension session expired.")], components: [backToHubRow()] });
+    return;
+  }
+  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
+  if (!trainer) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const infl = await getInflationBpsForGuild(gid);
+  const q = quoteHire(trainer.tier as TrainerTier, addWeeks, infl);
+  const debited = await deductBalance(interaction.user.id, q.total, gid);
+  if (!debited) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins for this extension. Needed **${q.total.toLocaleString()}**.`)], components: trainerManageRows() });
+    return;
+  }
+
+  await db.update(positionalTrainersTable).set({
+    weeksRemaining: sql`${positionalTrainersTable.weeksRemaining} + ${addWeeks}`,
+    weeksTotal: sql`${positionalTrainersTable.weeksTotal} + ${addWeeks}`,
+    totalCost: sql`${positionalTrainersTable.totalCost} + ${q.total}`,
+  }).where(eq(positionalTrainersTable.id, trainer.id));
+
+  await logTransaction(interaction.user.id, -q.total, "purchase", `Trainer contract extension — ${trainer.playerName} +${addWeeks} week(s)`, gid, "trainer");
+  await showTrainerManage(interaction, sess, trainer.id);
+}
+
+async function handleTrainerFocusChangeStart(interaction: ButtonInteraction, sess: ActionsSession) {
+  if (!sess.trainerManageId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No trainer selected.")], components: [backToHubRow()] });
+    return;
+  }
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_tr_focus_set")
+    .setPlaceholder("Choose the new training focus…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("⚡ Speed").setDescription("Bias rolls toward speed/agility/movement attrs").setValue("speed"),
+      new StringSelectMenuOptionBuilder().setLabel("💪 Power").setDescription("Bias rolls toward strength/power attrs").setValue("power"),
+      new StringSelectMenuOptionBuilder().setLabel("⚖️ Balanced").setDescription("Even chance across all eligible attrs").setValue("balanced"),
+      new StringSelectMenuOptionBuilder().setLabel("🎯 Position-focused").setDescription("Heavy bias toward this position's core attrs").setValue("position"),
+    ]);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("🎯 Change Trainer Focus")
+      .setDescription("Change focus before the next weekly roll. This is free and does not reset cooldown.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      ...trainerManageRows(),
+    ],
+  });
+}
+
+async function handleTrainerFocusChangeExecute(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const focus = interaction.values[0] as TrainerFocus;
+  if (!sess.trainerManageId || !["speed", "power", "balanced", "position"].includes(focus)) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Focus change session expired.")], components: [backToHubRow()] });
+    return;
+  }
+  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
+  if (!trainer) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
+    return;
+  }
+
+  await db.update(positionalTrainersTable)
+    .set({ focus })
+    .where(eq(positionalTrainersTable.id, trainer.id));
+
+  await showTrainerManage(interaction, sess, trainer.id);
+}
+
+async function handleTrainerFireExecute(interaction: ButtonInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  if (!sess.trainerManageId) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No trainer selected.")], components: [backToHubRow()] });
+    return;
+  }
+  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
+  if (!trainer) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
+    return;
+  }
+
+  const perWeek = Math.ceil(Number(trainer.totalCost ?? 0) / Math.max(1, Number(trainer.weeksTotal ?? 1)));
+  const refund = Math.max(0, Number(trainer.weeksRemaining ?? 0)) * perWeek;
+
+  await db.update(positionalTrainersTable).set({
+    status: "expired",
+    weeksRemaining: 0,
+    expiredAt: new Date(),
+  }).where(eq(positionalTrainersTable.id, trainer.id));
+
+  if (refund > 0) {
+    await addBalance(interaction.user.id, refund, gid);
+    await logTransaction(interaction.user.id, refund, "refund", `Trainer fired refund — ${trainer.playerName} (${trainer.weeksRemaining} unused week(s))`, gid, "trainer");
+  }
+
+  sess.trainerManageId = undefined;
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Orange)
+      .setTitle("🛑 Trainer Fired")
+      .setDescription(`**${trainer.playerName}**'s trainer contract was ended.\nRefund issued: **${refund.toLocaleString()} coins**.\n\nCooldown history for this player was preserved.`)],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Another").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("← Back to My Trainers").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Trainer").setStyle(ButtonStyle.Primary),
       ),
     ],
   });
 }
+
