@@ -31,6 +31,8 @@ import {
 } from "../db/db-helpers.js";
 import { weekLabel } from "../helpers/week-helpers.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
+import { getServerSettings } from "../db/server-settings.js";
+import { nextAdvanceDeadline } from "../discord/timezones.js";
 
 type GamedayContext = {
   guildId: string;
@@ -70,12 +72,12 @@ type OfferRow = {
 
 
 const GAMEDAY_TZ_OPTIONS = [
-  { key: "EST", label: "EST", offsetMinutes: -5 * 60 },
-  { key: "CST", label: "CST", offsetMinutes: -6 * 60 },
-  { key: "MST", label: "MST", offsetMinutes: -7 * 60 },
-  { key: "PST", label: "PST", offsetMinutes: -8 * 60 },
-  { key: "AKST", label: "AKST", offsetMinutes: -9 * 60 },
-  { key: "UTC", label: "UTC", offsetMinutes: 0 },
+  { key: "EST", label: "EST", timeZone: "America/New_York" },
+  { key: "CST", label: "CST", timeZone: "America/Chicago" },
+  { key: "MST", label: "MST", timeZone: "America/Denver" },
+  { key: "PST", label: "PST", timeZone: "America/Los_Angeles" },
+  { key: "AKST", label: "AKST", timeZone: "America/Anchorage" },
+  { key: "UTC", label: "UTC", timeZone: "UTC" },
 ] as const;
 
 type GamedayTzKey = typeof GAMEDAY_TZ_OPTIONS[number]["key"];
@@ -117,21 +119,30 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function formatLocalDateLabel(date: Date, tzKey: GamedayTzKey): string {
-  const parts = localParts(date, tzKey);
-  return `${parts.month}/${parts.day}/${parts.year}`;
+function formatPartsInTimeZone(date: Date, tzKey: GamedayTzKey): { year: number; month: number; day: number; hour: number; minute: number } {
+  const tz = tzByKey(tzKey)!;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour"),
+    minute: get("minute"),
+  };
 }
 
 function localParts(date: Date, tzKey: GamedayTzKey): { year: number; month: number; day: number; hour: number; minute: number } {
-  const tz = tzByKey(tzKey)!;
-  const shifted = new Date(date.getTime() + tz.offsetMinutes * 60_000);
-  return {
-    year: shifted.getUTCFullYear(),
-    month: shifted.getUTCMonth() + 1,
-    day: shifted.getUTCDate(),
-    hour: shifted.getUTCHours(),
-    minute: shifted.getUTCMinutes(),
-  };
+  return formatPartsInTimeZone(date, tzKey);
 }
 
 function localIsoDate(date: Date, tzKey: GamedayTzKey): string {
@@ -139,12 +150,22 @@ function localIsoDate(date: Date, tzKey: GamedayTzKey): string {
   return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
 
+function timeZoneOffsetMs(date: Date, tzKey: GamedayTzKey): number {
+  const p = localParts(date, tzKey);
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
+  return asUtc - date.getTime();
+}
+
 function localDateTimeToUtc(dateIso: string, time: string, tzKey: GamedayTzKey): Date {
-  const tz = tzByKey(tzKey)!;
   const [year, month, day] = dateIso.split("-").map(Number);
   const [hour, minute] = time.split(":").map(Number);
-  const utcMs = Date.UTC(year!, month! - 1, day!, hour!, minute!) - tz.offsetMinutes * 60_000;
-  return new Date(utcMs);
+
+  // Initial guess treats the selected local wall time as UTC, then adjusts by
+  // the real timezone offset for that instant. The second pass handles DST.
+  let guess = new Date(Date.UTC(year!, month! - 1, day!, hour!, minute!));
+  let utc = new Date(guess.getTime() - timeZoneOffsetMs(guess, tzKey));
+  utc = new Date(guess.getTime() - timeZoneOffsetMs(utc, tzKey));
+  return utc;
 }
 
 function displayTime(time: string): string {
@@ -156,11 +177,9 @@ function displayTime(time: string): string {
   return `${h12}:${pad2(m)} ${suffix}`;
 }
 
-function getBaseAdvanceDeadline(ctx: GamedayContext): Date {
-  // The active gameday channel already uses server settings. For guided scheduling,
-  // store/consume overrides in gameday_advance_overrides when commissioners approve
-  // a late-game delay.
-  return new Date(Date.now() + 72 * 60 * 60_000);
+async function getBaseAdvanceDeadline(ctx: GamedayContext): Promise<Date> {
+  const settings = await getServerSettings(ctx.guildId);
+  return nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
 }
 
 async function getAdvanceDeadline(ctx: GamedayContext): Promise<Date> {
@@ -177,8 +196,6 @@ async function getAdvanceDeadline(ctx: GamedayContext): Promise<Date> {
   `);
   const rows = ((result as any).rows ?? result) as Array<{ advance_at_utc: string | Date }>;
   if (rows[0]?.advance_at_utc) return new Date(rows[0].advance_at_utc);
-  // Fallback: approximate from now if no override exists. The channel creation code
-  // still posts official deadline from server settings; delay approvals write here.
   return getBaseAdvanceDeadline(ctx);
 }
 
@@ -191,14 +208,22 @@ async function getAvailableDays(ctx: GamedayContext, tzKey: GamedayTzKey): Promi
   const days: Array<{ iso: string; label: string }> = [];
   const todayParts = todayIso.split("-").map(Number);
   let cursor = new Date(Date.UTC(todayParts[0]!, todayParts[1]! - 1, todayParts[2]!));
+
   for (let i = 0; i < 10; i++) {
     const iso = `${cursor.getUTCFullYear()}-${pad2(cursor.getUTCMonth() + 1)}-${pad2(cursor.getUTCDate())}`;
     if (iso > deadlineIso) break;
-    const dateLabel = `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}/${cursor.getUTCFullYear()}`;
-    const label = iso === todayIso ? `Today — ${dateLabel}` : iso === deadlineIso ? `Advance Day — ${dateLabel}` : dateLabel;
-    days.push({ iso, label });
+
+    // Include a day only if it has at least one future slot before deadline.
+    const hasTimes = (await getAvailableTimes(ctx, iso, tzKey)).length > 0;
+    if (hasTimes) {
+      const dateLabel = `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}/${cursor.getUTCFullYear()}`;
+      const label = iso === todayIso ? `Today — ${dateLabel}` : iso === deadlineIso ? `Advance Day — ${dateLabel}` : dateLabel;
+      days.push({ iso, label });
+    }
+
     cursor = new Date(cursor.getTime() + 24 * 60 * 60_000);
   }
+
   return days;
 }
 
@@ -211,8 +236,11 @@ async function getAvailableTimes(ctx: GamedayContext, dayIso: string, tzKey: Gam
     for (const minute of [0, 30]) {
       const time = `${pad2(hour)}:${pad2(minute)}`;
       const utc = localDateTimeToUtc(dayIso, time, tzKey);
-      if (utc.getTime() <= now.getTime()) continue;
+
+      // Hard guard: never show slots that are already past or within the current minute.
+      if (utc.getTime() <= now.getTime() + 60_000) continue;
       if (utc.getTime() > deadline.getTime()) continue;
+
       const late = utc.getTime() >= deadline.getTime() - 60 * 60_000;
       out.push({ value: time, label: `${displayTime(time)} ${tzKey}${late ? " ⚠️ late" : ""}`, late });
     }
@@ -232,7 +260,6 @@ async function isCommissionerOrAdmin(interaction: ButtonInteraction | StringSele
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
   return member.roles.cache.some((r) => r.name.toLowerCase() === "commissioner");
 }
-
 
 function teamKey(teamName: string): string {
   return teamName.toLowerCase().trim();
