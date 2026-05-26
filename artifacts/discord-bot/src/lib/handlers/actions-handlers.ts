@@ -2444,11 +2444,6 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-  const trainerUsage = await getActiveTrainerConflicts({
-    guildId: gid,
-    seasonId: season.id,
-    ownerDiscordId: interaction.user.id,
-  });
   const { goldUsed, silverUsed } = await getActiveTrainingPackageUsage(interaction.user.id, season.id);
   const playerTrainingUsed = await getActiveTrainingPlayerUsage(
     interaction.user.id,
@@ -7459,30 +7454,6 @@ function weeksLeftInRegularSeason(currentWeek: string | null | undefined): numbe
 }
 
 
-async function getActiveTrainerUsage(
-  guildId: string,
-  seasonId: number,
-  ownerDiscordId: string,
-): Promise<{ activeCount: number; activeForPlayer: number }> {
-  const rows = await db
-    .select({
-      id: positionalTrainersTable.id,
-      playerName: positionalTrainersTable.playerName,
-    })
-    .from(positionalTrainersTable)
-    .where(and(
-      eq(positionalTrainersTable.guildId, guildId),
-      eq(positionalTrainersTable.seasonId, seasonId),
-      eq(positionalTrainersTable.ownerDiscordId, ownerDiscordId),
-      eq(positionalTrainersTable.status, "active"),
-    ));
-
-  return {
-    activeCount: rows.length,
-    activeForPlayer: 0,
-  };
-}
-
 async function getActiveTrainerConflicts(args: {
   guildId: string;
   seasonId: number;
@@ -7522,6 +7493,11 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
   }
   const season = await getOrCreateActiveSeason(gid);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const trainerUsage = await getActiveTrainerConflicts({
+    guildId: gid,
+    seasonId: season.id,
+    ownerDiscordId: interaction.user.id,
+  });
 
   // Reset session
   sess.trainerTier = undefined;
