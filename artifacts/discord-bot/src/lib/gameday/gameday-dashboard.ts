@@ -142,6 +142,39 @@ async function ensureGamedayTables(): Promise<void> {
       unique(guild_id, season_id, week_index, matchup_key)
     )
   `);
+
+  await db.execute(sql`
+    create table if not exists gameday_score_submissions (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      week_index integer not null,
+      matchup_key text not null,
+      away_discord_id text not null,
+      home_discord_id text not null,
+      away_team_name text not null,
+      home_team_name text not null,
+      submitted_by text not null,
+      opponent_discord_id text not null,
+      away_score integer not null,
+      home_score integer not null,
+      winner_discord_id text,
+      status text not null default 'pending',
+      dispute_reason text,
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now()
+    )
+  `);
+
+  await db.execute(sql`
+    create index if not exists gameday_score_submissions_lookup_idx
+    on gameday_score_submissions(guild_id, season_id, week_index, matchup_key, status)
+  `);
+
+  await db.execute(sql`
+    create index if not exists gameday_score_submissions_opp_idx
+    on gameday_score_submissions(guild_id, opponent_discord_id, status)
+  `);
 }
 
 async function queryOffers(whereSql: any): Promise<OfferRow[]> {
@@ -319,6 +352,7 @@ function mainRows(activeCount: number, pendingCount: number): ActionRowBuilder<B
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("gd_manage_offers").setLabel(`⚙️ Manage Active Offers (${activeCount})`).setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("gd_score_pending").setLabel("🏁 Score Approval").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -916,6 +950,7 @@ async function showGameQueue(interaction: ButtonInteraction, ctx: GamedayContext
         new ButtonBuilder().setCustomId("gd_advise_search").setLabel("🔎 Advise to Search").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("gd_request_invite").setLabel("🎮 Request Invite").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("gd_mark_begun").setLabel("▶️ Mark Game Begun").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("gd_submit_final").setLabel("🏁 Submit Final").setStyle(ButtonStyle.Danger),
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
@@ -1086,6 +1121,284 @@ async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: Ga
   });
 }
 
+
+async function showSubmitFinalModal(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId("gd_modal_submit_final")
+    .setTitle("Submit Final Score");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("away_score")
+        .setLabel("Away score")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(3),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("home_score")
+        .setLabel("Home score")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(3),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+function scoreWinner(ctx: GamedayContext, awayScore: number, homeScore: number): string | null {
+  if (awayScore > homeScore) return ctx.awayDiscordId;
+  if (homeScore > awayScore) return ctx.homeDiscordId;
+  return null;
+}
+
+async function handleSubmitFinalModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+  const status = await getMatchupStatus(ctx);
+  if (!status?.begun_at) {
+    await interaction.reply({ ephemeral: true, content: "❌ You must mark the game as begun before submitting a final score." });
+    return;
+  }
+
+  const awayScore = Number(interaction.fields.getTextInputValue("away_score").trim());
+  const homeScore = Number(interaction.fields.getTextInputValue("home_score").trim());
+  if (!Number.isInteger(awayScore) || !Number.isInteger(homeScore) || awayScore < 0 || homeScore < 0) {
+    await interaction.reply({ ephemeral: true, content: "❌ Scores must be valid non-negative whole numbers." });
+    return;
+  }
+
+  const winnerDiscordId = scoreWinner(ctx, awayScore, homeScore);
+  if (!winnerDiscordId) {
+    await interaction.reply({ ephemeral: true, content: "❌ Ties cannot be submitted through this flow. Contact a commissioner if this is intentional." });
+    return;
+  }
+
+  await db.execute(sql`
+    update gameday_score_submissions
+    set status = 'superseded', updated_at = now()
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+      and status = 'pending'
+  `);
+
+  const result = await db.execute(sql`
+    insert into gameday_score_submissions (
+      guild_id, season_id, week_index, matchup_key,
+      away_discord_id, home_discord_id, away_team_name, home_team_name,
+      submitted_by, opponent_discord_id,
+      away_score, home_score, winner_discord_id, status
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey},
+      ${ctx.awayDiscordId}, ${ctx.homeDiscordId}, ${ctx.awayTeamName}, ${ctx.homeTeamName},
+      ${ctx.userId}, ${ctx.opponentId},
+      ${awayScore}, ${homeScore}, ${winnerDiscordId}, 'pending'
+    )
+    returning id
+  `);
+  const rows = ((result as any).rows ?? result) as Array<{ id: number }>;
+  const id = rows[0]?.id ?? 0;
+
+  await dmOpponent(
+    interaction,
+    ctx,
+    `🏁 <@${ctx.userId}> submitted a final score for **${ctx.awayTeamName} @ ${ctx.homeTeamName}**:\n\n` +
+    `**${ctx.awayTeamName}: ${awayScore}**\n` +
+    `**${ctx.homeTeamName}: ${homeScore}**\n\n` +
+    `Open \`/gameday\` in the active gameday channel to approve or dispute it.`,
+  );
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("🏁 Final Score Submitted")
+        .setDescription(`Score submission #${id} was sent to <@${ctx.opponentId}> for approval.`),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function getPendingScoreApproval(ctx: GamedayContext): Promise<any | null> {
+  await ensureGamedayTables();
+  const result = await db.execute(sql`
+    select *
+    from gameday_score_submissions
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+      and opponent_discord_id = ${ctx.userId}
+      and status = 'pending'
+    order by created_at desc
+    limit 1
+  `);
+  const rows = ((result as any).rows ?? result) as any[];
+  return rows[0] ?? null;
+}
+
+async function showScoreApproval(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const score = await getPendingScoreApproval(ctx);
+  if (!score) {
+    await interaction.update({
+      ephemeral: true,
+      embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("🏁 Score Approval").setDescription("You do not have any pending score approvals.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+    });
+    return;
+  }
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle(`🏁 Score Approval #${score.id}`)
+        .setDescription([
+          `**Submitted by:** <@${score.submitted_by}>`,
+          `**Matchup:** <@${score.away_discord_id}> @ <@${score.home_discord_id}>`,
+          `**${score.away_team_name}:** ${score.away_score}`,
+          `**${score.home_team_name}:** ${score.home_score}`,
+          `**Winner:** <@${score.winner_discord_id}>`,
+        ].join("\n")),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`gd_score_approve:${score.id}`).setLabel("✅ Approve Score").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`gd_score_dispute:${score.id}`).setLabel("⚠️ Dispute Score").setStyle(ButtonStyle.Danger),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function approveScore(interaction: ButtonInteraction, ctx: GamedayContext, scoreId: number): Promise<void> {
+  const result = await db.execute(sql`
+    select *
+    from gameday_score_submissions
+    where id = ${scoreId}
+      and guild_id = ${ctx.guildId}
+      and opponent_discord_id = ${ctx.userId}
+      and status = 'pending'
+    limit 1
+  `);
+  const rows = ((result as any).rows ?? result) as any[];
+  const score = rows[0];
+  if (!score) {
+    await interaction.reply({ ephemeral: true, content: "❌ Score submission not found or no longer pending." });
+    return;
+  }
+
+  await db.execute(sql`
+    update gameday_score_submissions
+    set status = 'approved', updated_at = now()
+    where id = ${score.id}
+  `);
+
+  await db.execute(sql`
+    update game_schedules
+    set
+      away_score = ${score.away_score},
+      home_score = ${score.home_score},
+      winner_discord_id = ${score.winner_discord_id},
+      status = 'completed_pending_import',
+      finished_at = coalesce(finished_at, now()),
+      updated_at = now()
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and (
+           (away_discord_id = ${ctx.awayDiscordId} and home_discord_id = ${ctx.homeDiscordId})
+        or (away_discord_id = ${ctx.homeDiscordId} and home_discord_id = ${ctx.awayDiscordId})
+      )
+  `);
+
+  await postPublic(
+    interaction,
+    `🏁 **FINAL SUBMITTED & APPROVED**\n` +
+    `<@${score.away_discord_id}> @ <@${score.home_discord_id}>\n` +
+    `**${score.away_team_name}: ${score.away_score}**\n` +
+    `**${score.home_team_name}: ${score.home_score}**\n` +
+    `Winner: <@${score.winner_discord_id}>\n\n` +
+    `Status: **Completed — pending EA import confirmation**.`,
+  );
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✅ Score Approved").setDescription("The final score was publicly posted and marked completed pending import.")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
+async function showDisputeScoreModal(interaction: ButtonInteraction, scoreId: number): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId(`gd_modal_score_dispute:${scoreId}`)
+    .setTitle("Dispute Final Score");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Reason for dispute")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(800),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleDisputeScoreModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, scoreId: number): Promise<void> {
+  const reason = interaction.fields.getTextInputValue("reason").trim();
+  const result = await db.execute(sql`
+    select *
+    from gameday_score_submissions
+    where id = ${scoreId}
+      and guild_id = ${ctx.guildId}
+      and opponent_discord_id = ${ctx.userId}
+      and status = 'pending'
+    limit 1
+  `);
+  const rows = ((result as any).rows ?? result) as any[];
+  const score = rows[0];
+  if (!score) {
+    await interaction.reply({ ephemeral: true, content: "❌ Score submission not found or no longer pending." });
+    return;
+  }
+
+  await db.execute(sql`
+    update gameday_score_submissions
+    set status = 'disputed', dispute_reason = ${reason}, updated_at = now()
+    where id = ${score.id}
+  `);
+
+  await postPublic(
+    interaction,
+    `⚠️ **FINAL SCORE DISPUTED**\n` +
+    `<@${score.away_discord_id}> @ <@${score.home_discord_id}>\n` +
+    `Submitted score: **${score.away_team_name} ${score.away_score} — ${score.home_team_name} ${score.home_score}**\n` +
+    `Disputed by: <@${ctx.userId}>\n\n` +
+    `Commissioners should review this result.`,
+  );
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("⚠️ Score Disputed").setDescription("The dispute was posted publicly for commissioner review.")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
 export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("gd_")) return false;
 
@@ -1105,6 +1418,11 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId === "gd_request_invite") { await handleRequestInvite(interaction, ctx); return true; }
     if (interaction.customId === "gd_msg_opp") { await showOpponentMessageModal(interaction); return true; }
     if (interaction.customId === "gd_mark_begun") { await showMarkBegunModal(interaction); return true; }
+    if (interaction.customId === "gd_submit_final") { await showSubmitFinalModal(interaction); return true; }
+    if (interaction.customId === "gd_score_pending") { await showScoreApproval(interaction, ctx); return true; }
+
+    if (interaction.customId.startsWith("gd_score_approve:")) { await approveScore(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_score_dispute:")) { await showDisputeScoreModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
 
     if (interaction.customId.startsWith("gd_offer_accept:")) { await acceptOffer(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_offer_reject:")) { await rejectOfferModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
@@ -1126,6 +1444,8 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId === "gd_modal_offer_new") { await handleNewOfferModal(interaction, ctx); return true; }
     if (interaction.customId === "gd_modal_msg_opp") { await handleOpponentMessageModal(interaction, ctx); return true; }
     if (interaction.customId === "gd_modal_mark_begun") { await handleMarkBegunModal(interaction, ctx); return true; }
+    if (interaction.customId === "gd_modal_submit_final") { await handleSubmitFinalModal(interaction, ctx); return true; }
+    if (interaction.customId.startsWith("gd_modal_score_dispute:")) { await handleDisputeScoreModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_modal_reject:")) { await handleRejectModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_modal_counter:")) { await handleCounterModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_modal_edit:")) { await handleEditModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
