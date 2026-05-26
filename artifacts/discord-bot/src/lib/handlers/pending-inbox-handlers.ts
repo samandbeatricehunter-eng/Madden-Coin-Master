@@ -36,6 +36,7 @@ import {
   pendingChannelPayoutsTable,
   coinTransactionsTable,
   customPlayersTable,
+  customArchetypesTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, desc, isNotNull } from "drizzle-orm";
 import {
@@ -377,10 +378,48 @@ function customPlayerName(row: typeof customPlayersTable.$inferSelect): string {
   return `${row.firstName} ${row.lastName}`.trim();
 }
 
-function formatCustomAttributes(attrs: unknown, page: number): { text: string; totalPages: number } {
-  const entries = Object.entries((attrs ?? {}) as Record<string, unknown>)
-    .filter(([, value]) => value !== null && value !== undefined && value !== "")
-    .sort(([a], [b]) => a.localeCompare(b));
+function orderedCustomAttributeEntries(
+  attrs: unknown,
+  templateAttrs?: unknown,
+): Array<[string, unknown]> {
+  const rawAttrs = (attrs ?? {}) as Record<string, unknown>;
+  const rawEntries = Object.entries(rawAttrs)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "");
+
+  const rawMap = new Map(rawEntries);
+  const templateOrder = Object.keys((templateAttrs ?? {}) as Record<string, unknown>);
+  const preferredOrder = templateOrder.length > 0 ? templateOrder : Object.keys(rawAttrs);
+
+  const used = new Set<string>();
+  const ordered: Array<[string, unknown]> = [];
+
+  for (const key of preferredOrder) {
+    if (!used.has(key) && rawMap.has(key)) {
+      ordered.push([key, rawMap.get(key)]);
+      used.add(key);
+    }
+  }
+
+  // Preserve any unexpected/existing extra attributes after the template-defined
+  // attributes instead of alphabetizing the whole build. This keeps the review
+  // view aligned with the attribute template/custom-player builder order while
+  // still surfacing every saved value.
+  for (const [key, value] of rawEntries) {
+    if (!used.has(key)) {
+      ordered.push([key, value]);
+      used.add(key);
+    }
+  }
+
+  return ordered;
+}
+
+function formatCustomAttributes(
+  attrs: unknown,
+  page: number,
+  templateAttrs?: unknown,
+): { text: string; totalPages: number } {
+  const entries = orderedCustomAttributeEntries(attrs, templateAttrs);
 
   const pageSize = 18;
   const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
@@ -395,6 +434,23 @@ function formatCustomAttributes(attrs: unknown, page: number): { text: string; t
     text: slice.map(([key, value]) => `**${key}:** ${String(value)}`).join("\n"),
     totalPages,
   };
+}
+
+async function getCustomPlayerTemplateAttributes(
+  guildId: string,
+  player: typeof customPlayersTable.$inferSelect,
+): Promise<Record<string, number> | null> {
+  const [template] = await db
+    .select({ attributes: customArchetypesTable.attributes })
+    .from(customArchetypesTable)
+    .where(and(
+      eq(customArchetypesTable.guildId, guildId),
+      eq(customArchetypesTable.position, player.position),
+      eq(customArchetypesTable.name, player.archetypeName),
+    ))
+    .limit(1);
+
+  return (template?.attributes ?? null) as Record<string, number> | null;
 }
 
 async function buildCustomPlayersPage(
@@ -540,7 +596,8 @@ async function buildCustomPlayerDetailPage(
   }
 
   const p = row.player;
-  const attrs = formatCustomAttributes(p.attributes, attrPage);
+  const templateAttrs = await getCustomPlayerTemplateAttributes(guildId, p);
+  const attrs = formatCustomAttributes(p.attributes, attrPage, templateAttrs);
   const teamDisplay = p.teamName ?? row.userTeam ?? "?";
 
   const embed = new EmbedBuilder()
