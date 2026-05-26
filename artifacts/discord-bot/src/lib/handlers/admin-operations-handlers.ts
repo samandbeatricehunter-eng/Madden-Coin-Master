@@ -54,6 +54,7 @@ import { runWeeklyTrainerTick, expireAllActiveTrainersForSeason } from "../econo
 import { rebuildHistoricalChannel } from "../franchise/wildcard-automation.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
 import { nextAdvanceDeadline, formatAllZones, discordTimestampLong } from "../discord/timezones.js";
+import { createWeeklyGamedayChannel, gamedayWeekNumFromWeekKey } from "../gameday/gameday-channel.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -243,7 +244,12 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     return true;
   }
 
-  if (id === "ao_advance_confirm") {
+  if (id === "ao_advance_cat") {
+    await handleAdvanceCategorySelect(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+
+  if (id.startsWith("ao_advance_confirm")) {
     await handleAdvanceConfirm(interaction as ButtonInteraction);
     return true;
   }
@@ -343,7 +349,7 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     return true;
   }
 
-  // ── Post Game Channels ────────────────────────────────────────────────────────
+  // ── Post Game Channel ─────────────────────────────────────────────────────────
   if (id === "ao_post_game_channels") {
     await handlePostGameChannels(interaction as ButtonInteraction);
     return true;
@@ -716,7 +722,7 @@ async function handlePostMatchupsConfirm(interaction: ButtonInteraction) {
   }
 }
 
-// ── Post Game Channels ─────────────────────────────────────────────────────────
+// ── Post Game Channel ──────────────────────────────────────────────────────────
 
 
 async function handlePostGameChannels(interaction: ButtonInteraction) {
@@ -2755,7 +2761,76 @@ async function handleSetWeekSelect(interaction: StringSelectMenuInteraction, _se
 
 // ── Advance Week ───────────────────────────────────────────────────────────────
 
+
 async function handleAdvanceWeek(interaction: ButtonInteraction) {
+  const guildId = interaction.guildId!;
+  const guild   = interaction.guild;
+  const season  = await getOrCreateActiveSeason(guildId);
+  const current = season.currentWeek ?? "1";
+
+  const currentIdx = WEEK_SEQUENCE.indexOf(current);
+  const nextIdx    = currentIdx === -1 ? 0 : Math.min(currentIdx + 1, WEEK_SEQUENCE.length - 1);
+  const nextWeek   = WEEK_SEQUENCE[nextIdx]!;
+  const nextWeekNum = gamedayWeekNumFromWeekKey(nextWeek);
+
+  if (!guild) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Could not access guild.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary))],
+    });
+    return;
+  }
+
+  await guild.channels.fetch().catch(() => null);
+  const categories = guild.channels.cache
+    .filter((c) => c.type === ChannelType.GuildCategory)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((c) => ({ id: c.id, name: c.name }))
+    .slice(0, 24);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ao_advance_cat")
+    .setPlaceholder("Select gameday channel category for the next week…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder()
+        .setLabel("No category / top-level channel")
+        .setDescription("Create the new gameday channel outside a category.")
+        .setValue("none"),
+      ...categories.map((c) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(c.name.slice(0, 100))
+          .setDescription("Create the new gameday channel inside this category.")
+          .setValue(c.id),
+      ),
+    ]);
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("⏩ Advance Week — Select Gameday Category")
+        .setDescription(
+          `**Current week:** ${weekLabel(current)}\n` +
+          `**Next week:** **${weekLabel(nextWeek)}**\n\n` +
+          "Select where the new weekly gameday channel should be created.\n\n" +
+          "Advance will then:\n" +
+          "• Permanently delete the previous active gameday channel\n" +
+          "• Create **one** new league-wide gameday channel\n" +
+          "• Post the full schedule, H2H user tags, pinned header, and @everyone reminder\n" +
+          "• Run the normal advance-week auto-actions\n\n" +
+          (nextWeekNum == null ? "⚠️ This next week does not map to a gameday channel week, so channel creation may be skipped." : ""),
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("✖ Cancel").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleAdvanceCategorySelect(interaction: StringSelectMenuInteraction) {
   const guildId = interaction.guildId!;
   const season  = await getOrCreateActiveSeason(guildId);
   const current = season.currentWeek ?? "1";
@@ -2763,9 +2838,10 @@ async function handleAdvanceWeek(interaction: ButtonInteraction) {
   const currentIdx = WEEK_SEQUENCE.indexOf(current);
   const nextIdx    = currentIdx === -1 ? 0 : Math.min(currentIdx + 1, WEEK_SEQUENCE.length - 1);
   const nextWeek   = WEEK_SEQUENCE[nextIdx]!;
+  const categoryId = interaction.values[0] ?? "none";
 
   const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("ao_advance_confirm").setLabel("✅ Confirm Advance").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ao_advance_confirm:${categoryId}`).setLabel("✅ Confirm Advance").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("✖ Cancel").setStyle(ButtonStyle.Danger),
   );
 
@@ -2776,13 +2852,14 @@ async function handleAdvanceWeek(interaction: ButtonInteraction) {
         .setTitle("⏩ Advance Week — Confirm")
         .setDescription(
           `**Current week:** ${weekLabel(current)}\n` +
-          `**Next week:** **${weekLabel(nextWeek)}**\n\n` +
+          `**Next week:** **${weekLabel(nextWeek)}**\n` +
+          `**Gameday category:** ${categoryId === "none" ? "No category / top-level" : `<#${categoryId}>`}\n\n` +
           "This will run **all auto-actions**:\n" +
-          "• Create matchup channels for H2H games\n" +
-          "• Award GOTW participation bonuses\n" +
-          "• Process playoff payouts (if applicable)\n" +
-          "• And more...\n\n" +
-          "**Are you sure?**"
+          "• Create one weekly gameday channel for H2H actions\n" +
+          "• Award/update weekly automated systems\n" +
+          "• Process playoff payouts if applicable\n" +
+          "• Run trainer ticks and other advance actions\n\n" +
+          "**Are you sure?**",
         ),
     ],
     components: [confirmRow],
@@ -2790,6 +2867,7 @@ async function handleAdvanceWeek(interaction: ButtonInteraction) {
 }
 
 async function handleAdvanceConfirm(interaction: ButtonInteraction) {
+  const selectedCategoryId = interaction.customId.split(":")[1] ?? "none";
   await interaction.update({
     embeds: [
       new EmbedBuilder()
@@ -2801,7 +2879,7 @@ async function handleAdvanceConfirm(interaction: ButtonInteraction) {
   });
 
   try {
-    await performAdvanceWeek(interaction);
+    await performAdvanceWeek(interaction, selectedCategoryId === "none" ? null : selectedCategoryId);
   } catch (err) {
     console.error("[admin-operations] Advance week error:", err);
     await interaction.editReply({
@@ -2848,7 +2926,7 @@ function toChannelName(teamName: string): string {
     .replace(/-$/, "");
 }
 
-async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void> {
+async function performAdvanceWeek(interaction: ButtonInteraction, selectedGamedayCategoryId: string | null = null): Promise<void> {
   const guildId    = interaction.guildId!;
   const season     = await getOrCreateActiveSeason(guildId);
 
@@ -3298,6 +3376,8 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   const guild = interaction.guild;
 
   if (guild) {
+    // Legacy cleanup: remove old per-matchup channel rows and any surviving
+    // per-matchup Discord channels. New system creates ONE league-wide gameday channel.
     const oldChannels = await db.select()
       .from(gameChannelsTable)
       .where(eq(gameChannelsTable.seasonId, season.id));
@@ -3308,241 +3388,39 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
         const ch = guild.channels.cache.get(row.channelId)
           ?? await guild.channels.fetch(row.channelId).catch(() => null);
         if (ch) {
-          await ch.delete("Advance week — removing previous week's matchup channels");
+          await ch.delete("Advance week — removing legacy per-matchup channel");
           deleted++;
         }
       } catch (_) {}
     }
 
     if (oldChannels.length > 0) {
+      const oldChannelIds = oldChannels.map((r) => r.channelId).filter(Boolean);
+      if (oldChannelIds.length > 0) {
+        await db.delete(gameSchedulesTable).where(inArray(gameSchedulesTable.channelId, oldChannelIds));
+      }
       await db.delete(gameChannelsTable)
         .where(eq(gameChannelsTable.seasonId, season.id));
-      if (deleted > 0) channelLines.push(`🗑️ Removed **${deleted}** previous matchup channel${deleted !== 1 ? "s" : ""}`);
+      if (deleted > 0) channelLines.push(`🗑️ Removed **${deleted}** legacy matchup channel${deleted !== 1 ? "s" : ""}`);
     }
 
-    // Also sweep the GAMEDAY category for any orphaned Discord channels that have
-    // no DB row (e.g. created by a previous run that failed before the DB insert).
-    const gamedayCategory = guild.channels.cache.find(
-      c => c.type === ChannelType.GuildCategory && c.name.toUpperCase().includes("GAMEDAY"),
-    );
-    if (gamedayCategory) {
-      const orphans = guild.channels.cache.filter(
-        c => c.parentId === gamedayCategory.id && c.name.includes("-vs-"),
-      );
-      for (const [, ch] of orphans) {
-        try { await ch.delete("Advance week — sweeping orphaned matchup channel"); deleted++; }
-        catch (_) {}
+    const gamedayWeekNum = gamedayWeekNumFromWeekKey(newWeek);
+    if (gamedayWeekNum != null) {
+      try {
+        const result = await createWeeklyGamedayChannel({
+          guild,
+          guildId,
+          weekNum: gamedayWeekNum,
+          categoryId: selectedGamedayCategoryId,
+          deletePrevious: true,
+        });
+        channelLines.push(`✅ Created weekly gameday channel: <#${result.channelId}> (**${result.h2hCount}** H2H matchup${result.h2hCount !== 1 ? "s" : ""})`);
+      } catch (err) {
+        console.error("[admin-operations] Weekly gameday channel creation failed:", err);
+        channelLines.push(`⚠️ Weekly gameday channel creation failed: ${err}`);
       }
-    }
-
-    const newWeekNum = parseInt(newWeek, 10);
-    let channelWeekIndex: number | null = null;
-    let channelWeekDisplayLabel = weekLabel(newWeek);
-
-    if (!isNaN(newWeekNum) && newWeekNum >= 1 && newWeekNum <= 18) {
-      channelWeekIndex = newWeekNum - 1;
-    } else if (PLAYOFF_WEEK_META[newWeek]) {
-      channelWeekIndex = PLAYOFF_WEEK_META[newWeek]!.weekIndex;
-    }
-
-    if (channelWeekIndex !== null) {
-      const weekIndex = channelWeekIndex;
-
-      const games = await db.select()
-        .from(franchiseScheduleTable)
-        .where(and(
-          eq(franchiseScheduleTable.seasonId,  season.id),
-          eq(franchiseScheduleTable.weekIndex, weekIndex),
-        ));
-
-      const [mcaTeams, defaultLogos] = await Promise.all([
-        db.select({
-          fullName:  franchiseMcaTeamsTable.fullName,
-          nickName:  franchiseMcaTeamsTable.nickName,
-          discordId: franchiseMcaTeamsTable.discordId,
-          teamId:    franchiseMcaTeamsTable.teamId,
-          logoUrl:   franchiseMcaTeamsTable.logoUrl,
-        }).from(franchiseMcaTeamsTable)
-          .where(eq(franchiseMcaTeamsTable.seasonId, season.id)),
-        db.select({
-          teamId:   defaultTeamLogosTable.teamId,
-          fullName: defaultTeamLogosTable.fullName,
-          nickName: defaultTeamLogosTable.nickName,
-          logoUrl:  defaultTeamLogosTable.logoUrl,
-        }).from(defaultTeamLogosTable),
-      ]);
-
-      const defaultById   = new Map<number, string>();
-      const defaultByName = new Map<string, string>();
-      for (const d of defaultLogos) {
-        defaultById.set(d.teamId, d.logoUrl);
-        defaultByName.set(d.fullName.toLowerCase().trim(), d.logoUrl);
-        defaultByName.set(d.nickName.toLowerCase().trim(), d.logoUrl);
-      }
-
-      const teamToDiscord = new Map<string, string>();
-      const teamToMca     = new Map<string, typeof mcaTeams[0]>();
-      for (const t of mcaTeams) {
-        const keys = [
-          t.fullName.toLowerCase().trim(),
-          t.nickName.toLowerCase().trim(),
-          String(t.teamId),
-        ];
-        for (const key of keys) {
-          if (!teamToMca.has(key)) teamToMca.set(key, t);
-          if (t.discordId && !t.discordId.startsWith("unlinked_") && !teamToDiscord.has(key))
-            teamToDiscord.set(key, t.discordId);
-        }
-      }
-
-      const discordIdToMca = new Map<string, typeof mcaTeams[0]>();
-      for (const t of mcaTeams) {
-        if (t.discordId && !t.discordId.startsWith("unlinked_")) discordIdToMca.set(t.discordId, t);
-      }
-
-      const allUsers = await db.select({
-        discordId: usersTable.discordId,
-        team:      usersTable.team,
-      }).from(usersTable).where(eq(usersTable.guildId, guildId));
-      for (const u of allUsers) {
-        if (u.team && !u.discordId.startsWith("unlinked_") && !teamToDiscord.has(u.team.toLowerCase().trim())) {
-          teamToDiscord.set(u.team.toLowerCase().trim(), u.discordId);
-        }
-      }
-
-      const discordIdToProperTeam = new Map<string, string>();
-      for (const u of allUsers) {
-        if (u.team && !u.discordId.startsWith("unlinked_")) discordIdToProperTeam.set(u.discordId, u.team);
-      }
-
-      // Alias full team names to real Discord IDs resolved via nickname, and enrich discordIdToMca
-      for (const t of mcaTeams) {
-        const byNick = teamToDiscord.get(t.nickName.toLowerCase().trim());
-        if (byNick) {
-          if (!teamToDiscord.has(t.fullName.toLowerCase().trim()))
-            teamToDiscord.set(t.fullName.toLowerCase().trim(), byNick);
-          if (!discordIdToMca.has(byNick)) discordIdToMca.set(byNick, t);
-        }
-      }
-
-      const h2hGames = games.filter(g => {
-        const awayId = teamToDiscord.get(g.awayTeamName.toLowerCase().trim());
-        const homeId = teamToDiscord.get(g.homeTeamName.toLowerCase().trim());
-        return awayId && homeId;
-      });
-
-      if (h2hGames.length === 0 && games.length > 0) {
-        channelLines.push("📭 No H2H matchups found in schedule for this week — no channels created");
-      } else if (games.length === 0) {
-        channelLines.push("📭 No schedule data found for this week — run `/franchiseupdate` first");
-      }
-
-      await guild.channels.fetch();
-      const matchupCategory = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildCategory && c.name.toUpperCase().includes("GAMEDAY"),
-      );
-      const resolvedCategoryId = matchupCategory?.id ?? null;
-
-      if (!resolvedCategoryId) {
-        channelLines.push("⚠️ Could not find a GAMEDAY CENTER category in this server — matchup channels not created.");
-      }
-
-      let created = 0;
-      for (const g of resolvedCategoryId ? h2hGames : []) {
-        const awayDiscordId = teamToDiscord.get(g.awayTeamName.toLowerCase().trim())!;
-        const homeDiscordId = teamToDiscord.get(g.homeTeamName.toLowerCase().trim())!;
-        const awayProper    = discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName;
-        const homeProper    = discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName;
-        const awayNick      = discordIdToMca.get(awayDiscordId)?.nickName ?? discordIdToProperTeam.get(awayDiscordId) ?? g.awayTeamName.split(/\s+/).pop()!;
-        const homeNick      = discordIdToMca.get(homeDiscordId)?.nickName ?? discordIdToProperTeam.get(homeDiscordId) ?? g.homeTeamName.split(/\s+/).pop()!;
-        const chanName      = `${toChannelName(awayNick)}-vs-${toChannelName(homeNick)}`;
-
-        try {
-          // ── Public channel: @everyone can view by default. Explicit allow
-          // overwrites for bot + Commissioner role + both players + bot-admins
-          // remain so they retain send/manage perms even if guild defaults for
-          // @everyone are tightened. ──
-          const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
-          const botAdmins = await db.select({ discordId: usersTable.discordId })
-            .from(usersTable)
-            .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));
-          const overwrites: import("discord.js").OverwriteResolvable[] = [
-            { id: guild.client.user!.id,   allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] },
-          ];
-          if (commRole) overwrites.push({ id: commRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
-          if (awayDiscordId && !awayDiscordId.startsWith("unlinked_")) overwrites.push({ id: awayDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
-          if (homeDiscordId && !homeDiscordId.startsWith("unlinked_")) overwrites.push({ id: homeDiscordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
-          for (const a of botAdmins) {
-            if (a.discordId && a.discordId !== awayDiscordId && a.discordId !== homeDiscordId && !a.discordId.startsWith("unlinked_")) {
-              overwrites.push({ id: a.discordId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
-            }
-          }
-          const newChannel = await guild.channels.create({
-            name:   chanName,
-            type:   ChannelType.GuildText,
-            parent: resolvedCategoryId!,
-            permissionOverwrites: overwrites,
-          });
-
-          try {
-            await db.insert(gameChannelsTable).values({
-              seasonId:     season.id,
-              weekIndex,
-              channelId:    newChannel.id,
-              awayTeamName: awayProper,
-              homeTeamName: homeProper,
-            });
-          } catch (dbErr) {
-            console.error(`[admin-operations] game_channels INSERT failed for ${chanName}:`, dbErr);
-          }
-
-          // ── Scheduling header ────────────────────────────────────────────────
-          try {
-            const sched = await ensureScheduleRow({
-              guildId,
-              channelId:      newChannel.id,
-              seasonId:       season.id,
-              weekIndex,
-              awayDiscordId,
-              homeDiscordId,
-              awayTeamName:   awayProper,
-              homeTeamName:   homeProper,
-              status:         "unscheduled",
-            });
-            const settings  = await getServerSettings(guildId);
-            const deadline  = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
-            // Resolve server nicknames so both players are tagged AND named.
-            const awayMember = awayDiscordId && !awayDiscordId.startsWith("unlinked_")
-              ? await guild.members.fetch(awayDiscordId).catch(() => null) : null;
-            const homeMember = homeDiscordId && !homeDiscordId.startsWith("unlinked_")
-              ? await guild.members.fetch(homeDiscordId).catch(() => null) : null;
-            const awayTag = awayMember ? `<@${awayDiscordId}> (@${awayMember.displayName})` : awayProper;
-            const homeTag = homeMember ? `<@${homeDiscordId}> (@${homeMember.displayName})` : homeProper;
-            const headerMsg = await newChannel.send({
-              content:
-                `🏈 **${awayProper} @ ${homeProper}** — ${channelWeekDisplayLabel}\n` +
-                `${awayTag}  vs  ${homeTag}\n` +
-                `Schedule your game using the buttons below. Good luck!`,
-              components: [buildHeaderRow(sched)],
-            });
-            await headerMsg.pin().catch(() => {});
-            await db.update(gameSchedulesTable)
-              .set({ headerMessageId: headerMsg.id })
-              .where(eq(gameSchedulesTable.id, sched.id));
-          } catch (hdrErr) {
-            console.error(`[admin-operations] Failed to post scheduling header for ${chanName}:`, hdrErr);
-          }
-
-          created++;
-        } catch (chErr) {
-          console.error(`[admin-operations] Failed to create channel for ${chanName}:`, chErr);
-          channelLines.push(`⚠️ Could not create channel for **${g.awayTeamName} vs ${g.homeTeamName}**`);
-        }
-      }
-
-      if (created > 0) {
-        channelLines.push(`✅ Created **${created}** matchup channel${created !== 1 ? "s" : ""}${resolvedCategoryId ? `` : ""}`);
-      }
+    } else {
+      channelLines.push("⏭️ No gameday channel created for this league phase.");
     }
   }
 
@@ -3561,7 +3439,7 @@ async function performAdvanceWeek(interaction: ButtonInteraction): Promise<void>
   }
 
   if (channelLines.length > 0) {
-    embed.addFields({ name: "📺 Matchup Channels", value: channelLines.join("\n") });
+    embed.addFields({ name: "🎮 Gameday Channel", value: channelLines.join("\n") });
   }
 
   if (preseasonWipeNote) {

@@ -535,7 +535,7 @@ export function buildAdminCategoryPage(
         btn("ao_advance_week",        "⏩ Advance Week",         ButtonStyle.Primary),
         btn("ao_set_week",            "📅 Set Week",             ButtonStyle.Secondary),
         btn("ao_set_season_num",      "🔢 Set Season",           ButtonStyle.Secondary),
-        btn("ao_post_game_channels",  "🎮 Post Game Channels",  ButtonStyle.Secondary),
+        btn("ao_post_game_channels",  "🎮 Post Game Channel",   ButtonStyle.Secondary),
         btn("ao_post_matchups",       "📋 Post Matchups/GOTW",  ButtonStyle.Secondary),
       );
       break;

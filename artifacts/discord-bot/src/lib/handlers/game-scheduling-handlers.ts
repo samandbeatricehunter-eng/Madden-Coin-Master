@@ -1028,7 +1028,7 @@ export function buildBeginRow(sid: number): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
-// Used by the channel-create flow.
+// Legacy helper kept for any remaining per-matchup scheduling rows.
 export async function ensureScheduleRow(values: typeof gameSchedulesTable.$inferInsert): Promise<typeof gameSchedulesTable.$inferSelect> {
   const existing = await db.select().from(gameSchedulesTable).where(eq(gameSchedulesTable.channelId, values.channelId)).limit(1);
   if (existing[0]) return existing[0];

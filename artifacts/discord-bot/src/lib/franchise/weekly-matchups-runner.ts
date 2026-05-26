@@ -137,8 +137,8 @@ export async function runWeeklyMatchupsFlow(opts: RunWeeklyMatchupsOpts): Promis
   const displayWeekIndex = displayWeekNum - 1;
 
   // GOTW payouts no longer happen here — they're settled per-game when the
-  // winner is confirmed in the private game channel (see settleGotwForGame
-  // in game-scheduling-handlers.ts). The previous-week voter readback from
+  // winner is confirmed by import/game result flow. Gameday now uses one
+  // league-wide weekly channel instead of per-matchup private channels. The previous-week voter readback from
   // the Discord poll is dead — in-menu voting writes to gotw_votes directly.
   void payoutWeekIndex;
 
