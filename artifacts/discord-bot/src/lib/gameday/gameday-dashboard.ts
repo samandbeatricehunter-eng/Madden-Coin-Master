@@ -13,6 +13,7 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  PermissionFlagsBits,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -66,6 +67,172 @@ type OfferRow = {
   created_at: Date | string;
   updated_at: Date | string;
 };
+
+
+const GAMEDAY_TZ_OPTIONS = [
+  { key: "EST", label: "EST", offsetMinutes: -5 * 60 },
+  { key: "CST", label: "CST", offsetMinutes: -6 * 60 },
+  { key: "MST", label: "MST", offsetMinutes: -7 * 60 },
+  { key: "PST", label: "PST", offsetMinutes: -8 * 60 },
+  { key: "AKST", label: "AKST", offsetMinutes: -9 * 60 },
+  { key: "UTC", label: "UTC", offsetMinutes: 0 },
+] as const;
+
+type GamedayTzKey = typeof GAMEDAY_TZ_OPTIONS[number]["key"];
+
+type ScheduleDraft = {
+  dayIso?: string;
+  tz?: GamedayTzKey;
+  time?: string;
+};
+
+const scheduleDrafts = new Map<string, ScheduleDraft>();
+
+function draftKey(ctx: GamedayContext): string {
+  return `${ctx.guildId}:${ctx.season.id}:${ctx.weekIndex}:${ctx.matchupKey}:${ctx.userId}`;
+}
+
+function getScheduleDraft(ctx: GamedayContext): ScheduleDraft {
+  const key = draftKey(ctx);
+  let d = scheduleDrafts.get(key);
+  if (!d) {
+    d = {};
+    scheduleDrafts.set(key, d);
+  }
+  return d;
+}
+
+function setScheduleDraft(ctx: GamedayContext, patch: Partial<ScheduleDraft>): ScheduleDraft {
+  const key = draftKey(ctx);
+  const next = { ...getScheduleDraft(ctx), ...patch };
+  scheduleDrafts.set(key, next);
+  return next;
+}
+
+function tzByKey(key: string | undefined | null) {
+  return GAMEDAY_TZ_OPTIONS.find((t) => t.key === key);
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatLocalDateLabel(date: Date, tzKey: GamedayTzKey): string {
+  const parts = localParts(date, tzKey);
+  return `${parts.month}/${parts.day}/${parts.year}`;
+}
+
+function localParts(date: Date, tzKey: GamedayTzKey): { year: number; month: number; day: number; hour: number; minute: number } {
+  const tz = tzByKey(tzKey)!;
+  const shifted = new Date(date.getTime() + tz.offsetMinutes * 60_000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+  };
+}
+
+function localIsoDate(date: Date, tzKey: GamedayTzKey): string {
+  const p = localParts(date, tzKey);
+  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
+}
+
+function localDateTimeToUtc(dateIso: string, time: string, tzKey: GamedayTzKey): Date {
+  const tz = tzByKey(tzKey)!;
+  const [year, month, day] = dateIso.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const utcMs = Date.UTC(year!, month! - 1, day!, hour!, minute!) - tz.offsetMinutes * 60_000;
+  return new Date(utcMs);
+}
+
+function displayTime(time: string): string {
+  const [hRaw, mRaw] = time.split(":").map(Number);
+  const h = hRaw ?? 0;
+  const m = mRaw ?? 0;
+  const suffix = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${pad2(m)} ${suffix}`;
+}
+
+function getBaseAdvanceDeadline(ctx: GamedayContext): Date {
+  // The active gameday channel already uses server settings. For guided scheduling,
+  // store/consume overrides in gameday_advance_overrides when commissioners approve
+  // a late-game delay.
+  return new Date(Date.now() + 72 * 60 * 60_000);
+}
+
+async function getAdvanceDeadline(ctx: GamedayContext): Promise<Date> {
+  await ensureGamedayTables();
+  const result = await db.execute(sql`
+    select advance_at_utc
+    from gameday_advance_overrides
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and status = 'active'
+    order by created_at desc
+    limit 1
+  `);
+  const rows = ((result as any).rows ?? result) as Array<{ advance_at_utc: string | Date }>;
+  if (rows[0]?.advance_at_utc) return new Date(rows[0].advance_at_utc);
+  // Fallback: approximate from now if no override exists. The channel creation code
+  // still posts official deadline from server settings; delay approvals write here.
+  return getBaseAdvanceDeadline(ctx);
+}
+
+async function getAvailableDays(ctx: GamedayContext, tzKey: GamedayTzKey): Promise<Array<{ iso: string; label: string }>> {
+  const now = new Date();
+  const deadline = await getAdvanceDeadline(ctx);
+  const todayIso = localIsoDate(now, tzKey);
+  const deadlineIso = localIsoDate(deadline, tzKey);
+
+  const days: Array<{ iso: string; label: string }> = [];
+  const todayParts = todayIso.split("-").map(Number);
+  let cursor = new Date(Date.UTC(todayParts[0]!, todayParts[1]! - 1, todayParts[2]!));
+  for (let i = 0; i < 10; i++) {
+    const iso = `${cursor.getUTCFullYear()}-${pad2(cursor.getUTCMonth() + 1)}-${pad2(cursor.getUTCDate())}`;
+    if (iso > deadlineIso) break;
+    const dateLabel = `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}/${cursor.getUTCFullYear()}`;
+    const label = iso === todayIso ? `Today — ${dateLabel}` : iso === deadlineIso ? `Advance Day — ${dateLabel}` : dateLabel;
+    days.push({ iso, label });
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60_000);
+  }
+  return days;
+}
+
+async function getAvailableTimes(ctx: GamedayContext, dayIso: string, tzKey: GamedayTzKey): Promise<Array<{ value: string; label: string; late: boolean }>> {
+  const now = new Date();
+  const deadline = await getAdvanceDeadline(ctx);
+  const out: Array<{ value: string; label: string; late: boolean }> = [];
+
+  for (let hour = 0; hour < 24; hour++) {
+    for (const minute of [0, 30]) {
+      const time = `${pad2(hour)}:${pad2(minute)}`;
+      const utc = localDateTimeToUtc(dayIso, time, tzKey);
+      if (utc.getTime() <= now.getTime()) continue;
+      if (utc.getTime() > deadline.getTime()) continue;
+      const late = utc.getTime() >= deadline.getTime() - 60 * 60_000;
+      out.push({ value: time, label: `${displayTime(time)} ${tzKey}${late ? " ⚠️ late" : ""}`, late });
+    }
+  }
+
+  return out;
+}
+
+function commissionerRoleMention(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): string {
+  const role = interaction.guild?.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
+  return role ? `<@&${role.id}>` : "@Commissioners";
+}
+
+async function isCommissionerOrAdmin(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) return false;
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  return member.roles.cache.some((r) => r.name.toLowerCase() === "commissioner");
+}
+
 
 function teamKey(teamName: string): string {
   return teamName.toLowerCase().trim();
@@ -175,6 +342,41 @@ async function ensureGamedayTables(): Promise<void> {
     create index if not exists gameday_score_submissions_opp_idx
     on gameday_score_submissions(guild_id, opponent_discord_id, status)
   `);
+  await db.execute(sql`
+    create table if not exists gameday_advance_overrides (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      week_index integer not null,
+      requested_by text,
+      approved_by text,
+      advance_at_utc timestamp with time zone not null,
+      tz text not null,
+      reason text,
+      status text not null default 'active',
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now()
+    )
+  `);
+
+  await db.execute(sql`
+    create table if not exists gameday_commissioner_requests (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      week_index integer not null,
+      matchup_key text not null,
+      request_type text not null,
+      requested_by text not null,
+      opponent_discord_id text,
+      reason text,
+      status text not null default 'pending',
+      message_id text,
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now()
+    )
+  `);
+
 }
 
 async function queryOffers(whereSql: any): Promise<OfferRow[]> {
@@ -348,7 +550,7 @@ function mainRows(activeCount: number, pendingCount: number): ActionRowBuilder<B
       new ButtonBuilder().setCustomId("gd_schedule").setLabel("🗓️ Schedule Game").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("gd_pending").setLabel(`📨 Pending Offers (${pendingCount})`).setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("gd_queue").setLabel("🎮 Game Queue").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("gd_assist").setLabel("🚨 Assistance").setStyle(ButtonStyle.Danger).setDisabled(true),
+      new ButtonBuilder().setCustomId("gd_assist").setLabel("🚨 Assistance").setStyle(ButtonStyle.Danger),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("gd_manage_offers").setLabel(`⚙️ Manage Active Offers (${activeCount})`).setStyle(ButtonStyle.Secondary),
@@ -439,35 +641,175 @@ async function showScheduleMenu(interaction: ButtonInteraction, ctx: GamedayCont
   });
 }
 
-async function showNewOfferModal(interaction: ButtonInteraction): Promise<void> {
+
+async function showNewOfferModal(interaction: ButtonInteraction, ctx?: GamedayContext): Promise<void> {
+  // Backward-compatible name. The flow is now selector-driven, not a freeform modal.
+  if (!ctx) {
+    await interaction.reply({ ephemeral: true, content: "❌ Scheduling session expired. Reopen `/gameday` and try again." });
+    return;
+  }
+  setScheduleDraft(ctx, {});
+  await showTimezoneSelect(interaction, ctx);
+}
+
+async function showTimezoneSelect(interaction: ButtonInteraction | StringSelectMenuInteraction, ctx: GamedayContext): Promise<void> {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("gd_sched_tz")
+    .setPlaceholder("Select your timezone…")
+    .addOptions(GAMEDAY_TZ_OPTIONS.map((tz) =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(tz.label)
+        .setDescription(tz.key === "UTC" ? "Coordinated Universal Time" : `UTC${tz.offsetMinutes / 60}`)
+        .setValue(tz.key),
+    ));
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("🗓️ Schedule Game — Step 1")
+        .setDescription("Select the timezone you want to use for scheduling."),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_schedule").setLabel("← Back").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function showDaySelect(interaction: StringSelectMenuInteraction | ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const draft = getScheduleDraft(ctx);
+  const tzKey = draft.tz ?? "CST";
+  const days = await getAvailableDays(ctx, tzKey);
+  if (days.length === 0) {
+    await interaction.update({
+      ephemeral: true,
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Scheduling Days Available").setDescription("There are no selectable days before the current advance deadline.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_schedule").setLabel("← Back").setStyle(ButtonStyle.Secondary))],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("gd_sched_day")
+    .setPlaceholder("Select the day…")
+    .addOptions(days.slice(0, 25).map((d) =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(d.label)
+        .setValue(d.iso),
+    ));
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("🗓️ Schedule Game — Step 2")
+        .setDescription(`Timezone selected: **${tzKey}**\n\nSelect the day for your proposed game time.`),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_offer_new").setLabel("← Back to Timezone").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function showTimeSelect(interaction: StringSelectMenuInteraction | ButtonInteraction, ctx: GamedayContext, page = 0): Promise<void> {
+  const draft = getScheduleDraft(ctx);
+  if (!draft.tz || !draft.dayIso) {
+    await showTimezoneSelect(interaction as any, ctx);
+    return;
+  }
+
+  const times = await getAvailableTimes(ctx, draft.dayIso, draft.tz);
+  if (times.length === 0) {
+    await interaction.update({
+      ephemeral: true,
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Times Available").setDescription("No remaining time slots are available on that date before advance. Pick a different day/timezone or contact a commissioner.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_sched_back_day").setLabel("← Back to Day").setStyle(ButtonStyle.Secondary))],
+    });
+    return;
+  }
+
+  const pageSize = 24;
+  const pageCount = Math.max(1, Math.ceil(times.length / pageSize));
+  const safePage = Math.max(0, Math.min(page, pageCount - 1));
+  const slice = times.slice(safePage * pageSize, safePage * pageSize + pageSize);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("gd_sched_time")
+    .setPlaceholder(`Select time — page ${safePage + 1}/${pageCount}`)
+    .addOptions(slice.map((t) =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(t.label)
+        .setDescription(t.late ? "Within 1 hour of advance; commissioner delay request will post." : "Available before advance deadline")
+        .setValue(t.value),
+    ));
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("🗓️ Schedule Game — Step 3")
+        .setDescription(`Timezone: **${draft.tz}**\nDay: **${draft.dayIso}**\n\nSelect a time. Late slots are marked with ⚠️.`),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`gd_sched_time_page:${safePage - 1}`).setLabel("← Prev").setStyle(ButtonStyle.Secondary).setDisabled(safePage <= 0),
+        new ButtonBuilder().setCustomId(`gd_sched_time_page:${safePage + 1}`).setLabel("Next →").setStyle(ButtonStyle.Secondary).setDisabled(safePage >= pageCount - 1),
+        new ButtonBuilder().setCustomId("gd_sched_back_day").setLabel("Back to Day").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showOfferConfirm(interaction: StringSelectMenuInteraction | ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const draft = getScheduleDraft(ctx);
+  if (!draft.tz || !draft.dayIso || !draft.time) {
+    await showTimezoneSelect(interaction as any, ctx);
+    return;
+  }
+
+  const selectedUtc = localDateTimeToUtc(draft.dayIso, draft.time, draft.tz);
+  const deadline = await getAdvanceDeadline(ctx);
+  const late = selectedUtc.getTime() >= deadline.getTime() - 60 * 60_000;
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(late ? Colors.Orange : Colors.Green)
+        .setTitle("🗓️ Confirm Scheduling Offer")
+        .setDescription([
+          `**Proposed:** ${draft.dayIso} at ${displayTime(draft.time)} ${draft.tz}`,
+          `**Opponent:** <@${ctx.opponentId}>`,
+          late ? "⚠️ This time is within 1 hour of the advance deadline. If confirmed, commissioners will be tagged with Approve/Deny delay buttons." : "",
+        ].filter(Boolean).join("\n")),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_offer_confirm").setLabel("✅ Send Offer").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("gd_sched_note").setLabel("📝 Add Note").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("gd_sched_back_time").setLabel("← Back to Time").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showOfferNoteModal(interaction: ButtonInteraction): Promise<void> {
   const modal = new ModalBuilder()
-    .setCustomId("gd_modal_offer_new")
-    .setTitle("Send Scheduling Offer");
+    .setCustomId("gd_modal_offer_note")
+    .setTitle("Optional Scheduling Note");
 
   modal.addComponents(
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
-        .setCustomId("proposed_for")
-        .setLabel("Proposed date/time")
-        .setPlaceholder("Example: Thursday 8:30 PM CST")
-        .setStyle(TextInputStyle.Short)
-        .setMaxLength(80)
-        .setRequired(true),
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId("proposed_tz")
-        .setLabel("Timezone")
-        .setPlaceholder("CST, EST, MST, PST, etc.")
-        .setStyle(TextInputStyle.Short)
-        .setMaxLength(20)
-        .setRequired(false),
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
         .setCustomId("notes")
         .setLabel("Optional note")
-        .setPlaceholder("Example: I can also start a little earlier if needed.")
+        .setPlaceholder("Example: I can start 15 minutes earlier if needed.")
         .setStyle(TextInputStyle.Paragraph)
         .setMaxLength(500)
         .setRequired(false),
@@ -477,7 +819,29 @@ async function showNewOfferModal(interaction: ButtonInteraction): Promise<void> 
   await interaction.showModal(modal);
 }
 
+async function handleOfferNoteModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  const notes = interaction.fields.getTextInputValue("notes").trim() || undefined;
+  (setScheduleDraft(ctx, {}) as any).notes = notes;
+  await interaction.reply({
+    ephemeral: true,
+    content: notes ? "✅ Note saved. Use the button below to continue." : "✅ Note cleared. Use the button below to continue.",
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_offer_confirm").setLabel("Continue to Confirm").setStyle(ButtonStyle.Success),
+      ),
+    ],
+  });
+}
+
+
+
+
 async function handleNewOfferModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  // Legacy modal path retained only for old stale interactions.
+  await interaction.reply({ ephemeral: true, content: "❌ This scheduling form is outdated. Please reopen `/gameday` and use the new dropdown scheduler." });
+}
+
+async function sendGuidedOffer(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
   await ensureGamedayTables();
 
   const activeCount = await countOffers(sql`
@@ -494,9 +858,23 @@ async function handleNewOfferModal(interaction: ModalSubmitInteraction, ctx: Gam
     return;
   }
 
-  const proposedFor = interaction.fields.getTextInputValue("proposed_for").trim();
-  const proposedTz = interaction.fields.getTextInputValue("proposed_tz").trim() || null;
-  const notes = interaction.fields.getTextInputValue("notes").trim() || null;
+  const draft: any = getScheduleDraft(ctx);
+  if (!draft.tz || !draft.dayIso || !draft.time) {
+    await interaction.reply({ ephemeral: true, content: "❌ Scheduling selection expired. Restart the scheduler." });
+    return;
+  }
+
+  const selectedUtc = localDateTimeToUtc(draft.dayIso, draft.time, draft.tz);
+  const deadline = await getAdvanceDeadline(ctx);
+  if (selectedUtc.getTime() > deadline.getTime()) {
+    await interaction.reply({ ephemeral: true, content: "❌ That time is after the current advance deadline. Pick an earlier time or request commissioner help." });
+    return;
+  }
+
+  const proposedFor = `${draft.dayIso} ${displayTime(draft.time)}`;
+  const proposedTz = draft.tz;
+  const notes = draft.notes ?? null;
+  const late = selectedUtc.getTime() >= deadline.getTime() - 60 * 60_000;
 
   const result = await db.execute(sql`
     insert into gameday_schedule_offers (
@@ -519,20 +897,52 @@ async function handleNewOfferModal(interaction: ModalSubmitInteraction, ctx: Gam
   const dmText =
     `🗓️ **New Scheduling Offer**\n\n` +
     `<@${ctx.userId}> proposed a game time for **${ctx.awayTeamName} @ ${ctx.homeTeamName}**:\n\n` +
-    `**Time:** ${proposedFor}${proposedTz ? ` ${proposedTz}` : ""}\n` +
+    `**Time:** ${proposedFor} ${proposedTz}\n` +
     (notes ? `**Note:** ${notes}\n\n` : "\n") +
     `Open \`/gameday\` in the active gameday channel to accept, counter, or reject.`;
 
   const member = await interaction.guild?.members.fetch(ctx.opponentId).catch(() => null);
   await member?.send(dmText).catch(() => null);
 
-  await interaction.reply({
+  if (late) {
+    const commissionerMention = commissionerRoleMention(interaction);
+    const delayMsg = await interaction.channel?.isTextBased()
+      ? await interaction.channel.send({
+          content:
+            `⚠️ **Late Game Scheduled — Delay Review Needed**\n${commissionerMention}\n\n` +
+            `<@${ctx.userId}> proposed a game time within **1 hour** of advance.\n\n` +
+            `**Matchup:** <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>\n` +
+            `**Proposed:** ${proposedFor} ${proposedTz}\n` +
+            `**Current advance deadline:** <t:${Math.floor(deadline.getTime() / 1000)}:F>\n\n` +
+            `Commissioners may approve a delay or deny it.`,
+          components: [
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId(`gd_delay_approve:${offerId}`).setLabel("✅ Approve Delay").setStyle(ButtonStyle.Success),
+              new ButtonBuilder().setCustomId(`gd_delay_deny:${offerId}`).setLabel("❌ Deny Delay").setStyle(ButtonStyle.Danger),
+            ),
+          ],
+        }).catch(() => null)
+      : null;
+
+    await db.execute(sql`
+      insert into gameday_commissioner_requests (
+        guild_id, season_id, week_index, matchup_key, request_type,
+        requested_by, opponent_discord_id, reason, status, message_id
+      )
+      values (
+        ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, 'advance_delay',
+        ${ctx.userId}, ${ctx.opponentId}, ${`Late scheduling offer #${offerId}: ${proposedFor} ${proposedTz}`}, 'pending', ${delayMsg?.id ?? null}
+      )
+    `);
+  }
+
+  await interaction.update({
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
-        .setColor(Colors.Green)
+        .setColor(late ? Colors.Orange : Colors.Green)
         .setTitle("✅ Scheduling Offer Sent")
-        .setDescription(`Offer #${offerId ?? "?"} sent to <@${ctx.opponentId}>.\n\n**Time:** ${proposedFor}${proposedTz ? ` ${proposedTz}` : ""}`),
+        .setDescription(`Offer #${offerId ?? "?"} sent to <@${ctx.opponentId}>.\n\n**Time:** ${proposedFor} ${proposedTz}${late ? "\n\n⚠️ Commissioner delay review was posted because this is within 1 hour of advance." : ""}`),
     ],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -540,7 +950,11 @@ async function handleNewOfferModal(interaction: ModalSubmitInteraction, ctx: Gam
       ),
     ],
   });
+
+  scheduleDrafts.delete(draftKey(ctx));
 }
+
+
 
 async function showPendingOffers(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
   await ensureGamedayTables();
@@ -1399,6 +1813,217 @@ async function handleDisputeScoreModal(interaction: ModalSubmitInteraction, ctx:
   });
 }
 
+
+async function showDelayApproveModal(interaction: ButtonInteraction, offerId: number): Promise<void> {
+  if (!(await isCommissionerOrAdmin(interaction))) {
+    await interaction.reply({ ephemeral: true, content: "❌ Only commissioners can approve advance delays." });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`gd_modal_delay_approve:${offerId}`)
+    .setTitle("Approve Advance Delay");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("advance_at")
+        .setLabel("New advance date/time")
+        .setPlaceholder("Example: 2026-05-29 10:30 PM")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(40),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("timezone")
+        .setLabel("Timezone: EST, CST, MST, PST, AKST, UTC")
+        .setPlaceholder("CST")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(6),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+function parseCommissionerDateTime(raw: string, tzKey: GamedayTzKey): Date | null {
+  const cleaned = raw.trim().replace(/,/g, "");
+  const m = cleaned.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!m) return null;
+  let hour = Number(m[4]);
+  const minute = Number(m[5] ?? "0");
+  const ampm = m[6]?.toUpperCase();
+  if (ampm === "PM" && hour < 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+  const iso = `${m[1]}-${pad2(Number(m[2]))}-${pad2(Number(m[3]))}`;
+  return localDateTimeToUtc(iso, `${pad2(hour)}:${pad2(minute)}`, tzKey);
+}
+
+async function handleDelayApproveModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  if (!(await isCommissionerOrAdmin(interaction))) {
+    await interaction.reply({ ephemeral: true, content: "❌ Only commissioners can approve advance delays." });
+    return;
+  }
+
+  const raw = interaction.fields.getTextInputValue("advance_at").trim();
+  const tzRaw = interaction.fields.getTextInputValue("timezone").trim().toUpperCase();
+  const tz = tzByKey(tzRaw);
+  if (!tz) {
+    await interaction.reply({ ephemeral: true, content: "❌ Invalid timezone. Use EST, CST, MST, PST, AKST, or UTC." });
+    return;
+  }
+
+  const newAdvance = parseCommissionerDateTime(raw, tz.key);
+  if (!newAdvance || newAdvance.getTime() <= Date.now()) {
+    await interaction.reply({ ephemeral: true, content: "❌ Invalid date/time. Use format like `2026-05-29 10:30 PM` and make sure it is in the future." });
+    return;
+  }
+
+  await db.execute(sql`
+    update gameday_advance_overrides
+    set status = 'replaced', updated_at = now()
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and status = 'active'
+  `);
+
+  await db.execute(sql`
+    insert into gameday_advance_overrides (
+      guild_id, season_id, week_index, requested_by, approved_by,
+      advance_at_utc, tz, reason, status
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.userId}, ${interaction.user.id},
+      ${newAdvance.toISOString()}, ${tz.key}, ${`Approved late-game delay from offer #${offerId}`}, 'active'
+    )
+  `);
+
+  await db.execute(sql`
+    update gameday_commissioner_requests
+    set status = 'approved', updated_at = now()
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and request_type = 'advance_delay'
+      and status = 'pending'
+  `);
+
+  await postPublic(
+    interaction,
+    `✅ **Advance Delay Approved**\n` +
+    `Commissioner: <@${interaction.user.id}>\n` +
+    `New advance time: <t:${Math.floor(newAdvance.getTime() / 1000)}:F>\n\n` +
+    `All /gameday scheduling options now adjust to this updated deadline.`,
+  );
+
+  await interaction.reply({ ephemeral: true, content: "✅ Advance delay approved and scheduling deadline updated." });
+}
+
+async function denyDelay(interaction: ButtonInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  if (!(await isCommissionerOrAdmin(interaction))) {
+    await interaction.reply({ ephemeral: true, content: "❌ Only commissioners can deny advance delays." });
+    return;
+  }
+
+  await db.execute(sql`
+    update gameday_commissioner_requests
+    set status = 'denied', updated_at = now()
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and request_type = 'advance_delay'
+      and status = 'pending'
+  `);
+
+  await postPublic(
+    interaction,
+    `❌ **Advance Delay Denied**\n` +
+    `Commissioner: <@${interaction.user.id}>\n` +
+    `Delay request related to scheduling offer #${offerId} was denied. Current advance deadline remains in effect.`,
+  );
+
+  await interaction.reply({ ephemeral: true, content: "❌ Delay request denied." });
+}
+
+async function requestAssistance(interaction: ButtonInteraction, ctx: GamedayContext, type: "force_win" | "fair_sim" | "violation" | "contact_commish"): Promise<void> {
+  const labels: Record<typeof type, string> = {
+    force_win: "Force Win",
+    fair_sim: "Fair Sim",
+    violation: "Violation",
+    contact_commish: "Commissioner Contact",
+  };
+
+  const modal = new ModalBuilder()
+    .setCustomId(`gd_modal_assist:${type}`)
+    .setTitle(labels[type]);
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Reason / details")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(1000),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleAssistModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, type: string): Promise<void> {
+  const reason = interaction.fields.getTextInputValue("reason").trim();
+  await db.execute(sql`
+    insert into gameday_commissioner_requests (
+      guild_id, season_id, week_index, matchup_key, request_type,
+      requested_by, opponent_discord_id, reason, status
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, ${type},
+      ${ctx.userId}, ${ctx.opponentId}, ${reason}, 'pending'
+    )
+  `);
+
+  const commissionerMention = commissionerRoleMention(interaction);
+  await postPublic(
+    interaction,
+    `🚨 **${type.replace(/_/g, " ").toUpperCase()} REQUEST**\n${commissionerMention}\n\n` +
+    `**Matchup:** <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>\n` +
+    `**Submitted by:** <@${ctx.userId}>\n` +
+    `**Opponent notified:** <@${ctx.opponentId}>\n\n` +
+    `Commissioners should review this request in the gameday channel/context.`,
+  );
+
+  await dmOpponent(interaction, ctx, `🚨 <@${ctx.userId}> submitted a **${type.replace(/_/g, " ")}** request for your matchup. Commissioners have been notified.`);
+  await interaction.reply({ ephemeral: true, content: "✅ Request submitted and commissioners were tagged publicly." });
+}
+
+async function showAssistance(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Red)
+        .setTitle("🚨 Gameday Assistance")
+        .setDescription("Choose the type of commissioner assistance needed."),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_req_fw").setLabel("🏳️ Request Force Win").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("gd_req_fs").setLabel("⚖️ Request Fair Sim").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("gd_req_violation").setLabel("🚫 Flag Violation").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("gd_contact_commish").setLabel("📣 Contact Commissioner").setStyle(ButtonStyle.Primary),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
 export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("gd_")) return false;
 
@@ -1408,7 +2033,12 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
   if (interaction.isButton()) {
     if (interaction.customId === "gd_refresh") { await renderDashboard(interaction, ctx); return true; }
     if (interaction.customId === "gd_schedule") { await showScheduleMenu(interaction, ctx); return true; }
-    if (interaction.customId === "gd_offer_new") { await showNewOfferModal(interaction); return true; }
+    if (interaction.customId === "gd_offer_new") { await showNewOfferModal(interaction, ctx); return true; }
+    if (interaction.customId === "gd_sched_back_day") { await showDaySelect(interaction, ctx); return true; }
+    if (interaction.customId === "gd_sched_back_time") { await showTimeSelect(interaction, ctx); return true; }
+    if (interaction.customId === "gd_sched_note") { await showOfferNoteModal(interaction); return true; }
+    if (interaction.customId === "gd_offer_confirm") { await sendGuidedOffer(interaction, ctx); return true; }
+    if (interaction.customId.startsWith("gd_sched_time_page:")) { await showTimeSelect(interaction, ctx, Number(interaction.customId.split(":")[1] ?? "0")); return true; }
     if (interaction.customId === "gd_pending") { await showPendingOffers(interaction, ctx); return true; }
     if (interaction.customId === "gd_manage_offers") { await showManageOffers(interaction, ctx); return true; }
     if (interaction.customId === "gd_queue") { await showGameQueue(interaction, ctx); return true; }
@@ -1420,6 +2050,13 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId === "gd_mark_begun") { await showMarkBegunModal(interaction); return true; }
     if (interaction.customId === "gd_submit_final") { await showSubmitFinalModal(interaction); return true; }
     if (interaction.customId === "gd_score_pending") { await showScoreApproval(interaction, ctx); return true; }
+    if (interaction.customId === "gd_assist") { await showAssistance(interaction, ctx); return true; }
+    if (interaction.customId === "gd_req_fw") { await requestAssistance(interaction, ctx, "force_win"); return true; }
+    if (interaction.customId === "gd_req_fs") { await requestAssistance(interaction, ctx, "fair_sim"); return true; }
+    if (interaction.customId === "gd_req_violation") { await requestAssistance(interaction, ctx, "violation"); return true; }
+    if (interaction.customId === "gd_contact_commish") { await requestAssistance(interaction, ctx, "contact_commish"); return true; }
+    if (interaction.customId.startsWith("gd_delay_approve:")) { await showDelayApproveModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_delay_deny:")) { await denyDelay(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
 
     if (interaction.customId.startsWith("gd_score_approve:")) { await approveScore(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_score_dispute:")) { await showDisputeScoreModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
@@ -1435,6 +2072,9 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
   }
 
   if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === "gd_sched_tz") { setScheduleDraft(ctx, { tz: interaction.values[0] as GamedayTzKey, dayIso: undefined, time: undefined }); await showDaySelect(interaction, ctx); return true; }
+    if (interaction.customId === "gd_sched_day") { setScheduleDraft(ctx, { dayIso: interaction.values[0], time: undefined }); await showTimeSelect(interaction, ctx); return true; }
+    if (interaction.customId === "gd_sched_time") { setScheduleDraft(ctx, { time: interaction.values[0] }); await showOfferConfirm(interaction, ctx); return true; }
     if (interaction.customId === "gd_pending_select") { await showPendingOfferDetail(interaction, ctx); return true; }
     if (interaction.customId === "gd_manage_select") { await showManageOfferDetail(interaction, ctx); return true; }
     return true;
@@ -1442,6 +2082,9 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
 
   if (interaction.isModalSubmit()) {
     if (interaction.customId === "gd_modal_offer_new") { await handleNewOfferModal(interaction, ctx); return true; }
+    if (interaction.customId === "gd_modal_offer_note") { await handleOfferNoteModal(interaction, ctx); return true; }
+    if (interaction.customId.startsWith("gd_modal_delay_approve:")) { await handleDelayApproveModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_modal_assist:")) { await handleAssistModal(interaction, ctx, interaction.customId.split(":")[1] ?? "contact_commish"); return true; }
     if (interaction.customId === "gd_modal_msg_opp") { await handleOpponentMessageModal(interaction, ctx); return true; }
     if (interaction.customId === "gd_modal_mark_begun") { await handleMarkBegunModal(interaction, ctx); return true; }
     if (interaction.customId === "gd_modal_submit_final") { await handleSubmitFinalModal(interaction, ctx); return true; }
