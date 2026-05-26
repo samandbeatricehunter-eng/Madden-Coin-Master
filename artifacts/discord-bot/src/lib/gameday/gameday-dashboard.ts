@@ -430,6 +430,27 @@ async function executeOfferUpdate(q: any): Promise<void> {
   await db.execute(q);
 }
 
+async function updatePanel(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  payload: any,
+): Promise<void> {
+  if ((interaction as any).deferred || (interaction as any).replied) {
+    await interaction.editReply(payload).catch(async () => {
+      await interaction.followUp({ ...payload, ephemeral: true }).catch(() => null);
+    });
+    return;
+  }
+
+  await interaction.update(payload).catch(async (err: any) => {
+    if (err?.code === 10062) {
+      await interaction.deferUpdate().catch(() => null);
+      await interaction.editReply(payload).catch(() => null);
+      return;
+    }
+    throw err;
+  });
+}
+
 function isValidHttpUrl(value: string | null | undefined): boolean {
   const raw = String(value ?? "").trim();
   if (!raw) return false;
@@ -490,8 +511,13 @@ async function getContext(interaction: ChatInputCommandInteraction | ButtonInter
       ? `❌ \`/gameday\` only works in the active weekly gameday channel: <#${activeChannelId}>.`
       : "❌ No active weekly gameday channel is configured yet.";
     if (interaction.isRepliable()) {
-      if ((interaction as any).replied || (interaction as any).deferred) await (interaction as any).followUp({ content: msg, ephemeral: true }).catch(() => null);
-      else await (interaction as any).reply({ content: msg, ephemeral: true }).catch(() => null);
+      if ((interaction as any).deferred || (interaction as any).replied) {
+        await (interaction as any).editReply({ content: msg, embeds: [], components: [] }).catch(async () => {
+          await (interaction as any).followUp({ content: msg, ephemeral: true }).catch(() => null);
+        });
+      } else {
+        await (interaction as any).reply({ content: msg, ephemeral: true }).catch(() => null);
+      }
     }
     return null;
   }
@@ -647,7 +673,7 @@ async function showScheduleMenu(interaction: ButtonInteraction, ctx: GamedayCont
     and status = 'pending'
   `);
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -690,7 +716,7 @@ async function showTimezoneSelect(interaction: ButtonInteraction | StringSelectM
         .setValue(tz.key),
     ));
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -710,7 +736,7 @@ async function showDaySelect(interaction: StringSelectMenuInteraction | ButtonIn
   const tzKey = draft.tz ?? "CST";
   const days = await getAvailableDays(ctx, tzKey);
   if (days.length === 0) {
-    await interaction.update({
+    await updatePanel(interaction, {
       ephemeral: true,
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Scheduling Days Available").setDescription("There are no selectable days before the current advance deadline.")],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_schedule").setLabel("← Back").setStyle(ButtonStyle.Secondary))],
@@ -727,7 +753,7 @@ async function showDaySelect(interaction: StringSelectMenuInteraction | ButtonIn
         .setValue(d.iso),
     ));
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -751,7 +777,7 @@ async function showTimeSelect(interaction: StringSelectMenuInteraction | ButtonI
 
   const times = await getAvailableTimes(ctx, draft.dayIso, draft.tz);
   if (times.length === 0) {
-    await interaction.update({
+    await updatePanel(interaction, {
       ephemeral: true,
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ No Times Available").setDescription("No remaining time slots are available on that date before advance. Pick a different day/timezone or contact a commissioner.")],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_sched_back_day").setLabel("← Back to Day").setStyle(ButtonStyle.Secondary))],
@@ -774,7 +800,7 @@ async function showTimeSelect(interaction: StringSelectMenuInteraction | ButtonI
         .setValue(t.value),
     ));
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -804,7 +830,7 @@ async function showOfferConfirm(interaction: StringSelectMenuInteraction | Butto
   const deadline = await getAdvanceDeadline(ctx);
   const late = selectedUtc.getTime() >= deadline.getTime() - 60 * 60_000;
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -963,7 +989,7 @@ async function sendGuidedOffer(interaction: ButtonInteraction, ctx: GamedayConte
     `);
   }
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -995,7 +1021,7 @@ async function showPendingOffers(interaction: ButtonInteraction, ctx: GamedayCon
   `);
 
   if (offers.length === 0) {
-    await interaction.update({
+    await updatePanel(interaction, {
       ephemeral: true,
       embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("📨 Pending Offers").setDescription("You do not have any pending scheduling offers.")],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
@@ -1013,7 +1039,7 @@ async function showPendingOffers(interaction: ButtonInteraction, ctx: GamedayCon
         .setValue(String(o.id)),
     ));
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📨 Pending Offers (${offers.length})`).setDescription("Select an offer to accept, counter, or reject.")],
     components: [
@@ -1035,7 +1061,7 @@ async function showManageOffers(interaction: ButtonInteraction, ctx: GamedayCont
   `);
 
   if (offers.length === 0) {
-    await interaction.update({
+    await updatePanel(interaction, {
       ephemeral: true,
       embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("⚙️ Manage Active Offers").setDescription("You have no active pending offers to manage.")],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
@@ -1053,7 +1079,7 @@ async function showManageOffers(interaction: ButtonInteraction, ctx: GamedayCont
         .setValue(String(o.id)),
     ));
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`⚙️ Manage Active Offers (${offers.length})`).setDescription("Select an offer to edit or delete.")],
     components: [
@@ -1073,11 +1099,11 @@ async function showPendingOfferDetail(interaction: StringSelectMenuInteraction, 
   const offerId = Number(interaction.values[0]);
   const offer = await getOfferById(offerId);
   if (!offer || offer.recipient_discord_id !== ctx.userId || offer.status !== "pending") {
-    await interaction.update({ ephemeral: true, content: "❌ Offer not found or no longer pending.", embeds: [], components: [] });
+    await updatePanel(interaction, { ephemeral: true, content: "❌ Offer not found or no longer pending.", embeds: [], components: [] });
     return;
   }
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -1105,11 +1131,11 @@ async function showManageOfferDetail(interaction: StringSelectMenuInteraction, c
   const offerId = Number(interaction.values[0]);
   const offer = await getOfferById(offerId);
   if (!offer || offer.proposer_discord_id !== ctx.userId || offer.status !== "pending") {
-    await interaction.update({ ephemeral: true, content: "❌ Offer not found or no longer pending.", embeds: [], components: [] });
+    await updatePanel(interaction, { ephemeral: true, content: "❌ Offer not found or no longer pending.", embeds: [], components: [] });
     return;
   }
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -1168,7 +1194,7 @@ async function acceptOffer(interaction: ButtonInteraction, ctx: GamedayContext, 
     await member?.send(publicText).catch(() => null);
   }
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✅ Offer Accepted").setDescription("The confirmed schedule was posted publicly in the gameday channel.")],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
@@ -1348,7 +1374,7 @@ async function deleteOffer(interaction: ButtonInteraction, ctx: GamedayContext, 
   const member = await interaction.guild?.members.fetch(offer.recipient_discord_id).catch(() => null);
   await member?.send(`🗑️ <@${ctx.userId}> deleted a pending scheduling offer for **${offer.proposed_for}${offer.proposed_tz ? ` ${offer.proposed_tz}` : ""}**.`).catch(() => null);
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("🗑️ Offer Deleted").setDescription("The pending offer has been cancelled.")],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
@@ -1367,7 +1393,7 @@ async function showGameQueue(interaction: ButtonInteraction, ctx: GamedayContext
     ? `Game marked begun by <@${status.begun_by}> at <t:${Math.floor(new Date(status.begun_at).getTime() / 1000)}:t>.`
     : "Game has not been marked begun yet.";
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -1431,7 +1457,7 @@ async function handleCheckIn(interaction: ButtonInteraction, ctx: GamedayContext
   const refreshed = await getMatchupStatus(ctx);
   const bothChecked = Boolean(refreshed?.away_checked_in && refreshed?.home_checked_in);
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -1747,7 +1773,7 @@ async function getPendingScoreApproval(ctx: GamedayContext): Promise<any | null>
 async function showScoreApproval(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
   const score = await getPendingScoreApproval(ctx);
   if (!score) {
-    await interaction.update({
+    await updatePanel(interaction, {
       ephemeral: true,
       embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("🏁 Score Approval").setDescription("You do not have any pending score approvals.")],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
@@ -1755,7 +1781,7 @@ async function showScoreApproval(interaction: ButtonInteraction, ctx: GamedayCon
     return;
   }
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -1830,7 +1856,7 @@ async function approveScore(interaction: ButtonInteraction, ctx: GamedayContext,
     `Status: **Completed — pending EA import confirmation**.`,
   );
 
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✅ Score Approved").setDescription("The final score was publicly posted and marked completed pending import.")],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
@@ -2085,7 +2111,7 @@ async function handleAssistModal(interaction: ModalSubmitInteraction, ctx: Gamed
 }
 
 async function showAssistance(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
-  await interaction.update({
+  await updatePanel(interaction, {
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
@@ -2109,6 +2135,24 @@ async function showAssistance(interaction: ButtonInteraction, ctx: GamedayContex
 
 export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("gd_")) return false;
+
+  const shouldDefer =
+    interaction.isStringSelectMenu() ||
+    (interaction.isButton() && (
+      interaction.customId.startsWith("gd_sched_") ||
+      interaction.customId === "gd_offer_confirm" ||
+      interaction.customId === "gd_schedule" ||
+      interaction.customId === "gd_pending" ||
+      interaction.customId === "gd_manage_offers" ||
+      interaction.customId === "gd_queue" ||
+      interaction.customId === "gd_score_pending" ||
+      interaction.customId === "gd_assist" ||
+      interaction.customId === "gd_refresh"
+    ));
+
+  if (shouldDefer && !(interaction as any).deferred && !(interaction as any).replied) {
+    await interaction.deferUpdate().catch(() => null);
+  }
 
   const ctx = await getContext(interaction);
   if (!ctx) return true;
