@@ -1334,6 +1334,7 @@ async function showGameQueue(interaction: ButtonInteraction, ctx: GamedayContext
   const isAway = ctx.userId === ctx.awayDiscordId;
   const meChecked = isAway ? status.away_checked_in : status.home_checked_in;
   const oppChecked = isAway ? status.home_checked_in : status.away_checked_in;
+  const bothChecked = Boolean(status.away_checked_in && status.home_checked_in);
 
   const begunText = status.begun_at
     ? `Game marked begun by <@${status.begun_by}> at <t:${Math.floor(new Date(status.begun_at).getTime() / 1000)}:t>.`
@@ -1343,15 +1344,17 @@ async function showGameQueue(interaction: ButtonInteraction, ctx: GamedayContext
     ephemeral: true,
     embeds: [
       new EmbedBuilder()
-        .setColor(Colors.Green)
+        .setColor(bothChecked ? Colors.Green : Colors.Orange)
         .setTitle("🎮 Game Queue")
         .setDescription([
           `**Matchup:** <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>`,
-          `**Your check-in:** ${meChecked ? "✅ Checked in" : "❌ Not checked in"}`,
-          `**Opponent check-in:** ${oppChecked ? "✅ Checked in" : "❌ Not checked in"}`,
+          `**Away check-in:** ${status.away_checked_in ? "✅ Checked in" : "❌ Not checked in"} ${ctx.awayDiscordId === ctx.userId ? "**(you)**" : ""}`,
+          `**Home check-in:** ${status.home_checked_in ? "✅ Checked in" : "❌ Not checked in"} ${ctx.homeDiscordId === ctx.userId ? "**(you)**" : ""}`,
           `**Status:** ${begunText}`,
           "",
-          "Use these controls to coordinate gametime actions. Public notices will post for search/invite/start actions.",
+          bothChecked
+            ? "Both users are checked in. Gameday actions are now unlocked."
+            : "Both opponents must check in before search, invite, mark begun, or final score actions unlock.",
         ].join("\n")),
     ],
     components: [
@@ -1361,10 +1364,10 @@ async function showGameQueue(interaction: ButtonInteraction, ctx: GamedayContext
         new ButtonBuilder().setCustomId("gd_msg_opp").setLabel("💬 Message Opponent").setStyle(ButtonStyle.Secondary),
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("gd_advise_search").setLabel("🔎 Advise to Search").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("gd_request_invite").setLabel("🎮 Request Invite").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("gd_mark_begun").setLabel("▶️ Mark Game Begun").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("gd_submit_final").setLabel("🏁 Submit Final").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("gd_advise_search").setLabel("🔎 Advise to Search").setStyle(ButtonStyle.Primary).setDisabled(!bothChecked),
+        new ButtonBuilder().setCustomId("gd_request_invite").setLabel("🎮 Request Invite").setStyle(ButtonStyle.Primary).setDisabled(!bothChecked),
+        new ButtonBuilder().setCustomId("gd_mark_begun").setLabel("▶️ Mark Game Begun").setStyle(ButtonStyle.Success).setDisabled(!bothChecked),
+        new ButtonBuilder().setCustomId("gd_submit_final").setLabel("🏁 Submit Final").setStyle(ButtonStyle.Danger).setDisabled(!bothChecked),
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
@@ -1398,13 +1401,60 @@ async function handleCheckIn(interaction: ButtonInteraction, ctx: GamedayContext
       : `↩️ <@${ctx.userId}> has checked out and is no longer marked ready.`,
   );
 
-  await interaction.reply({
+  const refreshed = await getMatchupStatus(ctx);
+  const bothChecked = Boolean(refreshed?.away_checked_in && refreshed?.home_checked_in);
+
+  await interaction.update({
     ephemeral: true,
-    content: checkedIn ? "✅ You are checked in. Your opponent was notified by DM." : "↩️ You checked out. Your opponent was notified by DM.",
+    embeds: [
+      new EmbedBuilder()
+        .setColor(bothChecked ? Colors.Green : Colors.Orange)
+        .setTitle(checkedIn ? "✅ Check-In Updated" : "↩️ Check-Out Updated")
+        .setDescription([
+          `**Matchup:** <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>`,
+          `**Away check-in:** ${refreshed?.away_checked_in ? "✅ Checked in" : "❌ Not checked in"}`,
+          `**Home check-in:** ${refreshed?.home_checked_in ? "✅ Checked in" : "❌ Not checked in"}`,
+          "",
+          bothChecked
+            ? "Both users are checked in. Gameday actions are now unlocked."
+            : "Waiting for both users to check in before gameday actions unlock.",
+        ].join("\n")),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_queue").setLabel("Refresh Game Queue").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
   });
 }
 
+
+async function requireBothCheckedIn(interaction: ButtonInteraction | ModalSubmitInteraction, ctx: GamedayContext): Promise<boolean> {
+  const status = await getMatchupStatus(ctx);
+  if (status?.away_checked_in && status?.home_checked_in) return true;
+
+  const payload = {
+    ephemeral: true,
+    content: "❌ Both opponents must check in before this gameday action can be used.",
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_queue").setLabel("Open Game Queue").setStyle(ButtonStyle.Primary),
+      ),
+    ],
+  };
+
+  if ((interaction as any).isButton?.()) {
+    await (interaction as ButtonInteraction).reply(payload).catch(() => null);
+  } else {
+    await (interaction as ModalSubmitInteraction).reply(payload).catch(() => null);
+  }
+  return false;
+}
+
 async function handleAdviseSearch(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  if (!(await requireBothCheckedIn(interaction, ctx))) return;
+
   await ensureMatchupStatus(ctx);
   await db.execute(sql`
     update gameday_matchup_status
@@ -1416,6 +1466,8 @@ async function handleAdviseSearch(interaction: ButtonInteraction, ctx: GamedayCo
 }
 
 async function handleRequestInvite(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  if (!(await requireBothCheckedIn(interaction, ctx))) return;
+
   await ensureMatchupStatus(ctx);
   await db.execute(sql`
     update gameday_matchup_status
@@ -1505,6 +1557,8 @@ async function autoPayStreamIfEligible(interaction: ModalSubmitInteraction, ctx:
 }
 
 async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  if (!(await requireBothCheckedIn(interaction, ctx))) return;
+
   await ensureMatchupStatus(ctx);
   const rawUrl = interaction.fields.getTextInputValue("stream_url").trim();
   if (rawUrl && !isValidHttpUrl(rawUrl)) {
@@ -1570,6 +1624,8 @@ function scoreWinner(ctx: GamedayContext, awayScore: number, homeScore: number):
 }
 
 async function handleSubmitFinalModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  if (!(await requireBothCheckedIn(interaction, ctx))) return;
+
   await ensureGamedayTables();
   const status = await getMatchupStatus(ctx);
   if (!status?.begun_at) {
@@ -2047,8 +2103,8 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId === "gd_advise_search") { await handleAdviseSearch(interaction, ctx); return true; }
     if (interaction.customId === "gd_request_invite") { await handleRequestInvite(interaction, ctx); return true; }
     if (interaction.customId === "gd_msg_opp") { await showOpponentMessageModal(interaction); return true; }
-    if (interaction.customId === "gd_mark_begun") { await showMarkBegunModal(interaction); return true; }
-    if (interaction.customId === "gd_submit_final") { await showSubmitFinalModal(interaction); return true; }
+    if (interaction.customId === "gd_mark_begun") { if (!(await requireBothCheckedIn(interaction, ctx))) return true; await showMarkBegunModal(interaction); return true; }
+    if (interaction.customId === "gd_submit_final") { if (!(await requireBothCheckedIn(interaction, ctx))) return true; await showSubmitFinalModal(interaction); return true; }
     if (interaction.customId === "gd_score_pending") { await showScoreApproval(interaction, ctx); return true; }
     if (interaction.customId === "gd_assist") { await showAssistance(interaction, ctx); return true; }
     if (interaction.customId === "gd_req_fw") { await requestAssistance(interaction, ctx, "force_win"); return true; }
