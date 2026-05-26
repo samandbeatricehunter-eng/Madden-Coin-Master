@@ -55,6 +55,7 @@ import { rebuildHistoricalChannel } from "../franchise/wildcard-automation.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
 import { nextAdvanceDeadline, formatAllZones, discordTimestampLong } from "../discord/timezones.js";
 import { createWeeklyGamedayChannel, gamedayWeekNumFromWeekKey } from "../gameday/gameday-channel.js";
+import { renderCommissionerGamedayReview, handleCommissionerGamedayReviewInteraction } from "../gameday/commissioner-gameday-review.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -173,6 +174,16 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
       components: buildAdminOpsRows(),
     });
     return true;
+  }
+
+  // ── Gameday Review ──────────────────────────────────────────────────────────
+  if (id === "ao_gameday_review") {
+    await renderCommissionerGamedayReview(interaction as ButtonInteraction);
+    return true;
+  }
+  if (id.startsWith("gdrev_")) {
+    const handled = await handleCommissionerGamedayReviewInteraction(interaction as ButtonInteraction | StringSelectMenuInteraction);
+    if (handled) return true;
   }
 
   // ── Advance Period (24/48/72/96/120h) ───────────────────────────────────────

@@ -17,6 +17,7 @@ import * as guildMemberAdd    from "./events/guildMemberAdd.js";
 // ── Helpers ────────────────────────────────────────────────────────────────────
 import { startSavingsInterestScheduler } from "./lib/scheduling/savings-interest.js";
 import { startGameReminderScheduler }    from "./lib/scheduling/game-reminders.js";
+import { processGamedayReminderTick } from "./lib/gameday/gameday-reminders.js";
 
 // ── Global crash protection ────────────────────────────────────────────────────
 process.on("unhandledRejection", (reason) => {
@@ -82,6 +83,16 @@ if (!isProduction && !devBotEnabled) {
   client.once("ready", () => {
     startGameReminderScheduler(client);
     startSavingsInterestScheduler();
+
+    setInterval(() => {
+      processGamedayReminderTick(client).catch((err) =>
+        console.error("[gameday-reminders] tick failed:", err),
+      );
+    }, 10 * 60 * 1000);
+
+    processGamedayReminderTick(client).catch((err) =>
+      console.error("[gameday-reminders] initial tick failed:", err),
+    );
   });
 
   init()

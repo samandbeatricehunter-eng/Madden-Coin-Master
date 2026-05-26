@@ -647,7 +647,7 @@ async function renderDashboard(interaction: ChatInputCommandInteraction | Button
       { name: "Schedule Game", value: `Send proposed times · Manage active offers (**${activeCount}**) · Edit/delete offers`, inline: false },
       { name: `Pending Offers (${pendingCount})`, value: "Accept · Counter · Reject with reason", inline: false },
       { name: "Game Queue", value: "Check in/out · message opponent · advise search · request invite · mark begun with stream link", inline: false },
-      { name: "Assistance", value: "Coming later: contact commissioner · flag violation · request FS/FW", inline: false },
+      { name: "Assistance", value: "Contact commissioner · flag violation · request FS/FW", inline: false },
     );
 
   const payload = { ephemeral: true, embeds: [embed], components: mainRows(activeCount, pendingCount) as any };
@@ -2194,7 +2194,7 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId.startsWith("gd_offer_edit:")) { await editOfferModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
     if (interaction.customId.startsWith("gd_offer_delete:")) { await deleteOffer(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
 
-    await interaction.reply({ ephemeral: true, content: "⏳ This gameday feature is coming in a later phase." });
+    await interaction.reply({ ephemeral: true, content: "❌ Unknown or expired gameday action. Reopen `/gameday` and try again." });
     return true;
   }
 

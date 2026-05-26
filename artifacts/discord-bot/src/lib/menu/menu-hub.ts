@@ -385,7 +385,7 @@ export function buildBranchPage(node: MenuNode, ctx: MenuCtx): MenuPage {
 // ── Admin hub (unchanged: buttons + nested admin selector) ────────────────────
 
 export type AdminCategoryId =
-  | "commissioner_office"
+  | "commissioner_office" | "gameday_review"
   | "league_data" | "ao_payouts" | "user_data"
   | "store" | "server" | "troubleshoot";
 
@@ -398,6 +398,7 @@ interface AdminCategoryDef {
 
 const ADMIN_CATEGORIES: AdminCategoryDef[] = [
   { id: "commissioner_office", emoji: "🏛️", label: "Pending Review",   description: "Purchases, custom players, payouts, interviews, streams/highlights, history" },
+  { id: "gameday_review",      emoji: "🎮", label: "Gameday Review",   description: "FS/FW requests, violations, disputed finals, schedules, payouts" },
   { id: "league_data",         emoji: "📥", label: "Import / Advance", description: "Imports, EA connection, week/season controls, matchup posting" },
   { id: "ao_payouts",          emoji: "💰", label: "Manage Economy",  description: "Payouts, corrections, milestone and EOS payout tools" },
   { id: "user_data",           emoji: "👤", label: "Manage Users",    description: "User team links, records, balances, account data" },
@@ -538,6 +539,10 @@ export function buildAdminCategoryPage(
         btn("ao_post_game_channels",  "🎮 Post Game Channel",   ButtonStyle.Secondary),
         btn("ao_post_matchups",       "📋 Post Matchups/GOTW",  ButtonStyle.Secondary),
       );
+      break;
+    }
+    case "gameday_review": {
+      buttons.push(btn("ao_gameday_review", "🎮 Open Gameday Review", ButtonStyle.Success));
       break;
     }
     case "ao_payouts": {
