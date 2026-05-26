@@ -767,34 +767,8 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
 
   const playerId = savedPlayer!.id;
 
-  // Post to commissioner channel
-  let commMsgId: string | undefined;
-  let commChanId: string | undefined;
-  try {
-    const commId =
-      await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.DRAFT_PURCHASES_LOG)
-      ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER_LOG)
-      ?? await getGuildChannel(interaction.guildId!, CHANNEL_KEYS.COMMISSIONER);
-    const ch = commId ? await interaction.client.channels.fetch(commId).catch(() => null) : null;
-    if (ch?.isTextBased()) {
-      const tc        = ch as TextChannel;
-      const commEmbed = buildCommissionerEmbed(playerId, session);
-      const attrEmbeds = buildAttrEmbeds(session);
-      const commRow   = buildCommissionerRows(playerId);
-      const commMsg   = await tc.send({ embeds: [commEmbed, ...attrEmbeds], components: [commRow] });
-      commMsgId = commMsg.id;
-      commChanId = tc.id;
-    }
-  } catch (err) {
-    console.error("[custom-player] Failed to post to commissioner channel:", err);
-  }
-
-  // Update DB with commissioner message info
-  if (commMsgId) {
-    await db.update(customPlayersTable)
-      .set({ commissionerMessageId: commMsgId, commissionerChannelId: commChanId })
-      .where(eq(customPlayersTable.id, playerId));
-  }
+  // Custom player review now lives in /menu → Commissioner's Office → Pending Review → Pending Custom Players.
+  // Dedicated commissioner-channel posts are intentionally disabled for new submissions.
 
   // Confirm to user
   const newBalance = balance - session.totalCost;
@@ -803,7 +777,7 @@ export async function handleCcpConfirm(interaction: ButtonInteraction, sessionId
     .setTitle("✅ Custom Player Submitted!")
     .setDescription(
       `**${session.firstName} ${session.lastName}** (${session.position} / ${session.archetypeName}) has been submitted for review.\n\n` +
-      `A commissioner will apply your player to the draft class. You'll receive a DM when they've been added.`,
+      `A commissioner will review your player in **/menu → League Operations → Commissioner's Office → Pending Review → Pending Custom Players**. You'll receive a DM when they've been added.`,
     )
     .addFields(
       { name: "Cost Paid",     value: `${session.totalCost} coins`, inline: true },

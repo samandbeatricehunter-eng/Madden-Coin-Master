@@ -8,7 +8,7 @@
 
 import { db } from "@workspace/db";
 import {
-  purchasesTable, seasonsTable, usersTable,
+  purchasesTable, seasonsTable, usersTable, customPlayersTable,
   payoutRequestsTable, interviewRequestsTable, pendingChannelPayoutsTable,
   gotwHistoryTable, gotwVotesTable, gameSchedulesTable,
   gotyRoundsTable, gotyVotesTable,
@@ -17,6 +17,7 @@ import { eq, and, inArray, sql, desc, isNotNull } from "drizzle-orm";
 
 export interface CommOfficeCounts {
   purchases:       number;
+  customPlayers:   number;
   payouts:         number;
   interviews:      number;
   streamHighlight: number;
@@ -43,6 +44,16 @@ export async function getCommOfficeCounts(guildId: string): Promise<CommOfficeCo
       isNotNull(purchasesTable.id),
     ));
 
+
+  const [customPlayersRow] = seasonIds.length === 0 ? [{ cnt: 0 }] : await db
+    .select({ cnt: sql<number>`count(*)::int` })
+    .from(customPlayersTable)
+    .where(and(
+      eq(customPlayersTable.status, "pending"),
+      inArray(customPlayersTable.seasonId, seasonIds),
+      isNotNull(customPlayersTable.id),
+    ));
+
   const [payoutsRow] = userIds.length === 0 ? [{ cnt: 0 }] : await db
     .select({ cnt: sql<number>`count(*)::int` })
     .from(payoutRequestsTable)
@@ -59,13 +70,14 @@ export async function getCommOfficeCounts(guildId: string): Promise<CommOfficeCo
     .where(and(eq(pendingChannelPayoutsTable.guildId, guildId), eq(pendingChannelPayoutsTable.status, "pending")));
 
   const purchases       = purchasesRow?.cnt ?? 0;
+  const customPlayers   = customPlayersRow?.cnt ?? 0;
   const payouts         = payoutsRow?.cnt ?? 0;
   const interviews      = interviewsRow?.cnt ?? 0;
   const streamHighlight = channelRow?.cnt ?? 0;
 
   return {
-    purchases, payouts, interviews, streamHighlight,
-    total: purchases + payouts + interviews + streamHighlight,
+    purchases, customPlayers, payouts, interviews, streamHighlight,
+    total: purchases + customPlayers + payouts + interviews + streamHighlight,
   };
 }
 

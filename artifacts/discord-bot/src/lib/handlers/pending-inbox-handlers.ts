@@ -35,6 +35,7 @@ import {
   inventoryTable,
   pendingChannelPayoutsTable,
   coinTransactionsTable,
+  customPlayersTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, desc, isNotNull } from "drizzle-orm";
 import {
@@ -56,6 +57,7 @@ export function buildCommOfficeEmbed(): EmbedBuilder {
     .setDescription(
       "Select a category to review and act on pending items.\n\n" +
       "**🛒 Pending Purchases** — Store purchases awaiting application (apply / refund)\n" +
+      "**🎨 Pending Custom Players** — Custom builds awaiting application or refund\n" +
       "**📋 Pending Payouts** — User-submitted game payouts (approve / deny / edit)\n" +
       "**🎙️ Pending Interviews** — Post-game interviews (approve / deny / edit)\n" +
       "**🎬 Stream & Highlight Payouts** — Channel-detected media payouts (approve / deny / edit)\n" +
@@ -72,6 +74,7 @@ export function buildCommOfficeEmbed(): EmbedBuilder {
 
 export interface CommOfficeBadgeCounts {
   purchases?:       number;
+  customPlayers?:   number;
   payouts?:         number;
   interviews?:      number;
   streamHighlight?: number;
@@ -88,10 +91,11 @@ export function buildCommOfficeRows(
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("co_purchases:0").setLabel(badge("🛒 Pending Purchases", counts?.purchases)).setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("co_custom_players:0").setLabel(badge("🎨 Pending Custom Players", counts?.customPlayers)).setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("co_payouts:0").setLabel(badge("📋 Pending Payouts", counts?.payouts)).setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("co_interviews:0").setLabel(badge("🎙️ Pending Interviews", counts?.interviews)).setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("co_interviews:0").setLabel(badge("🎙️ Pending Interviews", counts?.interviews)).setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("co_channel:0").setLabel(badge("🎬 Stream/Highlight", counts?.streamHighlight)).setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("co_history:0").setLabel("🧾 Recent History").setStyle(ButtonStyle.Secondary),
     ),
@@ -351,6 +355,261 @@ async function buildPurchasesPage(
         .setStyle(ButtonStyle.Secondary),
     ),
   );
+
+  return { embed, rows };
+}
+
+
+// ── Pending Custom Players ────────────────────────────────────────────────────
+// customPlayersTable has no guildId — scoped via seasonsTable (seasonId → guildId).
+
+function customTierLabel(tier: string | null | undefined): string {
+  const raw = String(tier ?? "unknown").replace(/_/g, " ");
+  return raw.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function customStatusLabel(status: string | null | undefined): string {
+  const raw = String(status ?? "pending").replace(/_/g, " ");
+  return raw.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function customPlayerName(row: typeof customPlayersTable.$inferSelect): string {
+  return `${row.firstName} ${row.lastName}`.trim();
+}
+
+function formatCustomAttributes(attrs: unknown, page: number): { text: string; totalPages: number } {
+  const entries = Object.entries((attrs ?? {}) as Record<string, unknown>)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const pageSize = 18;
+  const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
+  const safePage = Math.max(0, Math.min(totalPages - 1, page));
+  const slice = entries.slice(safePage * pageSize, safePage * pageSize + pageSize);
+
+  if (slice.length === 0) {
+    return { text: "No attributes were saved for this custom player.", totalPages };
+  }
+
+  return {
+    text: slice.map(([key, value]) => `**${key}:** ${String(value)}`).join("\n"),
+    totalPages,
+  };
+}
+
+async function buildCustomPlayersPage(
+  guildId: string,
+  page: number,
+): Promise<{ embed: EmbedBuilder; rows: ActionRowBuilder<ButtonBuilder>[] }> {
+  const guildFilter = and(
+    eq(seasonsTable.guildId, guildId),
+    eq(customPlayersTable.status, "pending"),
+    isNotNull(customPlayersTable.id),
+  );
+
+  const [{ cnt }] = await db
+    .select({ cnt: sql<number>`count(*)::int` })
+    .from(customPlayersTable)
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(guildFilter);
+  const total = cnt ?? 0;
+
+  const raw = await db
+    .select({
+      player: customPlayersTable,
+      username: sql<string | null>`(
+        SELECT discord_username FROM economy_users eu
+        WHERE eu.discord_id = ${customPlayersTable.discordId} AND eu.guild_id = ${guildId}
+        LIMIT 1
+      )`.as("username"),
+      userTeam: sql<string | null>`(
+        SELECT team FROM economy_users eu
+        WHERE eu.discord_id = ${customPlayersTable.discordId} AND eu.guild_id = ${guildId}
+        LIMIT 1
+      )`.as("user_team"),
+    })
+    .from(customPlayersTable)
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(guildFilter)
+    .orderBy(customPlayersTable.createdAt, customPlayersTable.id)
+    .limit(PAGE_SIZE)
+    .offset(page * PAGE_SIZE);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const embed = new EmbedBuilder()
+    .setColor(0x9b59b6)
+    .setTitle(`🎨 Pending Custom Players — ${total} total`)
+    .setFooter({ text: `Page ${page + 1} / ${totalPages}` });
+
+  if (raw.length === 0) {
+    embed.setDescription("✅ No pending custom players. All caught up!");
+  } else {
+    for (let i = 0; i < raw.length; i++) {
+      const { player, username, userTeam } = raw[i];
+      const teamDisplay = player.teamName ?? userTeam ?? "?";
+      embed.addFields({
+        name: `#${i + 1} · ${customPlayerName(player)} — ${customTierLabel(player.packageTier)}`,
+        value: [
+          `**Buyer:** <@${player.discordId}>${username ? ` (${username})` : ""}`,
+          `**Team:** ${teamDisplay}`,
+          `**Position:** ${player.position}`,
+          `**Archetype:** ${player.archetypeName}`,
+          `**Dev:** ${customTierLabel(player.devTrait)}`,
+          `**Cost:** ${player.totalCost} coins`,
+          `**Status:** ${customStatusLabel(player.status)}`,
+          `**Submitted:** <t:${Math.floor(new Date(player.createdAt).getTime() / 1000)}:R>`,
+        ].join("\n"),
+        inline: false,
+      });
+    }
+  }
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const id = raw[i].player.id;
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`co_custom_detail:${id}:0`)
+          .setLabel(`🔎 View #${i + 1}`)
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`co_apply_custom:${id}`)
+          .setLabel(`✅ Mark Applied #${i + 1}`)
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`co_refund_custom:${id}`)
+          .setLabel(`↩ Refund #${i + 1}`)
+          .setStyle(ButtonStyle.Danger),
+      ),
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`co_custom_players:${page - 1}`)
+        .setLabel("◀ Prev")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page === 0),
+      new ButtonBuilder()
+        .setCustomId(`co_custom_players:${page + 1}`)
+        .setLabel("▶ Next")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page >= totalPages - 1),
+      new ButtonBuilder()
+        .setCustomId("co_main")
+        .setLabel("↩ Back")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  );
+
+  return { embed, rows };
+}
+
+async function buildCustomPlayerDetailPage(
+  guildId: string,
+  id: number,
+  attrPage: number,
+): Promise<{ embed: EmbedBuilder; rows: ActionRowBuilder<ButtonBuilder>[] }> {
+  const [row] = await db
+    .select({
+      player: customPlayersTable,
+      username: sql<string | null>`(
+        SELECT discord_username FROM economy_users eu
+        WHERE eu.discord_id = ${customPlayersTable.discordId} AND eu.guild_id = ${guildId}
+        LIMIT 1
+      )`.as("username"),
+      userTeam: sql<string | null>`(
+        SELECT team FROM economy_users eu
+        WHERE eu.discord_id = ${customPlayersTable.discordId} AND eu.guild_id = ${guildId}
+        LIMIT 1
+      )`.as("user_team"),
+    })
+    .from(customPlayersTable)
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(and(eq(customPlayersTable.id, id), eq(seasonsTable.guildId, guildId)))
+    .limit(1);
+
+  if (!row) {
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Red)
+      .setTitle("Custom Player Not Found")
+      .setDescription("This custom player could not be found for this guild.");
+    return { embed, rows: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("co_custom_players:0").setLabel("↩ Back").setStyle(ButtonStyle.Secondary))] };
+  }
+
+  const p = row.player;
+  const attrs = formatCustomAttributes(p.attributes, attrPage);
+  const teamDisplay = p.teamName ?? row.userTeam ?? "?";
+
+  const embed = new EmbedBuilder()
+    .setColor(p.status === "pending" ? 0x9b59b6 : p.status === "applied" ? Colors.Green : Colors.Red)
+    .setTitle(`🎨 Custom Player #${p.id} — ${customPlayerName(p)}`)
+    .setDescription(
+      [
+        "**Identity**",
+        `Buyer: <@${p.discordId}>${row.username ? ` (${row.username})` : ""}`,
+        `Team: **${teamDisplay}**`,
+        `Status: **${customStatusLabel(p.status)}**`,
+        `Cost: **${p.totalCost} coins**`,
+        "",
+        "**Build**",
+        `Position: **${p.position}**`,
+        `Archetype: **${p.archetypeName}**`,
+        `Tier: **${customTierLabel(p.packageTier)}**`,
+        `Dev Trait: **${customTierLabel(p.devTrait)}**`,
+        `Creation Points: **${p.creationPoints}**`,
+        "",
+        "**Appearance**",
+        `Jersey: **#${p.jerseyNumber}**`,
+        `College: **${p.college}**`,
+        `Hand: **${customTierLabel(p.dominantHand)}**`,
+        `Height/Weight: **${p.heightFt}'${p.heightIn}\" / ${p.weightLbs} lbs**`,
+        p.position === "QB" ? `Throwing Motion: **${p.throwingMotionStyle ?? "—"} ${p.throwingMotionNumber ?? ""}**` : "",
+        p.appearanceHead ? `Head: **${p.appearanceHead}**` : "",
+      ].filter(Boolean).join("\n"),
+    )
+    .addFields({
+      name: `Attributes — Page ${Math.max(0, attrPage) + 1}/${attrs.totalPages}`,
+      value: attrs.text.slice(0, 1024),
+      inline: false,
+    })
+    .setFooter({ text: `Submitted ${new Date(p.createdAt).toLocaleString("en-US", { timeZone: "America/Chicago" })} CST` });
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`co_custom_detail:${p.id}:${Math.max(0, attrPage - 1)}`)
+        .setLabel("◀ Attrs")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(attrPage <= 0),
+      new ButtonBuilder()
+        .setCustomId(`co_custom_detail:${p.id}:${attrPage + 1}`)
+        .setLabel("Attrs ▶")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(attrPage >= attrs.totalPages - 1),
+      new ButtonBuilder()
+        .setCustomId("co_custom_players:0")
+        .setLabel("↩ Back")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+
+  if (p.status === "pending") {
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`co_apply_custom:${p.id}`)
+          .setLabel("✅ Mark Applied")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`co_refund_custom:${p.id}`)
+          .setLabel("↩ Refund")
+          .setStyle(ButtonStyle.Danger),
+      ),
+    );
+  }
 
   return { embed, rows };
 }
@@ -879,6 +1138,115 @@ async function doDenyInterview(
   return `❌ Interview #${id} denied.`;
 }
 
+
+// ── Custom player actions ─────────────────────────────────────────────────────
+
+async function doApplyCustomPlayer(
+  id: number,
+  guildId: string,
+  adminId: string,
+  client: Client,
+): Promise<string> {
+  const [row] = await db
+    .select({ player: customPlayersTable })
+    .from(customPlayersTable)
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(and(eq(customPlayersTable.id, id), eq(seasonsTable.guildId, guildId)))
+    .limit(1);
+
+  const player = row?.player;
+  if (!player) throw new Error("Custom player not found.");
+  if (player.status !== "pending") throw new Error(`Already ${player.status}.`);
+
+  await db
+    .update(customPlayersTable)
+    .set({ status: "applied", appliedAt: new Date() })
+    .where(eq(customPlayersTable.id, id));
+
+  client.users
+    .fetch(player.discordId)
+    .then(u =>
+      u.send(
+        `✅ **Your custom player has been added to the draft class!**\n\n` +
+        `**${player.firstName} ${player.lastName}** (${player.position}) has been marked applied in-game.\n\n` +
+        `📋 **Reminder:** You will need to use a **draft pick** to select this player in the upcoming draft. ` +
+        `Favorite the player in-game so they appear at the top of your draft queue.`,
+      ).catch(() => null),
+    )
+    .catch(() => null);
+
+  return `✅ Custom player #${id} marked applied for <@${player.discordId}>.`;
+}
+
+function buildCustomRefundModal(id: number): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId(`co_modal_refund_custom:${id}`)
+    .setTitle("Refund Custom Player");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Reason for refund")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(300),
+    ),
+  );
+
+  return modal;
+}
+
+async function doRefundCustomPlayer(
+  id: number,
+  guildId: string,
+  adminId: string,
+  client: Client,
+  reason: string,
+): Promise<string> {
+  const [row] = await db
+    .select({ player: customPlayersTable })
+    .from(customPlayersTable)
+    .innerJoin(seasonsTable, eq(customPlayersTable.seasonId, seasonsTable.id))
+    .where(and(eq(customPlayersTable.id, id), eq(seasonsTable.guildId, guildId)))
+    .limit(1);
+
+  const player = row?.player;
+  if (!player) throw new Error("Custom player not found.");
+  if (player.status === "refunded") throw new Error("Already refunded.");
+
+  if (player.totalCost > 0) {
+    await addBalance(player.discordId, player.totalCost, guildId);
+    await logTransaction(
+      player.discordId,
+      player.totalCost,
+      "addcoins",
+      `Custom player refund (#${id}): ${reason}`,
+      guildId,
+      adminId,
+    );
+  }
+
+  await db
+    .update(customPlayersTable)
+    .set({ status: "refunded", refundedAt: new Date(), refundReason: reason })
+    .where(eq(customPlayersTable.id, id));
+
+  client.users
+    .fetch(player.discordId)
+    .then(u =>
+      u.send(
+        `↩ **Custom Player Refund**\n\n` +
+        `Your custom player **${player.firstName} ${player.lastName}** (${player.position}) was refunded.\n` +
+        `**+${player.totalCost} coins** returned to your balance.\n` +
+        `**Reason:** ${reason}`,
+      ).catch(() => null),
+    )
+    .catch(() => null);
+
+  return `↩ Custom player #${id} refunded — **+${player.totalCost} coins** → <@${player.discordId}>.`;
+}
+
 // ── Channel payout actions (stream / highlight) ──────────────────────────────
 
 async function doApproveChannelPayout(
@@ -1135,6 +1503,22 @@ export async function handleCommOfficeInteraction(
     await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
+  if (customId.startsWith("co_custom_players:")) {
+    await interaction.deferUpdate();
+    const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
+    const { embed, rows } = await buildCustomPlayersPage(guildId, page);
+    await interaction.editReply({ embeds: [embed], components: rows });
+    return;
+  }
+  if (customId.startsWith("co_custom_detail:")) {
+    await interaction.deferUpdate();
+    const [, idStr, pageStr] = customId.split(":");
+    const playerId = Math.max(0, parseInt(idStr ?? "0", 10));
+    const page = Math.max(0, parseInt(pageStr ?? "0", 10));
+    const { embed, rows } = await buildCustomPlayerDetailPage(guildId, playerId, page);
+    await interaction.editReply({ embeds: [embed], components: rows });
+    return;
+  }
   if (customId.startsWith("co_channel:")) {
     await interaction.deferUpdate();
     const page = Math.max(0, parseInt(customId.split(":")[1] ?? "0", 10));
@@ -1186,6 +1570,13 @@ export async function handleCommOfficeInteraction(
     await interaction.showModal(buildEditAmountModal("interview", id, defaultAmount));
     return;
   }
+  if (customId.startsWith("co_refund_custom:")) {
+    const id = parseInt(customId.split(":")[1] ?? "0", 10);
+    if (isNaN(id)) return;
+    await interaction.showModal(buildCustomRefundModal(id));
+    return;
+  }
+
   if (customId.startsWith("co_edit_channel:")) {
     const id = parseInt(customId.split(":")[1] ?? "0", 10);
     if (isNaN(id)) return;
@@ -1227,6 +1618,9 @@ export async function handleCommOfficeInteraction(
       case "co_refund_purchase":
         resultMsg = await doRefundPurchase(id, guildId, interaction.user.id, interaction.client);
         break;
+      case "co_apply_custom":
+        resultMsg = await doApplyCustomPlayer(id, guildId, interaction.user.id, interaction.client);
+        break;
       case "co_approve_interview":
         resultMsg = await doApproveInterview(id, guildId, interaction.user.id, interaction.client);
         break;
@@ -1262,7 +1656,9 @@ async function rerenderAfterAction(
     let embed: EmbedBuilder;
     let rows: ActionRowBuilder<ButtonBuilder>[];
 
-    if (prefix.includes("channel")) {
+    if (prefix.includes("custom")) {
+      ({ embed, rows } = await buildCustomPlayersPage(guildId, 0));
+    } else if (prefix.includes("channel")) {
       ({ embed, rows } = await buildChannelPayoutsPage(guildId, 0));
     } else if (prefix.includes("payout")) {
       ({ embed, rows } = await buildPayoutsPage(guildId, 0));
@@ -1288,6 +1684,20 @@ export async function handleCommOfficeModal(
 ): Promise<void> {
   const customId = interaction.customId;
   const guildId = interaction.guildId!;
+
+  const customRefund = /^co_modal_refund_custom:(\d+)$/.exec(customId);
+  if (customRefund) {
+    const id = parseInt(customRefund[1], 10);
+    const reason = interaction.fields.getTextInputValue("reason").trim();
+    await interaction.deferUpdate();
+    try {
+      const resultMsg = await doRefundCustomPlayer(id, guildId, interaction.user.id, interaction.client, reason);
+      await rerenderAfterAction(interaction, "co_refund_custom", guildId, resultMsg);
+    } catch (err) {
+      await interaction.followUp({ content: `❌ Refund failed: ${err instanceof Error ? err.message : String(err)}`, ephemeral: true }).catch(() => null);
+    }
+    return;
+  }
 
   // co_modal_edit_<kind>:<id>
   const m = /^co_modal_edit_(payout|interview|channel):(\d+)$/.exec(customId);
