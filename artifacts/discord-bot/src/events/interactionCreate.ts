@@ -263,6 +263,13 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Gameday dashboard interactions ───────────────────────────────────────────
+  if (interaction.customId.startsWith("gd_")) {
+    const { handleGamedayInteraction } = await import("../lib/gameday/gameday-dashboard.js");
+    await handleGamedayInteraction(interaction);
+    return;
+  }
+
   // ── Press Conference (pc_pick, pc_open_modal, pc_reply) ──────────────────────
   if (interaction.customId.startsWith("pc_")) {
     const pc = await import("../lib/handlers/press-conference-handlers.js");
@@ -2056,6 +2063,13 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── Gameday dashboard select menus ───────────────────────────────────────────
+  if (action?.startsWith("gd_")) {
+    const { handleGamedayInteraction } = await import("../lib/gameday/gameday-dashboard.js");
+    await handleGamedayInteraction(interaction);
+    return;
+  }
+
   // ── GOTW voting select menus ─────────────────────────────────────────────────
   if (action?.startsWith("gotwv_")) {
     const { handleGotwvInteraction } = await import("../lib/handlers/gotw-voting-handlers.js");
@@ -2346,6 +2360,13 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   // ── League Data wizard — all ld_ prefixed modal submissions ──────────────────
   if (action?.startsWith("ld_")) {
     await handleLeagueDataModal(interaction);
+    return;
+  }
+
+  // ── Gameday dashboard modal submissions ──────────────────────────────────────
+  if (action?.startsWith("gd_")) {
+    const { handleGamedayInteraction } = await import("../lib/gameday/gameday-dashboard.js");
+    await handleGamedayInteraction(interaction);
     return;
   }
 

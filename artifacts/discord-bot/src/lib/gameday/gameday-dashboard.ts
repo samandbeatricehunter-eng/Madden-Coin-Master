@@ -1,10 +1,18 @@
 import {
   ChatInputCommandInteraction,
+  ButtonInteraction,
+  StringSelectMenuInteraction,
+  ModalSubmitInteraction,
   EmbedBuilder,
   Colors,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -12,13 +20,49 @@ import {
   franchiseMcaTeamsTable,
   usersTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   getGuildChannel,
   getOrCreateActiveSeason,
   getScheduleSeasonId,
 } from "../db/db-helpers.js";
 import { weekLabel } from "../helpers/week-helpers.js";
+
+type GamedayContext = {
+  guildId: string;
+  season: any;
+  weekIndex: number;
+  scheduleSeasonId: number;
+  channelId: string;
+  userId: string;
+  awayDiscordId: string;
+  homeDiscordId: string;
+  opponentId: string;
+  awayTeamName: string;
+  homeTeamName: string;
+  matchupKey: string;
+  homeAway: "Home" | "Away";
+};
+
+type OfferRow = {
+  id: number;
+  guild_id: string;
+  season_id: number;
+  week_index: number;
+  matchup_key: string;
+  proposer_discord_id: string;
+  recipient_discord_id: string;
+  away_discord_id: string;
+  home_discord_id: string;
+  away_team_name: string;
+  home_team_name: string;
+  proposed_for: string;
+  proposed_tz: string | null;
+  notes: string | null;
+  status: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
 
 function teamKey(teamName: string): string {
   return teamName.toLowerCase().trim();
@@ -35,32 +79,92 @@ function weekIndexFromCurrentWeek(currentWeek: string | null | undefined): numbe
   return null;
 }
 
-export async function openGamedayDashboard(interaction: ChatInputCommandInteraction): Promise<void> {
+function matchupKey(a: string, b: string): string {
+  return [a, b].sort().join(":");
+}
+
+async function ensureGamedayTables(): Promise<void> {
+  await db.execute(sql`
+    create table if not exists gameday_schedule_offers (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      week_index integer not null,
+      matchup_key text not null,
+      proposer_discord_id text not null,
+      recipient_discord_id text not null,
+      away_discord_id text not null,
+      home_discord_id text not null,
+      away_team_name text not null,
+      home_team_name text not null,
+      proposed_for text not null,
+      proposed_tz text,
+      notes text,
+      status text not null default 'pending',
+      accepted_at timestamp with time zone,
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now()
+    )
+  `);
+  await db.execute(sql`
+    create index if not exists gameday_schedule_offers_lookup_idx
+    on gameday_schedule_offers(guild_id, season_id, week_index, matchup_key, status)
+  `);
+  await db.execute(sql`
+    create index if not exists gameday_schedule_offers_recipient_idx
+    on gameday_schedule_offers(guild_id, recipient_discord_id, status)
+  `);
+}
+
+async function queryOffers(whereSql: any): Promise<OfferRow[]> {
+  const result = await db.execute(sql`
+    select *
+    from gameday_schedule_offers
+    where ${whereSql}
+    order by created_at desc
+  `);
+  return ((result as any).rows ?? result) as OfferRow[];
+}
+
+async function countOffers(whereSql: any): Promise<number> {
+  const result = await db.execute(sql`
+    select count(*)::int as count
+    from gameday_schedule_offers
+    where ${whereSql}
+  `);
+  const rows = ((result as any).rows ?? result) as Array<{ count: number }>;
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function executeOfferUpdate(q: any): Promise<void> {
+  await db.execute(q);
+}
+
+async function getContext(interaction: ChatInputCommandInteraction | ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<GamedayContext | null> {
   const guildId = interaction.guildId!;
   const activeChannelId = await getGuildChannel(guildId, "gameday_active" as any).catch(() => null);
 
   if (!activeChannelId || interaction.channelId !== activeChannelId) {
-    await interaction.reply({
-      ephemeral: true,
-      content: activeChannelId
-        ? `❌ \`/gameday\` only works in the active weekly gameday channel: <#${activeChannelId}>.`
-        : "❌ No active weekly gameday channel is configured yet.",
-    });
-    return;
+    const msg = activeChannelId
+      ? `❌ \`/gameday\` only works in the active weekly gameday channel: <#${activeChannelId}>.`
+      : "❌ No active weekly gameday channel is configured yet.";
+    if (interaction.isRepliable()) {
+      if ((interaction as any).replied || (interaction as any).deferred) await (interaction as any).followUp({ content: msg, ephemeral: true }).catch(() => null);
+      else await (interaction as any).reply({ content: msg, ephemeral: true }).catch(() => null);
+    }
+    return null;
   }
 
   const season = await getOrCreateActiveSeason(guildId);
   const weekIndex = weekIndexFromCurrentWeek((season as any).currentWeek);
   if (weekIndex == null) {
-    await interaction.reply({
-      ephemeral: true,
-      content: "❌ There is no active H2H gameday dashboard for the current league week.",
-    });
-    return;
+    if (interaction.isRepliable()) {
+      await (interaction as any).reply?.({ ephemeral: true, content: "❌ There is no active H2H gameday dashboard for the current league week." }).catch(() => null);
+    }
+    return null;
   }
 
   const scheduleSeasonId = await getScheduleSeasonId(guildId);
-
   const [games, mcaTeams, users] = await Promise.all([
     db.select()
       .from(franchiseScheduleTable)
@@ -90,55 +194,649 @@ export async function openGamedayDashboard(interaction: ChatInputCommandInteract
     if (!teamToDiscord.has(teamKey(u.team))) teamToDiscord.set(teamKey(u.team), u.discordId);
   }
 
+  const userId = interaction.user.id;
   const myGame = games
     .map((g) => ({
       ...g,
       awayDiscordId: teamToDiscord.get(teamKey(g.awayTeamName)),
       homeDiscordId: teamToDiscord.get(teamKey(g.homeTeamName)),
     }))
-    .find((g) => g.awayDiscordId === interaction.user.id || g.homeDiscordId === interaction.user.id);
+    .find((g) => g.awayDiscordId === userId || g.homeDiscordId === userId);
 
   if (!myGame || !myGame.awayDiscordId || !myGame.homeDiscordId) {
-    await interaction.reply({
-      ephemeral: true,
-      content: "❌ You do not have a H2H matchup this week, so there are no gameday actions available.",
-    });
-    return;
+    if (interaction.isRepliable()) {
+      if ((interaction as any).replied || (interaction as any).deferred) await (interaction as any).followUp({ ephemeral: true, content: "❌ You do not have a H2H matchup this week, so there are no gameday actions available." }).catch(() => null);
+      else await (interaction as any).reply({ ephemeral: true, content: "❌ You do not have a H2H matchup this week, so there are no gameday actions available." }).catch(() => null);
+    }
+    return null;
   }
 
-  const opponentId = myGame.awayDiscordId === interaction.user.id ? myGame.homeDiscordId : myGame.awayDiscordId;
-  const homeAway = myGame.homeDiscordId === interaction.user.id ? "Home" : "Away";
+  const opponentId = myGame.awayDiscordId === userId ? myGame.homeDiscordId : myGame.awayDiscordId;
+
+  return {
+    guildId,
+    season,
+    weekIndex,
+    scheduleSeasonId,
+    channelId: activeChannelId,
+    userId,
+    awayDiscordId: myGame.awayDiscordId,
+    homeDiscordId: myGame.homeDiscordId,
+    opponentId,
+    awayTeamName: myGame.awayTeamName,
+    homeTeamName: myGame.homeTeamName,
+    matchupKey: matchupKey(myGame.awayDiscordId, myGame.homeDiscordId),
+    homeAway: myGame.homeDiscordId === userId ? "Home" : "Away",
+  };
+}
+
+function mainRows(activeCount: number, pendingCount: number): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("gd_schedule").setLabel("🗓️ Schedule Game").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("gd_pending").setLabel(`📨 Pending Offers (${pendingCount})`).setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("gd_queue").setLabel("🎮 Game Queue").setStyle(ButtonStyle.Success).setDisabled(true),
+      new ButtonBuilder().setCustomId("gd_assist").setLabel("🚨 Assistance").setStyle(ButtonStyle.Danger).setDisabled(true),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("gd_manage_offers").setLabel(`⚙️ Manage Active Offers (${activeCount})`).setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+async function renderDashboard(interaction: ChatInputCommandInteraction | ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+
+  const activeCount = await countOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and proposer_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
+
+  const pendingCount = await countOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and recipient_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Blurple)
     .setTitle("🎮 Gameday Dashboard")
     .setDescription([
-      `**Week:** ${weekLabel((season as any).currentWeek)}`,
-      `**Matchup:** <@${myGame.awayDiscordId}> @ <@${myGame.homeDiscordId}>`,
-      `**You are:** ${homeAway}`,
-      `**Opponent:** <@${opponentId}>`,
-      "",
-      "This is the Phase 1 dashboard shell. Scheduling offers, queue controls, final-score approval, FS/FW, and stream payout routing will be added in the next phases.",
+      `**Week:** ${weekLabel((ctx.season as any).currentWeek)}`,
+      `**Matchup:** <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>`,
+      `**You are:** ${ctx.homeAway}`,
+      `**Opponent:** <@${ctx.opponentId}>`,
     ].join("\n"))
     .addFields(
-      { name: "Schedule Game", value: "Send proposed times · Manage active offers (0) · Edit/delete offers", inline: false },
-      { name: "Pending Offers (0)", value: "Accept · Counter · Reject with reason", inline: false },
-      { name: "Game Queue", value: "Check in/out · Message opponent · Advise search · Request invite · Mark begun · Submit final", inline: false },
-      { name: "Assistance", value: "Contact Commissioner · Flag Violation · Request FS · Request FW", inline: false },
+      { name: "Schedule Game", value: `Send proposed times · Manage active offers (**${activeCount}**) · Edit/delete offers`, inline: false },
+      { name: `Pending Offers (${pendingCount})`, value: "Accept · Counter · Reject with reason", inline: false },
+      { name: "Game Queue", value: "Coming next: check in/out · message opponent · advise search · request invite · mark begun · submit final", inline: false },
+      { name: "Assistance", value: "Coming later: contact commissioner · flag violation · request FS/FW", inline: false },
     );
 
-  const rows = [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("gd_schedule").setLabel("🗓️ Schedule Game").setStyle(ButtonStyle.Primary).setDisabled(true),
-      new ButtonBuilder().setCustomId("gd_pending").setLabel("📨 Pending Offers (0)").setStyle(ButtonStyle.Secondary).setDisabled(true),
-      new ButtonBuilder().setCustomId("gd_queue").setLabel("🎮 Game Queue").setStyle(ButtonStyle.Success).setDisabled(true),
-      new ButtonBuilder().setCustomId("gd_assist").setLabel("🚨 Assistance").setStyle(ButtonStyle.Danger).setDisabled(true),
+  const payload = { ephemeral: true, embeds: [embed], components: mainRows(activeCount, pendingCount) as any };
+  if (interaction.isChatInputCommand()) await interaction.reply(payload);
+  else if ((interaction as any).replied || (interaction as any).deferred) await (interaction as any).editReply(payload).catch(() => (interaction as any).followUp(payload));
+  else await (interaction as any).update(payload).catch(() => (interaction as any).reply(payload));
+}
+
+export async function openGamedayDashboard(interaction: ChatInputCommandInteraction): Promise<void> {
+  const ctx = await getContext(interaction);
+  if (!ctx) return;
+  await renderDashboard(interaction, ctx);
+}
+
+async function showScheduleMenu(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+  const activeCount = await countOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and proposer_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("🗓️ Schedule Game")
+        .setDescription(
+          `You may have up to **3 active pending offers** for this matchup.\n\n` +
+          `Current active offers sent by you: **${activeCount}/3**.`,
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_offer_new").setLabel("➕ Send New Proposed Time").setStyle(ButtonStyle.Primary).setDisabled(activeCount >= 3),
+        new ButtonBuilder().setCustomId("gd_manage_offers").setLabel(`⚙️ Manage Active Offers (${activeCount})`).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showNewOfferModal(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId("gd_modal_offer_new")
+    .setTitle("Send Scheduling Offer");
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("proposed_for")
+        .setLabel("Proposed date/time")
+        .setPlaceholder("Example: Thursday 8:30 PM CST")
+        .setStyle(TextInputStyle.Short)
+        .setMaxLength(80)
+        .setRequired(true),
     ),
-  ];
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("proposed_tz")
+        .setLabel("Timezone")
+        .setPlaceholder("CST, EST, MST, PST, etc.")
+        .setStyle(TextInputStyle.Short)
+        .setMaxLength(20)
+        .setRequired(false),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("notes")
+        .setLabel("Optional note")
+        .setPlaceholder("Example: I can also start a little earlier if needed.")
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(500)
+        .setRequired(false),
+    ),
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleNewOfferModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+
+  const activeCount = await countOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and proposer_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
+
+  if (activeCount >= 3) {
+    await interaction.reply({ ephemeral: true, content: "❌ You already have 3 active pending offers for this matchup. Edit/delete one first." });
+    return;
+  }
+
+  const proposedFor = interaction.fields.getTextInputValue("proposed_for").trim();
+  const proposedTz = interaction.fields.getTextInputValue("proposed_tz").trim() || null;
+  const notes = interaction.fields.getTextInputValue("notes").trim() || null;
+
+  const result = await db.execute(sql`
+    insert into gameday_schedule_offers (
+      guild_id, season_id, week_index, matchup_key,
+      proposer_discord_id, recipient_discord_id,
+      away_discord_id, home_discord_id, away_team_name, home_team_name,
+      proposed_for, proposed_tz, notes, status
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey},
+      ${ctx.userId}, ${ctx.opponentId},
+      ${ctx.awayDiscordId}, ${ctx.homeDiscordId}, ${ctx.awayTeamName}, ${ctx.homeTeamName},
+      ${proposedFor}, ${proposedTz}, ${notes}, 'pending'
+    )
+    returning id
+  `);
+  const rows = ((result as any).rows ?? result) as Array<{ id: number }>;
+  const offerId = rows[0]?.id;
+
+  const dmText =
+    `🗓️ **New Scheduling Offer**\n\n` +
+    `<@${ctx.userId}> proposed a game time for **${ctx.awayTeamName} @ ${ctx.homeTeamName}**:\n\n` +
+    `**Time:** ${proposedFor}${proposedTz ? ` ${proposedTz}` : ""}\n` +
+    (notes ? `**Note:** ${notes}\n\n` : "\n") +
+    `Open \`/gameday\` in the active gameday channel to accept, counter, or reject.`;
+
+  const member = await interaction.guild?.members.fetch(ctx.opponentId).catch(() => null);
+  await member?.send(dmText).catch(() => null);
 
   await interaction.reply({
     ephemeral: true,
-    embeds: [embed],
-    components: rows,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle("✅ Scheduling Offer Sent")
+        .setDescription(`Offer #${offerId ?? "?"} sent to <@${ctx.opponentId}>.\n\n**Time:** ${proposedFor}${proposedTz ? ` ${proposedTz}` : ""}`),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
   });
+}
+
+async function showPendingOffers(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+  const offers = await queryOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and recipient_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
+
+  if (offers.length === 0) {
+    await interaction.update({
+      ephemeral: true,
+      embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("📨 Pending Offers").setDescription("You do not have any pending scheduling offers.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("gd_pending_select")
+    .setPlaceholder("Select an offer to review…")
+    .addOptions(offers.slice(0, 25).map(o =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`#${o.id} · ${o.proposed_for}`.slice(0, 100))
+        .setDescription(`From ${o.proposer_discord_id}`.slice(0, 100))
+        .setValue(String(o.id)),
+    ));
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`📨 Pending Offers (${offers.length})`).setDescription("Select an offer to accept, counter, or reject.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function showManageOffers(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  await ensureGamedayTables();
+  const offers = await queryOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and proposer_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
+
+  if (offers.length === 0) {
+    await interaction.update({
+      ephemeral: true,
+      embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("⚙️ Manage Active Offers").setDescription("You have no active pending offers to manage.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("gd_manage_select")
+    .setPlaceholder("Select one of your offers…")
+    .addOptions(offers.slice(0, 25).map(o =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`#${o.id} · ${o.proposed_for}`.slice(0, 100))
+        .setDescription(`To ${o.recipient_discord_id}`.slice(0, 100))
+        .setValue(String(o.id)),
+    ));
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`⚙️ Manage Active Offers (${offers.length})`).setDescription("Select an offer to edit or delete.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function getOfferById(id: number): Promise<OfferRow | null> {
+  const result = await db.execute(sql`select * from gameday_schedule_offers where id = ${id} limit 1`);
+  const rows = ((result as any).rows ?? result) as OfferRow[];
+  return rows[0] ?? null;
+}
+
+async function showPendingOfferDetail(interaction: StringSelectMenuInteraction, ctx: GamedayContext): Promise<void> {
+  const offerId = Number(interaction.values[0]);
+  const offer = await getOfferById(offerId);
+  if (!offer || offer.recipient_discord_id !== ctx.userId || offer.status !== "pending") {
+    await interaction.update({ ephemeral: true, content: "❌ Offer not found or no longer pending.", embeds: [], components: [] });
+    return;
+  }
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle(`📨 Scheduling Offer #${offer.id}`)
+        .setDescription([
+          `**From:** <@${offer.proposer_discord_id}>`,
+          `**Matchup:** <@${offer.away_discord_id}> @ <@${offer.home_discord_id}>`,
+          `**Proposed Time:** ${offer.proposed_for}${offer.proposed_tz ? ` ${offer.proposed_tz}` : ""}`,
+          offer.notes ? `**Note:** ${offer.notes}` : "",
+        ].filter(Boolean).join("\n")),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`gd_offer_accept:${offer.id}`).setLabel("✅ Accept").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`gd_offer_counter:${offer.id}`).setLabel("🔁 Counter").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`gd_offer_reject:${offer.id}`).setLabel("❌ Reject").setStyle(ButtonStyle.Danger),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_pending").setLabel("← Pending Offers").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function showManageOfferDetail(interaction: StringSelectMenuInteraction, ctx: GamedayContext): Promise<void> {
+  const offerId = Number(interaction.values[0]);
+  const offer = await getOfferById(offerId);
+  if (!offer || offer.proposer_discord_id !== ctx.userId || offer.status !== "pending") {
+    await interaction.update({ ephemeral: true, content: "❌ Offer not found or no longer pending.", embeds: [], components: [] });
+    return;
+  }
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle(`⚙️ Manage Offer #${offer.id}`)
+        .setDescription([
+          `**To:** <@${offer.recipient_discord_id}>`,
+          `**Proposed Time:** ${offer.proposed_for}${offer.proposed_tz ? ` ${offer.proposed_tz}` : ""}`,
+          offer.notes ? `**Note:** ${offer.notes}` : "",
+        ].filter(Boolean).join("\n")),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`gd_offer_edit:${offer.id}`).setLabel("✏️ Edit").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`gd_offer_delete:${offer.id}`).setLabel("🗑️ Delete").setStyle(ButtonStyle.Danger),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_manage_offers").setLabel("← Manage Offers").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+async function acceptOffer(interaction: ButtonInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  const offer = await getOfferById(offerId);
+  if (!offer || offer.recipient_discord_id !== ctx.userId || offer.status !== "pending") {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." });
+    return;
+  }
+
+  await executeOfferUpdate(sql`
+    update gameday_schedule_offers
+    set status = 'accepted', accepted_at = now(), updated_at = now()
+    where id = ${offer.id}
+  `);
+
+  await executeOfferUpdate(sql`
+    update gameday_schedule_offers
+    set status = 'superseded', updated_at = now()
+    where guild_id = ${offer.guild_id}
+      and season_id = ${offer.season_id}
+      and week_index = ${offer.week_index}
+      and matchup_key = ${offer.matchup_key}
+      and status = 'pending'
+      and id <> ${offer.id}
+  `);
+
+  const publicText =
+    `✅ **Game Scheduled**\n` +
+    `<@${offer.away_discord_id}> @ <@${offer.home_discord_id}>\n` +
+    `**Confirmed Time:** ${offer.proposed_for}${offer.proposed_tz ? ` ${offer.proposed_tz}` : ""}`;
+
+  const ch = interaction.channel;
+  if (ch?.isTextBased()) await ch.send({ content: publicText }).catch(() => null);
+
+  for (const uid of [offer.proposer_discord_id, offer.recipient_discord_id]) {
+    const member = await interaction.guild?.members.fetch(uid).catch(() => null);
+    await member?.send(publicText).catch(() => null);
+  }
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✅ Offer Accepted").setDescription("The confirmed schedule was posted publicly in the gameday channel.")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
+async function rejectOfferModal(interaction: ButtonInteraction, offerId: number): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId(`gd_modal_reject:${offerId}`)
+    .setTitle("Reject Scheduling Offer");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Reason")
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(500)
+        .setRequired(true),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleRejectModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  const offer = await getOfferById(offerId);
+  if (!offer || offer.recipient_discord_id !== ctx.userId || offer.status !== "pending") {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." });
+    return;
+  }
+
+  const reason = interaction.fields.getTextInputValue("reason").trim();
+  await executeOfferUpdate(sql`
+    update gameday_schedule_offers
+    set status = 'rejected', notes = coalesce(notes, '') || ${`\n\nRejected reason: ${reason}`}, updated_at = now()
+    where id = ${offer.id}
+  `);
+
+  const member = await interaction.guild?.members.fetch(offer.proposer_discord_id).catch(() => null);
+  await member?.send(`❌ Your scheduling offer for **${offer.proposed_for}${offer.proposed_tz ? ` ${offer.proposed_tz}` : ""}** was rejected.\n\n**Reason:** ${reason}`).catch(() => null);
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("❌ Offer Rejected").setDescription("The proposer was notified by DM.")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
+async function counterOfferModal(interaction: ButtonInteraction, offerId: number): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId(`gd_modal_counter:${offerId}`)
+    .setTitle("Counter Scheduling Offer");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("proposed_for").setLabel("Counter date/time").setPlaceholder("Example: Friday 9 PM CST").setStyle(TextInputStyle.Short).setMaxLength(80).setRequired(true),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("proposed_tz").setLabel("Timezone").setPlaceholder("CST, EST, MST, PST, etc.").setStyle(TextInputStyle.Short).setMaxLength(20).setRequired(false),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("notes").setLabel("Optional note").setStyle(TextInputStyle.Paragraph).setMaxLength(500).setRequired(false),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleCounterModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  await ensureGamedayTables();
+  const original = await getOfferById(offerId);
+  if (!original || original.recipient_discord_id !== ctx.userId || original.status !== "pending") {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." });
+    return;
+  }
+
+  const activeCount = await countOffers(sql`
+    guild_id = ${ctx.guildId}
+    and season_id = ${ctx.season.id}
+    and week_index = ${ctx.weekIndex}
+    and matchup_key = ${ctx.matchupKey}
+    and proposer_discord_id = ${ctx.userId}
+    and status = 'pending'
+  `);
+  if (activeCount >= 3) {
+    await interaction.reply({ ephemeral: true, content: "❌ You already have 3 active pending offers. Edit/delete one before countering." });
+    return;
+  }
+
+  const proposedFor = interaction.fields.getTextInputValue("proposed_for").trim();
+  const proposedTz = interaction.fields.getTextInputValue("proposed_tz").trim() || null;
+  const notes = interaction.fields.getTextInputValue("notes").trim() || null;
+
+  await executeOfferUpdate(sql`update gameday_schedule_offers set status = 'countered', updated_at = now() where id = ${original.id}`);
+
+  await db.execute(sql`
+    insert into gameday_schedule_offers (
+      guild_id, season_id, week_index, matchup_key,
+      proposer_discord_id, recipient_discord_id,
+      away_discord_id, home_discord_id, away_team_name, home_team_name,
+      proposed_for, proposed_tz, notes, status
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey},
+      ${ctx.userId}, ${ctx.opponentId},
+      ${ctx.awayDiscordId}, ${ctx.homeDiscordId}, ${ctx.awayTeamName}, ${ctx.homeTeamName},
+      ${proposedFor}, ${proposedTz}, ${notes}, 'pending'
+    )
+  `);
+
+  const member = await interaction.guild?.members.fetch(ctx.opponentId).catch(() => null);
+  await member?.send(`🔁 <@${ctx.userId}> countered with a new proposed game time:\n\n**${proposedFor}${proposedTz ? ` ${proposedTz}` : ""}**\n\nOpen \`/gameday\` to respond.`).catch(() => null);
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("🔁 Counter Sent").setDescription(`Counter sent to <@${ctx.opponentId}>.`)],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
+async function editOfferModal(interaction: ButtonInteraction, offerId: number): Promise<void> {
+  const offer = await getOfferById(offerId);
+  const modal = new ModalBuilder()
+    .setCustomId(`gd_modal_edit:${offerId}`)
+    .setTitle("Edit Scheduling Offer");
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("proposed_for").setLabel("Proposed date/time").setValue(offer?.proposed_for ?? "").setStyle(TextInputStyle.Short).setMaxLength(80).setRequired(true),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("proposed_tz").setLabel("Timezone").setValue(offer?.proposed_tz ?? "").setStyle(TextInputStyle.Short).setMaxLength(20).setRequired(false),
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder().setCustomId("notes").setLabel("Optional note").setValue(offer?.notes ?? "").setStyle(TextInputStyle.Paragraph).setMaxLength(500).setRequired(false),
+    ),
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleEditModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  const offer = await getOfferById(offerId);
+  if (!offer || offer.proposer_discord_id !== ctx.userId || offer.status !== "pending") {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." });
+    return;
+  }
+
+  const proposedFor = interaction.fields.getTextInputValue("proposed_for").trim();
+  const proposedTz = interaction.fields.getTextInputValue("proposed_tz").trim() || null;
+  const notes = interaction.fields.getTextInputValue("notes").trim() || null;
+
+  await executeOfferUpdate(sql`
+    update gameday_schedule_offers
+    set proposed_for = ${proposedFor}, proposed_tz = ${proposedTz}, notes = ${notes}, updated_at = now()
+    where id = ${offer.id}
+  `);
+
+  const member = await interaction.guild?.members.fetch(offer.recipient_discord_id).catch(() => null);
+  await member?.send(`✏️ <@${ctx.userId}> edited a pending scheduling offer.\n\n**New Time:** ${proposedFor}${proposedTz ? ` ${proposedTz}` : ""}\n\nOpen \`/gameday\` to respond.`).catch(() => null);
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("✏️ Offer Updated").setDescription("The opponent was notified by DM.")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
+async function deleteOffer(interaction: ButtonInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  const offer = await getOfferById(offerId);
+  if (!offer || offer.proposer_discord_id !== ctx.userId || offer.status !== "pending") {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." });
+    return;
+  }
+
+  await executeOfferUpdate(sql`
+    update gameday_schedule_offers
+    set status = 'cancelled', updated_at = now()
+    where id = ${offer.id}
+  `);
+
+  const member = await interaction.guild?.members.fetch(offer.recipient_discord_id).catch(() => null);
+  await member?.send(`🗑️ <@${ctx.userId}> deleted a pending scheduling offer for **${offer.proposed_for}${offer.proposed_tz ? ` ${offer.proposed_tz}` : ""}**.`).catch(() => null);
+
+  await interaction.update({
+    ephemeral: true,
+    embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("🗑️ Offer Deleted").setDescription("The pending offer has been cancelled.")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("gd_refresh").setLabel("← Dashboard").setStyle(ButtonStyle.Secondary))],
+  });
+}
+
+export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
+  if (!interaction.customId.startsWith("gd_")) return false;
+
+  const ctx = await getContext(interaction);
+  if (!ctx) return true;
+
+  if (interaction.isButton()) {
+    if (interaction.customId === "gd_refresh") { await renderDashboard(interaction, ctx); return true; }
+    if (interaction.customId === "gd_schedule") { await showScheduleMenu(interaction, ctx); return true; }
+    if (interaction.customId === "gd_offer_new") { await showNewOfferModal(interaction); return true; }
+    if (interaction.customId === "gd_pending") { await showPendingOffers(interaction, ctx); return true; }
+    if (interaction.customId === "gd_manage_offers") { await showManageOffers(interaction, ctx); return true; }
+
+    if (interaction.customId.startsWith("gd_offer_accept:")) { await acceptOffer(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_offer_reject:")) { await rejectOfferModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_offer_counter:")) { await counterOfferModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_offer_edit:")) { await editOfferModal(interaction, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_offer_delete:")) { await deleteOffer(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+
+    await interaction.reply({ ephemeral: true, content: "⏳ This gameday feature is coming in a later phase." });
+    return true;
+  }
+
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === "gd_pending_select") { await showPendingOfferDetail(interaction, ctx); return true; }
+    if (interaction.customId === "gd_manage_select") { await showManageOfferDetail(interaction, ctx); return true; }
+    return true;
+  }
+
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId === "gd_modal_offer_new") { await handleNewOfferModal(interaction, ctx); return true; }
+    if (interaction.customId.startsWith("gd_modal_reject:")) { await handleRejectModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_modal_counter:")) { await handleCounterModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_modal_edit:")) { await handleEditModal(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    return true;
+  }
+
+  return true;
 }
