@@ -2110,6 +2110,105 @@ async function handleAssistModal(interaction: ModalSubmitInteraction, ctx: Gamed
   await interaction.reply({ ephemeral: true, content: "✅ Request submitted and commissioners were tagged publicly." });
 }
 
+
+async function handleOfferWindowExtend(interaction: ButtonInteraction, ctx: GamedayContext, offerId: number): Promise<void> {
+  const rows = await db.execute(sql`
+    select *
+    from gameday_schedule_offers
+    where id = ${offerId}
+      and guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+      and status = 'pending'
+    limit 1
+  `);
+  const offer = (((rows as any).rows ?? rows) as any[])[0];
+  if (!offer) {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." });
+    return;
+  }
+  if (offer.proposer_discord_id !== ctx.userId) {
+    await interaction.reply({ ephemeral: true, content: "❌ Only the user who sent the scheduling offer can extend the response window." });
+    return;
+  }
+
+  await db.execute(sql`
+    create table if not exists gameday_offer_extensions (
+      id serial primary key,
+      offer_id integer not null,
+      extended_by text not null,
+      hours integer not null default 2,
+      reason text,
+      created_at timestamp with time zone not null default now()
+    )
+  `);
+
+  await db.execute(sql`
+    insert into gameday_offer_extensions (offer_id, extended_by, hours, reason)
+    values (${offerId}, ${ctx.userId}, 2, 'User extended response window from gameday notice')
+  `);
+
+  await postPublic(
+    interaction,
+    `⏳ **Scheduling Response Window Extended**\n` +
+    `<@${ctx.userId}> extended the response window for offer #${offerId} by **2 hours**.\n\n` +
+    `Opponent: <@${offer.recipient_discord_id}>`,
+  );
+
+  await interaction.reply({ ephemeral: true, content: "✅ Response window extended by 2 hours." });
+}
+
+async function handleOfferFwRequest(interaction: ButtonInteraction, ctx: GamedayContext, offerId: number, source: "no_response" | "no_show"): Promise<void> {
+  const rows = await db.execute(sql`
+    select *
+    from gameday_schedule_offers
+    where id = ${offerId}
+      and guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+    limit 1
+  `);
+  const offer = (((rows as any).rows ?? rows) as any[])[0];
+  if (!offer) {
+    await interaction.reply({ ephemeral: true, content: "❌ Offer not found." });
+    return;
+  }
+
+  const isParticipant = [offer.proposer_discord_id, offer.recipient_discord_id, offer.away_discord_id, offer.home_discord_id].includes(ctx.userId);
+  if (!isParticipant) {
+    await interaction.reply({ ephemeral: true, content: "❌ Only matchup participants can request FW from this notice." });
+    return;
+  }
+
+  const reason = source === "no_show"
+    ? `FW requested from no-show notice: opponent failed to check in by 45 minutes after scheduled start. Offer #${offerId}.`
+    : `FW requested from no-response notice: scheduling offer went unanswered for 9+ hours. Offer #${offerId}.`;
+
+  await db.execute(sql`
+    insert into gameday_commissioner_requests (
+      guild_id, season_id, week_index, matchup_key, request_type,
+      requested_by, opponent_discord_id, reason, status
+    )
+    values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, 'force_win',
+      ${ctx.userId}, ${ctx.opponentId}, ${reason}, 'pending'
+    )
+  `);
+
+  await postPublic(
+    interaction,
+    `🏳️ **Force Win Review Requested**\n` +
+    `Requested by: <@${ctx.userId}>\n` +
+    `Opponent: <@${ctx.opponentId}>\n` +
+    `Reason: ${source === "no_show" ? "No check-in by 45 minutes after scheduled start." : "No response to scheduling offer after 9+ hours."}\n\n` +
+    `Commissioners should review this in **Commissioner’s Office → Gameday Review**.`,
+  );
+
+  await interaction.reply({ ephemeral: true, content: "✅ FW request submitted for commissioner review." });
+}
+
 async function showAssistance(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
   await updatePanel(interaction, {
     ephemeral: true,
@@ -2178,6 +2277,9 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (interaction.customId === "gd_submit_final") { if (!(await requireBothCheckedIn(interaction, ctx))) return true; await showSubmitFinalModal(interaction); return true; }
     if (interaction.customId === "gd_score_pending") { await showScoreApproval(interaction, ctx); return true; }
     if (interaction.customId === "gd_assist") { await showAssistance(interaction, ctx); return true; }
+    if (interaction.customId.startsWith("gd_offer_extend:")) { await handleOfferWindowExtend(interaction, ctx, Number(interaction.customId.split(":")[1])); return true; }
+    if (interaction.customId.startsWith("gd_offer_fw:")) { await handleOfferFwRequest(interaction, ctx, Number(interaction.customId.split(":")[1]), "no_response"); return true; }
+    if (interaction.customId.startsWith("gd_noshow_fw:")) { await handleOfferFwRequest(interaction, ctx, Number(interaction.customId.split(":")[1]), "no_show"); return true; }
     if (interaction.customId === "gd_req_fw") { await requestAssistance(interaction, ctx, "force_win"); return true; }
     if (interaction.customId === "gd_req_fs") { await requestAssistance(interaction, ctx, "fair_sim"); return true; }
     if (interaction.customId === "gd_req_violation") { await requestAssistance(interaction, ctx, "violation"); return true; }

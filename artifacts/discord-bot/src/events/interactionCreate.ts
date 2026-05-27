@@ -284,6 +284,13 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Open wager board interactions ───────────────────────────────────────────
+  if (interaction.customId.startsWith("wager_")) {
+    const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
+    await handleWagerInteraction(interaction);
+    return;
+  }
+
   // ── Press Conference (pc_pick, pc_open_modal, pc_reply) ──────────────────────
   if (interaction.customId.startsWith("pc_")) {
     const pc = await import("../lib/handlers/press-conference-handlers.js");
@@ -343,6 +350,13 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ac_poty_vote") {
     const { renderPotyVote } = await import("../lib/media/play-of-the-year.js");
     await renderPotyVote(interaction as any);
+    return;
+  }
+
+  // ── Open wager board ───────────────────────────────────────────────────────
+  if (action === "ac_wager") {
+    const { openWagerBoard } = await import("../lib/economy/wager-board.js");
+    await openWagerBoard(interaction as any);
     return;
   }
 
@@ -2106,6 +2120,13 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── Open wager board select menus ───────────────────────────────────────────
+  if (action?.startsWith("wager_")) {
+    const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
+    await handleWagerInteraction(interaction);
+    return;
+  }
+
   // ── GOTW voting select menus ─────────────────────────────────────────────────
   if (action?.startsWith("gotwv_")) {
     const { handleGotwvInteraction } = await import("../lib/handlers/gotw-voting-handlers.js");
@@ -2403,6 +2424,13 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action?.startsWith("gd_")) {
     const { handleGamedayInteraction } = await import("../lib/gameday/gameday-dashboard.js");
     await handleGamedayInteraction(interaction);
+    return;
+  }
+
+  // ── Open wager board modal submissions ──────────────────────────────────────
+  if (action?.startsWith("wager_")) {
+    const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
+    await handleWagerInteraction(interaction);
     return;
   }
 

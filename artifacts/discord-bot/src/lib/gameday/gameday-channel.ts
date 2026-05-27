@@ -231,7 +231,7 @@ export async function createWeeklyGamedayChannel(args: {
         .setDescription(
           `**ADVANCE DEADLINE**\n${deadlineText}\n\n` +
           "**SCHEDULING POLICY**\n" +
-          "• If a scheduling proposal is sent and the opponent fails to respond within **4 hours**, the sender may request a Force Win due to lack of activity or extend the response window.\n\n" +
+          "• If a scheduling proposal is sent and the opponent fails to respond within **9 hours**, the sender may request a Force Win due to lack of activity or extend the response window.\n\n" +
           "**GAME CHECK-IN**\n" +
           "• Players are expected to check in before their scheduled game time using `/gameday`.\n" +
           "• Games must be marked as begun through `/gameday`. This is now the only way to post your stream link and receive stream payout review.\n\n" +
