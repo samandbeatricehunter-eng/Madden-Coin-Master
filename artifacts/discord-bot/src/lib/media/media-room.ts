@@ -20,6 +20,22 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
   return ((result as any).rows ?? result) as T[];
 }
 
+async function respondPanel(interaction: any, payload: any): Promise<void> {
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(payload).catch(async () => {
+      await interaction.followUp({ ...payload, ephemeral: true }).catch(() => null);
+    });
+    return;
+  }
+  if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) {
+    await interaction.update(payload).catch(async () => {
+      await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
+    });
+    return;
+  }
+  await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
+}
+
 function currentWeekKey(season: any): string {
   return String(season?.currentWeek ?? "").toLowerCase().trim();
 }
@@ -145,9 +161,7 @@ export async function renderActiveStreams(interaction: any): Promise<void> {
     ],
   };
 
-  if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
-  else if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) await interaction.update(payload).catch(() => interaction.reply(payload));
-  else await interaction.reply(payload);
+  await respondPanel(interaction, payload);
 }
 
 export async function renderGotyHub(interaction: any): Promise<void> {
@@ -186,9 +200,7 @@ export async function renderGotyHub(interaction: any): Promise<void> {
   );
 
   const payload = { ephemeral: true, embeds: [embed], components: [row] };
-  if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
-  else if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) await interaction.update(payload).catch(() => interaction.reply(payload));
-  else await interaction.reply(payload);
+  await respondPanel(interaction, payload);
 }
 
 async function showGotyNominationModal(interaction: any): Promise<void> {

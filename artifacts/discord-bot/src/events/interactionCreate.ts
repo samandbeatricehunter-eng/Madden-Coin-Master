@@ -291,6 +291,13 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── League role browser interactions ───────────────────────────────────────
+  if (interaction.customId === "ac_view_roles" || interaction.customId.startsWith("roles_view:")) {
+    const { handleLeagueRolesInteraction } = await import("../lib/roles/league-roles.js");
+    await handleLeagueRolesInteraction(interaction);
+    return;
+  }
+
   // ── Open wager board interactions ───────────────────────────────────────────
   if (interaction.customId.startsWith("wager_")) {
     const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
@@ -351,6 +358,13 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action?.startsWith("menu_")) {
     const handled = await handleMenuButton(interaction);
     if (handled) return;
+  }
+
+  // ── League roles action ────────────────────────────────────────────────────
+  if (action === "ac_view_roles") {
+    const { renderLeagueRoles } = await import("../lib/roles/league-roles.js");
+    await renderLeagueRoles(interaction as any, 0);
+    return;
   }
 
   // ── Media Room actions ─────────────────────────────────────────────────────

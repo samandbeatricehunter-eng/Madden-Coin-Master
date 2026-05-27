@@ -56,6 +56,7 @@ import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-sche
 import { nextAdvanceDeadline, formatAllZones, discordTimestampLong } from "../discord/timezones.js";
 import { createWeeklyGamedayChannel, gamedayWeekNumFromWeekKey } from "../gameday/gameday-channel.js";
 import { renderCommissionerGamedayReview, handleCommissionerGamedayReviewInteraction } from "../gameday/commissioner-gameday-review.js";
+import { recalculateLeagueRolesOnAdvance } from "../roles/league-roles.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -3480,6 +3481,13 @@ async function performAdvanceWeek(interaction: ButtonInteraction, selectedGameda
   ) as ActionRowBuilder<any>;
 
   await interaction.editReply({ embeds: [embed], components: [backRow] });
+
+  // ── League role + nickname tag recalculation ───────────────────────────────
+  if (guild) {
+    recalculateLeagueRolesOnAdvance(guild).catch((err) =>
+      console.error("[league-roles] advance recalculation failed:", err),
+    );
+  }
 
   // ── Wildcard automation + auto-reseed + division bonus + matchup flow ─────
   if (newWeek === "wildcard" && season.currentWeek === "18") {

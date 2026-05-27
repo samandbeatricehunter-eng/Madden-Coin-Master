@@ -235,6 +235,7 @@ const ROOT_NODES: MenuNode[] = [
       { path: "league_ops.autopilot",    emoji: "✈️", label: "Request Auto-Pilot", description: "Submit an auto-pilot request",       kind: "action", action: "ac_autopilot" },
       { path: "league_ops.open_teams",   emoji: "🔴", label: "Open Teams",         description: "View open teams",                   kind: "action", action: "ac_openteams" },
       { path: "league_ops.active_teams", emoji: "🟢", label: "Active/User Teams",  description: "View active user team assignments", kind: "action", action: "ac_activeteams" },
+      { path: "league_ops.roles",        emoji: "🏅", label: "View League Roles", description: "View automated roles, nickname tags, and current holders", kind: "action", action: "ac_view_roles" },
       { path: "league_ops.office",       emoji: "🏛️", label: "Commissioner's Office", description: "Open commissioner tools",        kind: "ops" },
     ],
   },
