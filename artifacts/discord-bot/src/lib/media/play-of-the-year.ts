@@ -108,7 +108,12 @@ export async function promptHighlightNomination(message: any): Promise<void> {
           "Limit: **3 nominations per category per season**.",
         ),
     ],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+    components: [
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("poty_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
   }).catch(() => null);
 }
 
@@ -152,6 +157,12 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
 
     const label = POTY_CATEGORIES.find((c) => c.key === category)?.label ?? category;
     await interaction.update({ content: `✅ Highlight nominated for **${label}**.`, embeds: [], components: [] });
+    return true;
+  }
+
+  if (interaction.isButton() && interaction.customId === "poty_media_home") {
+    const { renderMediaRoomHome } = await import("./media-room.js");
+    await renderMediaRoomHome(interaction);
     return true;
   }
 
@@ -216,6 +227,7 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
         new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder().setCustomId("poty_closeout").setLabel("Commissioner: Close/Tally POTY").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("poty_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary),
         ),
       ],
     };
@@ -249,7 +261,10 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
   if (!nominee) {
     await (interaction as any).update({
       embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle(`🏆 ${label}`).setDescription("No nominees in this category.")],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_home").setLabel("← Categories").setStyle(ButtonStyle.Secondary))],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_home").setLabel("← Categories").setStyle(ButtonStyle.Secondary)),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary)),
+      ],
     });
     return;
   }
@@ -274,6 +289,7 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
         new ButtonBuilder().setCustomId(`poty_page:${category}:${page + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= total - 1),
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_home").setLabel("← Categories").setStyle(ButtonStyle.Secondary)),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary)),
     ],
   });
 }

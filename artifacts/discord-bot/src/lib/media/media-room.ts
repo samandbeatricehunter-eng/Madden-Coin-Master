@@ -12,7 +12,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { addBalance, getGuildChannel, getOrCreateActiveSeason, logTransaction, CHANNEL_KEYS } from "../db/db-helpers.js";
+import { getOrCreateActiveSeason } from "../db/db-helpers.js";
 import { renderPotyVote } from "./play-of-the-year.js";
 
 async function rowsOf<T = any>(q: any): Promise<T[]> {
@@ -35,6 +35,43 @@ async function respondPanel(interaction: any, payload: any): Promise<void> {
   }
   await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
 }
+
+
+export async function renderMediaRoomHome(interaction: any): Promise<void> {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blurple)
+    .setTitle("🎙️ Media Room")
+    .setDescription(
+      [
+        "Choose a media feature:",
+        "",
+        "📺 **Active Stream Links** — streams posted in the last 1.5 hours",
+        "🏆 **GOTW Voting** — vote for this week's Game of the Week",
+        "🎬 **Play of the Year** — browse/vote POTY highlights",
+        "🎮 **Game of the Year** — nominate, browse, vote, and view winners",
+      ].join("\\n"),
+    );
+
+  const rows = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_active_streams").setLabel("📺 Active Stream Links").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ac_gotw_vote").setLabel("🏆 GOTW Voting").setStyle(ButtonStyle.Primary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_poty_vote").setLabel("🎬 Play of the Year").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("ac_goty_hub").setLabel("🎮 Game of the Year").setStyle(ButtonStyle.Success),
+    ),
+  ];
+
+  await respondPanel(interaction, { ephemeral: true, embeds: [embed], components: rows });
+}
+
+function mediaRoomBackRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("mr_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary),
+  );
+}
+
 
 function currentWeekKey(season: any): string {
   return String(season?.currentWeek ?? "").toLowerCase().trim();
@@ -92,19 +129,6 @@ async function ensureMediaTables(): Promise<void> {
       winner_details text,
       created_at timestamp with time zone not null default now(),
       unique(guild_id, season_id)
-    )
-  `);
-  await db.execute(sql`
-    create table if not exists media_goty_xf_rewards (
-      id serial primary key,
-      guild_id text not null,
-      season_id integer not null,
-      candidate_id integer not null,
-      discord_id text not null,
-      status text not null default 'pending_selection',
-      created_at timestamp with time zone not null default now(),
-      updated_at timestamp with time zone not null default now(),
-      unique(guild_id, season_id, candidate_id, discord_id)
     )
   `);
 }
@@ -171,6 +195,7 @@ export async function renderActiveStreams(interaction: any): Promise<void> {
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId("mr_active_streams_refresh").setLabel("Refresh").setStyle(ButtonStyle.Secondary),
       ),
+      mediaRoomBackRow(),
     ],
   };
 
@@ -210,47 +235,222 @@ export async function renderGotyHub(interaction: any): Promise<void> {
     new ButtonBuilder().setCustomId("mr_goty_browse").setLabel("Browse Nominees").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("mr_goty_vote").setLabel("Vote").setStyle(ButtonStyle.Success).setDisabled(!votingOpen),
     new ButtonBuilder().setCustomId("mr_goty_archive").setLabel("Past Winners").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("mr_goty_closeout").setLabel("Commissioner: Close/Tally").setStyle(ButtonStyle.Danger).setDisabled(!votingOpen),
+    new ButtonBuilder().setCustomId("mr_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary),
   );
 
   const payload = { ephemeral: true, embeds: [embed], components: [row] };
   await respondPanel(interaction, payload);
 }
 
-async function showGotyNominationModal(interaction: any): Promise<void> {
+
+function regularWeekNumberFromSeason(season: any): number | null {
+  const raw = currentWeekKey(season);
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1 && n <= 18) return n;
+  if (raw === "wildcard") return 19;
+  if (raw === "divisional") return 20;
+  if (raw === "conference") return 21;
+  if (raw === "superbowl") return 22;
+  return null;
+}
+
+function scheduleWeekIndexFromDisplayWeek(displayWeek: number): number {
+  if (displayWeek >= 1 && displayWeek <= 18) return displayWeek - 1;
+  if (displayWeek === 19) return 1018;
+  if (displayWeek === 20) return 1019;
+  if (displayWeek === 21) return 1020;
+  if (displayWeek === 22) return 1022;
+  return displayWeek - 1;
+}
+
+function displayWeekLabel(displayWeek: number): string {
+  if (displayWeek === 19) return "Wild Card";
+  if (displayWeek === 20) return "Divisional Round";
+  if (displayWeek === 21) return "Conference Championship";
+  if (displayWeek === 22) return "Super Bowl";
+  return `Week ${displayWeek}`;
+}
+
+async function showGotyWeekSelect(interaction: any): Promise<void> {
+  const guildId = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(guildId);
+  const currentDisplayWeek = regularWeekNumberFromSeason(season);
+
+  if (!currentDisplayWeek) {
+    await interaction.reply?.({ ephemeral: true, content: "❌ Could not determine the current league week." }).catch(() => null);
+    return;
+  }
+
+  const displayWeeks = [...new Set([currentDisplayWeek, Math.max(1, currentDisplayWeek - 1)])]
+    .filter((w) => w >= 1 && w <= 22);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("mr_goty_week")
+    .setPlaceholder("Select week to nominate from…")
+    .addOptions(
+      displayWeeks.map((w) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(displayWeekLabel(w))
+          .setDescription(w === currentDisplayWeek ? "Current week" : "Previous week")
+          .setValue(String(w)),
+      ),
+    );
+
+  await respondPanel(interaction, {
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle("🎮 GOTY Nomination — Select Week")
+        .setDescription("Choose either the current week or previous week. The next step will show only H2H matchups from that week."),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("mr_goty_home").setLabel("← GOTY Home").setStyle(ButtonStyle.Secondary),
+      ),
+      mediaRoomBackRow(),
+    ],
+  });
+}
+
+async function showGotyMatchupSelect(interaction: any, displayWeek: number): Promise<void> {
+  const guildId = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(guildId);
+  const weekIndex = scheduleWeekIndexFromDisplayWeek(displayWeek);
+
+  const games = await rowsOf<any>(sql`
+    select id, away_discord_id, home_discord_id, away_team_name, home_team_name, away_score, home_score, status
+    from game_schedules
+    where guild_id = ${guildId}
+      and season_id = ${season.id}
+      and week_index = ${weekIndex}
+      and away_discord_id is not null
+      and home_discord_id is not null
+      and away_discord_id <> ''
+      and home_discord_id <> ''
+      and away_discord_id not like 'unlinked_%'
+      and home_discord_id not like 'unlinked_%'
+    order by id asc
+    limit 25
+  `);
+
+  if (!games.length) {
+    await respondPanel(interaction, {
+      ephemeral: true,
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("🎮 GOTY Nomination — No H2H Games")
+          .setDescription(`No H2H matchups were found for **${displayWeekLabel(displayWeek)}**.`),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("mr_goty_nominate").setLabel("← Select Different Week").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("mr_goty_home").setLabel("GOTY Home").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`mr_goty_matchup:${displayWeek}`)
+    .setPlaceholder("Select H2H matchup…")
+    .addOptions(
+      games.map((g) => {
+        const score =
+          g.away_score != null && g.home_score != null
+            ? ` · ${g.away_score}-${g.home_score}`
+            : "";
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(`${g.away_team_name} @ ${g.home_team_name}`.slice(0, 100))
+          .setDescription(`${g.status ?? "scheduled"}${score}`.slice(0, 100))
+          .setValue(String(g.id));
+      }),
+    );
+
+  await respondPanel(interaction, {
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle("🎮 GOTY Nomination — Select Matchup")
+        .setDescription(`Showing H2H matchups from **${displayWeekLabel(displayWeek)}**.`),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("mr_goty_nominate").setLabel("← Week Select").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showGotyWinnerSelect(interaction: any, scheduleId: number, displayWeek: number): Promise<void> {
+  const guildId = interaction.guildId!;
+  const [game] = await rowsOf<any>(sql`
+    select id, away_discord_id, home_discord_id, away_team_name, home_team_name, away_score, home_score
+    from game_schedules
+    where guild_id = ${guildId}
+      and id = ${scheduleId}
+    limit 1
+  `);
+
+  if (!game) {
+    await interaction.reply?.({ ephemeral: true, content: "❌ Matchup not found." }).catch(() => null);
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`mr_goty_winner:${displayWeek}:${scheduleId}`)
+    .setPlaceholder("Select winner…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${game.away_team_name}`)
+        .setDescription(`Away user: ${game.away_discord_id}`.slice(0, 100))
+        .setValue(String(game.away_discord_id)),
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${game.home_team_name}`)
+        .setDescription(`Home user: ${game.home_discord_id}`.slice(0, 100))
+        .setValue(String(game.home_discord_id)),
+    ]);
+
+  const score =
+    game.away_score != null && game.home_score != null
+      ? `\nScore: **${game.away_team_name} ${game.away_score} — ${game.home_team_name} ${game.home_score}**`
+      : "";
+
+  await respondPanel(interaction, {
+    ephemeral: true,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Gold)
+        .setTitle("🎮 GOTY Nomination — Select Winner")
+        .setDescription(
+          `Matchup: **${game.away_team_name} @ ${game.home_team_name}**${score}\n\nSelect who won the game.`,
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`mr_goty_week_back:${displayWeek}`).setLabel("← Matchups").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showGotyNotesModal(interaction: any, displayWeek: number, scheduleId: number, winnerDiscordId: string): Promise<void> {
   const modal = new ModalBuilder()
-    .setCustomId("mr_goty_nominate_modal")
-    .setTitle("Nominate Game of the Year");
+    .setCustomId(`mr_goty_notes:${displayWeek}:${scheduleId}:${winnerDiscordId}`)
+    .setTitle("GOTY Nomination Notes");
 
   modal.addComponents(
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
-        .setCustomId("week")
-        .setLabel("Week number")
-        .setPlaceholder("Example: 8")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true),
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId("participants")
-        .setLabel("Participants")
-        .setPlaceholder("@UserA vs @UserB — mentions required")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true),
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId("score")
-        .setLabel("Final score and winner")
-        .setPlaceholder("Example: 31-28 Winner: @UserA")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true),
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
         .setCustomId("notes")
-        .setLabel("Highlights / notes")
+        .setLabel("Why should this game be GOTY?")
+        .setPlaceholder("Describe the comeback, rivalry stakes, big plays, drama, upset, etc.")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true)
         .setMaxLength(1000),
@@ -260,29 +460,36 @@ async function showGotyNominationModal(interaction: any): Promise<void> {
   await interaction.showModal(modal);
 }
 
-async function handleGotyNominationModal(interaction: any): Promise<void> {
+async function handleGotyNotesModal(interaction: any, displayWeek: number, scheduleId: number, winnerDiscordId: string): Promise<void> {
   await ensureMediaTables();
   const guildId = interaction.guildId!;
   const season = await getOrCreateActiveSeason(guildId);
-  const week = Number(interaction.fields.getTextInputValue("week").trim());
-  const participants = interaction.fields.getTextInputValue("participants").trim();
-  const score = interaction.fields.getTextInputValue("score").trim();
   const notes = interaction.fields.getTextInputValue("notes").trim();
 
-  const ids = [...participants.matchAll(/\d{15,25}/g)].map((m) => m[0]);
-  const winnerId = [...score.matchAll(/\d{15,25}/g)].map((m) => m[0])[0] ?? ids[0] ?? interaction.user.id;
+  const [game] = await rowsOf<any>(sql`
+    select id, away_discord_id, home_discord_id, away_team_name, home_team_name, away_score, home_score
+    from game_schedules
+    where guild_id = ${guildId}
+      and id = ${scheduleId}
+    limit 1
+  `);
 
-  if (!Number.isInteger(week) || week < 1 || ids.length < 2) {
-    await interaction.reply({
-      ephemeral: true,
-      content: "❌ Nomination needs a valid week number and two Discord IDs/user mentions in the participants field.",
-    });
+  if (!game) {
+    await interaction.reply({ ephemeral: true, content: "❌ Matchup not found. Nomination was not submitted." });
     return;
   }
 
-  const scoreNums = [...score.matchAll(/\d{1,3}/g)].map((m) => Number(m[0])).filter((n) => n < 100);
-  const awayScore = scoreNums[0] ?? 0;
-  const homeScore = scoreNums[1] ?? 0;
+  if (![String(game.away_discord_id), String(game.home_discord_id)].includes(String(winnerDiscordId))) {
+    await interaction.reply({ ephemeral: true, content: "❌ Winner must be one of the two selected matchup users." });
+    return;
+  }
+
+  const awayScore = game.away_score == null ? 0 : Number(game.away_score);
+  const homeScore = game.home_score == null ? 0 : Number(game.home_score);
+  const matchupSummary =
+    `${displayWeekLabel(displayWeek)} — ${game.away_team_name} @ ${game.home_team_name}\n` +
+    `Score: ${game.away_team_name} ${awayScore} — ${game.home_team_name} ${homeScore}\n\n` +
+    notes;
 
   await db.execute(sql`
     insert into media_goty_candidates (
@@ -292,10 +499,10 @@ async function handleGotyNominationModal(interaction: any): Promise<void> {
       notes, submitted_by, status
     )
     values (
-      ${guildId}, ${season.id}, ${week},
-      ${ids[0]}, ${ids[1]},
-      ${awayScore}, ${homeScore}, ${winnerId},
-      ${`${score}\n\n${notes}`}, ${interaction.user.id}, 'nominated'
+      ${guildId}, ${season.id}, ${displayWeek},
+      ${game.away_discord_id}, ${game.home_discord_id},
+      ${awayScore}, ${homeScore}, ${winnerDiscordId},
+      ${matchupSummary}, ${interaction.user.id}, 'nominated'
     )
   `);
 
@@ -332,7 +539,10 @@ async function renderGotyNominees(interaction: any, voteMode = false, page = 0):
   if (!c) {
     await interaction.update({
       embeds: [new EmbedBuilder().setColor(Colors.Greyple).setTitle("🎮 GOTY Nominees").setDescription("No GOTY nominees submitted yet.")],
-      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("mr_goty_home").setLabel("← GOTY Home").setStyle(ButtonStyle.Secondary))],
+      components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("mr_goty_home").setLabel("← GOTY Home").setStyle(ButtonStyle.Secondary)),
+      mediaRoomBackRow(),
+    ],
     });
     return;
   }
@@ -358,7 +568,7 @@ async function renderGotyNominees(interaction: any, voteMode = false, page = 0):
     new ButtonBuilder().setCustomId("mr_goty_home").setLabel("GOTY Home").setStyle(ButtonStyle.Secondary),
   );
 
-  await interaction.update({ embeds: [embed], components: [row] });
+  await interaction.update({ embeds: [embed], components: [row, mediaRoomBackRow()] });
 }
 
 async function castGotyVote(interaction: any, candidateId: number): Promise<void> {
@@ -397,93 +607,45 @@ async function renderGotyArchive(interaction: any): Promise<void> {
         .setTitle("🏛️ GOTY Past Winners")
         .setDescription(rows.length ? rows.map((r, i) => `**${i + 1}.** Season ${r.season_id} — ${r.winner_details ?? `Candidate #${r.candidate_id}`}`).join("\n") : "_No GOTY winners archived yet._"),
     ],
-    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("mr_goty_home").setLabel("← GOTY Home").setStyle(ButtonStyle.Secondary))],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("mr_goty_home").setLabel("← GOTY Home").setStyle(ButtonStyle.Secondary)),
+      mediaRoomBackRow(),
+    ],
   });
-}
-
-
-async function closeoutGoty(interaction: any): Promise<void> {
-  await ensureMediaTables();
-  const guildId = interaction.guildId!;
-  const season = await getOrCreateActiveSeason(guildId);
-  if (!isWildcardOrLater(season)) {
-    await interaction.reply({ ephemeral: true, content: "❌ GOTY voting cannot close before Wild Card." });
-    return;
-  }
-
-  const rows = await rowsOf<any>(sql`
-    select c.*, count(v.id)::int as votes
-    from media_goty_candidates c
-    left join media_goty_votes v on v.candidate_id = c.id
-    where c.guild_id = ${guildId}
-      and c.season_id = ${season.id}
-      and c.status = 'nominated'
-    group by c.id
-    order by votes desc, c.week_index asc, c.created_at asc
-    limit 1
-  `);
-  const winner = rows[0];
-  if (!winner) {
-    await interaction.reply({ ephemeral: true, content: "No GOTY nominees found." });
-    return;
-  }
-
-  const details = `Week ${winner.week_index}: <@${winner.away_discord_id}> ${winner.away_score} vs <@${winner.home_discord_id}> ${winner.home_score} — winner <@${winner.winner_discord_id}>`;
-
-  await db.execute(sql`
-    insert into media_goty_winners (guild_id, season_id, candidate_id, winner_details)
-    values (${guildId}, ${season.id}, ${winner.id}, ${details})
-    on conflict (guild_id, season_id)
-    do update set candidate_id = excluded.candidate_id, winner_details = excluded.winner_details
-  `);
-
-  for (const uid of [winner.away_discord_id, winner.home_discord_id]) {
-    await addBalance(uid, 250, guildId).catch(() => null);
-    await logTransaction(uid, 250, "addcoins", "GOTY winner participant bonus", guildId, "goty").catch(() => null);
-    await db.execute(sql`
-      insert into media_goty_xf_rewards (guild_id, season_id, candidate_id, discord_id, status)
-      values (${guildId}, ${season.id}, ${winner.id}, ${uid}, 'pending_selection')
-      on conflict (guild_id, season_id, candidate_id, discord_id) do nothing
-    `);
-    const user = await interaction.client.users.fetch(uid).catch(() => null);
-    await user?.send("🏆 Your game won **Game of the Year**. You received **250 coins** and have a pending free XF promotion reward. Commissioner/player selection handling will be available through the reward queue.").catch(() => null);
-  }
-
-  await db.execute(sql`
-    update media_goty_candidates
-    set status = case when id = ${winner.id} then 'winner' else 'closed' end,
-        updated_at = now()
-    where guild_id = ${guildId}
-      and season_id = ${season.id}
-  `);
-
-  const channelId = await getGuildChannel(guildId, CHANNEL_KEYS.GENERAL).catch(() => null);
-  const channel = channelId ? await interaction.guild?.channels.fetch(channelId).catch(() => null) : null;
-  if (channel?.isTextBased()) {
-    await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Gold)
-          .setTitle("🎮 Game of the Year Winner")
-          .setDescription(`${details}\n\nVotes: **${Number(winner.votes ?? 0)}**\nRewards: **250 coins + pending free XF promotion** for both participants.`),
-      ],
-    }).catch(() => null);
-  }
-
-  await interaction.reply({ ephemeral: true, content: "✅ GOTY voting closed, winner archived, rewards issued, and announcement posted." });
 }
 
 export async function handleMediaRoomInteraction(interaction: any): Promise<boolean> {
   const id = interaction.customId ?? "";
-  if (!id.startsWith("mr_")) return false;
+  if (!id.startsWith("mr_") && !id.startsWith("ac_")) return false;
 
+  if (id === "mr_media_home") { await renderMediaRoomHome(interaction); return true; }
+  if (id === "ac_active_streams") { await renderActiveStreams(interaction); return true; }
+  if (id === "ac_poty_vote") { await renderPotyVote(interaction); return true; }
+  if (id === "ac_goty_hub") { await renderGotyHub(interaction); return true; }
+  if (id === "ac_gotw_vote") {
+    const { handleActionsInteraction } = await import("../handlers/actions-handlers.js");
+    await handleActionsInteraction(interaction, "ac_gotw_vote");
+    return true;
+  }
   if (id === "mr_active_streams_refresh") { await renderActiveStreams(interaction); return true; }
   if (id === "mr_goty_home") { await renderGotyHub(interaction); return true; }
-  if (id === "mr_goty_nominate") { await showGotyNominationModal(interaction); return true; }
+  if (id === "mr_goty_week") { await showGotyMatchupSelect(interaction, Number(interaction.values[0])); return true; }
+  if (id.startsWith("mr_goty_week_back:")) { await showGotyMatchupSelect(interaction, Number(id.split(":")[1])); return true; }
+  if (id.startsWith("mr_goty_matchup:")) { await showGotyWinnerSelect(interaction, Number(interaction.values[0]), Number(id.split(":")[1])); return true; }
+  if (id.startsWith("mr_goty_winner:")) {
+    const [, , displayWeekRaw, scheduleIdRaw] = id.split(":");
+    await showGotyNotesModal(interaction, Number(displayWeekRaw), Number(scheduleIdRaw), String(interaction.values[0]));
+    return true;
+  }
+  if (id.startsWith("mr_goty_notes:")) {
+    const [, , displayWeekRaw, scheduleIdRaw, winnerDiscordId] = id.split(":");
+    await handleGotyNotesModal(interaction, Number(displayWeekRaw), Number(scheduleIdRaw), String(winnerDiscordId));
+    return true;
+  }
+  if (id === "mr_goty_nominate") { await showGotyWeekSelect(interaction); return true; }
   if (id === "mr_goty_browse") { await renderGotyNominees(interaction, false, 0); return true; }
   if (id === "mr_goty_vote") { await renderGotyNominees(interaction, true, 0); return true; }
   if (id === "mr_goty_archive") { await renderGotyArchive(interaction); return true; }
-  if (id === "mr_goty_closeout") { await closeoutGoty(interaction); return true; }
   if (id.startsWith("mr_goty_page:")) {
     const [, , mode, pageRaw] = id.split(":");
     await renderGotyNominees(interaction, mode === "vote", Math.max(0, Number(pageRaw ?? 0)));
@@ -493,7 +655,6 @@ export async function handleMediaRoomInteraction(interaction: any): Promise<bool
     await castGotyVote(interaction, Number(id.split(":")[2]));
     return true;
   }
-  if (id === "mr_goty_nominate_modal") { await handleGotyNominationModal(interaction); return true; }
 
   if (id === "mr_poty_vote") { await renderPotyVote(interaction); return true; }
 
