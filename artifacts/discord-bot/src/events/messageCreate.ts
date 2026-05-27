@@ -16,7 +16,12 @@ import { promptHighlightNomination } from "../lib/media/play-of-the-year.js";
 const PLAYOFF_WEEKS_SET = new Set(["wildcard", "divisional", "conference", "superbowl"]);
 const HIGHLIGHT_AUTO_PAYOUT = 50;
 
+function isDiscordStreamLabel(content: string): boolean {
+  return content.trim().toLowerCase() === "discord";
+}
+
 function hasValidUrl(content: string): boolean {
+  if (isDiscordStreamLabel(content)) return true;
   const match = content.match(/https?:\/\/\S+/i);
   if (!match) return false;
   try {
@@ -29,6 +34,7 @@ function hasValidUrl(content: string): boolean {
 
 
 function isAllowedStreamHost(content: string): boolean {
+  if (isDiscordStreamLabel(content)) return true;
   const match = content.match(/https?:\/\/\S+/i);
   if (!match) return false;
   try {
@@ -49,6 +55,7 @@ function isAllowedStreamHost(content: string): boolean {
 }
 
 async function isReachableUrl(content: string): Promise<boolean> {
+  if (isDiscordStreamLabel(content)) return true;
   const match = content.match(/https?:\/\/\S+/i);
   if (!match) return false;
   const controller = new AbortController();

@@ -451,9 +451,14 @@ async function updatePanel(
   });
 }
 
+function isDiscordStreamLabel(value: string | null | undefined): boolean {
+  return String(value ?? "").trim().toLowerCase() === "discord";
+}
+
 function isValidHttpUrl(value: string | null | undefined): boolean {
   const raw = String(value ?? "").trim();
   if (!raw) return false;
+  if (isDiscordStreamLabel(raw)) return true;
   try {
     const url = new URL(raw);
     return url.protocol === "http:" || url.protocol === "https:";
@@ -1566,7 +1571,7 @@ async function showMarkBegunModal(interaction: ButtonInteraction): Promise<void>
       new TextInputBuilder()
         .setCustomId("stream_url")
         .setLabel("Stream URL (optional)")
-        .setPlaceholder("https://twitch.tv/yourchannel or leave blank")
+        .setPlaceholder("https://twitch.tv/yourchannel, discord, or blank")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
         .setMaxLength(200),
@@ -1615,7 +1620,7 @@ async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: Ga
   await ensureMatchupStatus(ctx);
   const rawUrl = interaction.fields.getTextInputValue("stream_url").trim();
   if (rawUrl && !isValidHttpUrl(rawUrl)) {
-    await interaction.reply({ ephemeral: true, content: "❌ Invalid stream URL. Use a full valid URL starting with http:// or https://, or leave it blank." });
+    await interaction.reply({ ephemeral: true, content: "❌ Invalid stream entry. Use a full valid URL, type `discord`, or leave it blank." });
     return;
   }
 

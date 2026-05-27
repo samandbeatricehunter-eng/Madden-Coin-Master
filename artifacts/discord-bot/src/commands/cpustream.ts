@@ -40,7 +40,12 @@ function teamKey(teamName: string): string {
   return teamName.toLowerCase().trim();
 }
 
+function isDiscordStreamLabel(content: string): boolean {
+  return content.trim().toLowerCase() === "discord";
+}
+
 function hasValidUrl(content: string): boolean {
+  if (isDiscordStreamLabel(content)) return true;
   try {
     const url = new URL(content.trim());
     return url.protocol === "http:" || url.protocol === "https:";
@@ -50,6 +55,7 @@ function hasValidUrl(content: string): boolean {
 }
 
 function isAllowedStreamHost(content: string): boolean {
+  if (isDiscordStreamLabel(content)) return true;
   try {
     const url = new URL(content.trim());
     const host = url.hostname.toLowerCase();
@@ -68,6 +74,7 @@ function isAllowedStreamHost(content: string): boolean {
 }
 
 async function isReachableUrl(content: string): Promise<boolean> {
+  if (isDiscordStreamLabel(content)) return true;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
@@ -105,7 +112,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (!hasValidUrl(link) || !isAllowedStreamHost(link) || !(await isReachableUrl(link))) {
     await interaction.reply({
       ephemeral: true,
-      content: "❌ Invalid or unreachable stream link. Supported examples: Twitch, YouTube, Kick, Facebook, Xbox, or Discord links.",
+      content: "❌ Invalid or unreachable stream entry. Supported examples: Twitch, YouTube, Kick, Facebook, Xbox, Discord links, or simply `discord`.",
     });
     return;
   }
