@@ -11,7 +11,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "../db/db-helpers.js";
+import { addBalance, getGuildChannel, getOrCreateActiveSeason, logTransaction, CHANNEL_KEYS } from "../db/db-helpers.js";
 
 export const POTY_CATEGORIES = [
   { key: "run", label: "Run of the Year" },
@@ -64,6 +64,19 @@ export async function ensureHighlightTables(): Promise<void> {
       created_at timestamp with time zone not null default now(),
       updated_at timestamp with time zone not null default now(),
       unique(guild_id, season_id, category, voter_discord_id)
+    )
+  `);
+  await db.execute(sql`
+    create table if not exists highlight_winners (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      category text not null,
+      nominee_id integer not null,
+      winner_discord_id text not null,
+      vote_count integer not null default 0,
+      created_at timestamp with time zone not null default now(),
+      unique(guild_id, season_id, category)
     )
   `);
 }
@@ -153,6 +166,11 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
     return true;
   }
 
+  if (interaction.isButton() && interaction.customId === "poty_closeout") {
+    await closeoutPoty(interaction);
+    return true;
+  }
+
   if (interaction.isButton() && interaction.customId.startsWith("poty_vote:")) {
     await ensureHighlightTables();
     const [, , nomineeIdRaw] = interaction.customId.split(":");
@@ -193,8 +211,13 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
       .addOptions(POTY_CATEGORIES.map((c) => new StringSelectMenuOptionBuilder().setLabel(c.label).setValue(c.key)));
     const payload = {
       ephemeral: true,
-      embeds: [new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 Play of the Year Voting").setDescription("Select a category to view nominees and vote.")],
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+      embeds: [new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 Play of the Year Voting").setDescription("Select a category to view nominees and vote. Commissioners can close/tally voting from this panel.")],
+      components: [
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("poty_closeout").setLabel("Commissioner: Close/Tally POTY").setStyle(ButtonStyle.Danger),
+        ),
+      ],
     };
     if ((interaction as any).deferred || (interaction as any).replied) await (interaction as any).editReply(payload);
     else await (interaction as any).update(payload);
@@ -252,5 +275,59 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_home").setLabel("← Categories").setStyle(ButtonStyle.Secondary)),
     ],
+  });
+}
+
+
+export async function closeoutPoty(interaction: ButtonInteraction): Promise<void> {
+  await ensureHighlightTables();
+  const guildId = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(guildId);
+  const lines: string[] = [];
+
+  for (const cat of POTY_CATEGORIES) {
+    const rows = await rowsOf<any>(sql`
+      select n.id, n.submitter_discord_id, n.jump_url, count(v.id)::int as votes
+      from highlight_nominees n
+      left join highlight_votes v on v.nominee_id = n.id
+      where n.guild_id = ${guildId}
+        and n.season_id = ${season.id}
+        and n.category = ${cat.key}
+        and n.status = 'nominated'
+      group by n.id
+      order by votes desc, n.created_at asc
+      limit 1
+    `);
+    const winner = rows[0];
+    if (!winner) continue;
+
+    await db.execute(sql`
+      insert into highlight_winners (guild_id, season_id, category, nominee_id, winner_discord_id, vote_count)
+      values (${guildId}, ${season.id}, ${cat.key}, ${winner.id}, ${winner.submitter_discord_id}, ${Number(winner.votes ?? 0)})
+      on conflict (guild_id, season_id, category)
+      do update set nominee_id = excluded.nominee_id, winner_discord_id = excluded.winner_discord_id, vote_count = excluded.vote_count
+    `);
+
+    await addBalance(winner.submitter_discord_id, 150, guildId).catch(() => null);
+    await logTransaction(winner.submitter_discord_id, 150, "addcoins", `POTY Winner — ${cat.label}`, guildId, "poty").catch(() => null);
+    lines.push(`**${cat.label}:** <@${winner.submitter_discord_id}> (${Number(winner.votes ?? 0)} votes)`);
+  }
+
+  const channelId = await getGuildChannel(guildId, CHANNEL_KEYS.GENERAL).catch(() => null);
+  const channel = channelId ? await interaction.guild?.channels.fetch(channelId).catch(() => null) : null;
+  if (channel?.isTextBased() && lines.length) {
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Gold)
+          .setTitle("🏆 Play of the Year Winners")
+          .setDescription(lines.join("\\n")),
+      ],
+    }).catch(() => null);
+  }
+
+  await interaction.reply({
+    ephemeral: true,
+    content: lines.length ? "✅ POTY voting closed, winners posted, and rewards issued." : "No POTY nominees found to close out.",
   });
 }

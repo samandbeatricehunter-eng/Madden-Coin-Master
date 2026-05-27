@@ -10,9 +10,10 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { CHANNEL_KEYS, getGuildChannel } from "../db/db-helpers.js";
+import { CHANNEL_KEYS, getGuildChannel, getOrCreateActiveSeason } from "../db/db-helpers.js";
 
 const BOT_EMOJIS = ["🔥", "❄️", "🎯", "🏆", "⚠️"];
+const RATE_LIMIT_DELAY_MS = 800;
 
 type RoleDef = {
   key: string;
@@ -25,25 +26,53 @@ type RoleDef = {
 };
 
 export const LEAGUE_ROLE_DEFS: RoleDef[] = [
-  { key: "league_veteran", label: "League Veteran", type: "core", permanent: true, description: "Completed at least 2 full seasons in any REC bot league.", criteria: "Auto-assigned after 2 completed seasons once completion history is available." },
+  { key: "rec_og", label: "REC League OG", type: "core", permanent: true, description: "Linked to a team when this one-time legacy grant ran in any REC bot league.", criteria: "One-time server grant on the next advance after deployment. Follows user across REC bot leagues." },
+  { key: "league_veteran", label: "League Veteran", type: "core", permanent: true, description: "Completed at least 40 tracked H2H games across REC bot leagues.", criteria: "Auto-assigned at 40+ combined H2H wins/losses across all REC bot servers." },
   { key: "steady_streamer", label: "Steady Streamer", type: "performance", permanent: false, description: "Streams H2H games at least 90% of the time.", criteria: "9+ streams in last 10 recorded completed H2H games." },
   { key: "heavy_sweater", label: "Heavy Sweater", type: "performance", permanent: false, description: "Wins H2H games by a large all-time average margin.", criteria: "17+ average H2H margin of victory with at least 15 scored H2H games." },
-  { key: "mr_perfect", label: "Mr Perfect", type: "performance", permanent: true, description: "Completed an undefeated regular season.", criteria: "Permanent after completing a regular season undefeated." },
-  { key: "sb_winner", label: "SB Winner", type: "performance", permanent: true, description: "Won a Super Bowl in this server.", criteria: "Permanent after recorded Super Bowl win." },
-  { key: "trenches", label: "Terror in the Trenches", type: "performance", permanent: false, description: "Current user-team leader in sacks + tackles for loss.", criteria: "Transfers to the current sacks + TFL leader when supported stat imports are available." },
-  { key: "gimme_dat", label: "Mr Gimme Dat", type: "performance", permanent: false, description: "Current user-team leader in interceptions + fumble recoveries.", criteria: "Transfers to the current INT + FR leader when supported stat imports are available." },
-  { key: "smashmouth", label: "Smashmouth Football", type: "performance", permanent: false, description: "Majority rushing team.", criteria: "Rush attempts are the majority of team playcalls when supported stat imports are available." },
-  { key: "air_it_out", label: "Air it Out", type: "performance", permanent: false, description: "Heavy passing team.", criteria: "Pass attempts are at least 75% of offensive playcalls when supported stat imports are available." },
+  { key: "mr_perfect", label: "Mr Perfect", type: "performance", permanent: true, description: "Completed a 17-0 regular season.", criteria: "Permanent global role when a 17-0 record is detected on Week 18 → Wild Card advance." },
+  { key: "sb_winner", label: "SB Winner", type: "performance", permanent: true, description: "Won a Super Bowl in a REC bot league.", criteria: "Permanent global role after any recorded Super Bowl win." },
+  { key: "trenches", label: "Terror in the Trenches", type: "performance", permanent: false, description: "Current user-team leader in sacks + tackles for loss.", criteria: "Transfers to current leader using imported player/team season stats." },
+  { key: "gimme_dat", label: "Mr Gimme Dat", type: "performance", permanent: false, description: "Current user-team leader in interceptions + fumble recoveries.", criteria: "Transfers to current leader using imported player/team season stats." },
+  { key: "smashmouth", label: "Smashmouth Football", type: "performance", permanent: false, description: "Majority rushing team.", criteria: "Rush attempts are majority of team playcalls using player season stats." },
+  { key: "air_it_out", label: "Air it Out", type: "performance", permanent: false, description: "Heavy passing team.", criteria: "Pass attempts are at least 75% of offensive playcalls using player season stats." },
   { key: "hot", label: "Hot Streak", type: "tag", permanent: false, emoji: "🔥", description: "Won 2+ straight games.", criteria: "Nickname tag while active streak is 2+ wins." },
   { key: "cold", label: "Cold Streak", type: "tag", permanent: false, emoji: "❄️", description: "Lost 2+ straight games.", criteria: "Nickname tag while active streak is 2+ losses." },
   { key: "accurate_bettor", label: "Accurate Bettor", type: "tag", permanent: false, emoji: "🎯", description: "Strong wager/GOTW accuracy.", criteria: "80%+ combined successful wagers and GOTW picks, minimum 15 weighted decisions." },
-  { key: "champion", label: "Reigning Champion", type: "tag", permanent: false, emoji: "🏆", description: "Current defending Super Bowl champion.", criteria: "Nickname tag for current reigning champion." },
+  { key: "champion", label: "Reigning Champion", type: "tag", permanent: false, emoji: "🏆", description: "Current defending Super Bowl champion.", criteria: "Nickname tag for reigning champion." },
   { key: "scheduling_risk", label: "Scheduling Risk", type: "tag", permanent: false, emoji: "⚠️", description: "Repeated scheduling rulings against the user.", criteria: "60%+ approved FW/FS rulings against user in tracked sample." },
 ];
 
 async function rowsOf<T = any>(q: any): Promise<T[]> {
   const result = await db.execute(q);
   return ((result as any).rows ?? result) as T[];
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureRoleTables(): Promise<void> {
+  await db.execute(sql`
+    create table if not exists rec_role_global_entitlements (
+      id serial primary key,
+      discord_id text not null,
+      role_key text not null,
+      source_guild_id text,
+      reason text,
+      created_at timestamp with time zone not null default now(),
+      unique(discord_id, role_key)
+    )
+  `);
+  await db.execute(sql`
+    create table if not exists rec_role_server_one_time_events (
+      id serial primary key,
+      guild_id text not null,
+      event_key text not null,
+      processed_at timestamp with time zone not null default now(),
+      unique(guild_id, event_key)
+    )
+  `);
 }
 
 function cleanNickname(name: string): string {
@@ -63,6 +92,29 @@ async function ensureRole(guild: Guild, name: string) {
   });
 }
 
+async function grantGlobal(discordId: string, roleKey: string, sourceGuildId: string, reason: string): Promise<boolean> {
+  const before = await rowsOf(sql`
+    select id from rec_role_global_entitlements
+    where discord_id = ${discordId} and role_key = ${roleKey}
+    limit 1
+  `);
+  if (before.length) return false;
+  await db.execute(sql`
+    insert into rec_role_global_entitlements (discord_id, role_key, source_guild_id, reason)
+    values (${discordId}, ${roleKey}, ${sourceGuildId}, ${reason})
+    on conflict (discord_id, role_key) do nothing
+  `);
+  return true;
+}
+
+async function globalRoleKeys(discordId: string): Promise<Set<string>> {
+  const rows = await rowsOf<{ role_key: string }>(sql`
+    select role_key from rec_role_global_entitlements
+    where discord_id = ${discordId}
+  `).catch(() => []);
+  return new Set(rows.map((r) => r.role_key));
+}
+
 async function setMemberRole(member: GuildMember, roleName: string, shouldHave: boolean, changes: string[]) {
   const role = await ensureRole(member.guild, roleName).catch(() => null);
   if (!role) return;
@@ -70,9 +122,11 @@ async function setMemberRole(member: GuildMember, roleName: string, shouldHave: 
   if (shouldHave && !has) {
     await member.roles.add(role, "REC League automated role assignment").catch(() => null);
     changes.push(`<@${member.id}> earned **${roleName}**`);
+    await delay(RATE_LIMIT_DELAY_MS);
   } else if (!shouldHave && has) {
     await member.roles.remove(role, "REC League automated role removal").catch(() => null);
     changes.push(`<@${member.id}> lost **${roleName}**`);
+    await delay(RATE_LIMIT_DELAY_MS);
   }
 }
 
@@ -85,6 +139,7 @@ async function updateNicknameTags(member: GuildMember, emojis: string[], changes
   if (next !== current) {
     await member.setNickname(next, "REC League automated nickname tags").catch(() => null);
     changes.push(`<@${member.id}> nickname tags updated: ${unique.length ? unique.join(" ") : "none"}`);
+    await delay(RATE_LIMIT_DELAY_MS);
   }
 }
 
@@ -94,12 +149,12 @@ async function getGuildUsers(guildId: string): Promise<Array<{ discord_id: strin
     from economy_users
     where guild_id = ${guildId}
       and discord_id is not null
-  `);
+  `).catch(() => []);
 }
 
 async function getHotColdTag(guildId: string, userId: string): Promise<"🔥" | "❄️" | null> {
   const games = await rowsOf<any>(sql`
-    select winner_discord_id, away_discord_id, home_discord_id, status, finished_at, updated_at
+    select winner_discord_id, away_discord_id, home_discord_id, finished_at, updated_at
     from game_schedules
     where guild_id = ${guildId}
       and (away_discord_id = ${userId} or home_discord_id = ${userId})
@@ -122,7 +177,7 @@ async function getHotColdTag(guildId: string, userId: string): Promise<"🔥" | 
 }
 
 async function hasSchedulingRisk(guildId: string, userId: string): Promise<boolean> {
-  const rows = await rowsOf<{ count: number }>(sql`
+  const against = await rowsOf<{ count: number }>(sql`
     select count(*)::int as count
     from gameday_commissioner_requests
     where guild_id = ${guildId}
@@ -130,7 +185,18 @@ async function hasSchedulingRisk(guildId: string, userId: string): Promise<boole
       and request_type in ('force_win','fair_sim')
       and status = 'approved'
   `).catch(() => [{ count: 0 }]);
-  return Number(rows[0]?.count ?? 0) >= 3;
+
+  const total = await rowsOf<{ count: number }>(sql`
+    select count(*)::int as count
+    from game_schedules
+    where guild_id = ${guildId}
+      and (away_discord_id = ${userId} or home_discord_id = ${userId})
+      and status in ('force_win','fair_sim','auto_fair_sim','finished','completed_pending_import')
+  `).catch(() => [{ count: 0 }]);
+
+  const a = Number(against[0]?.count ?? 0);
+  const t = Number(total[0]?.count ?? 0);
+  return t >= 5 && a / Math.max(t, 1) >= 0.6;
 }
 
 async function hasAccurateBettor(guildId: string, userId: string): Promise<boolean> {
@@ -160,6 +226,83 @@ async function hasAccurateBettor(guildId: string, userId: string): Promise<boole
     if (String(v.settlement_status) === "correct") weightedWins += 1;
   }
   return weightedTotal >= 15 && weightedWins / weightedTotal >= 0.8;
+}
+
+async function seedOgOnce(guildId: string, changes: string[]): Promise<void> {
+  const done = await rowsOf(sql`
+    select id from rec_role_server_one_time_events
+    where guild_id = ${guildId} and event_key = 'rec_og_seed'
+    limit 1
+  `);
+  if (done.length) return;
+
+  const users = await rowsOf<{ discord_id: string; team: string | null }>(sql`
+    select discord_id, team
+    from economy_users
+    where guild_id = ${guildId}
+      and team is not null
+      and trim(team) <> ''
+  `).catch(() => []);
+
+  for (const u of users) {
+    const granted = await grantGlobal(u.discord_id, "rec_og", guildId, "Linked to a team at one-time REC League OG seed");
+    if (granted) changes.push(`<@${u.discord_id}> earned **REC League OG**`);
+  }
+
+  await db.execute(sql`
+    insert into rec_role_server_one_time_events (guild_id, event_key)
+    values (${guildId}, 'rec_og_seed')
+    on conflict (guild_id, event_key) do nothing
+  `);
+}
+
+async function seedLeagueVeterans(guildId: string, changes: string[]): Promise<void> {
+  const rows = await rowsOf<{ discord_id: string; games: number }>(sql`
+    select discord_id, sum(all_time_h2h_wins + all_time_h2h_losses)::int as games
+    from economy_users
+    group by discord_id
+    having sum(all_time_h2h_wins + all_time_h2h_losses) >= 40
+  `).catch(() => []);
+  for (const r of rows) {
+    const granted = await grantGlobal(r.discord_id, "league_veteran", guildId, `40+ tracked H2H games (${r.games})`);
+    if (granted) changes.push(`<@${r.discord_id}> earned **League Veteran**`);
+  }
+}
+
+async function seedMrPerfectIfWildcard(guildId: string, changes: string[]): Promise<void> {
+  const season = await getOrCreateActiveSeason(guildId).catch(() => null);
+  if (!season || String((season as any).currentWeek).toLowerCase() !== "wildcard") return;
+
+  const rows = await rowsOf<{ discord_id: string }>(sql`
+    select discord_id
+    from team_season_stats
+    where season_id = ${season.id}
+      and discord_id is not null
+      and wins = 17
+      and losses = 0
+      and coalesce(ties, 0) = 0
+  `).catch(() => []);
+
+  for (const r of rows) {
+    const granted = await grantGlobal(r.discord_id, "mr_perfect", guildId, "Finished regular season 17-0");
+    if (granted) changes.push(`<@${r.discord_id}> earned **Mr Perfect**`);
+  }
+}
+
+async function seedSbWinners(guildId: string, changes: string[]): Promise<Set<string>> {
+  const rows = await rowsOf<{ discord_id: string }>(sql`
+    select discord_id
+    from economy_users
+    where all_time_superbowl_wins > 0
+  `).catch(() => []);
+
+  const out = new Set<string>();
+  for (const r of rows) {
+    out.add(String(r.discord_id));
+    const granted = await grantGlobal(r.discord_id, "sb_winner", guildId, "Recorded Super Bowl winner");
+    if (granted) changes.push(`<@${r.discord_id}> earned **SB Winner**`);
+  }
+  return out;
 }
 
 async function getStreamerUsers(guildId: string): Promise<Set<string>> {
@@ -198,14 +341,48 @@ async function getHeavySweaters(guildId: string): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.discord_id)));
 }
 
-async function getSbWinners(guildId: string): Promise<Set<string>> {
+async function getLeaderByTeamStats(guildId: string, metric: "trenches" | "gimme"): Promise<string | null> {
+  const season = await getOrCreateActiveSeason(guildId).catch(() => null);
+  if (!season) return null;
+  const orderExpr = metric === "trenches"
+    ? sql`(coalesce(team_sacks,0)) desc`
+    : sql`(coalesce(team_ints,0) + coalesce(def_fumbles_rec,0)) desc`;
   const rows = await rowsOf<{ discord_id: string }>(sql`
     select discord_id
-    from economy_users
-    where guild_id = ${guildId}
-      and all_time_superbowl_wins > 0
+    from team_season_stats
+    where season_id = ${season.id}
+      and discord_id is not null
+    order by ${orderExpr}
+    limit 1
   `).catch(() => []);
-  return new Set(rows.map((r) => String(r.discord_id)));
+  return rows[0]?.discord_id ? String(rows[0].discord_id) : null;
+}
+
+async function getPlaycallRoles(guildId: string): Promise<{ smash: Set<string>; air: Set<string> }> {
+  const season = await getOrCreateActiveSeason(guildId).catch(() => null);
+  const smash = new Set<string>();
+  const air = new Set<string>();
+  if (!season) return { smash, air };
+
+  const rows = await rowsOf<{ discord_id: string; pass_att: number; rush_att: number }>(sql`
+    select discord_id,
+           sum(coalesce(pass_att,0))::int as pass_att,
+           sum(coalesce(rush_att,0))::int as rush_att
+    from player_season_stats
+    where season_id = ${season.id}
+      and discord_id is not null
+    group by discord_id
+  `).catch(() => []);
+
+  for (const r of rows) {
+    const pass = Number(r.pass_att ?? 0);
+    const rush = Number(r.rush_att ?? 0);
+    const total = pass + rush;
+    if (total < 150) continue;
+    if (rush / total > 0.5) smash.add(String(r.discord_id));
+    if (pass / total >= 0.75) air.add(String(r.discord_id));
+  }
+  return { smash, air };
 }
 
 async function postRoleUpdate(guild: Guild, lines: string[]) {
@@ -225,26 +402,52 @@ async function postRoleUpdate(guild: Guild, lines: string[]) {
   }
 }
 
+async function applyGlobalRoleEntitlements(member: GuildMember, entitlements: Set<string>, changes: string[]) {
+  const roleMap: Record<string, string> = {
+    rec_og: "REC League OG",
+    league_veteran: "League Veteran",
+    mr_perfect: "Mr Perfect",
+    sb_winner: "SB Winner",
+  };
+  for (const [key, roleName] of Object.entries(roleMap)) {
+    if (entitlements.has(key)) await setMemberRole(member, roleName, true, changes);
+  }
+}
+
 export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<void> {
+  await ensureRoleTables();
   const guildId = guild.id;
   const changes: string[] = [];
   await guild.members.fetch().catch(() => null);
   await guild.roles.fetch().catch(() => null);
 
-  const [users, steady, sweaters, sbWinners] = await Promise.all([
+  await seedOgOnce(guildId, changes);
+  await seedLeagueVeterans(guildId, changes);
+  await seedMrPerfectIfWildcard(guildId, changes);
+  const sbWinners = await seedSbWinners(guildId, changes);
+
+  const [users, steady, sweaters, trenchesLeader, gimmeLeader, playcalls] = await Promise.all([
     getGuildUsers(guildId),
     getStreamerUsers(guildId),
     getHeavySweaters(guildId),
-    getSbWinners(guildId),
+    getLeaderByTeamStats(guildId, "trenches"),
+    getLeaderByTeamStats(guildId, "gimme"),
+    getPlaycallRoles(guildId),
   ]);
 
   for (const u of users) {
     const member = await guild.members.fetch(u.discord_id).catch(() => null);
     if (!member) continue;
 
+    const entitlements = await globalRoleKeys(u.discord_id);
+    await applyGlobalRoleEntitlements(member, entitlements, changes);
+
     await setMemberRole(member, "Steady Streamer", steady.has(u.discord_id), changes);
     await setMemberRole(member, "Heavy Sweater", sweaters.has(u.discord_id), changes);
-    if (sbWinners.has(u.discord_id)) await setMemberRole(member, "SB Winner", true, changes);
+    await setMemberRole(member, "Terror in the Trenches", trenchesLeader === u.discord_id, changes);
+    await setMemberRole(member, "Mr Gimme Dat", gimmeLeader === u.discord_id, changes);
+    await setMemberRole(member, "Smashmouth Football", playcalls.smash.has(u.discord_id), changes);
+    await setMemberRole(member, "Air it Out", playcalls.air.has(u.discord_id), changes);
 
     const emojis: string[] = [];
     const hotCold = await getHotColdTag(guildId, u.discord_id);
@@ -260,6 +463,7 @@ export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<voi
 }
 
 export async function renderLeagueRoles(interaction: any, page = 0): Promise<void> {
+  await ensureRoleTables();
   const guild = interaction.guild!;
   await guild.roles.fetch().catch(() => null);
   await guild.members.fetch().catch(() => null);

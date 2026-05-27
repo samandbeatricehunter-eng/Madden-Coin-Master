@@ -2178,6 +2178,37 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── Direct routes for new menu items that must not fall through to stale router allow-lists ──
+  if (action === "menu_admin_cat" && interaction.values[0] === "gameday_review") {
+    const { renderCommissionerGamedayReview } = await import("../lib/gameday/commissioner-gameday-review.js");
+    await renderCommissionerGamedayReview(interaction as any);
+    return;
+  }
+
+  if (action === "menu_cat") {
+    const selected = interaction.values[0];
+    if (selected === "media_room.streams") {
+      const { renderActiveStreams } = await import("../lib/media/media-room.js");
+      await renderActiveStreams(interaction as any);
+      return;
+    }
+    if (selected === "media_room.goty") {
+      const { renderGotyHub } = await import("../lib/media/media-room.js");
+      await renderGotyHub(interaction as any);
+      return;
+    }
+    if (selected === "media_room.poty") {
+      const { renderPotyVote } = await import("../lib/media/play-of-the-year.js");
+      await renderPotyVote(interaction as any);
+      return;
+    }
+    if (selected === "league_ops.roles") {
+      const { renderLeagueRoles } = await import("../lib/roles/league-roles.js");
+      await renderLeagueRoles(interaction as any, 0);
+      return;
+    }
+  }
+
   // ── New /menu navigation (menu_cat, menu_admin_cat) ─────────────────────────
   if (action?.startsWith("menu_")) {
     const handled = await handleMenuSelect(interaction);

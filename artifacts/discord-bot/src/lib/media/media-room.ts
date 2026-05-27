@@ -12,7 +12,7 @@ import {
 } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { getOrCreateActiveSeason } from "../db/db-helpers.js";
+import { addBalance, getGuildChannel, getOrCreateActiveSeason, logTransaction, CHANNEL_KEYS } from "../db/db-helpers.js";
 import { renderPotyVote } from "./play-of-the-year.js";
 
 async function rowsOf<T = any>(q: any): Promise<T[]> {
@@ -92,6 +92,19 @@ async function ensureMediaTables(): Promise<void> {
       winner_details text,
       created_at timestamp with time zone not null default now(),
       unique(guild_id, season_id)
+    )
+  `);
+  await db.execute(sql`
+    create table if not exists media_goty_xf_rewards (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      candidate_id integer not null,
+      discord_id text not null,
+      status text not null default 'pending_selection',
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now(),
+      unique(guild_id, season_id, candidate_id, discord_id)
     )
   `);
 }
@@ -197,6 +210,7 @@ export async function renderGotyHub(interaction: any): Promise<void> {
     new ButtonBuilder().setCustomId("mr_goty_browse").setLabel("Browse Nominees").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("mr_goty_vote").setLabel("Vote").setStyle(ButtonStyle.Success).setDisabled(!votingOpen),
     new ButtonBuilder().setCustomId("mr_goty_archive").setLabel("Past Winners").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("mr_goty_closeout").setLabel("Commissioner: Close/Tally").setStyle(ButtonStyle.Danger).setDisabled(!votingOpen),
   );
 
   const payload = { ephemeral: true, embeds: [embed], components: [row] };
@@ -221,7 +235,7 @@ async function showGotyNominationModal(interaction: any): Promise<void> {
       new TextInputBuilder()
         .setCustomId("participants")
         .setLabel("Participants")
-        .setPlaceholder("@UserA vs @UserB or Discord IDs")
+        .setPlaceholder("@UserA vs @UserB — mentions required")
         .setStyle(TextInputStyle.Short)
         .setRequired(true),
     ),
@@ -229,7 +243,7 @@ async function showGotyNominationModal(interaction: any): Promise<void> {
       new TextInputBuilder()
         .setCustomId("score")
         .setLabel("Final score and winner")
-        .setPlaceholder("Example: Bears 31, Lions 28 — Winner: Bears/UserA")
+        .setPlaceholder("Example: 31-28 Winner: @UserA")
         .setStyle(TextInputStyle.Short)
         .setRequired(true),
     ),
@@ -387,6 +401,78 @@ async function renderGotyArchive(interaction: any): Promise<void> {
   });
 }
 
+
+async function closeoutGoty(interaction: any): Promise<void> {
+  await ensureMediaTables();
+  const guildId = interaction.guildId!;
+  const season = await getOrCreateActiveSeason(guildId);
+  if (!isWildcardOrLater(season)) {
+    await interaction.reply({ ephemeral: true, content: "❌ GOTY voting cannot close before Wild Card." });
+    return;
+  }
+
+  const rows = await rowsOf<any>(sql`
+    select c.*, count(v.id)::int as votes
+    from media_goty_candidates c
+    left join media_goty_votes v on v.candidate_id = c.id
+    where c.guild_id = ${guildId}
+      and c.season_id = ${season.id}
+      and c.status = 'nominated'
+    group by c.id
+    order by votes desc, c.week_index asc, c.created_at asc
+    limit 1
+  `);
+  const winner = rows[0];
+  if (!winner) {
+    await interaction.reply({ ephemeral: true, content: "No GOTY nominees found." });
+    return;
+  }
+
+  const details = `Week ${winner.week_index}: <@${winner.away_discord_id}> ${winner.away_score} vs <@${winner.home_discord_id}> ${winner.home_score} — winner <@${winner.winner_discord_id}>`;
+
+  await db.execute(sql`
+    insert into media_goty_winners (guild_id, season_id, candidate_id, winner_details)
+    values (${guildId}, ${season.id}, ${winner.id}, ${details})
+    on conflict (guild_id, season_id)
+    do update set candidate_id = excluded.candidate_id, winner_details = excluded.winner_details
+  `);
+
+  for (const uid of [winner.away_discord_id, winner.home_discord_id]) {
+    await addBalance(uid, 250, guildId).catch(() => null);
+    await logTransaction(uid, 250, "addcoins", "GOTY winner participant bonus", guildId, "goty").catch(() => null);
+    await db.execute(sql`
+      insert into media_goty_xf_rewards (guild_id, season_id, candidate_id, discord_id, status)
+      values (${guildId}, ${season.id}, ${winner.id}, ${uid}, 'pending_selection')
+      on conflict (guild_id, season_id, candidate_id, discord_id) do nothing
+    `);
+    const user = await interaction.client.users.fetch(uid).catch(() => null);
+    await user?.send("🏆 Your game won **Game of the Year**. You received **250 coins** and have a pending free XF promotion reward. Commissioner/player selection handling will be available through the reward queue.").catch(() => null);
+  }
+
+  await db.execute(sql`
+    update media_goty_candidates
+    set status = case when id = ${winner.id} then 'winner' else 'closed' end,
+        updated_at = now()
+    where guild_id = ${guildId}
+      and season_id = ${season.id}
+  `);
+
+  const channelId = await getGuildChannel(guildId, CHANNEL_KEYS.GENERAL).catch(() => null);
+  const channel = channelId ? await interaction.guild?.channels.fetch(channelId).catch(() => null) : null;
+  if (channel?.isTextBased()) {
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Gold)
+          .setTitle("🎮 Game of the Year Winner")
+          .setDescription(`${details}\n\nVotes: **${Number(winner.votes ?? 0)}**\nRewards: **250 coins + pending free XF promotion** for both participants.`),
+      ],
+    }).catch(() => null);
+  }
+
+  await interaction.reply({ ephemeral: true, content: "✅ GOTY voting closed, winner archived, rewards issued, and announcement posted." });
+}
+
 export async function handleMediaRoomInteraction(interaction: any): Promise<boolean> {
   const id = interaction.customId ?? "";
   if (!id.startsWith("mr_")) return false;
@@ -397,6 +483,7 @@ export async function handleMediaRoomInteraction(interaction: any): Promise<bool
   if (id === "mr_goty_browse") { await renderGotyNominees(interaction, false, 0); return true; }
   if (id === "mr_goty_vote") { await renderGotyNominees(interaction, true, 0); return true; }
   if (id === "mr_goty_archive") { await renderGotyArchive(interaction); return true; }
+  if (id === "mr_goty_closeout") { await closeoutGoty(interaction); return true; }
   if (id.startsWith("mr_goty_page:")) {
     const [, , mode, pageRaw] = id.split(":");
     await renderGotyNominees(interaction, mode === "vote", Math.max(0, Number(pageRaw ?? 0)));
