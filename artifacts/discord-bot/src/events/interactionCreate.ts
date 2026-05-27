@@ -284,6 +284,13 @@ async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  // ── Media Room interactions ────────────────────────────────────────────────
+  if (interaction.customId.startsWith("mr_")) {
+    const { handleMediaRoomInteraction } = await import("../lib/media/media-room.js");
+    await handleMediaRoomInteraction(interaction);
+    return;
+  }
+
   // ── Open wager board interactions ───────────────────────────────────────────
   if (interaction.customId.startsWith("wager_")) {
     const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
@@ -346,7 +353,17 @@ async function handleButton(interaction: ButtonInteraction) {
     if (handled) return;
   }
 
-  // ── Play of the Year vote action ────────────────────────────────────────────
+  // ── Media Room actions ─────────────────────────────────────────────────────
+  if (action === "ac_active_streams") {
+    const { renderActiveStreams } = await import("../lib/media/media-room.js");
+    await renderActiveStreams(interaction as any);
+    return;
+  }
+  if (action === "ac_goty_hub") {
+    const { renderGotyHub } = await import("../lib/media/media-room.js");
+    await renderGotyHub(interaction as any);
+    return;
+  }
   if (action === "ac_poty_vote") {
     const { renderPotyVote } = await import("../lib/media/play-of-the-year.js");
     await renderPotyVote(interaction as any);
@@ -2120,6 +2137,13 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── Media Room select menus ────────────────────────────────────────────────
+  if (action?.startsWith("mr_")) {
+    const { handleMediaRoomInteraction } = await import("../lib/media/media-room.js");
+    await handleMediaRoomInteraction(interaction);
+    return;
+  }
+
   // ── Open wager board select menus ───────────────────────────────────────────
   if (action?.startsWith("wager_")) {
     const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
@@ -2424,6 +2448,13 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   if (action?.startsWith("gd_")) {
     const { handleGamedayInteraction } = await import("../lib/gameday/gameday-dashboard.js");
     await handleGamedayInteraction(interaction);
+    return;
+  }
+
+  // ── Media Room modal submissions ───────────────────────────────────────────
+  if (action?.startsWith("mr_")) {
+    const { handleMediaRoomInteraction } = await import("../lib/media/media-room.js");
+    await handleMediaRoomInteraction(interaction);
     return;
   }
 

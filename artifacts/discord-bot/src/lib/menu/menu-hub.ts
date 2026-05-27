@@ -199,7 +199,7 @@ const ROOT_NODES: MenuNode[] = [
   {
     path: "league_center", emoji: "📊",
     label: "League Center",
-    description: "Standings, user stats, rankings, GOTW/GOTY",
+    description: "Standings, user stats, rankings",
     visible: MCA_VISIBLE,
     kind: "branch",
     children: [
@@ -208,9 +208,19 @@ const ROOT_NODES: MenuNode[] = [
       { path: "league_center.seasonpr",  emoji: "🥇", label: "Season PR",   description: "This season's power rankings",              kind: "action", action: "ac_seasonpr" },
       { path: "league_center.alltimepr", emoji: "🏆", label: "All-Time PR", description: "All-time league power rankings",             kind: "action", action: "ac_alltimepr" },
       { path: "league_center.globalpr",  emoji: "🌐", label: "Global PR",   description: "Global cross-server power rankings",         kind: "action", action: "ac_globalpr" },
-      { path: "league_center.gotw",      emoji: "🏆", label: "GOTW Vote",   description: "Vote on this week's Game of the Week",      kind: "action", action: "ac_gotw_vote" },
-      { path: "league_center.goty",      emoji: "🎮", label: "GOTY Vote",   description: "Vote for this season's Game of the Year",   visible: (c) => !!c.gotyActive, kind: "action", action: "ac_goty_vote" },
-      { path: "league_center.poty",      emoji: "🎬", label: "POTY Vote",   description: "Vote for Play of the Year highlights",      kind: "action", action: "ac_poty_vote" },
+    ],
+  },
+
+  {
+    path: "media_room", emoji: "🎙️",
+    label: "Media Room",
+    description: "Streams, GOTW, Play of the Year, Game of the Year",
+    kind: "branch",
+    children: [
+      { path: "media_room.streams", emoji: "📺", label: "Active Stream Links", description: "View streams posted in the last 1.5 hours", kind: "action", action: "ac_active_streams" },
+      { path: "media_room.gotw",    emoji: "🏆", label: "GOTW Voting",         description: "Vote on this week's Game of the Week",      kind: "action", action: "ac_gotw_vote" },
+      { path: "media_room.poty",    emoji: "🎬", label: "Play of the Year",    description: "Browse and vote on POTY highlights",       kind: "action", action: "ac_poty_vote" },
+      { path: "media_room.goty",    emoji: "🎮", label: "Game of the Year",    description: "Nominate, browse, vote, and view winners",  kind: "action", action: "ac_goty_hub" },
     ],
   },
 
@@ -285,9 +295,9 @@ function labelWithBadge(node: MenuNode, ctx?: MenuCtx): string {
   let badge = 0;
   if (ctx) {
     const action = node.kind === "action" ? node.action : "";
-    if (node.path === "league_center.gotw" || action === "ac_gotw_vote") {
+    if (node.path === "media_room.gotw" || action === "ac_gotw_vote") {
       badge = ctx.gotwUnvotedCount ?? 0;
-    } else if (node.path === "league_center.goty" || action === "ac_goty_vote") {
+    } else if (node.path === "media_room.goty" || action === "ac_goty_hub") {
       badge = ctx.gotyUnvotedCount ?? 0;
     }
   }
