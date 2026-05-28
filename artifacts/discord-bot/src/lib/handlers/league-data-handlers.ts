@@ -68,7 +68,6 @@ import {
   fetchNewsData,
   fetchLeagueTeamsAndRosters,
   fetchAllWeekSchedules,
-  probeMcaExportEndpoints,
   updateStoredToken,
   refreshTokenIfNeeded,
   type BlazeSession,
@@ -1414,19 +1413,6 @@ export async function runWeekImport(ctx: {
   const teamRes = await postToApi(`${weekBase}/team${guildQs}`, stats.teamStats);
   results.push({ name: "teamStats", ...teamRes });
 
-  // StandingsExport is the current source for season standings, playoff seed data,
-  // and Madden cap summary fields:
-  //   capRoom      = adjusted cap / cap limit
-  //   capSpent     = total spending
-  //   capAvailable = cap space, including negative over-cap values
-  const standingsPayload = (stats as any).standings;
-  if (standingsPayload == null) {
-    results.push({ name: "standings/cap", ok: true, status: 0, skipped: true });
-  } else {
-    const standingsRes = await postToApi(`${leagueBase}/standings${guildQs}`, standingsPayload);
-    results.push({ name: "standings/cap", ...standingsRes });
-  }
-
   const schedulesUrl = skipPayouts
     ? `${weekBase}/schedules${guildQs}&skipPayouts=1`
     : `${weekBase}/schedules${guildQs}`;
@@ -1598,368 +1584,193 @@ export async function runWeekImport(ctx: {
 }
 
 
-// ── Isolated MCA Import Diagnostics (Troubleshoot Hub) ───────────────────────
-type DiagnosticPayloadSummary = {
-  label: string;
-  kind: string;
-  topLevelKeys: string[];
-  nestedKeys: string[];
-  itemCount: number | null;
-  sample: unknown;
-  warnings: string[];
-};
-
-function diagnosticSafeSample(value: unknown, maxJsonChars = 3000): unknown {
-  try {
-    const json = JSON.stringify(value, (_key, v) => {
-      if (typeof v === "string" && v.length > 500) return `${v.slice(0, 500)}…`;
-      return v;
-    });
-    if (!json) return null;
-    return JSON.parse(json.length > maxJsonChars ? `${json.slice(0, maxJsonChars)}"…truncated"}` : json);
-  } catch {
-    return null;
-  }
-}
-
-function collectObjectKeys(value: unknown, prefix = "", depth = 0, out = new Set<string>()): Set<string> {
-  if (depth > 4 || value == null) return out;
-  if (Array.isArray(value)) {
-    const first = value.find(v => v && typeof v === "object");
-    if (first) collectObjectKeys(first, prefix ? `${prefix}[]` : "[]", depth + 1, out);
-    return out;
-  }
-  if (typeof value !== "object") return out;
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    const path = prefix ? `${prefix}.${key}` : key;
-    out.add(path);
-    const child = (value as Record<string, unknown>)[key];
-    if (child && typeof child === "object") collectObjectKeys(child, path, depth + 1, out);
-  }
-  return out;
-}
-
-function summarizeDiagnosticPayload(label: string, payload: unknown): DiagnosticPayloadSummary {
-  const topValue = Array.isArray(payload)
-    ? payload.find(v => v && typeof v === "object") ?? null
-    : payload;
-
-  const topLevelKeys = topValue && typeof topValue === "object" && !Array.isArray(topValue)
-    ? Object.keys(topValue as Record<string, unknown>).sort()
-    : [];
-
-  const nestedKeys = [...collectObjectKeys(payload)].sort();
-  const itemCount = Array.isArray(payload)
-    ? payload.length
-    : payload && typeof payload === "object"
-      ? Object.keys(payload as Record<string, unknown>).length
-      : null;
-
-  const keyText = nestedKeys.join(" ").toLowerCase();
-  const warnings: string[] = [];
-  if (label === "teamStats") {
-    const hasCapHints = ["cap", "salary", "spend", "spent", "penalty", "reserve", "rollover"].some(k => keyText.includes(k));
-    if (!hasCapHints) warnings.push("No obvious cap/salary/dead-cap keys found in teamStats payload.");
-  }
-  if (Array.isArray(payload) && payload.length === 0) warnings.push("Payload array is empty.");
-  if (payload == null) warnings.push("Payload is null/undefined.");
-
-  return {
-    label,
-    kind: Array.isArray(payload) ? "array" : typeof payload,
-    topLevelKeys,
-    nestedKeys,
-    itemCount,
-    sample: diagnosticSafeSample(Array.isArray(payload) ? payload.slice(0, 2) : payload),
-    warnings,
-  };
-}
-
-const MCA_ENDPOINT_DISCOVERY_KEYWORDS = [
-  "cap", "salary", "spend", "spent", "penalt", "reserve", "rollover", "room",
-  "available", "contract", "bonus", "dead", "release", "guaranteed", "savings",
-];
-
-function extractCapHits(keys: string[]): string[] {
-  return keys.filter(k => MCA_ENDPOINT_DISCOVERY_KEYWORDS.some(term => k.toLowerCase().includes(term))).slice(0, 80);
-}
-
-function summarizeProbePayload(payload: unknown): { kind: string; itemCount: number | null; topLevelKeys: string[]; nestedKeys: string[]; sample: unknown } {
-  const topValue = Array.isArray(payload)
-    ? payload.find(v => v && typeof v === "object") ?? null
-    : payload;
-
-  const topLevelKeys = topValue && typeof topValue === "object" && !Array.isArray(topValue)
-    ? Object.keys(topValue as Record<string, unknown>).sort()
-    : [];
-
-  const nestedKeys = [...collectObjectKeys(payload)].sort();
-  const itemCount = Array.isArray(payload)
-    ? payload.length
-    : payload && typeof payload === "object"
-      ? Object.keys(payload as Record<string, unknown>).length
-      : null;
-
-  return {
-    kind: Array.isArray(payload) ? "array" : typeof payload,
-    itemCount,
-    topLevelKeys,
-    nestedKeys,
-    sample: diagnosticSafeSample(Array.isArray(payload) ? payload.slice(0, 2) : payload),
-  };
-}
-
-async function ensureImportDiagnosticTables(): Promise<void> {
+// ── Missing Data Diagnostics + Backfill Attempt ──────────────────────────────
+// Runs from Troubleshoot. It audits canonical games for missing scores/winners
+// across the active league season, records the gaps, then attempts to pull the
+// missing weeks from EA schedule endpoints and post them through the normal
+// schedule-import processor. This does not award payouts.
+export async function runMissingDataDiagnostics(guildId: string): Promise<{
+  ok: boolean;
+  runId?: number;
+  missingBefore: number;
+  weeksChecked: number;
+  weeksAttempted: number;
+  weeksSynced: number;
+  remainingAfter: number;
+  weekSummary: string[];
+  error?: string;
+}> {
   await db.execute(sql`
-    create table if not exists mca_import_diagnostic_runs (
+    create table if not exists mca_missing_data_audit_runs (
       id bigserial primary key,
       guild_id text not null,
-      season_id bigint,
-      requested_by text,
-      week_num integer,
-      week_type text not null default 'reg',
-      dry_run boolean not null default true,
       status text not null default 'running',
-      summary jsonb not null default '{}'::jsonb,
-      warnings jsonb not null default '[]'::jsonb,
+      missing_before integer not null default 0,
+      weeks_checked integer not null default 0,
+      weeks_attempted integer not null default 0,
+      weeks_synced integer not null default 0,
+      remaining_after integer not null default 0,
+      summary_json jsonb not null default '{}'::jsonb,
       created_at timestamp with time zone not null default now(),
       completed_at timestamp with time zone
     )
   `);
-
   await db.execute(sql`
-    create table if not exists mca_import_diagnostic_payloads (
+    create table if not exists mca_missing_data_audit_items (
       id bigserial primary key,
-      run_id bigint not null references mca_import_diagnostic_runs(id) on delete cascade,
+      run_id bigint not null references mca_missing_data_audit_runs(id) on delete cascade,
       guild_id text not null,
-      season_id bigint,
-      payload_label text not null,
-      payload_kind text,
-      item_count integer,
-      top_level_keys jsonb not null default '[]'::jsonb,
-      nested_keys jsonb not null default '[]'::jsonb,
-      sample_json jsonb,
-      warnings jsonb not null default '[]'::jsonb,
+      rec_game_id bigint,
+      week_number integer,
+      away_team_name text,
+      home_team_name text,
+      missing_fields text[] not null default '{}',
+      attempted_endpoint text,
+      attempt_status text,
       created_at timestamp with time zone not null default now()
     )
   `);
 
-  await db.execute(sql`
-    create table if not exists mca_endpoint_probe_results (
-      id bigserial primary key,
-      run_id bigint not null references mca_import_diagnostic_runs(id) on delete cascade,
-      guild_id text not null,
-      season_id bigint,
-      endpoint_label text not null,
-      endpoint_name text not null,
-      request_body jsonb not null default '{}'::jsonb,
-      available boolean not null default false,
-      payload_kind text,
-      item_count integer,
-      top_level_keys jsonb not null default '[]'::jsonb,
-      nested_keys jsonb not null default '[]'::jsonb,
-      cap_score integer not null default 0,
-      cap_key_hits jsonb not null default '[]'::jsonb,
-      sample_json jsonb,
-      error_message text,
-      created_at timestamp with time zone not null default now()
-    )
-  `);
-}
-
-export async function runMcaImportDiagnostics(ctx: {
-  guildId: string;
-  requestedBy: string;
-  guild?: Guild | null;
-}): Promise<{
-  ok: boolean;
-  runId?: number;
-  weekLabel?: string;
-  payloads?: DiagnosticPayloadSummary[];
-  endpointProbeCount?: number;
-  availableEndpointCount?: number;
-  capEndpointHits?: string[];
-  endpointSummaries?: Array<{ label: string; name: string; available: boolean; itemCount: number | null; topLevelKeys: string[]; capHits: string[] }>;
-  warnings?: string[];
-  error?: "no_connection" | "token_refresh_failed" | "fetch_failed" | "no_active_season";
-}> {
-  const { guildId, requestedBy } = ctx;
-  await ensureImportDiagnosticTables();
-
-  const [season] = await db.select({ id: seasonsTable.id, currentWeek: seasonsTable.currentWeek })
-    .from(seasonsTable)
-    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
-    .limit(1);
-
-  if (!season) return { ok: false, error: "no_active_season" };
-
-  // Clear the previous isolated diagnostic review for this guild before creating a new one.
-  await db.execute(sql`delete from mca_import_diagnostic_runs where guild_id = ${guildId}`);
-
-  const currentWeekNum = weekStringToNum(season.currentWeek);
-  const weekType: "reg" = "reg";
-  const weekIndex = currentWeekNum - 1;
-  const wkLabel = getWeekLabel(weekType, currentWeekNum);
-
-  const inserted = await db.execute(sql`
-    insert into mca_import_diagnostic_runs (guild_id, season_id, requested_by, week_num, week_type, dry_run, status)
-    values (${guildId}, ${season.id}, ${requestedBy}, ${currentWeekNum}, ${weekType}, true, 'running')
+  const [run] = await rowsOf<{ id: number }>(sql`
+    insert into mca_missing_data_audit_runs (guild_id)
+    values (${guildId})
     returning id
   `);
-  const runId = Number((((inserted as any).rows ?? inserted)[0] as any)?.id);
+  const runId = Number(run?.id ?? 0);
 
-  const conn = await loadEAConnection(guildId);
+  const missingRows = await rowsOf<any>(sql`
+    select id, week_number, away_team_name, home_team_name, away_score, home_score, winner_discord_id
+    from v_rec_active_league_games
+    where guild_id = ${guildId}
+      and is_h2h = true
+      and (
+        away_score is null
+        or home_score is null
+        or winner_discord_id is null
+      )
+    order by week_number asc, id asc
+  `).catch(async () => rowsOf<any>(sql`
+    select id, week_number, away_team_name, home_team_name, away_score, home_score, winner_discord_id
+    from rec_league_games
+    where guild_id = ${guildId}
+      and is_h2h = true
+      and (
+        away_score is null
+        or home_score is null
+        or winner_discord_id is null
+      )
+    order by week_number asc, id asc
+  `));
+
+  for (const g of missingRows) {
+    const missing: string[] = [];
+    if (g.away_score == null) missing.push('away_score');
+    if (g.home_score == null) missing.push('home_score');
+    if (g.winner_discord_id == null) missing.push('winner_discord_id');
+    await db.execute(sql`
+      insert into mca_missing_data_audit_items (
+        run_id, guild_id, rec_game_id, week_number, away_team_name, home_team_name, missing_fields, attempt_status
+      ) values (
+        ${runId}, ${guildId}, ${g.id}, ${g.week_number}, ${g.away_team_name}, ${g.home_team_name}, ${missing}, 'pending'
+      )
+    `);
+  }
+
+  const uniqueWeeks = [...new Set(missingRows.map((r) => Number(r.week_number)).filter((n) => Number.isInteger(n) && n >= 1 && n <= 23))].sort((a, b) => a - b);
+  let weeksSynced = 0;
+  const weekSummary: string[] = [];
+
+  const conn = await loadEAConnection(guildId).catch(() => null);
   if (!conn) {
-    await db.execute(sql`update mca_import_diagnostic_runs set status='failed', warnings=${JSON.stringify(["No EA connection found"])}::jsonb, completed_at=now() where id=${runId}`);
-    return { ok: false, runId, weekLabel: wkLabel, error: "no_connection" };
+    await db.execute(sql`
+      update mca_missing_data_audit_runs
+      set status = 'no_connection', missing_before = ${missingRows.length}, weeks_checked = ${uniqueWeeks.length}, completed_at = now()
+      where id = ${runId}
+    `);
+    return { ok: false, runId, missingBefore: missingRows.length, weeksChecked: uniqueWeeks.length, weeksAttempted: 0, weeksSynced: 0, remainingAfter: missingRows.length, weekSummary, error: 'no_connection' };
   }
 
   let { token, eaLeagueId } = conn;
-  let blazeSession: BlazeSession;
   try {
     const refreshed = await refreshTokenIfNeeded(token);
-    token = refreshed;
-    blazeSession = await createBlazeSession(token);
-  } catch {
-    await db.execute(sql`update mca_import_diagnostic_runs set status='failed', warnings=${JSON.stringify(["Token refresh or Blaze session creation failed"])}::jsonb, completed_at=now() where id=${runId}`);
-    return { ok: false, runId, weekLabel: wkLabel, error: "token_refresh_failed" };
+    if (refreshed.accessToken !== token.accessToken) {
+      await updateStoredToken(eaLeagueId, refreshed);
+      token = refreshed;
+    }
+  } catch (err: any) {
+    await db.execute(sql`
+      update mca_missing_data_audit_runs
+      set status = 'token_refresh_failed', missing_before = ${missingRows.length}, weeks_checked = ${uniqueWeeks.length}, completed_at = now()
+      where id = ${runId}
+    `);
+    return { ok: false, runId, missingBefore: missingRows.length, weeksChecked: uniqueWeeks.length, weeksAttempted: 0, weeksSynced: 0, remainingAfter: missingRows.length, weekSummary, error: 'token_refresh_failed' };
   }
 
-  try {
-    const stats = await fetchWeeklyStats(token, eaLeagueId, weekIndex, 1, blazeSession);
-    const rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId, blazeSession).catch(() => null);
-    const newsData = await fetchNewsData(token, eaLeagueId, blazeSession).catch(() => null);
-    const scheduleData = await fetchAllWeekSchedules(token, eaLeagueId, currentWeekNum, 1, currentWeekNum, blazeSession).catch(() => null);
+  const apiBase = getApiBase();
+  const key = getWebhookKey();
+  const platform = token.platform;
+  const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+  const guildQs = `?guildId=${encodeURIComponent(guildId)}&skipPayouts=1&diagnosticBackfill=1`;
 
-    const payloads: DiagnosticPayloadSummary[] = [];
-    for (const [label, payload] of [
-      ["passing", stats.passing],
-      ["rushing", stats.rushing],
-      ["receiving", stats.receiving],
-      ["defense", stats.defense],
-      ["kicking", stats.kicking],
-      ["punting", stats.punting],
-      ["kickReturn", stats.kickReturn],
-      ["puntReturn", stats.puntReturn],
-      ["teamStats", stats.teamStats],
-      ["standings", (stats as any).standings],
-      ["schedules", stats.schedules],
-      ["leagueTeams", rosterData?.leagueTeams],
-      ["teamRosters", rosterData?.teamRosters],
-      ["freeAgents", rosterData?.freeAgents],
-      ["news", newsData],
-      ["scheduleOnlyWeekResults", scheduleData?.weekResults],
-    ] as const) {
-      payloads.push(summarizeDiagnosticPayload(label, payload));
-    }
-
-    const warnings = payloads.flatMap(p => p.warnings.map(w => `${p.label}: ${w}`));
-
-    for (const payload of payloads) {
+  for (const week of uniqueWeeks) {
+    try {
+      const result = await fetchAllWeekSchedules(token, eaLeagueId, week, 1, week);
+      const weekPayload = result.weekResults.find((r) => r.weekNum === week)?.data;
+      if (!weekPayload) throw new Error('No schedule payload returned');
+      const r = await postToApi(`${leagueBase}/week/reg/${week}/schedule-import${guildQs}`, weekPayload);
+      const status = r.ok ? 'synced' : `http_${r.status}`;
+      if (r.ok) weeksSynced++;
+      weekSummary.push(`Week ${week}: ${status}`);
       await db.execute(sql`
-        insert into mca_import_diagnostic_payloads (
-          run_id, guild_id, season_id, payload_label, payload_kind, item_count,
-          top_level_keys, nested_keys, sample_json, warnings
-        ) values (
-          ${runId}, ${guildId}, ${season.id}, ${payload.label}, ${payload.kind}, ${payload.itemCount},
-          ${JSON.stringify(payload.topLevelKeys)}::jsonb,
-          ${JSON.stringify(payload.nestedKeys)}::jsonb,
-          ${JSON.stringify(payload.sample)}::jsonb,
-          ${JSON.stringify(payload.warnings)}::jsonb
-        )
+        update mca_missing_data_audit_items
+        set attempted_endpoint = 'CareerMode_GetWeeklySchedulesExport', attempt_status = ${status}
+        where run_id = ${runId} and week_number = ${week}
+      `);
+    } catch (err: any) {
+      const status = `failed: ${String(err?.message ?? err).slice(0, 80)}`;
+      weekSummary.push(`Week ${week}: ${status}`);
+      await db.execute(sql`
+        update mca_missing_data_audit_items
+        set attempted_endpoint = 'CareerMode_GetWeeklySchedulesExport', attempt_status = ${status}
+        where run_id = ${runId} and week_number = ${week}
       `);
     }
-
-    const teamList = (((rosterData?.leagueTeams as any)?.leagueTeamInfoList ?? []) as Array<{ teamId?: number }>)
-      .map((team, listIndex) => ({ teamId: Number(team.teamId ?? 0), listIndex }))
-      .filter(t => Number.isFinite(t.teamId) && t.teamId > 0)
-      .slice(0, 3);
-
-    const endpointProbes = await probeMcaExportEndpoints(token, eaLeagueId, weekIndex, 1, blazeSession, teamList)
-      .catch((err) => {
-        warnings.push(`endpointDiscovery: ${err instanceof Error ? err.message : String(err)}`);
-        return [];
-      });
-
-    const capEndpointHits: string[] = [];
-    const endpointSummaries: Array<{ label: string; name: string; available: boolean; itemCount: number | null; topLevelKeys: string[]; capHits: string[] }> = [];
-    let availableEndpointCount = 0;
-
-    for (const probe of endpointProbes) {
-      const summary = summarizeProbePayload(probe.payload);
-      const capHits = extractCapHits(summary.nestedKeys);
-      const capScore = capHits.length;
-
-      if (probe.available) availableEndpointCount += 1;
-      if (capScore > 0) capEndpointHits.push(`${probe.endpointName} (${capScore})`);
-      if (probe.available) {
-        endpointSummaries.push({
-          label: probe.label,
-          name: probe.endpointName,
-          available: probe.available,
-          itemCount: summary.itemCount,
-          topLevelKeys: summary.topLevelKeys.slice(0, 12),
-          capHits: capHits.slice(0, 12),
-        });
-      }
-
-      await db.execute(sql`
-        insert into mca_endpoint_probe_results (
-          run_id, guild_id, season_id, endpoint_label, endpoint_name, request_body,
-          available, payload_kind, item_count, top_level_keys, nested_keys,
-          cap_score, cap_key_hits, sample_json, error_message
-        ) values (
-          ${runId}, ${guildId}, ${season.id}, ${probe.label}, ${probe.endpointName},
-          ${JSON.stringify(probe.requestBody)}::jsonb,
-          ${probe.available}, ${summary.kind}, ${summary.itemCount},
-          ${JSON.stringify(summary.topLevelKeys)}::jsonb,
-          ${JSON.stringify(summary.nestedKeys)}::jsonb,
-          ${capScore},
-          ${JSON.stringify(capHits)}::jsonb,
-          ${JSON.stringify(summary.sample)}::jsonb,
-          ${probe.errorMessage ?? null}
-        )
-      `);
-    }
-
-    await db.execute(sql`
-      update mca_import_diagnostic_runs
-      set status='complete',
-          summary=${JSON.stringify({
-            payloadCount: payloads.length,
-            endpointProbeCount: endpointProbes.length,
-            availableEndpointCount,
-            capEndpointHits: capEndpointHits.slice(0, 20),
-            weekLabel: wkLabel,
-            dryRun: true,
-            leagueDataWrites: 0,
-            payoutsTriggered: false,
-            endpointDiscovery: true,
-            availableEndpoints: endpointSummaries.slice(0, 25),
-          })}::jsonb,
-          warnings=${JSON.stringify(warnings)}::jsonb,
-          completed_at=now()
-      where id=${runId}
-    `);
-
-    return {
-      ok: true,
-      runId,
-      weekLabel: wkLabel,
-      payloads,
-      endpointProbeCount: endpointProbes.length,
-      availableEndpointCount,
-      capEndpointHits: capEndpointHits.slice(0, 20),
-      endpointSummaries: endpointSummaries.slice(0, 25),
-      warnings,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await db.execute(sql`
-      update mca_import_diagnostic_runs
-      set status='failed', warnings=${JSON.stringify([message])}::jsonb, completed_at=now()
-      where id=${runId}
-    `);
-    return { ok: false, runId, weekLabel: wkLabel, error: "fetch_failed", warnings: [message] };
   }
+
+  const remainingRows = await rowsOf<{ count: number }>(sql`
+    select count(*)::int as count
+    from v_rec_active_league_games
+    where guild_id = ${guildId}
+      and is_h2h = true
+      and (
+        away_score is null
+        or home_score is null
+        or winner_discord_id is null
+      )
+  `).catch(() => [{ count: missingRows.length }]);
+  const remainingAfter = Number(remainingRows[0]?.count ?? missingRows.length);
+
+  await db.execute(sql`
+    update mca_missing_data_audit_runs
+    set status = 'completed',
+        missing_before = ${missingRows.length},
+        weeks_checked = ${uniqueWeeks.length},
+        weeks_attempted = ${uniqueWeeks.length},
+        weeks_synced = ${weeksSynced},
+        remaining_after = ${remainingAfter},
+        summary_json = ${JSON.stringify({ weekSummary })}::jsonb,
+        completed_at = now()
+    where id = ${runId}
+  `);
+
+  return {
+    ok: true,
+    runId,
+    missingBefore: missingRows.length,
+    weeksChecked: uniqueWeeks.length,
+    weeksAttempted: uniqueWeeks.length,
+    weeksSynced,
+    remainingAfter,
+    weekSummary,
+  };
 }

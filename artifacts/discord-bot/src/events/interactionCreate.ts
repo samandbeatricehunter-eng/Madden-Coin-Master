@@ -127,7 +127,7 @@ import {
   handleTsSchedSel,
   handleTsSchedDelete,
   handleTsImportSchedule,
-  handleTsImportDiagnostics,
+  handleTsDataDiagnostics,
   handleTsRepostSchedulingHeaders,
 } from "../lib/handlers/admin-troubleshoot-handlers.js";
 import {
@@ -136,8 +136,6 @@ import {
   handleLeagueDataSelect,
 } from "../lib/handlers/league-data-handlers.js";
 import { handleMenuButton, handleMenuSelect } from "../lib/menu/menu-router.js";
-import { handleCustomPlayerWizardInteraction } from "../lib/menu/actions/store/custom-player/wizard/custom-player-wizard-router.js";
-import { routeInteraction } from "../lib/interactions/router.js";
 
 
 export const name = "interactionCreate";
@@ -179,10 +177,6 @@ export async function execute(interaction: Interaction) {
     try { await command.autocomplete(interaction); } catch (err) { console.error("Autocomplete error:", err); }
     return;
   }
-
-  // Consolidated interaction router handles domain-owned component flows first.
-  // Legacy handler branches below remain as fallback while each domain is extracted.
-  if (await routeInteraction(interaction)) return;
 
   if (interaction.isChatInputCommand()) {
     const client = interaction.client as any;
@@ -251,14 +245,6 @@ export async function execute(interaction: Interaction) {
 async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
-
-  // ── Custom Player wizard boundary (ccp_*).
-  // Phase 10 moves all routing for the existing builder behind a dedicated router
-  // so interactionCreate no longer owns the custom-player state machine.
-  if (interaction.customId.startsWith("ccp_")) {
-    const handled = await handleCustomPlayerWizardInteraction(interaction);
-    if (handled) return;
-  }
 
   // ── Team request commissioner buttons (treq_link|uid|team, treq_deny|uid|team) ─
   if (interaction.customId.startsWith("treq_link|")) { await handleTreqLinkButton(interaction); return; }
@@ -340,7 +326,7 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ts_sched_review_week")    { await handleTsSchedReviewWeek(interaction);          return; }
   if (action === "ts_sched_delete")         { await handleTsSchedDelete(interaction);              return; }
   if (action === "ts_import_schedule")      { await handleTsImportSchedule(interaction);           return; }
-  if (action === "ts_import_diagnostics")   { await handleTsImportDiagnostics(interaction);        return; }
+  if (action === "ts_data_diagnostics")     { await handleTsDataDiagnostics(interaction);          return; }
   if (action === "ts_repost_sched_headers") { await handleTsRepostSchedulingHeaders(interaction);  return; }
 
   // ── League Data wizard — all ld_ prefixed buttons ─────────────────────────

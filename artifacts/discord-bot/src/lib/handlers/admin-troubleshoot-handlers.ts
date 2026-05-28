@@ -43,7 +43,7 @@ import {
   formatSeedingLines,
 } from "../franchise/playoff-seeding.js";
 import { getArticleStandings } from "../franchise/gcs-fallback.js";
-import { runScheduleOnlyImport, runMcaImportDiagnostics } from "./league-data-handlers.js";
+import { runScheduleOnlyImport, runMissingDataDiagnostics } from "./league-data-handlers.js";
 import { getMilestoneTiers } from "../economy/payout-config.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
 import { nextAdvanceDeadline } from "../discord/timezones.js";
@@ -118,11 +118,11 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ts_eos_reset").setLabel("🗑️ Clear & Rerun EOS").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ao_milestone_audit").setLabel("🎯 Milestone Audit").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ts_import_schedule").setLabel("📅 Import Schedule Only").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ts_data_diagnostics").setLabel("🧬 Data Diagnostics").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_repost_sched_headers").setLabel("📌 Re-post Scheduling Headers").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ts_import_diagnostics").setLabel("🧬 Data Diagnostics").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   return [row1, row2, row3];
@@ -178,7 +178,6 @@ export async function handleTsRepairRecords(interaction: ButtonInteraction): Pro
 
   await interaction.editReply({ embeds: [embed] });
 }
-
 
 // ── 2. Resync Rosters & Data ──────────────────────────────────────────────────
 export async function handleTsResyncData(interaction: ButtonInteraction): Promise<void> {
@@ -1054,6 +1053,51 @@ export async function handleTsSchedSel(interaction: StringSelectMenuInteraction)
   });
 }
 
+
+export async function handleTsDataDiagnostics(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blurple)
+        .setTitle("🧬 Running Data Diagnostics + Missing Data Backfill…")
+        .setDescription(
+          "Auditing canonical games for missing scores/winners across the active league season, then attempting week-by-week schedule recovery from EA endpoints.\n\n" +
+          "This uses schedule endpoints only and does **not** award payouts."
+        )
+        .setTimestamp(),
+    ],
+  });
+
+  const result = await runMissingDataDiagnostics(interaction.guildId!);
+
+  const embed = new EmbedBuilder()
+    .setColor(result.ok ? Colors.Green : Colors.Orange)
+    .setTitle("🧬 Data Diagnostics Complete")
+    .setDescription(
+      [
+        `Run ID: **${result.runId ?? "n/a"}**`,
+        `Missing fields before: **${result.missingBefore}**`,
+        `Weeks checked: **${result.weeksChecked}**`,
+        `Weeks attempted: **${result.weeksAttempted}**`,
+        `Weeks synced: **${result.weeksSynced}**`,
+        `Remaining missing fields: **${result.remainingAfter}**`,
+        result.error ? `Error: \`${result.error}\`` : null,
+        "",
+        "**Week attempts**",
+        result.weekSummary.length ? result.weekSummary.slice(0, 15).join("\n") : "No missing weekly fields found.",
+        result.weekSummary.length > 15 ? `…and ${result.weekSummary.length - 15} more.` : null,
+      ].filter(Boolean).join("\n"),
+    )
+    .setFooter({ text: "Review tables: mca_missing_data_audit_runs + mca_missing_data_audit_items" })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 // ── 9. Import Schedule Only ───────────────────────────────────────────────────
 export async function handleTsImportSchedule(interaction: ButtonInteraction): Promise<void> {
   if (!(await guardAdmin(interaction))) return;
@@ -1107,114 +1151,6 @@ export async function handleTsImportSchedule(interaction: ButtonInteraction): Pr
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
-}
-
-
-// ── 10. Isolated MCA Import Diagnostics ──────────────────────────────────────
-export async function handleTsImportDiagnostics(interaction: ButtonInteraction): Promise<void> {
-  if (!(await guardAdmin(interaction))) return;
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const guildId = interaction.guildId!;
-
-  await interaction.editReply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Blurple)
-        .setTitle("🧬 Running Isolated Data Diagnostics…")
-        .setDescription(
-          "Fetching the current EA/MCA payload and probing likely Blaze/WAL endpoints in **dry-run diagnostics mode**.\n\n" +
-          "This does **not** write league stats, schedules, rosters, records, cap data, or payouts. " +
-          "The previous diagnostic review for this server will be cleared and replaced."
-        )
-        .setTimestamp(),
-    ],
-  });
-
-  const result = await runMcaImportDiagnostics({
-    guildId,
-    requestedBy: interaction.user.id,
-    guild: interaction.guild,
-  });
-
-  if (!result.ok) {
-    const msgs: Record<string, string> = {
-      no_connection: "No EA connection found for this server. Link EA first through League Data Manager.",
-      token_refresh_failed: "EA token refresh or Blaze session creation failed. Reconnect EA if this persists.",
-      fetch_failed: "EA/MCA payload fetch failed. Check Railway logs and rerun diagnostics.",
-      no_active_season: "No active season found for this server.",
-    };
-
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("❌ Import Diagnostics Failed")
-          .setDescription(msgs[result.error ?? ""] ?? "Unknown diagnostics failure.")
-          .addFields(
-            { name: "Run ID", value: result.runId ? String(result.runId) : "not created", inline: true },
-            { name: "Safety", value: "Dry-run only. No league data or payouts changed.", inline: false },
-          )
-          .setTimestamp(),
-      ],
-    });
-    return;
-  }
-
-  const payloads = result.payloads ?? [];
-  const capPayload = payloads.find(p => p.label === "teamStats");
-  const capKeys = (capPayload?.nestedKeys ?? []).filter(k => /cap|salary|spend|spent|penalt|reserve|rollover/i.test(k));
-  const warnings = result.warnings ?? [];
-  const endpointProbeCount = result.endpointProbeCount ?? 0;
-  const availableEndpointCount = result.availableEndpointCount ?? 0;
-  const capEndpointHits = result.capEndpointHits ?? [];
-  const endpointSummaries = result.endpointSummaries ?? [];
-
-  const payloadLines = payloads
-    .map(p => `• **${p.label}** — ${p.kind}${p.itemCount == null ? "" : ` · ${p.itemCount} item(s)`} · ${p.nestedKeys.length} key path(s)`)
-    .slice(0, 15)
-    .join("\n");
-
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle("🧬 Data Diagnostics Complete")
-    .setDescription(
-      "Diagnostics completed in isolated dry-run mode.\n\n" +
-      "✅ No league data altered\n" +
-      "✅ No payouts triggered\n" +
-      "✅ Previous diagnostic run cleared first\n" +
-      "✅ Payload keys/samples stored for isolated review"
-    )
-    .addFields(
-      { name: "Run ID", value: String(result.runId), inline: true },
-      { name: "Week", value: result.weekLabel ?? "unknown", inline: true },
-      { name: "Payloads Audited", value: String(payloads.length), inline: true },
-      { name: "Endpoints Probed", value: `${endpointProbeCount} checked · ${availableEndpointCount} available`, inline: true },
-      { name: "Payload Summary", value: payloadLines || "No payloads captured.", inline: false },
-      { name: "Cap-related teamStats keys", value: capKeys.length ? capKeys.slice(0, 30).join("\n") : "No cap/salary-related keys detected in teamStats.", inline: false },
-      { name: "Cap-related endpoint hits", value: capEndpointHits.length ? capEndpointHits.slice(0, 10).join("\n") : "No alternate cap/contract endpoints discovered yet.", inline: false },
-      { name: "Warnings", value: warnings.length ? warnings.slice(0, 8).join("\n") : "None", inline: false },
-    )
-    .setFooter({ text: "Review tables: mca_import_diagnostic_payloads + mca_endpoint_probe_results" })
-    .setTimestamp();
-
-  const endpointLines = endpointSummaries
-    .map((e) => {
-      const keys = e.topLevelKeys.length ? e.topLevelKeys.join(", ") : "no top-level keys";
-      const cap = e.capHits.length ? `\nCap/contract hits: ${e.capHits.slice(0, 6).join(", ")}` : "";
-      return `• **${e.label}** — \`${e.name}\` · ${e.itemCount ?? 0} item(s)\nKeys: ${keys}${cap}`;
-    })
-    .slice(0, 12);
-
-  const endpointEmbed = new EmbedBuilder()
-    .setColor(Colors.Blurple)
-    .setTitle("🛰 Available / Unused Endpoint Details")
-    .setDescription(endpointLines.length ? endpointLines.join("\n\n").slice(0, 3900) : "No available endpoints were captured in this run.")
-    .setFooter({ text: "These are dry-run endpoint probes only. No league data was changed." })
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: endpointLines.length ? [embed, endpointEmbed] : [embed] });
 }
 
 export async function handleTsSchedDelete(interaction: ButtonInteraction): Promise<void> {
