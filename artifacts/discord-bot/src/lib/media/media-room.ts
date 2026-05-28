@@ -61,6 +61,41 @@ export function invalidateMediaRoomCache(guildId?: string): void {
   }
 }
 
+function shouldDeferMediaInteraction(customId: string, interaction: any): boolean {
+  if (!interaction.isButton?.() && !interaction.isStringSelectMenu?.()) return false;
+
+  // Modal openings must use showModal() as the first acknowledgement.
+  if (customId.startsWith("mr_goty_matchup:")) return false;
+
+  // These handlers perform DB work / render panels and should acknowledge immediately.
+  return (
+    customId === "mr_media_home" ||
+    customId === "ac_active_streams" ||
+    customId === "mr_active_streams" ||
+    customId === "ac_poty_vote" ||
+    customId === "mr_poty_vote" ||
+    customId === "ac_goty_hub" ||
+    customId === "ac_goty_vote" ||
+    customId === "mr_goty_hub" ||
+    customId === "mr_active_streams_refresh" ||
+    customId === "mr_goty_home" ||
+    customId === "mr_goty_nominate" ||
+    customId === "mr_goty_week" ||
+    customId === "mr_goty_browse" ||
+    customId === "mr_goty_vote" ||
+    customId === "mr_goty_archive" ||
+    customId.startsWith("mr_goty_page:") ||
+    customId.startsWith("mr_goty_vote_cast:")
+  );
+}
+
+async function deferMediaInteractionIfNeeded(interaction: any): Promise<void> {
+  const customId = interaction.customId ?? "";
+  if (!shouldDeferMediaInteraction(customId, interaction)) return;
+  if (interaction.deferred || interaction.replied) return;
+  await interaction.deferUpdate().catch(() => null);
+}
+
 async function respondPanel(interaction: any, payload: any): Promise<void> {
   if (interaction.deferred || interaction.replied) {
     await interaction.editReply(payload).catch(async () => {
@@ -256,7 +291,7 @@ export async function renderGotyHub(interaction: any): Promise<void> {
   await ensureMediaTables();
   const guildId = interaction.guildId!;
   const season = await getOrCreateActiveSeason(guildId);
-  await refreshCanonicalLeagueSeason(guildId);
+  void refreshCanonicalLeagueSeason(guildId).catch((err) => console.warn("[media-room] canonical refresh failed:", err));
 
   const votingOpen = isWildcardOrLater(season);
   const nominationOpen = isRegularSeason(season);
@@ -419,13 +454,17 @@ async function showGotyNotesModal(interaction: any, weekNumber: number, recGameI
 }
 
 async function handleGotyNotesModal(interaction: any, weekNumber: number, recGameId: number): Promise<void> {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true }).catch(() => null);
+  }
+
   await ensureMediaTables();
   const guildId = interaction.guildId!;
   const season = await getOrCreateActiveSeason(guildId);
   const game = await getCanonicalGame(guildId, recGameId);
 
   if (!game) {
-    await interaction.reply({ ephemeral: true, content: "❌ Canonical game not found. Nomination was not submitted." });
+    await interaction.editReply({ content: "❌ Canonical game not found. Nomination was not submitted." }).catch(() => null);
     return;
   }
 
@@ -459,10 +498,9 @@ async function handleGotyNotesModal(interaction: any, weekNumber: number, recGam
     )
   `);
 
-  await interaction.reply({
-    ephemeral: true,
+  await interaction.editReply({
     content: "✅ GOTY nomination submitted. If this game is not final yet, score and winner details will update after import.",
-  });
+  }).catch(() => null);
 }
 
 async function renderGotyNominees(interaction: any, voteMode = false, page = 0): Promise<void> {
@@ -545,7 +583,7 @@ async function castGotyVote(interaction: any, candidateId: number): Promise<void
   const guildId = interaction.guildId!;
   const season = await getOrCreateActiveSeason(guildId);
   if (!isWildcardOrLater(season)) {
-    await interaction.reply({ ephemeral: true, content: "❌ GOTY voting does not open until Wild Card." });
+    await respondPanel(interaction, { content: "❌ GOTY voting does not open until Wild Card.", embeds: [], components: [] });
     return;
   }
 
@@ -556,7 +594,7 @@ async function castGotyVote(interaction: any, candidateId: number): Promise<void
     do update set candidate_id = excluded.candidate_id, updated_at = now()
   `);
 
-  await interaction.reply({ ephemeral: true, content: "✅ GOTY vote recorded. You may change your vote until voting closes." });
+  await respondPanel(interaction, { content: "✅ GOTY vote recorded. You may change your vote until voting closes.", embeds: [], components: [] });
 }
 
 async function renderGotyArchive(interaction: any): Promise<void> {
@@ -586,6 +624,8 @@ async function renderGotyArchive(interaction: any): Promise<void> {
 export async function handleMediaRoomInteraction(interaction: any): Promise<boolean> {
   const id = interaction.customId ?? "";
   if (!id.startsWith("mr_") && !id.startsWith("ac_")) return false;
+
+  await deferMediaInteractionIfNeeded(interaction);
 
   if (id === "mr_media_home") { await renderMediaRoomHome(interaction); return true; }
 
