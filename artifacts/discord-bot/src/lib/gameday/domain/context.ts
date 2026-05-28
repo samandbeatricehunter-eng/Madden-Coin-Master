@@ -61,8 +61,8 @@ async function replyEphemeral(interaction: GamedayInteraction, content: string):
 type ResolveGamedayContextOptions = { silentNoMatchup?: boolean };
 
 type Cached<T> = { value: T; expiresAt: number };
-const CONTEXT_TTL_MS = 45_000;
-const SHORT_TTL_MS = 20_000;
+const CONTEXT_TTL_MS = 60_000;
+const SHORT_TTL_MS = 60_000;
 const cache = new Map<string, Cached<any>>();
 
 function getCached<T>(key: string): T | null {

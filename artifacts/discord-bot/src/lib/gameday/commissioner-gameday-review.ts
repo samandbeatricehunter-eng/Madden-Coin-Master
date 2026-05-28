@@ -49,28 +49,33 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
 }
 
 async function respondReview(interaction: ButtonInteraction | StringSelectMenuInteraction, payload: any): Promise<void> {
+  const safePayload = { ...payload };
   if ((interaction as any).deferred || (interaction as any).replied) {
-    await (interaction as any).editReply(payload).catch(async () => {
-      await (interaction as any).followUp({ ...payload, ephemeral: true }).catch(() => null);
+    await (interaction as any).editReply(safePayload).catch(async () => {
+      await (interaction as any).followUp({ ...safePayload, ephemeral: true }).catch(() => null);
     });
     return;
   }
-  await (interaction as any).update(payload).catch(async () => {
+
+  await (interaction as any).update(safePayload).catch(async () => {
     if (!(interaction as any).deferred && !(interaction as any).replied) {
-      await (interaction as any).reply({ ...payload, ephemeral: true }).catch(() => null);
+      await (interaction as any).reply({ ...safePayload, ephemeral: true }).catch(() => null);
+      return;
     }
+    await (interaction as any).editReply(safePayload).catch(async () => {
+      await (interaction as any).followUp({ ...safePayload, ephemeral: true }).catch(() => null);
+    });
   });
 }
 
-async function acknowledgeReview(interaction: ButtonInteraction | StringSelectMenuInteraction): Promise<void> {
-  if (!(interaction as any).deferred && !(interaction as any).replied) {
-    await (interaction as any).deferUpdate().catch(() => null);
-  }
+async function acknowledgeReviewInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction): Promise<void> {
+  if ((interaction as any).deferred || (interaction as any).replied) return;
+  await (interaction as any).deferUpdate().catch(() => null);
 }
 
 
 type Cached<T> = { value: T; expiresAt: number };
-const REVIEW_TTL_MS = 30_000;
+const REVIEW_TTL_MS = 60_000;
 const reviewCache = new Map<string, Cached<any>>();
 
 function getReviewCached<T>(key: string): T | null {
@@ -712,15 +717,15 @@ Dashed report #${id} was denied by <@${interaction.user.id}>.`);
 export async function handleCommissionerGamedayReviewInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("gdrev_")) return false;
 
+  await acknowledgeReviewInteraction(interaction);
+
   if (interaction.isStringSelectMenu()) {
     if (interaction.customId === "gdrev_cat") {
-      await interaction.deferUpdate();
       await renderReviewCategory(interaction, interaction.values[0] as ReviewKind, 0);
       return true;
     }
     if (interaction.customId.startsWith("gdrev_item:")) {
       const kind = interaction.customId.split(":")[1] as ReviewKind;
-      await interaction.deferUpdate();
       await renderReviewDetail(interaction, kind, Number(interaction.values[0]));
       return true;
     }
@@ -728,18 +733,15 @@ export async function handleCommissionerGamedayReviewInteraction(interaction: Bu
 
   if (interaction.isButton()) {
     if (interaction.customId === "gdrev_home") {
-      await acknowledgeReview(interaction);
       await renderCommissionerGamedayReview(interaction);
       return true;
     }
     if (interaction.customId.startsWith("gdrev_page:")) {
-      await acknowledgeReview(interaction);
       const [, , kind, pageRaw] = interaction.customId.split(":");
       await renderReviewCategory(interaction, kind as ReviewKind, Math.max(0, Number(pageRaw ?? 0)));
       return true;
     }
     if (interaction.customId.startsWith("gdrev_resolve:")) {
-      await acknowledgeReview(interaction);
       const [, , kind, idRaw, action] = interaction.customId.split(":");
       await resolveReviewItem(interaction, kind as ReviewKind, Number(idRaw), action ?? "resolve");
       return true;

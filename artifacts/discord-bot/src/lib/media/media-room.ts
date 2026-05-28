@@ -29,6 +29,38 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
   return ((result as any).rows ?? result) as T[];
 }
 
+type MediaCacheEntry<T> = { value: T; expiresAt: number };
+const MEDIA_CACHE_TTL_MS = 60_000;
+const mediaCache = new Map<string, MediaCacheEntry<any>>();
+
+function getMediaCached<T>(key: string): T | null {
+  const hit = mediaCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    mediaCache.delete(key);
+    return null;
+  }
+  return hit.value as T;
+}
+
+async function mediaCached<T>(key: string, loader: () => Promise<T>, ttlMs = MEDIA_CACHE_TTL_MS): Promise<T> {
+  const hit = getMediaCached<T>(key);
+  if (hit !== null) return hit;
+  const value = await loader();
+  mediaCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  return value;
+}
+
+export function invalidateMediaRoomCache(guildId?: string): void {
+  if (!guildId) {
+    mediaCache.clear();
+    return;
+  }
+  for (const key of mediaCache.keys()) {
+    if (key.startsWith(`${guildId}:`)) mediaCache.delete(key);
+  }
+}
+
 async function respondPanel(interaction: any, payload: any): Promise<void> {
   if (interaction.deferred || interaction.replied) {
     await interaction.editReply(payload).catch(async () => {
@@ -38,7 +70,11 @@ async function respondPanel(interaction: any, payload: any): Promise<void> {
   }
   if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) {
     await interaction.update(payload).catch(async () => {
-      await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(payload).catch(async () => interaction.followUp({ ...payload, ephemeral: true }).catch(() => null));
+      } else {
+        await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
+      }
     });
     return;
   }
@@ -225,13 +261,13 @@ export async function renderGotyHub(interaction: any): Promise<void> {
   const votingOpen = isWildcardOrLater(season);
   const nominationOpen = isRegularSeason(season);
 
-  const candidates = await rowsOf<{ count: number }>(sql`
+  const candidates = await mediaCached(`${guildId}:goty:candidates:${season.id}`, () => rowsOf<{ count: number }>(sql`
     select count(*)::int as count
     from media_goty_candidates
     where guild_id = ${guildId}
       and season_id = ${season.id}
       and status = 'nominated'
-  `);
+  `));
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
@@ -259,7 +295,7 @@ export async function renderGotyHub(interaction: any): Promise<void> {
 
 async function showGotyWeekSelect(interaction: any): Promise<void> {
   const guildId = interaction.guildId!;
-  const weeks = await listCanonicalWeeksForGoty(guildId);
+  const weeks = await mediaCached(`${guildId}:goty:weeks`, () => listCanonicalWeeksForGoty(guildId));
 
   if (!weeks.length) {
     await respondPanel(interaction, {
@@ -310,7 +346,7 @@ async function showGotyWeekSelect(interaction: any): Promise<void> {
 
 async function showGotyMatchupSelect(interaction: any, weekNumber: number): Promise<void> {
   const guildId = interaction.guildId!;
-  const games = await listCanonicalGamesForGoty(guildId, weekNumber);
+  const games = await mediaCached(`${guildId}:goty:games:${weekNumber}`, () => listCanonicalGamesForGoty(guildId, weekNumber));
 
   if (!games.length) {
     await respondPanel(interaction, {

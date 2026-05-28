@@ -1058,6 +1058,29 @@ export async function processStandingsSeedings(body: unknown, eaLeagueId = 0, gu
             set: { teamName: teamName || undefined, ...standingsSet },
           }),
       );
+      ops.push(
+        db.execute(sql`
+          insert into rec_cap_snapshots (
+            guild_id, legacy_season_id, team_id, team_name, discord_id,
+            cap_room, cap_spent, cap_available, source, raw_json, updated_at
+          )
+          values (
+            ${season.guildId ?? guildId ?? ""}, ${season.id}, ${teamId}, ${teamName || ""}, ${discordId},
+            ${Number(t?.capRoom ?? 0)}, ${Number(t?.capSpent ?? 0)}, ${Number(t?.capAvailable ?? 0)},
+            'CareerMode_GetStandingsExport', ${JSON.stringify(t ?? {})}::jsonb, now()
+          )
+          on conflict (guild_id, legacy_season_id, team_id) do update
+          set team_name = excluded.team_name,
+              discord_id = excluded.discord_id,
+              cap_room = excluded.cap_room,
+              cap_spent = excluded.cap_spent,
+              cap_available = excluded.cap_available,
+              source = excluded.source,
+              raw_json = excluded.raw_json,
+              updated_at = now()
+        `),
+      );
+
       standingsUpserted++;
 
       // ── Write playoff seeds to usersTable for human playoff teams ─────────
@@ -3107,6 +3130,42 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
     }));
 
     await db.insert(franchiseRostersTable).values(rowsWithPortraits);
+
+    const contractOps = rowsWithPortraits.map((r: any) => {
+      const attrs = (r.attributes ?? {}) as Record<string, unknown>;
+      return db.execute(sql`
+        insert into rec_contract_snapshots (
+          guild_id, legacy_season_id, team_id, team_name, discord_id,
+          player_id, player_name, position, overall,
+          contract_years_left, contract_salary, contract_bonus,
+          cap_hit, cap_release_penalty, cap_release_net_savings,
+          raw_json, updated_at
+        )
+        values (
+          ${season.guildId ?? guildId ?? ""}, ${season.id}, ${mcaTeamId}, ${teamEntry.fullName}, ${teamEntry.discordId ?? null},
+          ${r.playerId}, ${[r.firstName, r.lastName].filter(Boolean).join(" ")}, ${r.position ?? null}, ${r.overall ?? null},
+          ${r.contractYearsLeft ?? null}, ${attrs.contractSalary != null ? Number(attrs.contractSalary) : null}, ${attrs.contractBonus != null ? Number(attrs.contractBonus) : null},
+          ${attrs.capHit != null ? Number(attrs.capHit) : null}, ${attrs.capReleasePenalty != null ? Number(attrs.capReleasePenalty) : null}, ${attrs.capReleaseNetSavings != null ? Number(attrs.capReleaseNetSavings) : null},
+          ${JSON.stringify(attrs)}::jsonb, now()
+        )
+        on conflict (guild_id, legacy_season_id, player_id) do update
+        set team_id = excluded.team_id,
+            team_name = excluded.team_name,
+            discord_id = excluded.discord_id,
+            player_name = excluded.player_name,
+            position = excluded.position,
+            overall = excluded.overall,
+            contract_years_left = excluded.contract_years_left,
+            contract_salary = excluded.contract_salary,
+            contract_bonus = excluded.contract_bonus,
+            cap_hit = excluded.cap_hit,
+            cap_release_penalty = excluded.cap_release_penalty,
+            cap_release_net_savings = excluded.cap_release_net_savings,
+            raw_json = excluded.raw_json,
+            updated_at = now()
+      `);
+    });
+    await Promise.all(contractOps);
 
     invalidateRostersCache(season.id);
 
