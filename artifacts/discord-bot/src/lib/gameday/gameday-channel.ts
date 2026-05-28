@@ -138,15 +138,11 @@ export async function createWeeklyGamedayChannel(args: {
     }
   }
 
-  const approvedRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "approved member");
-  const commissionerRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
-
-  if (!approvedRole && !commissionerRole) {
-    throw new Error("Could not find an Approved Member or Commissioner role to grant access to the gameday channel.");
-  }
-
+  // Consolidated rebuild: weekly gameday channels are public league hubs.
+  // Access control for actions now lives in interaction handlers, not channel
+  // visibility overwrites. This prevents private-channel drift and stale role
+  // permissions while still letting observers read the gameday flow.
   const overwrites: import("discord.js").OverwriteResolvable[] = [
-    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
     {
       id: guild.client.user!.id,
       allow: [
@@ -159,26 +155,12 @@ export async function createWeeklyGamedayChannel(args: {
     },
   ];
 
-  if (approvedRole) {
-    overwrites.push({
-      id: approvedRole.id,
-      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-    });
-  }
-
-  if (commissionerRole) {
-    overwrites.push({
-      id: commissionerRole.id,
-      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages],
-    });
-  }
-
   const safeWeekName = weekNum > 18 ? `playoffs-${weekNum}` : `week-${weekNum}`;
   const newChannel = await guild.channels.create({
     name: `${safeWeekName}-gameday`,
     type: ChannelType.GuildText,
     parent: categoryId ?? undefined,
-    topic: "Use /gameday for all matchup actions. Non-command user messages are automatically deleted.",
+    topic: "Use /gameday from any server channel for matchup actions. Public notices post here. Non-command user messages here are automatically deleted.",
     permissionOverwrites: overwrites,
   }) as TextChannel;
 
@@ -214,9 +196,9 @@ export async function createWeeklyGamedayChannel(args: {
         .setColor(Colors.Blurple)
         .setTitle(`🎮 OFFICIAL ${displayLabel.toUpperCase()} GAMEDAY CHANNEL`)
         .setDescription(
-          "This channel is used exclusively for H2H scheduling, gameday actions, stream tracking, final score confirmations, FW/FS requests, and commissioner assistance.\n\n" +
-          "Only commissioners may send normal messages here. All non-command user messages will be automatically deleted.\n\n" +
-          "Use `/gameday` to access your private matchup dashboard.",
+          "This channel is the public hub for H2H scheduling confirmations, CPU stream posts, gameday actions, stream tracking, final score confirmations, FW/FS requests, and commissioner assistance.\n\n" +
+          "You may run `/gameday` from **any server channel**. Any public action posts will still route here automatically.\n\n" +
+          "Only commissioners may send normal messages here. All non-command user messages in this channel will be automatically deleted.",
         ),
     ],
   });
@@ -231,25 +213,47 @@ export async function createWeeklyGamedayChannel(args: {
         .setDescription(
           `**ADVANCE DEADLINE**\n${deadlineText}\n\n` +
           "**SCHEDULING POLICY**\n" +
-          "• If a scheduling proposal is sent and the opponent fails to respond within **9 hours**, the sender may request a Force Win due to lack of activity or extend the response window.\n\n" +
-          "**GAME CHECK-IN**\n" +
-          "• Players are expected to check in before their scheduled game time using `/gameday`.\n" +
-          "• Games must be marked as begun through `/gameday`. This is now the only way to post your stream link and receive stream payout review.\n\n" +
+          "• If a scheduling proposal is sent and the opponent fails to respond within **9 hours**, the sender may request a Force Win due to lack of activity.\n" +
+          "• The responding user may extend the response window in **+2 hour increments** from the pending offer screen.\n" +
+          "• If a user has not checked in by **45 minutes after the confirmed scheduled start time** without a reschedule, the opponent may request FW review.\n\n" +
+          "**GAME CHECK-IN / COMMAND ACCESS**\n" +
+          "• You may run `/gameday` from **any server channel**. Public confirmations still post here.\n" +
+          "• H2H players are expected to check in before their scheduled game time using `/gameday`.\n" +
+          "• CPU-game users will see a limited CPU dashboard for CPU streams and FW requests.\n" +
+          "• H2H games must be marked as begun through `/gameday`. This is now the only way to post your H2H stream link and receive stream payout review.\n\n" +
           "**STREAMING POLICY**\n" +
           "• Home team is expected to stream regular season games. Either user may stream.\n" +
           "• In playoffs, home team is required to stream.\n" +
-          "• If away cannot or chooses not to stream, home may still be penalized for failing to uphold streaming responsibilities. Penalties may include coin fines, compensation to the opponent, or any reasonable commissioner discipline.\n\n" +
+          "• If away cannot or chooses not to stream, home may still be penalized for failing to uphold streaming responsibilities. Penalties may include coin fines, compensation to the opponent, or any reasonable commissioner discipline.\n\n" +          "**HIGHLIGHT SUBMISSION / PLAY OF THE YEAR**\n" +
+          "• Highlights must be posted in the designated highlights channel.\n" +
+          "• Users may submit **1 paid highlight upload per advance week**. Multi-clip posts are rejected; repost only one clip.\n" +
+          "• After a valid highlight is accepted, the bot will DM you with a nomination dropdown.\n" +
+          "• You may nominate the clip for: Run of the Year, Pass of the Year, Catch of the Year, Interception of the Year, Hit Stick of the Year, Return of the Year, or Defensive Play of the Year.\n" +
+          "• Users may nominate up to **3 clips per category per season**.\n\n" +
           "**FINAL SCORES**\n" +
           "• Final scores must be submitted through `/gameday` after the game is marked begun.\n" +
           "• Opponents must approve or dispute submitted scores.\n" +
           "• Commissioners may review unresolved score disputes.\n\n" +
           "**ASSISTANCE**\n" +
-          "Use `/gameday` for FW requests, FS requests, violations, commissioner contact, and scheduling issues.",
+          "Use `/gameday` from anywhere for FW requests, FS requests, violations, commissioner contact, scheduling issues, and CPU stream/FW actions.",
         ),
     ],
     allowedMentions: { parse: ["everyone"] },
   });
   await reminder.pin().catch(() => null);
+
+  if (weekNum === 19) {
+    await newChannel.send({
+      content: "@everyone",
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Gold)
+          .setTitle("🏆 THE PLAYOFFS HAVE BEGUN")
+          .setDescription("**WILDCARD ROUND**\n\nEvery playoff game is treated as a Game of the Week matchup and is eligible for voting through the bot menu."),
+      ],
+      allowedMentions: { parse: ["everyone"] },
+    }).catch(() => null);
+  }
 
   return {
     channelId: newChannel.id,

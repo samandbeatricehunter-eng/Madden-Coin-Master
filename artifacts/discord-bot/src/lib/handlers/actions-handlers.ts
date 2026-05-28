@@ -8,7 +8,7 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
-  TextChannel, PermissionFlagsBits,
+  TextChannel, PermissionFlagsBits, MessageFlags,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -63,6 +63,9 @@ import { ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaP
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../economy/stat-categories.js";
 import { createSession } from "./custom-player-session.js";
 
+
+import { canUseCommissionerOffice } from "../roles/rec-role-access.js";
+import { REC_ALL_ROLES_FOR_DISPLAY } from "../roles/rec-metric-roles.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -123,7 +126,6 @@ interface ActionsSession {
   trainerPlayerPos?: string;
   trainerPlayerOvr?: number;
   trainerWeeks?: number;
-  trainerManageId?: number;
   // standings flow
   standingsConf?: "AFC" | "NFC" | "ALL";
   // rules view flow
@@ -157,10 +159,6 @@ interface ActionsSession {
 const sessions = new Map<string, ActionsSession>();
 const SESSION_TTL_MS = 15 * 60 * 1000;
 
-// Prevent duplicate charging when Discord redelivers or a user double-clicks the training confirm button.
-const trainingExecuteLocks = new Set<string>();
-const ACTIVE_TRAINER_HIRE_CAP = 2;
-
 function sessionKey(guildId: string, userId: string) {
   return `${guildId}:${userId}`;
 }
@@ -179,6 +177,11 @@ function touchSession(sess: ActionsSession) {
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
+
+async function rowsOf<T = any>(q: any): Promise<T[]> {
+  const result = await db.execute(q);
+  return ((result as any).rows ?? result) as T[];
+}
 
 function backToHubRow(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -412,6 +415,7 @@ function buildRosterNavRows(source: "my" | "any"): ActionRowBuilder<ButtonBuilde
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("ac_rc_cards").setLabel("🃏 View Player Cards").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("ac_rc_teamstats").setLabel("📊 View Team Stats").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("💰 Cap Manager").setStyle(ButtonStyle.Success),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(backId).setLabel("← Back").setStyle(ButtonStyle.Secondary),
@@ -847,6 +851,44 @@ function fmtDiff(n: number): string { return n >= 0 ? `+${n}` : `${n}`; }
 
 // ── Main dispatch ──────────────────────────────────────────────────────────────
 
+
+async function handleRolesBreakdown(interaction: ButtonInteraction) {
+  const structural = REC_ALL_ROLES_FOR_DISPLAY.filter((r) => r.kind === "structural");
+  const badges = REC_ALL_ROLES_FOR_DISPLAY.filter((r) => r.kind === "badge");
+  const metrics = REC_ALL_ROLES_FOR_DISPLAY.filter((r) => r.kind === "metric");
+
+  const roleLine = (r: typeof REC_ALL_ROLES_FOR_DISPLAY[number]) =>
+    `${r.name}\n${r.description}\nThreshold: ${r.threshold}`;
+
+  const embeds = [
+    new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("🎖️ REC Role Breakdown")
+      .setDescription(
+        "REC roles are split into structural access roles, permanent badge roles, and auto-synced metric identity roles.\n\n" +
+        "Metric roles are recalculated during each advance and when commissioners run **Sync REC Roles**."
+      )
+      .addFields(
+        { name: "Structural Roles", value: structural.map(roleLine).join("\n\n").slice(0, 1000), inline: false },
+        { name: "Permanent Badge Roles", value: badges.map(roleLine).join("\n\n").slice(0, 1000), inline: false },
+      ),
+    new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("🎖️ REC Metric Roles — Skill / Streak")
+      .setDescription(metrics.slice(0, 9).map(roleLine).join("\n\n").slice(0, 3900)),
+    new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("🎖️ REC Metric Roles — Playstyle / Legacy")
+      .setDescription(metrics.slice(9).map(roleLine).join("\n\n").slice(0, 3900)),
+  ];
+
+  await interaction.reply({
+    embeds,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+
 export async function handleActionsInteraction(
   interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
   overrideId?: string,
@@ -882,7 +924,7 @@ export async function handleActionsInteraction(
     const isDiscordAdmin = memberTyped?.permissions?.has(PermissionFlagsBits.Administrator) ?? false;
     const isDbAdmin      = await isAdminUser(uid, gid);
     const isAdmin        = isDiscordAdmin || isDbAdmin;
-    const isCommissioner = memberTyped?.roles?.cache?.some((r) => r.name === "Commissioner") ?? false;
+    const isCommissioner = canUseCommissionerOffice(memberTyped, false);
     const seasonNum      = season.seasonNumber;
     const wkStr          = weekLabel(season.currentWeek);
 
@@ -949,8 +991,22 @@ export async function handleActionsInteraction(
   // Purchase sub-buttons
   if (id === "ac_buy_agereset") { await handleBuyAgeResetPosPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_devup")    { await handleBuyDevUpPosPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_buy_legend")   { await handleBuyLegendPick(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_buy_custom")   { await handleBuyCustomInfo(interaction as ButtonInteraction); return true; }
+  if (id === "ac_buy_legend")   {
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
+    if (!legendPurchasesOpen(season.currentWeek)) {
+      await (interaction as ButtonInteraction).reply({ ephemeral: true, content: "🔒 Legend purchases closed at the advance to Week 16." });
+      return true;
+    }
+    await handleBuyLegendPick(interaction as ButtonInteraction, sess); return true;
+  }
+  if (id === "ac_buy_custom")   {
+    const season = await getOrCreateActiveSeason(interaction.guildId!);
+    if (!customPlayersOpen(season.currentWeek)) {
+      await (interaction as ButtonInteraction).reply({ ephemeral: true, content: "🔒 Custom player submissions closed at the advance to Divisional Round." });
+      return true;
+    }
+    await handleBuyCustomInfo(interaction as ButtonInteraction); return true;
+  }
   if (id.startsWith("ac_buy_arpos:"))       { await handleBuyARPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_dupos:"))       { await handleBuyDUPlayerPick(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id.startsWith("ac_buy_arplayer:"))    { await handleBuyARConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
@@ -982,12 +1038,6 @@ export async function handleActionsInteraction(
   if (id === "ac_ht_weeks")                 { await handleHireTrainerConfirm(interaction as StringSelectMenuInteraction, sess); return true; }
   if (id === "ac_ht_confirm")               { await handleHireTrainerExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_my_trainers")              { await handleMyTrainers(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_tr_manage")                 { await handleTrainerManageSelect(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_tr_extend")                 { await handleTrainerExtendStart(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_tr_extend_weeks")           { await handleTrainerExtendExecute(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_tr_focus_change")           { await handleTrainerFocusChangeStart(interaction as ButtonInteraction, sess); return true; }
-  if (id === "ac_tr_focus_set")              { await handleTrainerFocusChangeExecute(interaction as StringSelectMenuInteraction, sess); return true; }
-  if (id === "ac_tr_fire")                   { await handleTrainerFireExecute(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_buy_contract_ext")  { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "contract_extension"); return true; }
   if (id === "ac_buy_salary_red")    { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "salary_reduction"); return true; }
   if (id === "ac_buy_bonus_red")     { await handleBuyContractModPosPick(interaction as ButtonInteraction, sess, "bonus_reduction"); return true; }
@@ -1014,6 +1064,16 @@ export async function handleActionsInteraction(
   // ── Row 2: Rosters ───────────────────────────────────────────────────────────
 
   if (id === "ac_myroster")       { await handleMyRoster(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_cap_manager")    { await handleCapManager(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_cap_calc")       { await handleCapTargetSelect(interaction as ButtonInteraction); return true; }
+  if (id === "ac_cap_target")     { await handleCapTargetResult(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_cap_toggle")     { await handleCapToggle(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_cap_purchase:")) { await handleCapPurchasePreview(interaction as ButtonInteraction, sess, id.split(":")[1] ?? ""); return true; }
+  if (id === "ac_cap_pfa")       { await handleCapPotentialFaPosition(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_cap_pfa_pos")   { await handleCapPotentialFaList(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id === "ac_cap_pfa_player"){ await handleCapPotentialFaCard(interaction as StringSelectMenuInteraction, sess); return true; }
+  if (id.startsWith("ac_cap_pfa_page:")) { await handleCapPotentialFaCardPage(interaction as ButtonInteraction, sess); return true; }
+  if (id === "ac_cap_negotiate")  { await handleCapNegotiations(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyroster")      { await handleAnyRosterTeamPick(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_anyroster_sel_afc" || id === "ac_anyroster_sel_nfc" || id === "ac_anyroster_sel") { await handleAnyRosterShow(interaction as StringSelectMenuInteraction, sess); return true; }
   // Roster card — player cards + team stats from within roster view
@@ -1088,6 +1148,11 @@ export async function handleActionsInteraction(
     return true;
   }
 
+  if (id === "ac_roles_breakdown") {
+    await handleRolesBreakdown(interaction as ButtonInteraction);
+    return true;
+  }
+
   if (id === "ac_seasonpr")     { await handleSeasonPR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_alltimepr")    { await handleAllTimePR(interaction as ButtonInteraction, sess); return true; }
   if (id === "ac_globalpr")     { await handleGlobalPR(interaction as ButtonInteraction, sess); return true; }
@@ -1156,13 +1221,16 @@ async function handlePurchaseMenu(interaction: ButtonInteraction, sess: ActionsS
   const contractOn  = settings.coinEconomy && (settings.contractExtensionsEnabled ?? false);
   const salaryOn    = settings.coinEconomy && (settings.salaryReductionsEnabled ?? false);
   const bonusOn     = settings.coinEconomy && (settings.bonusReductionsEnabled ?? false);
+  const activeSeason = await getOrCreateActiveSeason(gid);
+  const legendOpen = legendPurchasesOpen(activeSeason.currentWeek);
+  const customOpen = customPlayersOpen(activeSeason.currentWeek);
 
   const allButtons: ButtonBuilder[] = [];
   if (trainingOn)  allButtons.push(new ButtonBuilder().setCustomId("ac_buy_training").setLabel("🎓 Training Package").setStyle(ButtonStyle.Primary));
   if (ageOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_agereset").setLabel("🔄 Age Reset").setStyle(ButtonStyle.Primary));
   if (devOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_devup").setLabel("📈 Dev Trait Upgrade").setStyle(ButtonStyle.Primary));
-  if (customOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Success));
-  if (legOn)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("🏆 Buy a Legend").setStyle(ButtonStyle.Success));
+  if (customOn && customOpen)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_custom").setLabel("🎨 Custom Player").setStyle(ButtonStyle.Success));
+  if (legOn && legendOpen)      allButtons.push(new ButtonBuilder().setCustomId("ac_buy_legend").setLabel("🏆 Buy a Legend").setStyle(ButtonStyle.Success));
   if (contractOn) allButtons.push(new ButtonBuilder().setCustomId("ac_buy_contract_ext").setLabel("📋 Contract Extension").setStyle(ButtonStyle.Secondary));
   if (salaryOn)   allButtons.push(new ButtonBuilder().setCustomId("ac_buy_salary_red").setLabel("💵 Salary Reduction").setStyle(ButtonStyle.Secondary));
   if (bonusOn)    allButtons.push(new ButtonBuilder().setCustomId("ac_buy_bonus_red").setLabel("🎁 Bonus Reduction").setStyle(ButtonStyle.Secondary));
@@ -2147,60 +2215,6 @@ const TRAINING_TIERS = {
   bronze: { label: "🥉 Bronze", cost: 250,  points: 1, purchaseType: "training_bronze" as const, seasonStatKey: null,                      limit: 999 },
 } as const;
 type TrainingTier = keyof typeof TRAINING_TIERS;
-type ActiveTrainingPurchaseStatus = "pending" | "approved";
-const ACTIVE_TRAINING_PURCHASE_STATUSES: ActiveTrainingPurchaseStatus[] = ["pending", "approved"];
-
-async function getActiveTrainingPackageUsage(
-  discordId: string,
-  seasonId: number,
-): Promise<{ goldUsed: number; silverUsed: number }> {
-  const rows = await db
-    .select({ purchaseType: purchasesTable.purchaseType })
-    .from(purchasesTable)
-    .where(and(
-      eq(purchasesTable.discordId, discordId),
-      eq(purchasesTable.seasonId, seasonId),
-      inArray(purchasesTable.purchaseType, ["training_gold", "training_silver"]),
-      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
-    ));
-
-  return {
-    goldUsed: rows.filter((r) => r.purchaseType === "training_gold").length,
-    silverUsed: rows.filter((r) => r.purchaseType === "training_silver").length,
-  };
-}
-
-async function getActiveTrainingPlayerUsage(
-  discordId: string,
-  seasonId: number,
-  playerName: string,
-  playerId?: number | null,
-): Promise<number> {
-  const normalizedName = playerName.trim();
-  const baseConditions = [
-    eq(purchasesTable.discordId, discordId),
-    eq(purchasesTable.seasonId, seasonId),
-    inArray(purchasesTable.purchaseType, ["training_gold", "training_silver", "training_bronze"]),
-    inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
-  ];
-
-  const playerConditions = playerId
-    ? [
-        or(
-          eq(purchasesTable.eaFranchiseId, playerId),
-          eq(purchasesTable.playerName, normalizedName),
-        ),
-      ]
-    : [eq(purchasesTable.playerName, normalizedName)];
-
-  const rows = await db
-    .select({ id: purchasesTable.id })
-    .from(purchasesTable)
-    .where(and(...baseConditions, ...playerConditions));
-
-  return rows.length;
-}
-
 
 // Attribute pools for weighted lottery (1.5× chance when goal matches)
 const TRAINING_SPEED_ATTRS = new Set([
@@ -2317,14 +2331,10 @@ function rollTrainingAttrs(
     (!posFilter || posFilter.has(a)) &&
     (playerAttrs[a] ?? 0) < 99,
   );
-
-  // If every eligible attribute is already capped, return an empty roll instead
-  // of falling back to the full attribute list. Falling back can create invalid
-  // +points rows for attributes already at 99.
-  if (eligible.length === 0) return [];
+  const pool = eligible.length > 0 ? eligible : allAttrs;
 
   // Weighted selection without replacement
-  const remaining        = eligible.slice();
+  const remaining        = pool.slice();
   const remainingWeights = remaining.map(a => (boostSet && boostSet.has(a) ? boostMult : 1.0));
   const results: string[] = [];
   const n = Math.min(count, remaining.length);
@@ -2450,47 +2460,40 @@ async function handleBuyTrainingTierPick(interaction: StringSelectMenuInteractio
 
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
+  const stats  = await getSeasonStats(interaction.user.id, season.id);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-  const { goldUsed, silverUsed } = await getActiveTrainingPackageUsage(interaction.user.id, season.id);
-  const playerTrainingUsed = await getActiveTrainingPlayerUsage(
-    interaction.user.id,
-    season.id,
-    sess.trainingPlayerName,
-    sess.trainingPlayerId,
-  );
 
-  const playerLimitReached = playerTrainingUsed >= 1;
-  const goldDisabled   = playerLimitReached;
-  const silverDisabled = playerLimitReached;
-  const bronzeDisabled = playerLimitReached;
+  const goldUsed   = (stats as any)["trainingGoldPurchased"]   as number ?? 0;
+  const silverUsed = (stats as any)["trainingSilverPurchased"] as number ?? 0;
+
+  const goldDisabled   = goldUsed   >= TRAINING_TIERS.gold.limit;
+  const silverDisabled = silverUsed >= TRAINING_TIERS.silver.limit;
 
   const tierRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:gold")
-      .setLabel(`🥇 Gold — 1,000 coins (4-5 attrs · up to +4 pts each)${goldDisabled ? " [PLAYER LIMIT REACHED]" : ""}`)
+      .setLabel(`🥇 Gold — 1,000 coins (4-5 attrs · up to +4 pts each)${goldDisabled ? " [LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Primary)
       .setDisabled(goldDisabled || user.balance < TRAINING_TIERS.gold.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:silver")
-      .setLabel(`🥈 Silver — 500 coins (3 attrs · up to +2 pts each)${silverDisabled ? " [PLAYER LIMIT REACHED]" : ""}`)
+      .setLabel(`🥈 Silver — 500 coins (3 attrs · up to +2 pts each)${silverDisabled ? " [LIMIT REACHED]" : ""}`)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(silverDisabled || user.balance < TRAINING_TIERS.silver.cost),
     new ButtonBuilder()
       .setCustomId("ac_buy_training_tier:bronze")
-      .setLabel(`🥉 Bronze — 250 coins (2 attrs · +1 pt each)${bronzeDisabled ? " [PLAYER LIMIT REACHED]" : ""}`)
+      .setLabel("🥉 Bronze — 250 coins (2 attrs · +1 pt each)")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(bronzeDisabled || user.balance < TRAINING_TIERS.bronze.cost),
+      .setDisabled(user.balance < TRAINING_TIERS.bronze.cost),
   );
 
   const lines = [
     `**Player:** ${sess.trainingPlayerName} (${sess.trainingPlayerPos}) — OVR ${sess.trainingPlayerOvr}`,
     `**Your balance:** ${user.balance.toLocaleString()} coins`,
     "",
-    `**Gold** — 1,000 coins · 4-5 attrs · up to +4 pts each`,
-    `**Silver** — 500 coins · 3 attrs · up to +2 pts each`,
-    "**Bronze** — 250 coins · 2 attrs · +1 pt each",
-    `**Player package cap:** ${playerTrainingUsed}/1 active training package used for this player this season`,
-    "_This cap is per player across all tiers. Pending/approved packages count; refunded/denied packages do not._",
+    `**Gold** — 1,000 coins · 4-5 attrs · up to +4 pts each · ${goldUsed}/${TRAINING_TIERS.gold.limit} used this season`,
+    `**Silver** — 500 coins · 3 attrs · up to +2 pts each · ${silverUsed}/${TRAINING_TIERS.silver.limit} used this season`,
+    "**Bronze** — 250 coins · 2 attrs · +1 pt each · unlimited",
     "",
     "Select the tier you want to buy. You'll choose a **training goal** next to bias the roll.",
   ];
@@ -2522,16 +2525,12 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
     return;
   }
-  {
+  if (meta.limit < 999 && meta.seasonStatKey) {
     const season = await getOrCreateActiveSeason(gid);
-    const used = await getActiveTrainingPlayerUsage(
-      interaction.user.id,
-      season.id,
-      sess.trainingPlayerName,
-      sess.trainingPlayerId,
-    );
-    if (used >= 1) {
-      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainingPlayerName}** already has an active training package this season. Refunded purchases do not count toward this cap.`)], components: [backToHubRow()] });
+    const stats  = await getSeasonStats(interaction.user.id, season.id);
+    const used   = (stats as any)[meta.seasonStatKey] as number ?? 0;
+    if (used >= meta.limit) {
+      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)], components: [backToHubRow()] });
       return;
     }
   }
@@ -2575,8 +2574,7 @@ async function handleBuyTrainingGoalPick(interaction: ButtonInteraction, sess: A
         "💪 **Power** — 50% boost to rolls for strength, power & physical attributes\n" +
         "⚖️ **Balanced** — all attributes equally likely\n" +
         "🎯 **Position Focused** — 100% boost to rolls for this player's core position attributes\n\n" +
-        "_The boost increases the probability, not a guarantee. The result is still a lottery._\n\n" +
-        "_Each player can receive only **one active Training Package per season total**, regardless of tier. Refunded or denied packages do not count._",
+        "_The boost increases the probability, not a guarantee. The result is still a lottery._",
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(goalMenu), cancelRow()],
   });
@@ -2618,7 +2616,7 @@ async function handleBuyTrainingConfirm(interaction: StringSelectMenuInteraction
         `**Training Goal:** ${goalLabel} — ${goalDesc}\n` +
         `**Cost:** ${meta.cost.toLocaleString()} coins\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n\n` +
-        "The lottery will roll when you confirm. All rolled attribute changes will be sent to **Commissioner's Office → Pending Purchases**. Each player can receive only **one active Training Package per season total**, regardless of tier.",
+        "The lottery will roll when you confirm. All rolled attribute changes will be posted to your commissioner.",
       )],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -2634,272 +2632,138 @@ async function handleBuyTrainingExecute(interaction: ButtonInteraction, sess: Ac
   const gid  = interaction.guildId!;
   const tier = sess.trainingTier as TrainingTier | undefined;
   const goal = sess.trainingGoal ?? "balanced";
-  const lockKey = [
-    "training",
-    gid,
-    interaction.user.id,
-    tier ?? "missing-tier",
-    sess.trainingPlayerId ?? "missing-player-id",
-    sess.trainingPlayerName ?? "missing-player-name",
-    goal,
-  ].join(":");
-
-  if (trainingExecuteLocks.has(lockKey)) {
-    await interaction.deferUpdate().catch(() => null);
-    await interaction.editReply({
-      embeds: [new EmbedBuilder()
-        .setColor(Colors.Yellow)
-        .setDescription("⏳ This training package purchase is already being processed. Please wait a moment.")],
-      components: [backToHubRow()],
-    }).catch(() => null);
+  if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")], components: [backToHubRow()] });
     return;
   }
 
-  trainingExecuteLocks.add(lockKey);
+  const meta   = TRAINING_TIERS[tier];
+  const season = await getOrCreateActiveSeason(gid);
+  const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
 
-  try {
-    await interaction.deferUpdate();
+  if (user.balance < meta.cost) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)], components: [backToHubRow()] });
+    return;
+  }
 
-    if (!tier || !TRAINING_TIERS[tier] || !sess.trainingPlayerName) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Session expired. Please start again.")],
-        components: [backToHubRow()],
-      });
+  if (meta.limit < 999 && meta.seasonStatKey) {
+    const stats = await getSeasonStats(interaction.user.id, season.id);
+    const used  = (stats as any)[meta.seasonStatKey] as number ?? 0;
+    if (used >= meta.limit) {
+      await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ You have used all **${meta.limit}** ${meta.label} training packages this season.`)], components: [backToHubRow()] });
       return;
     }
+  }
 
-    const meta   = TRAINING_TIERS[tier];
-    const season = await getOrCreateActiveSeason(gid);
-    const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-
-    // Idempotency guard against a double-click / interaction redelivery that already
-    // inserted a pending purchase for this exact package a few seconds ago.
-    const duplicateCutoff = new Date(Date.now() - 2 * 60 * 1000);
-    const [recentDuplicate] = await db.select({ id: purchasesTable.id })
-      .from(purchasesTable)
+  // Mutual exclusion: block training package if this player already has any
+  // trainer (active or expired) this season under this user.
+  if (sess.trainingPlayerName) {
+    const [conflict] = await db.select({ id: positionalTrainersTable.id, status: positionalTrainersTable.status })
+      .from(positionalTrainersTable)
       .where(and(
-        eq(purchasesTable.discordId,    interaction.user.id),
-        eq(purchasesTable.seasonId,     season.id),
-        inArray(purchasesTable.purchaseType, ["training_gold", "training_silver", "training_bronze"]),
-        eq(purchasesTable.playerName,   sess.trainingPlayerName),
-        inArray(purchasesTable.status,  ACTIVE_TRAINING_PURCHASE_STATUSES),
-        sql`${purchasesTable.createdAt} >= ${duplicateCutoff}`,
+        eq(positionalTrainersTable.guildId,        gid),
+        eq(positionalTrainersTable.seasonId,       season.id),
+        eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+        eq(positionalTrainersTable.playerName,     sess.trainingPlayerName),
+        eq(positionalTrainersTable.status,         "active"),
       ))
       .limit(1);
-
-    if (recentDuplicate) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder()
-          .setColor(Colors.Yellow)
-          .setTitle("🎓 Training Package Already Submitted")
-          .setDescription(
-            `An active training package for **${sess.trainingPlayerName}** already exists.\n\n` +
-            "No additional coins were deducted.",
-          )],
-        components: [backToHubRow()],
-      });
-      return;
-    }
-
-    if (user.balance < meta.cost) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins. You need **${meta.cost.toLocaleString()}** but only have **${user.balance.toLocaleString()}**.`)],
-        components: [backToHubRow()],
-      });
-      return;
-    }
-
-    {
-      const used = await getActiveTrainingPlayerUsage(
-        interaction.user.id,
-        season.id,
-        sess.trainingPlayerName,
-        sess.trainingPlayerId,
-      );
-      if (used >= 1) {
-        await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainingPlayerName}** already has an active training package this season. Refunded purchases do not count toward this cap.`)],
-          components: [backToHubRow()],
-        });
-        return;
-      }
-    }
-
-    // Mutual exclusion: block training package if this player already has any
-    // trainer (active or expired) this season under this user.
-    if (sess.trainingPlayerName) {
-      const [conflict] = await db.select({ id: positionalTrainersTable.id, status: positionalTrainersTable.status })
-        .from(positionalTrainersTable)
-        .where(and(
-          eq(positionalTrainersTable.guildId,        gid),
-          eq(positionalTrainersTable.seasonId,       season.id),
-          eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
-          eq(positionalTrainersTable.playerName,     sess.trainingPlayerName),
-        ))
-        .limit(1);
-      if (conflict) {
-        await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-            `❌ **${sess.trainingPlayerName}** already has a positional trainer this season ` +
-            `(status: ${conflict.status}). Training Packages and Trainers are mutually exclusive per player per season.`,
-          )],
-          components: [backToHubRow()],
-        });
-        return;
-      }
-    }
-
-    // Fetch player attributes first so we can filter 99-capped attrs from the lottery pool.
-    let playerAttrs: Record<string, number> = {};
-    if (sess.trainingPlayerId) {
-      const seasonId   = await getRosterSeasonId(gid);
-      const rosterRows = await db.select({ attributes: franchiseRostersTable.attributes })
-        .from(franchiseRostersTable)
-        .where(and(
-          eq(franchiseRostersTable.seasonId, seasonId),
-          eq(franchiseRostersTable.playerId, sess.trainingPlayerId),
-        ))
-        .limit(1);
-      playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
-    }
-
-    // 🎲 Step 1 — Roll how many attributes are upgraded (tier-biased, higher tier → more attrs)
-    const attrCount   = rollAttrCount(tier);
-    // 🎲 Step 2 — Roll which attributes (weighted by goal, without replacement, excludes 99s)
-    const rolledAttrs = rollTrainingAttrs(goal, playerAttrs, sess.trainingPlayerPos ?? "", attrCount);
-    // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max).
-    // If the roll would push an attribute over 99, reduce the applied boost to
-    // exactly the amount needed to reach 99. Example: 97 + rolled 4 becomes +2.
-    type TrainingResult = { attr: string; before: number | null; after: number | null; points: number };
-    const results: TrainingResult[] = rolledAttrs
-      .map(attr => {
-        const before = playerAttrs[attr] !== undefined ? Number(playerAttrs[attr]) : null;
-        const rolledPoints = rollTierPoints(meta.points, before ?? 0);
-        if (before === null) {
-          return { attr, before, after: null, points: rolledPoints };
-        }
-
-        const after = Math.min(99, before + rolledPoints);
-        const appliedPoints = Math.max(0, after - before);
-        return { attr, before, after, points: appliedPoints };
-      })
-      .filter(r => r.points > 0);
-
-    if (results.length === 0) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("Training Package Not Available")
-          .setDescription(
-            `❌ **${sess.trainingPlayerName}** has no eligible ${sess.trainingPlayerPos ?? "position"} attributes below the 99 cap for this training package.\n\n` +
-            "No coins were deducted.",
-          )],
-        components: [backToHubRow()],
-      });
-      return;
-    }
-
-    const resultLines = results.map(r =>
-      r.before !== null
-        ? `• **${r.attr}:** ${r.before} → **${r.after}** (+${r.points})`
-        : `• +${r.points} ${r.attr}`,
-    );
-    const beforeAfterText  = `**${results.length} attribute${results.length !== 1 ? "s" : ""} upgraded:**\n${resultLines.join("\n")}`;
-    const attrNamesSummary = results.map(r => `${r.attr} +${r.points}`).join(", ");
-
-    // Mutate balances + audit + pending purchase in one transaction so a partial
-    // failure cannot charge coins without also creating the pending purchase row.
-    const [inserted] = await db.transaction(async (tx) => {
-      await tx.update(usersTable)
-        .set({ balance: sql`${usersTable.balance} - ${meta.cost}` })
-        .where(and(eq(usersTable.discordId, interaction.user.id), eq(usersTable.guildId, gid)));
-
-      await tx.insert(coinTransactionsTable).values({
-        discordId:   interaction.user.id,
-        guildId:     gid,
-        amount:      -meta.cost,
-        type:        "purchase",
-        description: `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — ${attrNamesSummary}`,
-      });
-
-      const purchaseRows = await tx.insert(purchasesTable).values({
-        discordId:      interaction.user.id,
-        seasonId:       season.id,
-        purchaseType:   meta.purchaseType,
-        playerName:     sess.trainingPlayerName,
-        playerPosition: sess.trainingPlayerPos ?? "",
-        attributeName:  attrNamesSummary,
-        cost:           meta.cost,
-        status:         "pending",
-        notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${attrNamesSummary}`,
-        teamName:       user.team ?? null,
-        eaFranchiseId:  sess.trainingPlayerId ?? null,
-      }).returning({ id: purchasesTable.id });
-
-      return purchaseRows;
-    });
-
-    if (!inserted?.id) {
-      throw new Error("Training purchase insert did not return a purchase id.");
-    }
-
-    if (meta.seasonStatKey === "trainingGoldPurchased") {
-      await db.update(seasonStatsTable)
-        .set({ trainingGoldPurchased: sql`${seasonStatsTable.trainingGoldPurchased} + 1` })
-        .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
-    } else if (meta.seasonStatKey === "trainingSilverPurchased") {
-      await db.update(seasonStatsTable)
-        .set({ trainingSilverPurchased: sql`${seasonStatsTable.trainingSilverPurchased} + 1` })
-        .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
-    }
-
-    await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted.id, {
-      playerName:      sess.trainingPlayerName,
-      playerPos:       sess.trainingPlayerPos ?? "",
-      trainingGoal:    goal,
-      trainingResults: beforeAfterText,
-      attributeName:   attrNamesSummary,
-      tier,
-    });
-
-    await interaction.editReply({
-      embeds: [new EmbedBuilder()
-        .setColor(Colors.Green)
-        .setTitle("🎓 Training Package Purchased!")
-        .setDescription(
-          `**${meta.label} Training Package** purchased for **${sess.trainingPlayerName}** (${sess.trainingPlayerPos})!\n\n` +
-          `🎲 **Lottery Result:** ${beforeAfterText}\n\n` +
-          `Your commissioner has been notified and this is now listed in **Commissioner's Office → Pending Purchases**. ` +
-          `**${meta.cost.toLocaleString()} coins** deducted.`,
+    if (conflict) {
+      await interaction.update({
+        embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
+          `❌ **${sess.trainingPlayerName}** already has a positional trainer this season ` +
+          `(status: ${conflict.status}). Training Packages and Trainers are mutually exclusive per player per season.`,
         )],
-      components: [backToHubRow()],
-    });
-  } catch (err) {
-    console.error("[training-package] execute failed", err);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("Training Package Error")
-          .setDescription("❌ Something went wrong while processing this training package. No further action was taken after the failure point. Check Railway logs.")],
         components: [backToHubRow()],
-      }).catch(() => null);
-    } else {
-      await interaction.reply({
-        embeds: [new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("Training Package Error")
-          .setDescription("❌ Something went wrong while processing this training package. Check Railway logs.")],
-        components: [backToHubRow()],
-        ephemeral: true,
-      }).catch(() => null);
+      });
+      return;
     }
-  } finally {
-    trainingExecuteLocks.delete(lockKey);
   }
+
+  // Fetch player attributes first so we can filter 99-capped attrs from the lottery pool
+  let playerAttrs: Record<string, number> = {};
+  if (sess.trainingPlayerId) {
+    const seasonId   = await getRosterSeasonId(gid);
+    const rosterRows = await db.select({ attributes: franchiseRostersTable.attributes })
+      .from(franchiseRostersTable)
+      .where(and(
+        eq(franchiseRostersTable.seasonId, seasonId),
+        eq(franchiseRostersTable.playerId, sess.trainingPlayerId),
+      ))
+      .limit(1);
+    playerAttrs = (rosterRows[0]?.attributes as Record<string, number> | null | undefined) ?? {};
+  }
+
+  // 🎲 Step 1 — Roll how many attributes are upgraded (tier-biased, higher tier → more attrs)
+  const attrCount   = rollAttrCount(tier);
+  // 🎲 Step 2 — Roll which attributes (weighted by goal, without replacement, excludes 99s)
+  const rolledAttrs = rollTrainingAttrs(goal, playerAttrs, sess.trainingPlayerPos ?? "", attrCount);
+  // 🎲 Step 3 — Roll points per attribute (ascending weights → biased toward tier max)
+  type TrainingResult = { attr: string; before: number | null; after: number | null; points: number };
+  const results: TrainingResult[] = rolledAttrs.map(attr => {
+    const before = playerAttrs[attr] !== undefined ? playerAttrs[attr]! : null;
+    const points = rollTierPoints(meta.points, before ?? 0);
+    const after  = before !== null ? before + points : null;
+    return { attr, before, after, points };
+  });
+
+  const resultLines     = results.map(r =>
+    r.before !== null
+      ? `• **${r.attr}:** ${r.before} → **${r.after}** (+${r.points})`
+      : `• +${r.points} ${r.attr}`,
+  );
+  const beforeAfterText  = `**${results.length} attribute${results.length !== 1 ? "s" : ""} upgraded:**\n${resultLines.join("\n")}`;
+  const attrNamesSummary = results.map(r => `${r.attr} +${r.points}`).join(", ");
+
+  await deductBalance(interaction.user.id, meta.cost, gid);
+  await logTransaction(
+    interaction.user.id, -meta.cost, "purchase",
+    `${meta.label} Training Package — ${sess.trainingPlayerName} — ${goal} goal — ${attrNamesSummary}`, gid,
+  );
+
+  const [inserted] = await db.insert(purchasesTable).values({
+    discordId:      interaction.user.id,
+    seasonId:       season.id,
+    purchaseType:   meta.purchaseType,
+    playerName:     sess.trainingPlayerName,
+    playerPosition: sess.trainingPlayerPos ?? "",
+    attributeName:  attrNamesSummary,
+    cost:           meta.cost,
+    status:         "pending",
+    notes:          `Training ${tier} (${goal} goal) — ${sess.trainingPlayerName} — ${attrNamesSummary}`,
+  }).returning({ id: purchasesTable.id });
+
+  if (meta.seasonStatKey === "trainingGoldPurchased") {
+    await db.update(seasonStatsTable)
+      .set({ trainingGoldPurchased: sql`${seasonStatsTable.trainingGoldPurchased} + 1` })
+      .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+  } else if (meta.seasonStatKey === "trainingSilverPurchased") {
+    await db.update(seasonStatsTable)
+      .set({ trainingSilverPurchased: sql`${seasonStatsTable.trainingSilverPurchased} + 1` })
+      .where(and(eq(seasonStatsTable.discordId, interaction.user.id), eq(seasonStatsTable.seasonId, season.id)));
+  }
+
+  await sendCommissionerNotification(interaction as any, meta.purchaseType as any, inserted!.id, {
+    playerName:      sess.trainingPlayerName,
+    playerPos:       sess.trainingPlayerPos ?? "",
+    trainingGoal:    goal,
+    trainingResults: beforeAfterText,
+    attributeName:   attrNamesSummary,
+    tier,
+  });
+
+  await interaction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle("🎓 Training Package Purchased!")
+      .setDescription(
+        `**${meta.label} Training Package** purchased for **${sess.trainingPlayerName}** (${sess.trainingPlayerPos})!\n\n` +
+        `🎲 **Lottery Result:** ${beforeAfterText}\n\n` +
+        `Your commissioner has been notified and will apply this upgrade. **${meta.cost.toLocaleString()} coins** deducted.`,
+      )],
+    components: [backToHubRow()],
+  });
 }
-
-
 
 // ── Wager ─────────────────────────────────────────────────────────────────────
 
@@ -3774,6 +3638,743 @@ export async function handleInterviewTypePick(interaction: ButtonInteraction) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ROW 2 — Rosters
 // ═══════════════════════════════════════════════════════════════════════════════
+
+
+// ── Cap Manager helpers ───────────────────────────────────────────────────────
+type CapRosterPlayer = typeof franchiseRostersTable.$inferSelect & {
+  salaryM: number;
+  bonusM: number;
+  capHitM: number;
+  savingsM: number;
+  deadM: number;
+  desiredSalaryM: number;
+  desiredBonusM: number;
+  desiredLength: number;
+};
+
+function numAttr(attrs: unknown, keys: string[], fallback = 0): number {
+  const aliases = new Set(keys.map((k) => k.toLowerCase()));
+  const seen = new Set<any>();
+
+  function walk(obj: any): number | null {
+    if (!obj || typeof obj !== "object" || seen.has(obj)) return null;
+    seen.add(obj);
+
+    for (const [rawKey, rawVal] of Object.entries(obj)) {
+      const key = rawKey.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const wanted of aliases) {
+        const normalized = wanted.replace(/[^a-z0-9]/g, "");
+        if (key === normalized || key.includes(normalized)) {
+          if (rawVal != null && rawVal !== "") {
+            const n = Number(String(rawVal).replace(/[$,]/g, ""));
+            if (Number.isFinite(n)) return n;
+          }
+        }
+      }
+    }
+
+    for (const rawVal of Object.values(obj)) {
+      const nested = walk(rawVal);
+      if (nested != null) return nested;
+    }
+
+    return null;
+  }
+
+  return walk(attrs) ?? fallback;
+}
+
+function normalizeCapM(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const abs = Math.abs(value);
+  // MCA/player-card financial fields are usually stored as raw dollars.
+  // If already small, treat as millions; if large, normalize to millions.
+  if (abs >= 1_000_000) return value / 1_000_000;
+  if (abs >= 1_000) return value / 1_000_000;
+  return value;
+}
+
+function moneyM(n: number): string {
+  const m = normalizeCapM(n);
+  if (!Number.isFinite(m)) return "$0.00M";
+  const sign = m < 0 ? "-" : "";
+  return `${sign}$${Math.abs(m).toFixed(2)}M`;
+}
+
+function releaseNetM(p: CapRosterPlayer): number {
+  return p.savingsM - p.deadM;
+}
+
+function releaseNetLabel(p: CapRosterPlayer): string {
+  const net = releaseNetM(p);
+  if (net > 0.01) return `Net +${moneyM(net)}`;
+  if (net < -0.01) return `Net -${moneyM(Math.abs(net))}`;
+  return "Net even";
+}
+
+function bestRosterCapUsed(roster: CapRosterPlayer[]): number {
+  return roster.reduce((sum, p) => sum + Math.max(0, p.capHitM), 0);
+}
+
+function capPlayer(row: typeof franchiseRostersTable.$inferSelect): CapRosterPlayer {
+  const attrs = row.attributes ?? {};
+  const salaryM = normalizeCapM(numAttr(attrs, ["contractSalary", "contract_salary", "salary", "salaryAmount", "currentSalary", "playerSalary"]));
+  const bonusM = normalizeCapM(numAttr(attrs, ["contractBonus", "contract_bonus", "signingBonus", "bonus", "currentBonus", "playerBonus"]));
+  const capHitM = normalizeCapM(numAttr(attrs, ["capHit", "cap_hit", "currentCapHit", "playerCapHit", "capNumber"], salaryM + bonusM));
+  const savingsM = normalizeCapM(numAttr(attrs, ["capReleaseNetSavings", "releaseSavings", "capSavings", "netSavings", "releaseNetSavings"]));
+  const deadM = normalizeCapM(numAttr(attrs, ["capReleasePenalty", "releasePenalty", "capReleaseNetPenalty", "deadCap", "deadMoney", "penalty"]));
+  const desiredSalaryM = normalizeCapM(numAttr(attrs, ["desiredSalary", "desired_salary", "reSignSalary", "resignSalary", "wantedSalary"]));
+  const desiredBonusM = normalizeCapM(numAttr(attrs, ["desiredBonus", "desired_bonus", "reSignBonus", "resignBonus", "wantedBonus"]));
+  const desiredLength = numAttr(attrs, ["desiredLength", "desiredYears", "reSignLength"], 0);
+  return { ...row, salaryM, bonusM, capHitM, savingsM, deadM, desiredSalaryM, desiredBonusM, desiredLength };
+}
+
+function positionValue(pos: string): number {
+  const p = pos.toUpperCase();
+  if (["QB"].includes(p)) return 1.35;
+  if (["LT","RT","LE","RE","EDGE","LOLB","ROLB","CB"].includes(p)) return 1.18;
+  if (["WR","MLB","FS","SS","DT"].includes(p)) return 1.08;
+  if (["HB","TE","LG","RG","C"].includes(p)) return 1.0;
+  if (["K","P","FB"].includes(p)) return 0.72;
+  return 0.95;
+}
+
+function ageRisk(pos: string, age: number): number {
+  const p = pos.toUpperCase();
+  const cliff = ["HB","CB","WR"].includes(p) ? 29 : ["QB","K","P"].includes(p) ? 35 : 31;
+  return Math.max(0, age - cliff) * 4;
+}
+
+function playerValueScore(p: CapRosterPlayer, samePos: CapRosterPlayer[]): number {
+  const rank = [...samePos].sort((a,b) => (b.overall ?? 0) - (a.overall ?? 0)).findIndex(x => x.playerId === p.playerId) + 1;
+  const dev = Number(p.devTrait ?? 0) * 6;
+  const starter = rank === 1 ? 12 : rank === 2 ? 4 : -4;
+  const value = (Number(p.overall ?? 0) * positionValue(p.position)) + dev + starter - ageRisk(p.position, Number(p.age ?? 0));
+  return Math.round(value);
+}
+
+function capEfficiency(p: CapRosterPlayer): number {
+  if (p.capHitM <= 0) return 999;
+  return Number((Number(p.overall ?? 0) / p.capHitM).toFixed(2));
+}
+
+function targetToRange(value: string, currentOpen: number, capLimit: number): { label: string; min: number; max: number } {
+  switch (value) {
+    case "10_20": return { label: "$10–20M", min: 10, max: 20 };
+    case "20_30": return { label: "$20–30M", min: 20, max: 30 };
+    case "30_40": return { label: "$30–40M", min: 30, max: 40 };
+    case "40_50": return { label: "$40–50M", min: 40, max: 50 };
+    case "50_60": return { label: "$50–60M", min: 50, max: 60 };
+    default: {
+      const ideal = Math.max(18, Math.min(45, capLimit * 0.13));
+      return { label: "Best Ideal Cap Target", min: ideal, max: ideal + 10 };
+    }
+  }
+}
+
+async function getUserCapContext(interaction: ButtonInteraction | StringSelectMenuInteraction) {
+  const gid = interaction.guildId!;
+  const [user, seasonId] = await Promise.all([
+    getOrCreateUser(interaction.user.id, interaction.user.username, gid),
+    getRosterSeasonId(gid),
+  ]);
+
+  if (!user.team) throw new Error("You are not linked to a team.");
+
+  const [teamRow] = await db.select({
+    teamId: franchiseMcaTeamsTable.teamId,
+    fullName: franchiseMcaTeamsTable.fullName,
+    nickName: franchiseMcaTeamsTable.nickName,
+  }).from(franchiseMcaTeamsTable)
+    .where(and(
+      eq(franchiseMcaTeamsTable.seasonId, seasonId),
+      or(
+        sql`lower(${franchiseMcaTeamsTable.nickName}) = lower(${user.team})`,
+        sql`lower(${franchiseMcaTeamsTable.fullName}) = lower(${user.team})`,
+      ),
+    ))
+    .limit(1);
+
+  if (!teamRow) throw new Error(`Team ${user.team} was not found in imported franchise data.`);
+
+  const rosterRaw = await db.select().from(franchiseRostersTable)
+    .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.teamId, Number(teamRow.teamId))))
+    .orderBy(asc(franchiseRostersTable.position), desc(franchiseRostersTable.overall));
+
+  const roster = rosterRaw.map(capPlayer);
+
+  const wallet = Number(user.balance ?? 0);
+  const [savings] = await db.select().from(userSavingsTable)
+    .where(eq(userSavingsTable.discordId, interaction.user.id))
+    .limit(1)
+    .catch(() => [null] as any[]);
+
+  const teamId = Number(teamRow.teamId);
+  const fullName = String(teamRow.fullName ?? "");
+  const nickName = String(teamRow.nickName ?? "");
+  const userTeam = String(user.team ?? "");
+
+  // Use raw SQL for cap summary lookup so camelCase/snake_case ORM mapping cannot break this.
+  // Prefer exact current roster season and team_id, then fall back to name/discord/latest import.
+  const capRows = await rowsOf<any>(sql`
+    select
+      season_id,
+      team_id,
+      team_name,
+      cap_room,
+      cap_spent,
+      cap_available
+    from team_season_stats
+    where
+      (
+        season_id = ${seasonId}
+        and (
+          team_id = ${teamId}
+          or lower(team_name) in (lower(${fullName}), lower(${nickName}), lower(${userTeam}))
+          or discord_id = ${interaction.user.id}
+        )
+      )
+      or (
+        team_id = ${teamId}
+        or lower(team_name) in (lower(${fullName}), lower(${nickName}), lower(${userTeam}))
+        or discord_id = ${interaction.user.id}
+      )
+    order by
+      case when season_id = ${seasonId} then 0 else 1 end,
+      season_id desc
+    limit 1
+  `).catch(() => []);
+
+  const teamStats = capRows[0] ?? null;
+  const rosterCapUsedM = bestRosterCapUsed(roster);
+
+  // Source of truth for Madden cap summary:
+  // cap_room = cap limit, cap_spent = used cap, cap_available = open cap space.
+  // Roster cap-hit sum is diagnostic only because MCA roster tables may include more than the active roster.
+  const importedCapLimitM = normalizeCapM(Number(teamStats?.cap_room ?? 0));
+  const importedCapSpentM = normalizeCapM(Number(teamStats?.cap_spent ?? 0));
+  const importedOpenM = normalizeCapM(Number(teamStats?.cap_available ?? 0));
+
+  const capLimitM = importedCapLimitM > 0 ? importedCapLimitM : Math.max(255, rosterCapUsedM + Math.max(importedOpenM, 0));
+  const capAvailableM = importedOpenM > 0 ? importedOpenM : Math.max(0, capLimitM - Math.max(importedCapSpentM, 0));
+  const capSpentM = importedCapSpentM > 0 ? importedCapSpentM : Math.max(0, capLimitM - capAvailableM);
+
+  // Estimated release exposure = the combined dead money only for currently shown top positive-net cut candidates.
+  // It is not "current dead cap" and should not be read as already owed money.
+  const deadM = topCutCandidates(roster, 5).reduce((s,p)=>s+(p.deadM > 0 ? p.deadM : 0),0);
+
+  return { gid, user, seasonId, teamRow, roster, teamStats, wallet, savingsBalance: Number((savings as any)?.balance ?? 0), capSpentM, capAvailableM, capLimitM, deadM };
+}
+
+function summarizeCapHealth(openM: number, capLimitM: number): string {
+  const pct = capLimitM > 0 ? openM / capLimitM : 0;
+  if (openM < 0) return "🔴 Over Cap";
+  if (pct < 0.04) return "🟠 Tight";
+  if (pct < 0.10) return "🟡 Manageable";
+  return "🟢 Flexible";
+}
+
+function topCutCandidates(roster: CapRosterPlayer[], limit = 8): CapRosterPlayer[] {
+  return [...roster]
+    .filter(p => p.savingsM > 0)
+    .sort((a,b) => {
+      const aScore = a.savingsM - (playerValueScore(a, roster.filter(x => x.position === a.position)) / 18) - (a.deadM * 0.25);
+      const bScore = b.savingsM - (playerValueScore(b, roster.filter(x => x.position === b.position)) / 18) - (b.deadM * 0.25);
+      return bScore - aScore;
+    })
+    .slice(0, limit);
+}
+
+function expiringPlayers(roster: CapRosterPlayer[]): CapRosterPlayer[] {
+  return roster
+    .filter(p => Number(p.contractYearsLeft ?? 0) <= 1)
+    .sort((a,b) => playerValueScore(b, roster.filter(x => x.position === b.position)) - playerValueScore(a, roster.filter(x => x.position === a.position)));
+}
+
+function resignRecommendation(p: CapRosterPlayer, roster: CapRosterPlayer[]): { tier: string; plan: string; why: string } {
+  const same = roster.filter(x => x.position === p.position);
+  const score = playerValueScore(p, same);
+  const age = Number(p.age ?? 0);
+  const ovr = Number(p.overall ?? 0);
+  const desiredTotal = p.desiredSalaryM + p.desiredBonusM;
+  const years = p.desiredLength || (age <= 27 ? 4 : age >= 31 ? 1 : 2);
+
+  if (score >= 100 || (ovr >= 88 && age <= 30)) {
+    return { tier: "🔒 Must Keep", plan: `${years} yrs · ${moneyM(p.desiredSalaryM || p.salaryM)}/yr · ${moneyM(p.desiredBonusM || p.bonusM)} bonus`, why: "Premium roster value, starter impact, and difficult internal replacement." };
+  }
+  if (score >= 82 && age <= 31) {
+    return { tier: "✅ Keep If Reasonable", plan: `${Math.min(years,3)} yrs · target near current salary`, why: "Useful starter/rotation value if demand does not spike." };
+  }
+  if (age >= 31 || (desiredTotal > 0 && desiredTotal > p.capHitM * 1.25)) {
+    return { tier: "⚠️ Price Check", plan: "Short deal only or let walk if demand rises.", why: "Age, cost, or replacement risk makes a long-term deal inefficient." };
+  }
+  return { tier: "🚪 Replaceable", plan: "Let walk unless very cheap.", why: "Lower roster value or sufficient depth at the position." };
+}
+
+function economyRecommendations(roster: CapRosterPlayer[], wallet: number, savings: number): string[] {
+  const budget = wallet + savings;
+  const bloated = [...roster]
+    .filter(p => p.capHitM >= 8 || p.bonusM >= 5 || p.salaryM >= 8)
+    .sort((a,b)=>b.capHitM-a.capHitM)
+    .slice(0,5);
+  if (!bloated.length) return ["No obvious bloated salary/bonus targets found from current import data."];
+
+  return bloated.map(p => {
+    const lever = p.bonusM >= p.salaryM ? "Bonus Reduction" : "Salary Reduction";
+    const extension = Number(p.contractYearsLeft ?? 0) <= 1 ? " or One-Year Extension" : "";
+    return `• **${p.firstName} ${p.lastName} (${p.position})** — ${moneyM(p.capHitM)} cap hit. Consider **${lever}${extension}**${budget > 0 ? ` if wallet/savings budget allows (${budget.toLocaleString()} coins available).` : "."}`;
+  });
+}
+
+
+async function getPotentialFreeAgents(guildId: string, pos = "ALL", limit = 25): Promise<CapRosterPlayer[]> {
+  const seasonId = await getRosterSeasonId(guildId);
+  const conditions: SQL<unknown>[] = [
+    eq(franchiseRostersTable.seasonId, seasonId),
+    sql`coalesce(${franchiseRostersTable.contractYearsLeft}, 99) <= 1`,
+    sql`${franchiseRostersTable.teamId} <> ${FA_TEAM_ID_BROWSE}`,
+  ];
+  if (pos !== "ALL") conditions.push(sql`upper(${franchiseRostersTable.position}) = upper(${pos})`);
+
+  const rows = await db.select().from(franchiseRostersTable)
+    .where(and(...conditions))
+    .orderBy(desc(franchiseRostersTable.overall), asc(franchiseRostersTable.age))
+    .limit(limit);
+
+  return rows.map(capPlayer);
+}
+
+function pfaLine(p: CapRosterPlayer): string {
+  const demand = p.desiredSalaryM || p.desiredBonusM
+    ? ` · ask ${moneyM(p.desiredSalaryM)}/yr + ${moneyM(p.desiredBonusM)} bonus`
+    : "";
+  return `• **${p.firstName} ${p.lastName} (${p.position})** — OVR ${p.overall}, Age ${p.age ?? "?"}, cap ${moneyM(p.capHitM)}${demand}`;
+}
+
+async function potentialFaAlternatives(ctx: Awaited<ReturnType<typeof getUserCapContext>>, limit = 6): Promise<string[]> {
+  const overpaid = [...ctx.roster]
+    .filter((p) => p.capHitM >= 8 && p.overall >= 70)
+    .sort((a, b) => (b.capHitM - b.overall / 10) - (a.capHitM - a.overall / 10))
+    .slice(0, 10);
+
+  const out: string[] = [];
+  for (const player of overpaid) {
+    const pfas = await getPotentialFreeAgents(ctx.gid, player.position, 12);
+    const alt = pfas.find((fa) =>
+      fa.playerId !== player.playerId &&
+      Number(fa.overall ?? 0) >= Number(player.overall ?? 0) - 3 &&
+      fa.capHitM > 0 &&
+      fa.capHitM < Math.max(player.capHitM * 0.8, player.capHitM - 4)
+    );
+
+    const youngDepth = ctx.roster
+      .filter((x) =>
+        x.playerId !== player.playerId &&
+        x.position === player.position &&
+        Number(x.age ?? 99) <= 25 &&
+        Number(x.overall ?? 0) >= Number(player.overall ?? 0) - 6 &&
+        x.capHitM < player.capHitM * 0.45
+      )
+      .sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0))[0];
+
+    if (alt) {
+      out.push(`• **${player.firstName} ${player.lastName} (${player.position})** costs ${moneyM(player.capHitM)}. Potential FA alternative: **${alt.firstName} ${alt.lastName}**, OVR ${alt.overall}, current cap ${moneyM(alt.capHitM)}.`);
+    } else if (youngDepth) {
+      out.push(`• **${player.firstName} ${player.lastName} (${player.position})** costs ${moneyM(player.capHitM)}. Internal cheaper development option: **${youngDepth.firstName} ${youngDepth.lastName}**, age ${youngDepth.age}, OVR ${youngDepth.overall}, cap ${moneyM(youngDepth.capHitM)}.`);
+    }
+
+    if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
+function capHealthNotes(ctx: Awaited<ReturnType<typeof getUserCapContext>>): string[] {
+  const notes: string[] = [];
+  const expiring = expiringPlayers(ctx.roster);
+  const expensive = ctx.roster.filter((p) => p.capHitM >= 10).length;
+  const youngValue = ctx.roster
+    .filter((p) => Number(p.age ?? 99) <= 25 && Number(p.overall ?? 0) >= 75 && p.capHitM <= 4)
+    .sort((a,b) => (b.overall ?? 0) - (a.overall ?? 0))
+    .slice(0, 4);
+
+  if (ctx.capAvailableM <= 10) notes.push("Cap is tight. Prioritize positive-net cuts, salary/bonus reductions, and low-cost internal replacements.");
+  if (expiring.length >= 8) notes.push(`You have ${expiring.length} contract-year players. Preserve enough space for resign priorities before chasing external FAs.`);
+  if (expensive >= 5) notes.push(`${expensive} players carry $10M+ cap hits. Review whether production matches cost.`);
+  if (youngValue.length) notes.push(`Young value pieces to protect/develop: ${youngValue.map((p) => `${p.firstName} ${p.lastName} (${p.position})`).join(", ")}.`);
+
+  return notes;
+}
+
+async function handleCapPotentialFaPosition(interaction: ButtonInteraction, sess: ActionsSession) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_cap_pfa_pos")
+    .setPlaceholder("Select potential FA position…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("All Positions").setValue("ALL"),
+      ...BROWSE_POSITIONS.slice(0, 24).map((p) => new StringSelectMenuOptionBuilder().setLabel(p).setValue(p)),
+    ]);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("🧲 Potential FA Preview")
+      .setDescription("Potential FAs are contract-year players from the current imported season. Select a position to preview the pool.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("← Cap Manager").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function handleCapPotentialFaList(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const pos = interaction.values[0] ?? "ALL";
+  sess.capFaPos = pos;
+  sess.capFaPage = 1;
+  const pfas = await getPotentialFreeAgents(interaction.guildId!, pos, 25);
+
+  if (!pfas.length) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Grey).setTitle(`🧲 Potential FAs — ${pos}`)
+        .setDescription("No potential FAs found for this position from the current import.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_cap_pfa").setLabel("← Change Position").setStyle(ButtonStyle.Secondary),
+      )],
+    });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_cap_pfa_player")
+    .setPlaceholder("Select a player card…")
+    .addOptions(pfas.slice(0, 25).map((p) =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${p.firstName} ${p.lastName} (${p.position}) — OVR ${p.overall}`.slice(0, 100))
+        .setDescription(`Age ${p.age ?? "?"} · Team ${p.teamName} · Cap ${moneyM(p.capHitM)}`.slice(0, 100))
+        .setValue(String(p.playerId)),
+    ));
+
+  const embeds: EmbedBuilder[] = [];
+  const chunks: CapRosterPlayer[][] = [];
+  for (let i = 0; i < pfas.length; i += 10) chunks.push(pfas.slice(i, i + 10));
+
+  chunks.forEach((chunk, idx) => {
+    embeds.push(new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle(`🧲 Potential FAs — ${pos}${chunks.length > 1 ? ` (${idx + 1}/${chunks.length})` : ""}`)
+      .setDescription(chunk.map(pfaLine).join("\n").slice(0, 3900)));
+  });
+
+  await interaction.update({
+    embeds,
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_cap_pfa").setLabel("← Change Position").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("Cap Manager").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function handleCapPotentialFaCard(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  sess.capFaPlayerId = Number(interaction.values[0]);
+  sess.capFaPage = 1;
+  await showCapPotentialFaCard(interaction, sess);
+}
+
+async function handleCapPotentialFaCardPage(interaction: ButtonInteraction, sess: ActionsSession) {
+  const page = Number(interaction.customId.split(":")[1]);
+  if (Number.isFinite(page)) sess.capFaPage = page;
+  await showCapPotentialFaCard(interaction, sess);
+}
+
+async function showCapPotentialFaCard(interaction: ButtonInteraction | StringSelectMenuInteraction, sess: ActionsSession) {
+  const gid = interaction.guildId!;
+  const seasonId = await getRosterSeasonId(gid);
+  const playerId = sess.capFaPlayerId!;
+  const page = sess.capFaPage ?? 1;
+  const season = await getOrCreateActiveSeason(gid);
+
+  const [roster, stats] = await Promise.all([
+    db.select().from(franchiseRostersTable)
+      .where(and(eq(franchiseRostersTable.seasonId, seasonId), eq(franchiseRostersTable.playerId, playerId)))
+      .limit(1).then(r => r[0]),
+    db.select().from(playerSeasonStatsTable)
+      .where(and(eq(playerSeasonStatsTable.seasonId, seasonId), eq(playerSeasonStatsTable.playerId, playerId)))
+      .limit(1).then(r => r[0]),
+  ]);
+
+  if (!roster) {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Player not found.")],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_cap_pfa").setLabel("← Potential FAs").setStyle(ButtonStyle.Secondary),
+      )],
+    });
+    return;
+  }
+
+  const pages = buildPlayerCardPages(roster, stats, season.seasonNumber ?? 1);
+  const safePage = Math.min(Math.max(1, page), pages.length);
+
+  await interaction.update({
+    embeds: [pages[safePage - 1]!],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ac_cap_pfa_page:${safePage - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(safePage <= 1),
+        new ButtonBuilder().setCustomId("ac_cap_pfa_page_num").setLabel(`Page ${safePage} / ${pages.length}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId(`ac_cap_pfa_page:${safePage + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(safePage >= pages.length),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_cap_pfa").setLabel("← Potential FAs").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("Cap Manager").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+
+async function handleCapManager(interaction: ButtonInteraction, _sess: ActionsSession) {
+  try {
+    const ctx = await getUserCapContext(interaction);
+    const expiring = expiringPlayers(ctx.roster);
+    const cut = topCutCandidates(ctx.roster, 5);
+    const health = summarizeCapHealth(ctx.capAvailableM, ctx.capLimitM);
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle("💰 Cap Manager")
+      .setDescription(`**${ctx.teamRow.fullName}** cap snapshot and planning tools.`)
+      .addFields(
+        { name: "Cap Limit", value: moneyM(ctx.capLimitM), inline: true },
+        { name: "Cap Used", value: moneyM(ctx.capSpentM), inline: true },
+        { name: "Open Space", value: `${moneyM(ctx.capAvailableM)}\n${health}`, inline: true },
+        { name: "Projected Cut Penalty", value: `${moneyM(ctx.deadM)}\n_if all listed flex candidates were released_`, inline: true },
+        { name: "Expiring Contracts", value: String(expiring.length), inline: true },
+        { name: "Wallet / Savings", value: `${ctx.wallet.toLocaleString()} / ${ctx.savingsBalance.toLocaleString()} coins`, inline: true },
+        { name: "Top Cap Flex Candidates", value: cut.length ? cut.map(p => `• ${p.firstName} ${p.lastName} (${p.position}) — save ${moneyM(p.savingsM)}, dead ${moneyM(p.deadM)}, **${releaseNetLabel(p)}**`).join("\n").slice(0,1000) : "_No positive-savings cuts found._", inline: false },
+      );
+
+    const notes = capHealthNotes(ctx);
+    const pfaNotes = await potentialFaAlternatives(ctx, 4);
+    if (notes.length) embed.addFields({ name: "Cap Strategy Notes", value: notes.join("\n").slice(0, 1000), inline: false });
+    if (pfaNotes.length) embed.addFields({ name: "Potential FA / Internal Replacement Angles", value: pfaNotes.join("\n").slice(0, 1200), inline: false });
+
+    await interaction.update({
+      embeds: [embed],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("ac_cap_calc").setLabel("📈 Calculate Best Cap Options").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("ac_cap_negotiate").setLabel("🤝 Review Negotiations & Plan").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId("ac_cap_pfa").setLabel("🧲 Preview Potential FAs").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+    });
+  } catch (err: any) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ ${err?.message ?? "Could not load Cap Manager."}`)], components: [backToHubRow()] });
+  }
+}
+
+async function handleCapTargetSelect(interaction: ButtonInteraction) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_cap_target")
+    .setPlaceholder("Select your desired open cap space…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("$10–20 Million").setValue("10_20"),
+      new StringSelectMenuOptionBuilder().setLabel("$20–30 Million").setValue("20_30"),
+      new StringSelectMenuOptionBuilder().setLabel("$30–40 Million").setValue("30_40"),
+      new StringSelectMenuOptionBuilder().setLabel("$40–50 Million").setValue("40_50"),
+      new StringSelectMenuOptionBuilder().setLabel("$50–60 Million").setValue("50_60"),
+      new StringSelectMenuOptionBuilder().setLabel("Best Ideal Cap Target").setValue("ideal"),
+    ]);
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle("📈 Calculate Best Cap Options").setDescription("Choose the open cap-space target you want the bot to plan toward.")],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("← Cap Manager").setStyle(ButtonStyle.Secondary)),
+    ],
+  });
+}
+
+
+function buildCapToggleMenu(candidates: CapRosterPlayer[], releasedIds: number[]): ActionRowBuilder<StringSelectMenuBuilder> | null {
+  if (!candidates.length) return null;
+  const released = new Set(releasedIds);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ac_cap_toggle")
+    .setPlaceholder("Toggle release/keep candidates…")
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(candidates.slice(0, 25).map((p) =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${released.has(Number(p.playerId)) ? "Release" : "Keep"} · ${p.firstName} ${p.lastName} (${p.position})`.slice(0, 100))
+        .setDescription(`Save ${moneyM(p.savingsM)} · Dead ${moneyM(p.deadM)} · ${releaseNetLabel(p)} · OVR ${p.overall}`.slice(0, 100))
+        .setValue(String(p.playerId)),
+    ));
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+function capProjectionText(ctx: Awaited<ReturnType<typeof getUserCapContext>>, candidates: CapRosterPlayer[], releaseIds: number[]) {
+  const released = candidates.filter((p) => releaseIds.includes(Number(p.playerId)));
+  const gained = released.reduce((s,p) => s + p.savingsM, 0);
+  const addedDead = released.reduce((s,p) => s + p.deadM, 0);
+  const netGain = gained - addedDead;
+  return {
+    gained,
+    addedDead,
+    netGain,
+    projected: ctx.capAvailableM + gained,
+    released,
+  };
+}
+
+async function renderCapScenario(interaction: ButtonInteraction | StringSelectMenuInteraction, sess: ActionsSession) {
+  const ctx = await getUserCapContext(interaction);
+  const target = targetToRange(sess.capTargetValue ?? "ideal", ctx.capAvailableM, ctx.capLimitM);
+  const candidates = topCutCandidates(ctx.roster, 12);
+  const releaseIds = sess.capReleaseIds ?? [];
+  const proj = capProjectionText(ctx, candidates, releaseIds);
+  const needed = Math.max(0, target.min - ctx.capAvailableM);
+
+  const candidateText = candidates.length
+    ? candidates.slice(0, 10).map((p) => {
+        const mark = releaseIds.includes(Number(p.playerId)) ? "🔴 RELEASE" : "🟢 KEEP";
+        return `• **${mark}** — ${p.firstName} ${p.lastName} (${p.position}) · save ${moneyM(p.savingsM)} · dead ${moneyM(p.deadM)} · **${releaseNetLabel(p)}** · OVR ${p.overall}`;
+      }).join("\n").slice(0, 1600)
+    : "_No positive-savings candidates found._";
+
+  const pfaNotes = await potentialFaAlternatives(ctx, 4);
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Gold)
+    .setTitle(`📈 Cap Scenario — ${target.label}`)
+    .setDescription(
+      `Current open space: **${moneyM(ctx.capAvailableM)}**\n` +
+      `Goal minimum: **${moneyM(target.min)}**\n` +
+      `Needed to goal: **${moneyM(needed)}**`
+    )
+    .addFields(
+      { name: "Live Projection", value:
+        `Projected open space: **${moneyM(proj.projected)}**\n` +
+        `Added release savings: **${moneyM(proj.gained)}**\n` +
+        `Added dead money: **${moneyM(proj.addedDead)}**\n` +
+        `Net release difference: **${proj.netGain >= 0 ? "+" : "-"}${moneyM(Math.abs(proj.netGain))}**\n` +
+        `Status: ${proj.projected >= target.min ? "✅ Goal reached" : "⚠️ Short of target"}`,
+        inline: false,
+      },
+      { name: "Toggle Candidates", value: candidateText, inline: false },
+      { name: "Server-Side Contract Purchases", value:
+        "Use these only through the REC store:\n" +
+        "• Salary Reduction: cuts selected player's salary in half\n" +
+        "• Bonus Reduction: cuts selected player's bonus in half\n" +
+        "• One-Year Extension: adds 1 year at the same current terms",
+        inline: false,
+      },
+    );
+
+  if (pfaNotes.length) {
+    embed.addFields({ name: "Potential FA / Internal Replacement Angles", value: pfaNotes.join("\n").slice(0, 1200), inline: false });
+  }
+
+  const rows: any[] = [];
+  const menu = buildCapToggleMenu(candidates, releaseIds);
+  if (menu) rows.push(menu);
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ac_cap_purchase:salary").setLabel("Salary Reduction Ideas").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_cap_purchase:bonus").setLabel("Bonus Reduction Ideas").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_cap_purchase:extend").setLabel("+1 Year Ideas").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("← Cap Manager").setStyle(ButtonStyle.Secondary),
+  ));
+
+  const payload = { embeds: [embed], components: rows };
+  if ((interaction as any).deferred || (interaction as any).replied) await (interaction as any).editReply(payload);
+  else await (interaction as any).update(payload);
+}
+
+async function handleCapToggle(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  const playerId = Number(interaction.values[0]);
+  const current = new Set(sess.capReleaseIds ?? []);
+  if (current.has(playerId)) current.delete(playerId);
+  else current.add(playerId);
+  sess.capReleaseIds = [...current];
+  await renderCapScenario(interaction, sess);
+}
+
+async function handleCapPurchasePreview(interaction: ButtonInteraction, _sess: ActionsSession, kind: string) {
+  const ctx = await getUserCapContext(interaction);
+  let players = [...ctx.roster];
+  if (kind === "salary") players = players.filter((p) => p.salaryM > 0).sort((a,b)=>b.salaryM-a.salaryM);
+  else if (kind === "bonus") players = players.filter((p) => p.bonusM > 0).sort((a,b)=>b.bonusM-a.bonusM);
+  else players = players.filter((p) => Number(p.contractYearsLeft ?? 0) <= 1).sort((a,b)=>b.capHitM-a.capHitM);
+
+  const label = kind === "salary" ? "Salary Reduction" : kind === "bonus" ? "Bonus Reduction" : "One-Year Extension";
+  const lines = players.slice(0, 8).map((p) => {
+    const impact = kind === "salary" ? p.salaryM / 2 : kind === "bonus" ? p.bonusM / 2 : 0;
+    return `• **${p.firstName} ${p.lastName} (${p.position})** — ${kind === "extend" ? `${p.contractYearsLeft ?? 0} yrs left, current cap ${moneyM(p.capHitM)}` : `est. cap relief ${moneyM(impact)}`}`;
+  });
+
+  await interaction.update({
+    embeds: [new EmbedBuilder().setColor(Colors.Blue).setTitle(`🪙 ${label} Candidates`).setDescription(lines.length ? lines.join("\n") : "_No clean candidates found._")],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_cap_calc").setLabel("← Scenario").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("Cap Manager").setStyle(ButtonStyle.Secondary),
+    )],
+  });
+}
+
+
+async function handleCapTargetResult(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
+  try {
+    sess.capTargetValue = interaction.values[0] ?? "ideal";
+    sess.capReleaseIds = [];
+    await renderCapScenario(interaction, sess);
+  } catch (err: any) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ ${err?.message ?? "Could not calculate cap plan."}`)], components: [backToHubRow()] });
+  }
+}
+
+async function handleCapNegotiations(interaction: ButtonInteraction, _sess: ActionsSession) {
+  try {
+    const ctx = await getUserCapContext(interaction);
+    const exp = expiringPlayers(ctx.roster);
+
+    const groups: Record<string, string[]> = {
+      "🔒 Must Keep": [],
+      "✅ Keep If Reasonable": [],
+      "⚠️ Price Check": [],
+      "🚪 Replaceable": [],
+    };
+
+    for (const p of exp) {
+      const rec = resignRecommendation(p, ctx.roster);
+      groups[rec.tier] ??= [];
+      groups[rec.tier].push(`• **${p.firstName} ${p.lastName} (${p.position})** OVR ${p.overall}, Age ${p.age}\n  ${rec.plan}\n  _${rec.why}_`);
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blue)
+      .setTitle("🤝 Negotiations & Resign Plan")
+      .setDescription(`Contract-year review for **${ctx.teamRow.fullName}**.\nOpen cap: **${moneyM(ctx.capAvailableM)}** · Expiring players: **${exp.length}**`);
+
+    for (const [tier, lines] of Object.entries(groups)) {
+      embed.addFields({ name: tier, value: lines.length ? lines.join("\n").slice(0,1000) : "_None_", inline: false });
+    }
+
+    await interaction.update({
+      embeds: [embed],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ac_cap_calc").setLabel("📈 Build Cap Plan").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_cap_manager").setLabel("← Cap Manager").setStyle(ButtonStyle.Secondary),
+      )],
+    });
+  } catch (err: any) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ ${err?.message ?? "Could not review negotiations."}`)], components: [backToHubRow()] });
+  }
+}
+
 
 async function handleMyRoster(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid = interaction.guildId!;
@@ -7460,36 +8061,6 @@ function weeksLeftInRegularSeason(currentWeek: string | null | undefined): numbe
   return 0;
 }
 
-
-async function getActiveTrainerConflicts(args: {
-  guildId: string;
-  seasonId: number;
-  ownerDiscordId: string;
-  playerName?: string | null;
-}): Promise<{ activeCount: number; activeForPlayer: number }> {
-  const rows = await db
-    .select({
-      id: positionalTrainersTable.id,
-      playerName: positionalTrainersTable.playerName,
-    })
-    .from(positionalTrainersTable)
-    .where(and(
-      eq(positionalTrainersTable.guildId, args.guildId),
-      eq(positionalTrainersTable.seasonId, args.seasonId),
-      eq(positionalTrainersTable.ownerDiscordId, args.ownerDiscordId),
-      eq(positionalTrainersTable.status, "active"),
-    ));
-
-  const target = (args.playerName ?? "").trim().toLowerCase();
-
-  return {
-    activeCount: rows.length,
-    activeForPlayer: target
-      ? rows.filter((row) => (row.playerName ?? "").trim().toLowerCase() === target).length
-      : 0,
-  };
-}
-
 async function handleHireTrainerStart(interaction: ButtonInteraction, sess: ActionsSession) {
   const gid    = interaction.guildId!;
   // Defer up-front — several DB awaits below can exceed Discord's 3s window
@@ -7500,11 +8071,6 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
   }
   const season = await getOrCreateActiveSeason(gid);
   const user   = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-  const trainerUsage = await getActiveTrainerConflicts({
-    guildId: gid,
-    seasonId: season.id,
-    ownerDiscordId: interaction.user.id,
-  });
 
   // Reset session
   sess.trainerTier = undefined;
@@ -7524,15 +8090,14 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
     return;
   }
 
-  if (trainerUsage.activeCount >= ACTIVE_TRAINER_HIRE_CAP) {
+  // Per-user trainersHired cap check
+  const stats = await getSeasonStats(interaction.user.id, season.id);
+  const hired = (stats as any).trainersHired as number ?? 0;
+  const HIRE_CAP = 2;
+  if (hired >= HIRE_CAP) {
     await interaction.editReply({
-      embeds: [new EmbedBuilder()
-        .setColor(Colors.Red)
-        .setTitle("🏋️ Hire Positional Trainer")
-        .setDescription(
-          `❌ You already have **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires.\n\n` +
-          "You can hire another trainer after one of your active trainer contracts expires.",
-        )],
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
+        .setDescription(`❌ You have already hired the maximum of **${HIRE_CAP} trainers** this season.`)],
       components: [backToHubRow()],
     });
     return;
@@ -7562,20 +8127,14 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
       .setDescription([
         "Hire a personal trainer to roll **random attribute boosts** on one of your players each week.",
         "",
-        `**🥇 Gold**   — **${(TRAINER_TIERS.gold.baseChanceBps   / 100).toFixed(0)}%** weekly hit chance · ${gold.perWeek}/wk`,
-        `**🥈 Silver** — **${(TRAINER_TIERS.silver.baseChanceBps / 100).toFixed(0)}%** weekly hit chance · ${silver.perWeek}/wk`,
-        `**🥉 Bronze** — **${(TRAINER_TIERS.bronze.baseChanceBps / 100).toFixed(0)}%** weekly hit chance · ${bronze.perWeek}/wk`,
+        `**🥇 Gold**   — base **${(TRAINER_TIERS.gold.baseChanceBps   / 100).toFixed(0)}%** hit · up to 2 boosts/hit · ${gold.perWeek}/wk`,
+        `**🥈 Silver** — base **${(TRAINER_TIERS.silver.baseChanceBps / 100).toFixed(0)}%** hit · 1 boost/hit · ${silver.perWeek}/wk`,
+        `**🥉 Bronze** — base **${(TRAINER_TIERS.bronze.baseChanceBps / 100).toFixed(0)}%** hit · 1 boost/hit · ${bronze.perWeek}/wk`,
         "",
-        "**Perks:**",
-        "• Young development bonus: players with **3 or fewer years pro** and **under 85 OVR** get **+10%** weekly success chance.",
-        "• Long contract bonus: contracts of **6+ weeks** can spike successful weeks into **3 boosts (25%)** or **2 boosts (15%)**.",
-        "• Cooldown weeks still have good odds, but are reduced for **2 weeks** after a successful roll.",
-        `• Active trainer cap: **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** currently active. You may have up to **${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires at one time.`,
-        "• One active trainer per player at a time. After a trainer expires, you may hire another for that same player.",
+        "Cooldown reduces the hit chance for **2 weeks** after each successful roll.",
+        `Per-player season caps: **Speed +3**, **Strength/COD/Accel/Agility +4** (combined with Training Packages).`,
         "",
-        `Per-player season caps still apply: **Speed +3**, **Strength/COD/Accel/Agility +4**.`,
-        "",
-        `**Your balance:** ${user.balance.toLocaleString()} coins · **Active trainers:** ${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
+        `**Your balance:** ${user.balance.toLocaleString()} coins · **Hires used:** ${hired}/${HIRE_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
       ].join("\n"))],
     components: [row, cancelRow()],
   });
@@ -7654,28 +8213,21 @@ async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteracti
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
 
-  // Trainer cap checks:
-  // - max 2 active trainers per user at one time
-  // - only 1 active trainer can be attached to a specific player at one time
-  const trainerUsage = await getActiveTrainerConflicts({
-    guildId: gid,
-    seasonId: season.id,
-    ownerDiscordId: interaction.user.id,
-    playerName: sess.trainerPlayerName,
-  });
-  if (trainerUsage.activeCount >= ACTIVE_TRAINER_HIRE_CAP) {
+  // Mutual exclusion: block if this player has any existing trainer or training package this season under this user.
+  const [trConflict] = await db.select({ status: positionalTrainersTable.status })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId,        gid),
+      eq(positionalTrainersTable.seasonId,       season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.playerName,     sess.trainerPlayerName!),
+      eq(positionalTrainersTable.status,         "active"),
+    ))
+    .limit(1);
+  if (trConflict) {
     await interaction.update({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-        `❌ You already have **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires. Wait for one to expire before hiring another.`,
-      )],
-      components: [backToHubRow()],
-    });
-    return;
-  }
-  if (trainerUsage.activeForPlayer > 0) {
-    await interaction.update({
-      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-        `❌ **${sess.trainerPlayerName}** already has an active trainer. You can hire another trainer for this player after the active contract expires.`,
+        `❌ **${sess.trainerPlayerName}** already has an active trainer (status: ${trConflict.status}). Only one active trainer can be assigned to a player at a time. You can hire another trainer for this player after the current contract expires.`,
       )],
       components: [backToHubRow()],
     });
@@ -7688,7 +8240,7 @@ async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteracti
       eq(purchasesTable.seasonId,   season.id),
       eq(purchasesTable.playerName, sess.trainerPlayerName!),
       inArray(purchasesTable.purchaseType, ["training_gold","training_silver","training_bronze"]),
-      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
+      ne(purchasesTable.status, "refunded"),
     ))
     .limit(1);
   if (pkgConflict) {
@@ -7717,7 +8269,7 @@ async function handleHireTrainerFocusPick(interaction: StringSelectMenuInteracti
       .setDescription(
         `**Tier:** ${TRAINER_TIERS[sess.trainerTier!].label}\n` +
         `**Player:** ${sess.trainerPlayerName} (${sess.trainerPlayerPos}) — OVR ${sess.trainerPlayerOvr}\n\n` +
-        `Pick the **training focus** — this biases which attributes the weekly lottery favors. You may have up to **${ACTIVE_TRAINER_HIRE_CAP}** active trainers at once, but only **one active trainer per player** at a time. Training Packages cannot be stacked with trainers on the same player.`
+        "Pick the **training focus** — biases which attributes the weekly lottery favors."
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
@@ -7771,7 +8323,7 @@ async function handleHireTrainerWeeksPick(interaction: StringSelectMenuInteracti
         `**Focus:** ${focus}\n` +
         `**Your balance:** ${user.balance.toLocaleString()} coins\n` +
         `**Regular-season weeks left:** ${weeksLeft}\n\n` +
-        `Cost is **paid upfront** for the whole contract. Contracts of **6+ weeks** unlock bonus upside on successful rolls: **25% chance for 3 boosts** and **15% chance for 2 boosts**. You may have up to **${ACTIVE_TRAINER_HIRE_CAP}** active trainers at once, with only **one active trainer per player**. Refunds are not issued at season end.`,
+        "Cost is **paid upfront** for the whole contract. Refunds are not issued at season end.",
       )],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), cancelRow()],
   });
@@ -7800,9 +8352,7 @@ async function handleHireTrainerConfirm(interaction: StringSelectMenuInteraction
         `**Per-week cost:** ${q.perWeek.toLocaleString()} coins`,
         `**Total cost:** **${q.total.toLocaleString()} coins** (paid upfront)`,
         "",
-        weeks >= 6
-          ? "Click **Confirm Hire** to deduct coins and start the contract. This contract qualifies for the **6+ week bonus**: successful rolls can spike to **3 boosts (25%)** or **2 boosts (15%)**. The first roll happens on the next **Advance Week**."
-          : "Click **Confirm Hire** to deduct coins and start the contract. The first roll happens on the next **Advance Week**.",
+        "Click **Confirm Hire** to deduct coins and start the contract. The first roll happens on the next **Advance Week**.",
       ].join("\n"))],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -7824,9 +8374,16 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
 
   // Re-validate everything (race-safe).
   const user      = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
+  const stats     = await getSeasonStats(interaction.user.id, season.id);
+  const hired     = (stats as any).trainersHired as number ?? 0;
   const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
   const infl      = await getInflationBpsForGuild(gid);
   const q         = quoteHire(sess.trainerTier, sess.trainerWeeks, infl);
+
+  if (hired >= 2) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ You have already hired the maximum of 2 trainers this season.")], components: [backToHubRow()] });
+    return;
+  }
   if (sess.trainerWeeks > weeksLeft) {
     await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Only **${weeksLeft}** regular-season weeks remain — you picked ${sess.trainerWeeks}.`)], components: [backToHubRow()] });
     return;
@@ -7836,31 +8393,19 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
     return;
   }
 
-  // Re-check trainer caps at execute time:
-  // - max 2 active trainers per user
-  // - only 1 active trainer per player at one time
-  const trainerUsage = await getActiveTrainerConflicts({
-    guildId: gid,
-    seasonId: season.id,
-    ownerDiscordId: interaction.user.id,
-    playerName: sess.trainerPlayerName,
-  });
-  if (trainerUsage.activeCount >= ACTIVE_TRAINER_HIRE_CAP) {
-    await interaction.update({
-      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-        `❌ You already have **${trainerUsage.activeCount}/${ACTIVE_TRAINER_HIRE_CAP}** active trainer hires. Wait for one to expire before hiring another.`,
-      )],
-      components: [backToHubRow()],
-    });
-    return;
-  }
-  if (trainerUsage.activeForPlayer > 0) {
-    await interaction.update({
-      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(
-        `❌ **${sess.trainerPlayerName}** already has an active trainer. You can hire another trainer for this player after the active contract expires.`,
-      )],
-      components: [backToHubRow()],
-    });
+  // Re-check mutual exclusion at execute time (both trainer + training package).
+  const [trConflict] = await db.select({ id: positionalTrainersTable.id })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId,        gid),
+      eq(positionalTrainersTable.seasonId,       season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.playerName,     sess.trainerPlayerName),
+      eq(positionalTrainersTable.status,         "active"),
+    ))
+    .limit(1);
+  if (trConflict) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already has an active trainer. You can hire another trainer for this player after the current trainer contract expires.`)], components: [backToHubRow()] });
     return;
   }
   const [pkgConflict2] = await db.select({ id: purchasesTable.id })
@@ -7870,11 +8415,11 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
       eq(purchasesTable.seasonId,   season.id),
       eq(purchasesTable.playerName, sess.trainerPlayerName),
       inArray(purchasesTable.purchaseType, ["training_gold","training_silver","training_bronze"]),
-      inArray(purchasesTable.status, ACTIVE_TRAINING_PURCHASE_STATUSES),
+      ne(purchasesTable.status, "refunded"),
     ))
     .limit(1);
   if (pkgConflict2) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already had a Training Package this season. Training Packages and Trainers are mutually exclusive per player per season.`)], components: [backToHubRow()] });
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ **${sess.trainerPlayerName}** already had a Training Package this season — trainers and packages are mutually exclusive per player per season.`)], components: [backToHubRow()] });
     return;
   }
 
@@ -7932,8 +8477,7 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
   });
 }
 
-
-async function handleMyTrainers(interaction: ButtonInteraction, sess: ActionsSession) {
+async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSession) {
   const gid    = interaction.guildId!;
   const season = await getOrCreateActiveSeason(gid);
 
@@ -7942,13 +8486,14 @@ async function handleMyTrainers(interaction: ButtonInteraction, sess: ActionsSes
       eq(positionalTrainersTable.guildId,        gid),
       eq(positionalTrainersTable.seasonId,       season.id),
       eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.status,         "active"),
     ))
     .orderBy(desc(positionalTrainersTable.hiredAt));
 
   if (trainers.length === 0) {
     await interaction.update({
       embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
-        .setDescription("You have no trainers this season. Hire one from **Hire Positional Trainer** in the Coaches Office.")],
+        .setDescription("You have no active trainers. Hire one from **Hire Positional Trainer** in the Coaches Office.")],
       components: [
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Trainer").setStyle(ButtonStyle.Primary),
@@ -7968,259 +8513,22 @@ async function handleMyTrainers(interaction: ButtonInteraction, sess: ActionsSes
     const logLines = logs.length === 0
       ? "  _No rolls yet — first tick lands on the next Advance Week._"
       : logs.map(l => `  • **W${l.weekIndex + 1}** — ${l.hit ? "✅" : "❌"} ${l.reason}`).join("\n");
-    const statusBadge = t.status === "active" ? "🟢 Active" : "⏹ Expired";
+    const statusBadge = "🟢 Active";
     sections.push(
-      `**#${t.id} · ${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}** — ${t.playerName} (${t.playerPos}) · ${statusBadge}\n` +
-      `Focus: **${t.focus}** · Weeks: **${t.weeksRemaining}/${t.weeksTotal}** · Spent: **${Number(t.totalCost ?? 0).toLocaleString()} coins**\n` +
+      `**${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}** — ${t.playerName} (${t.playerPos}) · ${statusBadge}\n` +
+      `Focus: **${t.focus}** · Weeks: **${t.weeksRemaining}/${t.weeksTotal}** · Spent: **${t.totalCost.toLocaleString()} coins**\n` +
       `Recent rolls:\n${logLines}`,
     );
   }
 
-  const active = trainers.filter(t => t.status === "active");
-  const components: any[] = [];
-  if (active.length > 0) {
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId("ac_tr_manage")
-      .setPlaceholder("Manage an active trainer…")
-      .addOptions(active.slice(0, 25).map(t =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`#${t.id} · ${t.playerName} · ${TRAINER_TIERS[t.tier as TrainerTier]?.label ?? t.tier}`)
-          .setDescription(`${t.weeksRemaining}/${t.weeksTotal} weeks left · Focus: ${t.focus}`)
-          .setValue(String(t.id)),
-      ));
-    components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
-  }
-
-  components.push(
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Another").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-    ),
-  );
-
   await interaction.update({
     embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
       .setDescription(sections.join("\n\n").slice(0, 4000))],
-    components,
-  });
-}
-
-async function loadOwnedActiveTrainer(guildId: string, ownerDiscordId: string, trainerId: number) {
-  const [trainer] = await db.select().from(positionalTrainersTable)
-    .where(and(
-      eq(positionalTrainersTable.guildId, guildId),
-      eq(positionalTrainersTable.ownerDiscordId, ownerDiscordId),
-      eq(positionalTrainersTable.id, trainerId),
-      eq(positionalTrainersTable.status, "active"),
-    ))
-    .limit(1);
-  return trainer ?? null;
-}
-
-function trainerManageRows(): ActionRowBuilder<ButtonBuilder>[] {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_tr_extend").setLabel("➕ Extend Contract").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ac_tr_focus_change").setLabel("🎯 Change Focus").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ac_tr_fire").setLabel("🛑 Fire + Refund").setStyle(ButtonStyle.Danger),
-    ),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("← Back to My Trainers").setStyle(ButtonStyle.Secondary),
-    ),
-  ];
-}
-
-async function showTrainerManage(interaction: ButtonInteraction | StringSelectMenuInteraction, sess: ActionsSession, trainerId: number) {
-  const gid = interaction.guildId!;
-  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, trainerId);
-  if (!trainer) {
-    const payload = {
-      embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")],
-      components: [backToHubRow()],
-    };
-    if (interaction.isStringSelectMenu()) await interaction.update(payload);
-    else await interaction.update(payload);
-    return;
-  }
-
-  sess.trainerManageId = trainer.id;
-  const perWeek = Math.ceil(Number(trainer.totalCost ?? 0) / Math.max(1, Number(trainer.weeksTotal ?? 1)));
-  const refund = perWeek * Math.max(0, Number(trainer.weeksRemaining ?? 0));
-
-  await interaction.update({
-    embeds: [new EmbedBuilder()
-      .setColor(0x8b5cf6)
-      .setTitle(`🏋️ Manage Trainer #${trainer.id}`)
-      .setDescription([
-        `**Player:** ${trainer.playerName} (${trainer.playerPos})`,
-        `**Tier:** ${TRAINER_TIERS[trainer.tier as TrainerTier]?.label ?? trainer.tier}`,
-        `**Focus:** ${trainer.focus}`,
-        `**Weeks Remaining:** ${trainer.weeksRemaining}/${trainer.weeksTotal}`,
-        `**Refund if fired now:** ${refund.toLocaleString()} coins`,
-        "",
-        "Cooldown is tied to this player’s trainer hit history, so firing/rehiring does **not** reset cooldown.",
-      ].join("\n"))],
-    components: trainerManageRows(),
-  });
-}
-
-async function handleTrainerManageSelect(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const trainerId = Number(interaction.values[0] ?? 0);
-  await showTrainerManage(interaction, sess, trainerId);
-}
-
-async function handleTrainerExtendStart(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid = interaction.guildId!;
-  if (!sess.trainerManageId) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No trainer selected.")], components: [backToHubRow()] });
-    return;
-  }
-  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
-  if (!trainer) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
-    return;
-  }
-  const season = await getOrCreateActiveSeason(gid);
-  const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
-  const maxAdd = Math.max(0, Math.min(weeksLeft - Number(trainer.weeksRemaining ?? 0), 18));
-  if (maxAdd <= 0) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No additional regular-season weeks are available to extend this trainer.")], components: trainerManageRows() });
-    return;
-  }
-
-  const infl = await getInflationBpsForGuild(gid);
-  const perWeek = quoteHire(trainer.tier as TrainerTier, 1, infl).perWeek;
-  const opts = Array.from({ length: Math.min(maxAdd, 25) }, (_, i) => i + 1).map(w =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(`${w} week${w !== 1 ? "s" : ""} — ${(perWeek * w).toLocaleString()} coins`)
-      .setValue(String(w)),
-  );
-
-  await interaction.update({
-    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("➕ Extend Trainer Contract")
-      .setDescription(`**${trainer.playerName}** · ${TRAINER_TIERS[trainer.tier as TrainerTier]?.label ?? trainer.tier}\nCurrent: **${trainer.weeksRemaining}/${trainer.weeksTotal}** weeks.\n\nExtending to **6+ total weeks** immediately qualifies this trainer for long-contract boost odds.`)],
-    components: [
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder().setCustomId("ac_tr_extend_weeks").setPlaceholder("Choose weeks to add…").addOptions(opts),
-      ),
-      ...trainerManageRows(),
-    ],
-  });
-}
-
-async function handleTrainerExtendExecute(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const gid = interaction.guildId!;
-  const addWeeks = Number(interaction.values[0] ?? 0);
-  if (!sess.trainerManageId || !addWeeks) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Extension session expired.")], components: [backToHubRow()] });
-    return;
-  }
-  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
-  if (!trainer) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
-    return;
-  }
-
-  const infl = await getInflationBpsForGuild(gid);
-  const q = quoteHire(trainer.tier as TrainerTier, addWeeks, infl);
-  const debited = await deductBalance(interaction.user.id, q.total, gid);
-  if (!debited) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Insufficient coins for this extension. Needed **${q.total.toLocaleString()}**.`)], components: trainerManageRows() });
-    return;
-  }
-
-  await db.update(positionalTrainersTable).set({
-    weeksRemaining: sql`${positionalTrainersTable.weeksRemaining} + ${addWeeks}`,
-    weeksTotal: sql`${positionalTrainersTable.weeksTotal} + ${addWeeks}`,
-    totalCost: sql`${positionalTrainersTable.totalCost} + ${q.total}`,
-  }).where(eq(positionalTrainersTable.id, trainer.id));
-
-  await logTransaction(interaction.user.id, -q.total, "purchase", `Trainer contract extension — ${trainer.playerName} +${addWeeks} week(s)`, gid, "trainer");
-  await showTrainerManage(interaction, sess, trainer.id);
-}
-
-async function handleTrainerFocusChangeStart(interaction: ButtonInteraction, sess: ActionsSession) {
-  if (!sess.trainerManageId) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No trainer selected.")], components: [backToHubRow()] });
-    return;
-  }
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ac_tr_focus_set")
-    .setPlaceholder("Choose the new training focus…")
-    .addOptions([
-      new StringSelectMenuOptionBuilder().setLabel("⚡ Speed").setDescription("Bias rolls toward speed/agility/movement attrs").setValue("speed"),
-      new StringSelectMenuOptionBuilder().setLabel("💪 Power").setDescription("Bias rolls toward strength/power attrs").setValue("power"),
-      new StringSelectMenuOptionBuilder().setLabel("⚖️ Balanced").setDescription("Even chance across all eligible attrs").setValue("balanced"),
-      new StringSelectMenuOptionBuilder().setLabel("🎯 Position-focused").setDescription("Heavy bias toward this position's core attrs").setValue("position"),
-    ]);
-
-  await interaction.update({
-    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("🎯 Change Trainer Focus")
-      .setDescription("Change focus before the next weekly roll. This is free and does not reset cooldown.")],
-    components: [
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
-      ...trainerManageRows(),
-    ],
-  });
-}
-
-async function handleTrainerFocusChangeExecute(interaction: StringSelectMenuInteraction, sess: ActionsSession) {
-  const gid = interaction.guildId!;
-  const focus = interaction.values[0] as TrainerFocus;
-  if (!sess.trainerManageId || !["speed", "power", "balanced", "position"].includes(focus)) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Focus change session expired.")], components: [backToHubRow()] });
-    return;
-  }
-  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
-  if (!trainer) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
-    return;
-  }
-
-  await db.update(positionalTrainersTable)
-    .set({ focus })
-    .where(eq(positionalTrainersTable.id, trainer.id));
-
-  await showTrainerManage(interaction, sess, trainer.id);
-}
-
-async function handleTrainerFireExecute(interaction: ButtonInteraction, sess: ActionsSession) {
-  const gid = interaction.guildId!;
-  if (!sess.trainerManageId) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No trainer selected.")], components: [backToHubRow()] });
-    return;
-  }
-  const trainer = await loadOwnedActiveTrainer(gid, interaction.user.id, sess.trainerManageId);
-  if (!trainer) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ Trainer not found or no longer active.")], components: [backToHubRow()] });
-    return;
-  }
-
-  const perWeek = Math.ceil(Number(trainer.totalCost ?? 0) / Math.max(1, Number(trainer.weeksTotal ?? 1)));
-  const refund = Math.max(0, Number(trainer.weeksRemaining ?? 0)) * perWeek;
-
-  await db.update(positionalTrainersTable).set({
-    status: "expired",
-    weeksRemaining: 0,
-    expiredAt: new Date(),
-  }).where(eq(positionalTrainersTable.id, trainer.id));
-
-  if (refund > 0) {
-    await addBalance(interaction.user.id, refund, gid);
-    await logTransaction(interaction.user.id, refund, "refund", `Trainer fired refund — ${trainer.playerName} (${trainer.weeksRemaining} unused week(s))`, gid, "trainer");
-  }
-
-  sess.trainerManageId = undefined;
-  await interaction.update({
-    embeds: [new EmbedBuilder().setColor(Colors.Orange)
-      .setTitle("🛑 Trainer Fired")
-      .setDescription(`**${trainer.playerName}**'s trainer contract was ended.\nRefund issued: **${refund.toLocaleString()} coins**.\n\nCooldown history for this player was preserved.`)],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("← Back to My Trainers").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Trainer").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Another").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
       ),
     ],
   });
 }
-

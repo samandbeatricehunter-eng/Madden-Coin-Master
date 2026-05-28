@@ -135,6 +135,8 @@ import {
   handleLeagueDataSelect,
 } from "../lib/handlers/league-data-handlers.js";
 import { handleMenuButton, handleMenuSelect } from "../lib/menu/menu-router.js";
+import { handleCustomPlayerWizardInteraction } from "../lib/menu/actions/store/custom-player/wizard/custom-player-wizard-router.js";
+import { routeInteraction } from "../lib/interactions/router.js";
 
 
 export const name = "interactionCreate";
@@ -176,6 +178,10 @@ export async function execute(interaction: Interaction) {
     try { await command.autocomplete(interaction); } catch (err) { console.error("Autocomplete error:", err); }
     return;
   }
+
+  // Consolidated interaction router handles domain-owned component flows first.
+  // Legacy handler branches below remain as fallback while each domain is extracted.
+  if (await routeInteraction(interaction)) return;
 
   if (interaction.isChatInputCommand()) {
     const client = interaction.client as any;
@@ -245,6 +251,14 @@ async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
 
+  // ── Custom Player wizard boundary (ccp_*).
+  // Phase 10 moves all routing for the existing builder behind a dedicated router
+  // so interactionCreate no longer owns the custom-player state machine.
+  if (interaction.customId.startsWith("ccp_")) {
+    const handled = await handleCustomPlayerWizardInteraction(interaction);
+    if (handled) return;
+  }
+
   // ── Team request commissioner buttons (treq_link|uid|team, treq_deny|uid|team) ─
   if (interaction.customId.startsWith("treq_link|")) { await handleTreqLinkButton(interaction); return; }
   if (interaction.customId.startsWith("treq_deny|")) { await handleTreqDenyButton(interaction); return; }
@@ -281,27 +295,6 @@ async function handleButton(interaction: ButtonInteraction) {
   if (interaction.customId.startsWith("hlnom_") || interaction.customId.startsWith("poty_")) {
     const { handleHighlightNominationInteraction } = await import("../lib/media/play-of-the-year.js");
     await handleHighlightNominationInteraction(interaction);
-    return;
-  }
-
-  // ── Media Room interactions ────────────────────────────────────────────────
-  if (interaction.customId.startsWith("mr_")) {
-    const { handleMediaRoomInteraction } = await import("../lib/media/media-room.js");
-    await handleMediaRoomInteraction(interaction);
-    return;
-  }
-
-  // ── League role browser interactions ───────────────────────────────────────
-  if (interaction.customId === "ac_view_roles" || interaction.customId.startsWith("roles_view:")) {
-    const { handleLeagueRolesInteraction } = await import("../lib/roles/league-roles.js");
-    await handleLeagueRolesInteraction(interaction);
-    return;
-  }
-
-  // ── Open wager board interactions ───────────────────────────────────────────
-  if (interaction.customId.startsWith("wager_")) {
-    const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
-    await handleWagerInteraction(interaction);
     return;
   }
 
@@ -360,34 +353,10 @@ async function handleButton(interaction: ButtonInteraction) {
     if (handled) return;
   }
 
-  // ── League roles action ────────────────────────────────────────────────────
-  if (action === "ac_view_roles") {
-    const { renderLeagueRoles } = await import("../lib/roles/league-roles.js");
-    await renderLeagueRoles(interaction as any, 0);
-    return;
-  }
-
-  // ── Media Room actions ─────────────────────────────────────────────────────
-  if (action === "ac_active_streams") {
-    const { renderActiveStreams } = await import("../lib/media/media-room.js");
-    await renderActiveStreams(interaction as any);
-    return;
-  }
-  if (action === "ac_goty_hub") {
-    const { renderGotyHub } = await import("../lib/media/media-room.js");
-    await renderGotyHub(interaction as any);
-    return;
-  }
+  // ── Play of the Year vote action ────────────────────────────────────────────
   if (action === "ac_poty_vote") {
     const { renderPotyVote } = await import("../lib/media/play-of-the-year.js");
     await renderPotyVote(interaction as any);
-    return;
-  }
-
-  // ── Open wager board ───────────────────────────────────────────────────────
-  if (action === "ac_wager") {
-    const { openWagerBoard } = await import("../lib/economy/wager-board.js");
-    await openWagerBoard(interaction as any);
     return;
   }
 
@@ -2151,20 +2120,6 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
-  // ── Media Room select menus ────────────────────────────────────────────────
-  if (action?.startsWith("mr_")) {
-    const { handleMediaRoomInteraction } = await import("../lib/media/media-room.js");
-    await handleMediaRoomInteraction(interaction);
-    return;
-  }
-
-  // ── Open wager board select menus ───────────────────────────────────────────
-  if (action?.startsWith("wager_")) {
-    const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
-    await handleWagerInteraction(interaction);
-    return;
-  }
-
   // ── GOTW voting select menus ─────────────────────────────────────────────────
   if (action?.startsWith("gotwv_")) {
     const { handleGotwvInteraction } = await import("../lib/handlers/gotw-voting-handlers.js");
@@ -2172,41 +2127,17 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
     return;
   }
 
+  // ── GOTY nomination/voting select menus ─────────────────────────────────────
+  if (action?.startsWith("gotyv_")) {
+    const { handleGotyvInteraction } = await import("../lib/handlers/goty-voting-handlers.js");
+    await handleGotyvInteraction(interaction);
+    return;
+  }
+
   // ── Admin troubleshoot — schedule select menu ─────────────────────────────────
   if (action === "ts_sched_sel") {
     await handleTsSchedSel(interaction);
     return;
-  }
-
-  // ── Direct routes for new menu items that must not fall through to stale router allow-lists ──
-  if (action === "menu_admin_cat" && interaction.values[0] === "gameday_review") {
-    const { renderCommissionerGamedayReview } = await import("../lib/gameday/commissioner-gameday-review.js");
-    await renderCommissionerGamedayReview(interaction as any);
-    return;
-  }
-
-  if (action === "menu_cat") {
-    const selected = interaction.values[0];
-    if (selected === "media_room.streams") {
-      const { renderActiveStreams } = await import("../lib/media/media-room.js");
-      await renderActiveStreams(interaction as any);
-      return;
-    }
-    if (selected === "media_room.goty") {
-      const { renderGotyHub } = await import("../lib/media/media-room.js");
-      await renderGotyHub(interaction as any);
-      return;
-    }
-    if (selected === "media_room.poty") {
-      const { renderPotyVote } = await import("../lib/media/play-of-the-year.js");
-      await renderPotyVote(interaction as any);
-      return;
-    }
-    if (selected === "league_ops.roles") {
-      const { renderLeagueRoles } = await import("../lib/roles/league-roles.js");
-      await renderLeagueRoles(interaction as any, 0);
-      return;
-    }
   }
 
   // ── New /menu navigation (menu_cat, menu_admin_cat) ─────────────────────────
@@ -2496,17 +2427,10 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     return;
   }
 
-  // ── Media Room modal submissions ───────────────────────────────────────────
-  if (action?.startsWith("mr_")) {
-    const { handleMediaRoomInteraction } = await import("../lib/media/media-room.js");
-    await handleMediaRoomInteraction(interaction);
-    return;
-  }
-
-  // ── Open wager board modal submissions ──────────────────────────────────────
-  if (action?.startsWith("wager_")) {
-    const { handleWagerInteraction } = await import("../lib/economy/wager-board.js");
-    await handleWagerInteraction(interaction);
+  // ── GOTY nomination modal submissions ───────────────────────────────────────
+  if (action?.startsWith("gotyv_")) {
+    const { handleGotyvInteraction } = await import("../lib/handlers/goty-voting-handlers.js");
+    await handleGotyvInteraction(interaction);
     return;
   }
 

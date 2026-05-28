@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder,
   ButtonInteraction,
+  ButtonBuilder,
   ButtonStyle,
   Colors,
   EmbedBuilder,
@@ -17,6 +18,7 @@ type ReviewKind =
   | "violation"
   | "contact_commish"
   | "advance_delay"
+  | "accepted_schedule"
   | "disputed_finals"
   | "payout_history"
   | "schedule_attempts"
@@ -29,6 +31,7 @@ function kindLabel(kind: string): string {
     violation: "Violations",
     contact_commish: "Commissioner Contact",
     advance_delay: "Advance Delay Requests",
+    accepted_schedule: "Accepted Scheduled Times",
     disputed_finals: "Disputed Finals",
     payout_history: "Stream/Highlight Auto-Payout History",
     schedule_attempts: "Schedule Attempts",
@@ -47,7 +50,10 @@ async function countPending(guildId: string, type: string): Promise<number> {
     select count(*)::int as count
     from gameday_commissioner_requests
     where guild_id = ${guildId}
-      and request_type = ${type}
+      and (
+        request_type = ${type}
+        or (${type} = 'force_win' and request_type = 'checkin_force_win')
+      )
       and status = 'pending'
   `);
   return Number(rows[0]?.count ?? 0);
@@ -85,15 +91,27 @@ async function countScheduleAttempts(guildId: string): Promise<number> {
   return Number(rows[0]?.count ?? 0);
 }
 
+async function countAcceptedScheduledGames(guildId: string): Promise<number> {
+  const rows = await rowsOf<{ count: number }>(sql`
+    select count(*)::int as count
+    from game_schedules
+    where guild_id = ${guildId}
+      and scheduled_at is not null
+      and status in ('scheduled','accepted','started')
+  `);
+  return Number(rows[0]?.count ?? 0);
+}
+
 export async function renderCommissionerGamedayReview(interaction: ButtonInteraction | StringSelectMenuInteraction) {
   const guildId = interaction.guildId!;
 
-  const [fw, fs, violations, contact, delays, disputed, payouts, schedules] = await Promise.all([
+  const [fw, fs, violations, contact, delays, acceptedSchedules, disputed, payouts, schedules] = await Promise.all([
     countPending(guildId, "force_win"),
     countPending(guildId, "fair_sim"),
     countPending(guildId, "violation"),
     countPending(guildId, "contact_commish"),
     countPending(guildId, "advance_delay"),
+    countAcceptedScheduledGames(guildId),
     countDisputed(guildId),
     countPayouts(guildId),
     countScheduleAttempts(guildId),
@@ -109,6 +127,7 @@ export async function renderCommissionerGamedayReview(interaction: ButtonInterac
         `🚫 Violations: **${violations}**`,
         `📣 Commissioner Contact: **${contact}**`,
         `⏰ Advance Delay Requests: **${delays}**`,
+        `✅ Accepted Scheduled Times: **${acceptedSchedules}**`,
         `🏁 Disputed Finals: **${disputed}**`,
         `🗓️ Schedule Attempts: **${schedules}**`,
         `💰 Recent Auto-Payouts: **${payouts}**`,
@@ -124,6 +143,7 @@ export async function renderCommissionerGamedayReview(interaction: ButtonInterac
       new StringSelectMenuOptionBuilder().setLabel(`Violations (${violations})`).setValue("violation").setEmoji("🚫"),
       new StringSelectMenuOptionBuilder().setLabel(`Commissioner Contact (${contact})`).setValue("contact_commish").setEmoji("📣"),
       new StringSelectMenuOptionBuilder().setLabel(`Advance Delay Requests (${delays})`).setValue("advance_delay").setEmoji("⏰"),
+      new StringSelectMenuOptionBuilder().setLabel(`Accepted Scheduled Times (${acceptedSchedules})`).setValue("accepted_schedule").setEmoji("✅"),
       new StringSelectMenuOptionBuilder().setLabel(`Disputed Finals (${disputed})`).setValue("disputed_finals").setEmoji("🏁"),
       new StringSelectMenuOptionBuilder().setLabel(`Schedule Attempts (${schedules})`).setValue("schedule_attempts").setEmoji("🗓️"),
       new StringSelectMenuOptionBuilder().setLabel(`Auto-Payout History (${payouts})`).setValue("payout_history").setEmoji("💰"),
@@ -135,7 +155,7 @@ export async function renderCommissionerGamedayReview(interaction: ButtonInterac
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
       new ActionRowBuilder<any>().addComponents(
-        new (await import("discord.js")).ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
       ),
     ],
   };
@@ -157,7 +177,10 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
       select count(*)::int as count
       from gameday_commissioner_requests
       where guild_id = ${guildId}
-        and request_type = ${kind}
+        and (
+          request_type = ${kind}
+          or (${kind} = 'force_win' and request_type = 'checkin_force_win')
+        )
         and status = 'pending'
     `);
     total = Number(countRows[0]?.count ?? 0);
@@ -165,9 +188,35 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
       select *
       from gameday_commissioner_requests
       where guild_id = ${guildId}
-        and request_type = ${kind}
+        and (
+          request_type = ${kind}
+          or (${kind} = 'force_win' and request_type = 'checkin_force_win')
+        )
         and status = 'pending'
       order by created_at desc
+      limit ${pageSize}
+      offset ${offset}
+    `);
+  } else if (kind === "accepted_schedule") {
+    const countRows = await rowsOf<{ count: number }>(sql`
+      select count(*)::int as count
+      from game_schedules
+      where guild_id = ${guildId}
+        and scheduled_at is not null
+        and status in ('scheduled','accepted','started')
+    `);
+    total = Number(countRows[0]?.count ?? 0);
+    rows = await rowsOf(sql`
+      select id, guild_id, season_id, week_index,
+             away_discord_id, home_discord_id,
+             away_team_name, home_team_name,
+             status, scheduled_at, scheduled_tz, channel_id,
+             updated_at
+      from game_schedules
+      where guild_id = ${guildId}
+        and scheduled_at is not null
+        and status in ('scheduled','accepted','started')
+      order by scheduled_at asc, updated_at desc
       limit ${pageSize}
       offset ${offset}
     `);
@@ -193,15 +242,13 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
       select count(*)::int as count
       from gameday_schedule_offers
       where guild_id = ${guildId}
-        and created_at >= now() - interval '7 days'
-    `);
+        `);
     total = Number(countRows[0]?.count ?? 0);
     rows = await rowsOf(sql`
       select *
       from gameday_schedule_offers
       where guild_id = ${guildId}
-        and created_at >= now() - interval '7 days'
-      order by created_at desc
+        order by created_at desc
       limit ${pageSize}
       offset ${offset}
     `);
@@ -273,14 +320,14 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
 
   const components: any[] = [];
 
-  if (rows.length && ["force_win", "fair_sim", "violation", "contact_commish", "advance_delay", "disputed_finals"].includes(kind)) {
+  if (rows.length && ["force_win", "fair_sim", "violation", "contact_commish", "advance_delay", "disputed_finals", "accepted_schedule"].includes(kind)) {
     const select = new StringSelectMenuBuilder()
       .setCustomId(`gdrev_item:${kind}`)
       .setPlaceholder("Select an item to resolve…")
       .addOptions(rows.slice(0, 25).map((r) =>
         new StringSelectMenuOptionBuilder()
-          .setLabel(`#${r.id} · ${kindLabel(kind)}`.slice(0, 100))
-          .setDescription((r.reason ?? r.dispute_reason ?? r.status ?? "Review item").slice(0, 100))
+          .setLabel((kind === "accepted_schedule" ? `Week ${Number(r.week_index ?? 0) + 1} · ${r.away_team_name ?? "Away"} @ ${r.home_team_name ?? "Home"}` : `#${r.id} · ${kindLabel(kind)}`).slice(0, 100))
+          .setDescription((kind === "accepted_schedule" ? `${r.status ?? "scheduled"} · ${r.scheduled_at ? new Date(r.scheduled_at).toLocaleString() : "No time"}` : (r.reason ?? r.dispute_reason ?? r.status ?? "Review item")).slice(0, 100))
           .setValue(String(r.id)),
       ));
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select));
@@ -299,6 +346,15 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
 }
 
 function formatReviewRow(kind: string, r: any, n: number): string {
+  if (kind === "accepted_schedule") {
+    const ts = r.scheduled_at ? Math.floor(new Date(r.scheduled_at).getTime() / 1000) : null;
+    const time = ts ? `<t:${ts}:f> (<t:${ts}:R>)` : `${r.scheduled_at ?? "Unknown"} ${r.scheduled_tz ?? ""}`;
+    const channel = r.channel_id ? `
+Channel: <#${r.channel_id}>` : "";
+    return `**${n}. Week ${Number(r.week_index ?? 0) + 1} — ${r.status}**
+<@${r.away_discord_id}> (${r.away_team_name ?? "Away"}) @ <@${r.home_discord_id}> (${r.home_team_name ?? "Home"})
+Accepted Time: **${time}**${channel}`;
+  }
   if (kind === "disputed_finals") {
     return `**${n}. Score Dispute #${r.id}**\n<@${r.away_discord_id}> @ <@${r.home_discord_id}>\nScore: **${r.away_team_name} ${r.away_score} — ${r.home_team_name} ${r.home_score}**\nReason: ${r.dispute_reason ?? "_No reason_"}`;
   }
@@ -322,6 +378,16 @@ export async function renderReviewDetail(interaction: StringSelectMenuInteractio
     rows = await rowsOf(sql`
       select *
       from gameday_score_submissions
+      where id = ${id}
+        and guild_id = ${guildId}
+      limit 1
+    `);
+  } else if (kind === "accepted_schedule") {
+    rows = await rowsOf(sql`
+      select id, guild_id, season_id, week_index,
+             away_discord_id, home_discord_id, away_team_name, home_team_name,
+             status, scheduled_at, scheduled_tz, channel_id, reschedule_pending_offer_id, updated_at
+      from game_schedules
       where id = ${id}
         and guild_id = ${guildId}
       limit 1
@@ -363,6 +429,10 @@ export async function renderReviewDetail(interaction: StringSelectMenuInteractio
     row.addComponents(
       new ButtonBuilder().setCustomId(`gdrev_resolve:${kind}:${id}:approve_score`).setLabel("✅ Uphold Score").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`gdrev_resolve:${kind}:${id}:void_score`).setLabel("❌ Void Score").setStyle(ButtonStyle.Danger),
+    );
+  } else if (kind === "accepted_schedule") {
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`gdrs_edit:${id}`).setLabel("🔁 Request Reschedule").setStyle(ButtonStyle.Primary),
     );
   } else {
     row.addComponents(
@@ -507,11 +577,13 @@ export async function handleCommissionerGamedayReviewInteraction(interaction: Bu
 
   if (interaction.isStringSelectMenu()) {
     if (interaction.customId === "gdrev_cat") {
+      await interaction.deferUpdate();
       await renderReviewCategory(interaction, interaction.values[0] as ReviewKind, 0);
       return true;
     }
     if (interaction.customId.startsWith("gdrev_item:")) {
       const kind = interaction.customId.split(":")[1] as ReviewKind;
+      await interaction.deferUpdate();
       await renderReviewDetail(interaction, kind, Number(interaction.values[0]));
       return true;
     }

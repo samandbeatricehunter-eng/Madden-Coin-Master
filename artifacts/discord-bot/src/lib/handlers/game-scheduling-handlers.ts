@@ -112,7 +112,7 @@ export function buildHeaderRow(sched: typeof gameSchedulesTable.$inferSelect): A
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     scheduleBtn,
     new ButtonBuilder().setCustomId(`gs_fairsim:${sid}`).setLabel("⚖️ Request Fair Sim").setStyle(ButtonStyle.Secondary).setDisabled(isLocked),
-    new ButtonBuilder().setCustomId(`gs_forcewin:${sid}`).setLabel("🏳️ Request Force Win").setStyle(ButtonStyle.Secondary).setDisabled(isLocked),
+    new ButtonBuilder().setCustomId(`gs_forcewin:${sid}`).setLabel("🏳️ Request FW Review").setStyle(ButtonStyle.Secondary).setDisabled(isLocked),
     new ButtonBuilder().setCustomId(`gs_mark_done:${sid}`).setLabel("✅ Mark Completed").setStyle(ButtonStyle.Success).setDisabled(isLocked),
   );
 }
@@ -698,7 +698,7 @@ async function handleForceWinRequest(interaction: ButtonInteraction, sid: number
       new ButtonBuilder().setCustomId(`gs_req_reject:${sid}|forcewin|${uid}`).setLabel("❌ Reject").setStyle(ButtonStyle.Danger),
     );
     await (interaction.channel as TextChannel).send({ content: `<@${opponentId}>`, embeds: [embed], components: [row] });
-    await interaction.reply({ content: "✅ Force Win request posted in channel.", ephemeral: true });
+    await interaction.reply({ content: "✅ Force Win review request posted in channel.", ephemeral: true });
     return true;
   } finally {
     releaseGsAction(uid, sid, "forcewin");

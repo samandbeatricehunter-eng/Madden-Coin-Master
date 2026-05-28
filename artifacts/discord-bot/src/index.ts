@@ -6,7 +6,6 @@ import { getOrCreateActiveSeason, normalizeDefensivePositions, PRIMARY_GUILD_ID 
 //    through menu hub buttons/selects routed via events/interactionCreate.ts ─
 import * as actions from "./commands/actions.js";
 import * as gameday from "./commands/gameday.js";
-import * as cpustream from "./commands/cpustream.js";
 
 // ── Events ────────────────────────────────────────────────────────────────────
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -19,7 +18,7 @@ import * as guildMemberAdd    from "./events/guildMemberAdd.js";
 import { startSavingsInterestScheduler } from "./lib/scheduling/savings-interest.js";
 import { startGameReminderScheduler }    from "./lib/scheduling/game-reminders.js";
 import { processGamedayReminderTick } from "./lib/gameday/gameday-reminders.js";
-import { processWagerSettlementTick } from "./lib/economy/wager-board.js";
+import { startGamedayReconciliationScheduler } from "./lib/gameday/reconcile-imported-results.js";
 
 // ── Global crash protection ────────────────────────────────────────────────────
 process.on("unhandledRejection", (reason) => {
@@ -56,7 +55,7 @@ if (!isProduction && !devBotEnabled) {
 
   client.commands = new Collection();
 
-  const commands = [actions, gameday, cpustream];
+  const commands = [actions, gameday];
 
   for (const command of commands) {
     client.commands.set(command.data.name, command);
@@ -85,21 +84,16 @@ if (!isProduction && !devBotEnabled) {
   client.once("ready", () => {
     startGameReminderScheduler(client);
     startSavingsInterestScheduler();
+    startGamedayReconciliationScheduler(client);
 
     setInterval(() => {
       processGamedayReminderTick(client).catch((err) =>
         console.error("[gameday-reminders] tick failed:", err),
       );
-      processWagerSettlementTick(client).catch((err) =>
-        console.error("[wager-settlement] tick failed:", err),
-      );
     }, 10 * 60 * 1000);
 
     processGamedayReminderTick(client).catch((err) =>
       console.error("[gameday-reminders] initial tick failed:", err),
-    );
-    processWagerSettlementTick(client).catch((err) =>
-      console.error("[wager-settlement] initial tick failed:", err),
     );
   });
 
