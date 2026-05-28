@@ -549,6 +549,7 @@ export type WeeklyExportData = {
   kickReturn: unknown;
   puntReturn: unknown;
   teamStats:  unknown;
+  standings:  unknown;
   schedules:  unknown;
 };
 
@@ -701,7 +702,7 @@ export async function fetchWeeklyStats(
   const session   = existingSession ?? await createBlazeSession(refreshed);
   const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
 
-  const [passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, schedules] = await Promise.all([
+  const [passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules] = await Promise.all([
     fetchExportData(refreshed, session, EXPORT_ENDPOINTS.passing!,        body),
     fetchExportData(refreshed, session, EXPORT_ENDPOINTS.rushing!,        body),
     fetchExportData(refreshed, session, EXPORT_ENDPOINTS.receiving!,      body),
@@ -711,10 +712,11 @@ export async function fetchWeeklyStats(
     fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.kickReturn!, body),
     fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.puntReturn!, body),
     fetchExportData(refreshed, session, EXPORT_ENDPOINTS.teamStats!,      body),
+    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.standings!,  { leagueId: eaLeagueId }),
     fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!,      body),
   ]);
 
-  return { passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, schedules };
+  return { passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules };
 }
 
 // ── Awards export (season-level, no weekIndex needed) ─────────────────────────

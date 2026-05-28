@@ -1419,8 +1419,13 @@ export async function runWeekImport(ctx: {
   //   capRoom      = adjusted cap / cap limit
   //   capSpent     = total spending
   //   capAvailable = cap space, including negative over-cap values
-  const standingsRes = await postToApi(`${leagueBase}/standings${guildQs}`, (stats as any).standings);
-  results.push({ name: "standings/cap", ...standingsRes });
+  const standingsPayload = (stats as any).standings;
+  if (standingsPayload == null) {
+    results.push({ name: "standings/cap", ok: true, status: 0, skipped: true });
+  } else {
+    const standingsRes = await postToApi(`${leagueBase}/standings${guildQs}`, standingsPayload);
+    results.push({ name: "standings/cap", ...standingsRes });
+  }
 
   const schedulesUrl = skipPayouts
     ? `${weekBase}/schedules${guildQs}&skipPayouts=1`
