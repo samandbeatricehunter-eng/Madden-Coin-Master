@@ -146,15 +146,22 @@ router.post("/madden/:leagueKey/:platform/:leagueId/repair-teamlinks", validateK
 });
 
 // ── /standings — league standings; log structure so we know what fields arrive ─
-router.post("/madden/:leagueKey/:platform/:leagueId/standings", validateKey, (req, res) => {
+router.post("/madden/:leagueKey/:platform/:leagueId/standings", validateKey, async (req, res) => {
+  const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
+  const guildId = String(req.query["guildId"] ?? "");
   saveMcaPayload("mca/standings.json", req.body);
   res.status(200).json({ status: "received" });
+
   const body = req.body as Record<string, unknown>;
   const keys = Object.keys(body ?? {});
   const firstKey = keys[0];
   const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
   console.log("[mca/standings] Top-level keys:", keys);
   console.log("[mca/standings] First item sample:", JSON.stringify(sample)?.slice(0, 500));
+
+  const result = await processStandingsSeedings(req.body, leagueId, guildId)
+    .catch(err => ({ ok: false, message: String(err) }));
+  console.log("[mca/standings] Result:", result.message);
 });
 
 // ── /teamstats — season-level team stats (some MCA versions send this) ────────

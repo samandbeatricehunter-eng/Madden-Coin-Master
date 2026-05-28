@@ -1414,6 +1414,14 @@ export async function runWeekImport(ctx: {
   const teamRes = await postToApi(`${weekBase}/team${guildQs}`, stats.teamStats);
   results.push({ name: "teamStats", ...teamRes });
 
+  // StandingsExport is the current source for season standings, playoff seed data,
+  // and Madden cap summary fields:
+  //   capRoom      = adjusted cap / cap limit
+  //   capSpent     = total spending
+  //   capAvailable = cap space, including negative over-cap values
+  const standingsRes = await postToApi(`${leagueBase}/standings${guildQs}`, (stats as any).standings);
+  results.push({ name: "standings/cap", ...standingsRes });
+
   const schedulesUrl = skipPayouts
     ? `${weekBase}/schedules${guildQs}&skipPayouts=1`
     : `${weekBase}/schedules${guildQs}`;
@@ -1828,6 +1836,7 @@ export async function runMcaImportDiagnostics(ctx: {
       ["kickReturn", stats.kickReturn],
       ["puntReturn", stats.puntReturn],
       ["teamStats", stats.teamStats],
+      ["standings", (stats as any).standings],
       ["schedules", stats.schedules],
       ["leagueTeams", rosterData?.leagueTeams],
       ["teamRosters", rosterData?.teamRosters],

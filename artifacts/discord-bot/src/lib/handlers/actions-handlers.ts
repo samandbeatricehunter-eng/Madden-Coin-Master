@@ -3797,18 +3797,17 @@ function buildFallbackCapEngine(args: {
   capSpentM: number;
   capAvailableM: number;
 }): CapEngineSnapshot {
-  // Madden/MCA standings cap columns are not named like the in-game labels.
-  // Correct live mapping:
-  //   team_season_stats.cap_available -> Adjusted Cap / total cap limit
+  // Madden/WAL StandingsExport cap columns map to in-game labels as:
+  //   team_season_stats.cap_room      -> Adjusted Cap / cap limit
   //   team_season_stats.cap_spent     -> Total Spending
-  //   team_season_stats.cap_room      -> Cap Space, including negative values
-  // Do not clamp negative cap_room to 0; over-cap teams need to display correctly.
-  const hasAdjustedCap = hasImportedCapValue(args.teamStats?.cap_available);
-  const hasCapSpace = hasImportedCapValue(args.teamStats?.cap_room);
+  //   team_season_stats.cap_available -> Cap Space, including negative over-cap values
+  // Do not clamp negative cap_available to 0; over-cap teams need to display correctly.
+  const hasAdjustedCap = hasImportedCapValue(args.teamStats?.cap_room);
+  const hasCapSpace = hasImportedCapValue(args.teamStats?.cap_available);
   const hasTotalSpending = hasImportedCapValue(args.teamStats?.cap_spent);
 
-  const adjustedCapM = hasAdjustedCap ? safeCapNumber(args.teamStats.cap_available) : args.capLimitM;
-  const capSpaceM = hasCapSpace ? safeCapNumber(args.teamStats.cap_room) : args.capAvailableM;
+  const adjustedCapM = hasAdjustedCap ? safeCapNumber(args.teamStats.cap_room) : args.capLimitM;
+  const capSpaceM = hasCapSpace ? safeCapNumber(args.teamStats.cap_available) : args.capAvailableM;
   const totalSpendingM = hasTotalSpending ? safeCapNumber(args.teamStats.cap_spent) : args.capSpentM;
 
   const baseCapM = adjustedCapM > 0
@@ -3986,6 +3985,8 @@ async function getUserCapContext(interaction: ButtonInteraction | StringSelectMe
       )
     order by
       case when season_id = ${seasonId} then 0 else 1 end,
+      case when coalesce(cap_room, 0) <> 0 or coalesce(cap_spent, 0) <> 0 or coalesce(cap_available, 0) <> 0 then 0 else 1 end,
+      updated_at desc,
       season_id desc
     limit 1
   `).catch(() => []);
@@ -3993,18 +3994,18 @@ async function getUserCapContext(interaction: ButtonInteraction | StringSelectMe
   const teamStats = capRows[0] ?? null;
   const rosterCapUsedM = bestRosterCapUsed(roster);
 
-  // Source of truth for Madden cap summary from team_season_stats:
-  //   cap_available = Adjusted Cap / total cap limit
+  // Source of truth for Madden cap summary from StandingsExport:
+  //   cap_room      = Adjusted Cap / cap limit
   //   cap_spent     = Total Spending
-  //   cap_room      = Cap Space, including negative over-cap values
+  //   cap_available = Cap Space, including negative over-cap values
   // Roster cap-hit sum is diagnostic only because MCA roster tables may include more than the active roster.
-  const hasAdjustedCap = hasImportedCapValue(teamStats?.cap_available);
+  const hasAdjustedCap = hasImportedCapValue(teamStats?.cap_room);
   const hasTotalSpending = hasImportedCapValue(teamStats?.cap_spent);
-  const hasCapSpace = hasImportedCapValue(teamStats?.cap_room);
+  const hasCapSpace = hasImportedCapValue(teamStats?.cap_available);
 
-  const importedAdjustedCapM = safeCapNumber(teamStats?.cap_available);
+  const importedAdjustedCapM = safeCapNumber(teamStats?.cap_room);
   const importedCapSpentM = safeCapNumber(teamStats?.cap_spent);
-  const importedCapSpaceM = safeCapNumber(teamStats?.cap_room);
+  const importedCapSpaceM = safeCapNumber(teamStats?.cap_available);
 
   const capLimitM = hasAdjustedCap && importedAdjustedCapM > 0
     ? importedAdjustedCapM
