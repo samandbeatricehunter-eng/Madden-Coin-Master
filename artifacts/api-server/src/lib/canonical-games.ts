@@ -15,15 +15,40 @@ function extractList(body: unknown, ...keys: string[]): any[] {
   return [];
 }
 
+function asInt(value: unknown, fallback: number | null = null): number | null {
+  if (value === null || value === undefined || value === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+function asText(value: unknown): string | null {
+  const v = String(value ?? "").trim();
+  return v.length ? v : null;
+}
+
 export function canonicalWeekNumber(weekType: string, weekNum: number): number {
   const wt = String(weekType || "reg").toLowerCase();
   if (wt === "reg" || wt === "regular" || wt === "season") return weekNum;
-  if (wt === "pre" || wt === "preseason") return weekNum;
   if (weekNum === 1) return 19;
   if (weekNum === 2) return 20;
   if (weekNum === 3) return 21;
   if (weekNum === 4) return 22;
   return weekNum;
+}
+
+function weekNumberForGame(game: any, routeWeekNum: number, weekType: string): number {
+  if (routeWeekNum > 0) return canonicalWeekNumber(weekType, routeWeekNum);
+
+  // Full-season schedule exports usually carry EA's zero-based weekIndex.
+  const idx = asInt(game?.weekIndex ?? game?.week_index ?? game?.weekNum ?? game?.week ?? null, null);
+  if (idx === null) return 0;
+
+  const wt = String(weekType || "season").toLowerCase();
+  if (wt === "season" || wt === "reg" || wt === "regular") {
+    // Madden regular season weekIndex is zero-based in schedule exports.
+    return idx >= 0 && idx <= 17 ? idx + 1 : idx;
+  }
+  return canonicalWeekNumber(wt, idx);
 }
 
 function stableGameKey(parts: {
@@ -37,64 +62,9 @@ function stableGameKey(parts: {
 }): string {
   const ea = String(parts.eaScheduleId ?? "").trim();
   if (ea) return `ea:${parts.recSeasonId}:${ea}`;
-
-  const away = parts.awayTeamId != null && parts.awayTeamId >= 0
-    ? `t${parts.awayTeamId}`
-    : `u${parts.awayDiscord ?? "unknownAway"}`;
-  const home = parts.homeTeamId != null && parts.homeTeamId >= 0
-    ? `t${parts.homeTeamId}`
-    : `u${parts.homeDiscord ?? "unknownHome"}`;
-
+  const away = parts.awayTeamId != null && parts.awayTeamId >= 0 ? `t${parts.awayTeamId}` : `u${parts.awayDiscord ?? "unknownAway"}`;
+  const home = parts.homeTeamId != null && parts.homeTeamId >= 0 ? `t${parts.homeTeamId}` : `u${parts.homeDiscord ?? "unknownHome"}`;
   return `wk:${parts.recSeasonId}:${parts.weekNumber}:${away}:${home}`;
-}
-
-async function ensureCanonicalView(): Promise<void> {
-  await db.execute(sql`drop view if exists v_rec_active_league_games`).catch(() => null);
-  await db.execute(sql`
-    create view v_rec_active_league_games as
-    select
-      g.id,
-      g.rec_league_id,
-      g.rec_season_id,
-      g.legacy_game_schedule_id,
-      g.legacy_franchise_schedule_id,
-      g.ea_schedule_id,
-      g.processed_game_id,
-      g.week_type,
-      g.week_number,
-      g.week_index,
-      g.away_team_id,
-      g.home_team_id,
-      g.away_team_name,
-      g.home_team_name,
-      g.away_discord_id,
-      g.home_discord_id,
-      g.away_score,
-      g.home_score,
-      g.winner_discord_id,
-      g.imported_winner_discord_id,
-      g.status,
-      g.is_h2h,
-      g.source_priority,
-      g.source,
-      g.import_generation,
-      g.confidence_score,
-      g.conflict_notes,
-      g.imported_at,
-      g.created_at,
-      g.updated_at,
-      g.stable_game_key,
-      coalesce(g.legacy_season_id, s.legacy_season_id) as legacy_season_id,
-      coalesce(g.guild_id, l.guild_id) as guild_id,
-      l.guild_id as league_guild_id,
-      s.season_number,
-      s.current_week,
-      s.stage,
-      s.is_active as season_is_active
-    from rec_league_games g
-    join rec_league_seasons s on s.id = g.rec_season_id
-    join rec_leagues l on l.id = s.rec_league_id
-    where s.is_active = true  `);
 }
 
 export async function ensureCanonicalLeagueLayerApi(): Promise<void> {
@@ -108,7 +78,6 @@ export async function ensureCanonicalLeagueLayerApi(): Promise<void> {
       updated_at timestamp with time zone not null default now()
     )
   `);
-
   await db.execute(sql`
     create table if not exists rec_league_seasons (
       id bigserial primary key,
@@ -126,17 +95,13 @@ export async function ensureCanonicalLeagueLayerApi(): Promise<void> {
       unique(rec_league_id, season_number)
     )
   `);
-
   await db.execute(sql`
     create table if not exists rec_league_games (
       id bigserial primary key,
       rec_league_id bigint not null references rec_leagues(id) on delete cascade,
       rec_season_id bigint not null references rec_league_seasons(id) on delete cascade,
-      guild_id text,
-      legacy_season_id bigint,
       legacy_game_schedule_id bigint,
       legacy_franchise_schedule_id bigint,
-      stable_game_key text,
       ea_schedule_id text,
       processed_game_id text,
       week_type text not null default 'regular',
@@ -161,58 +126,36 @@ export async function ensureCanonicalLeagueLayerApi(): Promise<void> {
       conflict_notes text,
       imported_at timestamp with time zone,
       created_at timestamp with time zone not null default now(),
-      updated_at timestamp with time zone not null default now()
+      updated_at timestamp with time zone not null default now(),
+      stable_game_key text,
+      legacy_season_id bigint,
+      guild_id text
     )
   `);
-
-  await db.execute(sql`alter table rec_league_games add column if not exists guild_id text`).catch(() => null);
-  await db.execute(sql`alter table rec_league_games add column if not exists legacy_season_id bigint`).catch(() => null);
-  await db.execute(sql`alter table rec_league_games add column if not exists stable_game_key text`).catch(() => null);
-
+  await db.execute(sql`alter table rec_league_games add column if not exists stable_game_key text`);
+  await db.execute(sql`alter table rec_league_games add column if not exists legacy_season_id bigint`);
+  await db.execute(sql`alter table rec_league_games add column if not exists guild_id text`);
   await db.execute(sql`
-    update rec_league_games g
-    set
-      guild_id = coalesce(g.guild_id, l.guild_id),
-      legacy_season_id = coalesce(g.legacy_season_id, s.legacy_season_id),
-      rec_league_id = coalesce(g.rec_league_id, s.rec_league_id),
-      updated_at = now()
-    from rec_league_seasons s
-    join rec_leagues l on l.id = s.rec_league_id
-    where g.rec_season_id = s.id
-      and (g.guild_id is null or g.legacy_season_id is null or g.rec_league_id is null)
-  `).catch(() => null);
-
-  await db.execute(sql`
-    create unique index if not exists rec_league_games_stable_key_idx
+    create unique index if not exists rec_league_games_rec_season_stable_key_idx
     on rec_league_games(rec_season_id, stable_game_key)
     where stable_game_key is not null
-  `).catch(() => null);
-
-  await db.execute(sql`create index if not exists rec_league_games_guild_season_week_idx on rec_league_games(guild_id, rec_season_id, week_number)`).catch(() => null);
-  await db.execute(sql`create index if not exists rec_league_games_legacy_season_week_idx on rec_league_games(legacy_season_id, week_number)`).catch(() => null);
-
-  await ensureCanonicalView().catch(() => null);
+  `);
 }
 
-export async function getCanonicalSeason(
-  eaLeagueId: number,
-  guildId?: string,
-): Promise<{ recLeagueId: number; recSeasonId: number; legacySeasonId: number; guildId: string }> {
+export async function getCanonicalSeason(eaLeagueId: number, guildId?: string): Promise<{ recLeagueId: number; recSeasonId: number; legacySeasonId: number; guildId: string }> {
   await ensureCanonicalLeagueLayerApi();
 
   let resolvedGuildId = String(guildId ?? "").trim();
   if (!resolvedGuildId) {
     const [conn] = await rowsOf<any>(sql`select guild_id from ea_connections where ea_league_id = ${eaLeagueId} limit 1`);
-    resolvedGuildId = String(conn?.guild_id ?? "").trim();
+    resolvedGuildId = String(conn?.guild_id ?? "");
   }
   if (!resolvedGuildId) throw new Error(`Cannot resolve guild for EA league ${eaLeagueId}`);
 
   await db.execute(sql`
     insert into rec_leagues (guild_id, ea_league_id, display_name)
     values (${resolvedGuildId}, ${eaLeagueId}, 'REC League')
-    on conflict (guild_id) do update set
-      ea_league_id = coalesce(excluded.ea_league_id, rec_leagues.ea_league_id),
-      updated_at = now()
+    on conflict (guild_id) do update set ea_league_id = coalesce(excluded.ea_league_id, rec_leagues.ea_league_id), updated_at = now()
   `);
 
   const [season] = await rowsOf<any>(sql`
@@ -235,8 +178,6 @@ export async function getCanonicalSeason(
         else 'regular'
       end)
     on conflict (legacy_season_id) do update set
-      rec_league_id = excluded.rec_league_id,
-      season_number = excluded.season_number,
       current_week = excluded.current_week,
       is_active = true,
       completed = false,
@@ -245,33 +186,128 @@ export async function getCanonicalSeason(
   `);
 
   const [recSeason] = await rowsOf<any>(sql`select id from rec_league_seasons where legacy_season_id = ${season.id} limit 1`);
-
-  return {
-    recLeagueId: Number(league.id),
-    recSeasonId: Number(recSeason.id),
-    legacySeasonId: Number(season.id),
-    guildId: resolvedGuildId,
-  };
+  return { recLeagueId: Number(league.id), recSeasonId: Number(recSeason.id), legacySeasonId: Number(season.id), guildId: resolvedGuildId };
 }
 
-export async function repairCanonicalOwnershipForGuild(guildId: string): Promise<{ updated: number }> {
-  await ensureCanonicalLeagueLayerApi();
+async function loadTeamMap(legacySeasonId: number): Promise<Map<number, any>> {
+  const teams = await rowsOf<any>(sql`
+    select team_id, full_name, nick_name, discord_id
+    from franchise_mca_teams
+    where season_id = ${legacySeasonId}
+  `);
+  return new Map(teams.map(t => [Number(t.team_id), t]));
+}
 
-  const result = await db.execute(sql`
-    update rec_league_games g
+
+type CanonicalGameInput = {
+  recLeagueId: number;
+  recSeasonId: number;
+  legacySeasonId: number;
+  guildId: string;
+  stableGameKey: string;
+  weekType: string;
+  weekNumber: number;
+  weekIndex: number | null;
+  awayTeamId: number | null;
+  homeTeamId: number | null;
+  awayTeamName: string;
+  homeTeamName: string;
+  awayDiscordId: string | null;
+  homeDiscordId: string | null;
+  awayScore: number | null;
+  homeScore: number | null;
+  winnerDiscordId: string | null;
+  importedWinnerDiscordId: string | null;
+  status: string;
+  isH2h: boolean;
+  sourcePriority: number;
+  source: string;
+  confidenceScore: number;
+  importedAtSql?: any;
+  legacyGameScheduleId?: number | null;
+  legacyFranchiseScheduleId?: number | null;
+  eaScheduleId?: string | null;
+  processedGameId?: string | null;
+};
+
+async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise<boolean> {
+  const updated = await rowsOf<{ id: number }>(sql`
+    update rec_league_games
     set
-      guild_id = l.guild_id,
-      legacy_season_id = s.legacy_season_id,
-      rec_league_id = s.rec_league_id,
+      guild_id = coalesce(rec_league_games.guild_id, ${input.guildId}),
+      legacy_season_id = coalesce(rec_league_games.legacy_season_id, ${input.legacySeasonId}),
+      rec_league_id = coalesce(rec_league_games.rec_league_id, ${input.recLeagueId}),
+      stable_game_key = coalesce(rec_league_games.stable_game_key, ${input.stableGameKey}),
+      legacy_game_schedule_id = coalesce(rec_league_games.legacy_game_schedule_id, ${input.legacyGameScheduleId ?? null}),
+      legacy_franchise_schedule_id = coalesce(rec_league_games.legacy_franchise_schedule_id, ${input.legacyFranchiseScheduleId ?? null}),
+      ea_schedule_id = coalesce(rec_league_games.ea_schedule_id, ${input.eaScheduleId ?? null}),
+      processed_game_id = coalesce(rec_league_games.processed_game_id, ${input.processedGameId ?? null}),
+      week_type = coalesce(rec_league_games.week_type, ${input.weekType}),
+      week_index = coalesce(rec_league_games.week_index, ${input.weekIndex}),
+      away_team_id = coalesce(rec_league_games.away_team_id, ${input.awayTeamId}),
+      home_team_id = coalesce(rec_league_games.home_team_id, ${input.homeTeamId}),
+      away_team_name = coalesce(nullif(rec_league_games.away_team_name, ''), ${input.awayTeamName}),
+      home_team_name = coalesce(nullif(rec_league_games.home_team_name, ''), ${input.homeTeamName}),
+      away_discord_id = coalesce(rec_league_games.away_discord_id, ${input.awayDiscordId}),
+      home_discord_id = coalesce(rec_league_games.home_discord_id, ${input.homeDiscordId}),
+      away_score = coalesce(${input.awayScore}, rec_league_games.away_score),
+      home_score = coalesce(${input.homeScore}, rec_league_games.home_score),
+      winner_discord_id = coalesce(${input.winnerDiscordId}, rec_league_games.winner_discord_id),
+      imported_winner_discord_id = coalesce(${input.importedWinnerDiscordId}, rec_league_games.imported_winner_discord_id),
+      status = case when ${input.status} = 'finished' then 'finished' else coalesce(rec_league_games.status, ${input.status}) end,
+      is_h2h = coalesce(rec_league_games.is_h2h, false) or ${input.isH2h},
+      source_priority = greatest(coalesce(rec_league_games.source_priority, 0), ${input.sourcePriority}),
+      confidence_score = greatest(coalesce(rec_league_games.confidence_score, 0), ${input.confidenceScore}),
+      imported_at = coalesce(rec_league_games.imported_at, now()),
       updated_at = now()
-    from rec_league_seasons s
-    join rec_leagues l on l.id = s.rec_league_id
-    where g.rec_season_id = s.id
-      and l.guild_id = ${guildId}
-      and (g.guild_id is distinct from l.guild_id or g.legacy_season_id is distinct from s.legacy_season_id or g.rec_league_id is distinct from s.rec_league_id)
+    where rec_league_id = ${input.recLeagueId}
+      and rec_season_id = ${input.recSeasonId}
+      and week_number = ${input.weekNumber}
+      and coalesce(least(away_discord_id, home_discord_id), away_team_name) =
+          coalesce(least(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.awayTeamName})
+      and coalesce(greatest(away_discord_id, home_discord_id), home_team_name) =
+          coalesce(greatest(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.homeTeamName})
+    returning id
   `);
 
-  return { updated: Number((result as any).rowCount ?? 0) };
+  if (updated.length > 0) return false;
+
+  const inserted = await rowsOf<{ id: number }>(sql`
+    insert into rec_league_games (
+      rec_league_id, rec_season_id, legacy_season_id, guild_id,
+      legacy_game_schedule_id, legacy_franchise_schedule_id, ea_schedule_id, processed_game_id,
+      stable_game_key, week_type, week_number, week_index,
+      away_team_id, home_team_id, away_team_name, home_team_name,
+      away_discord_id, home_discord_id, away_score, home_score,
+      winner_discord_id, imported_winner_discord_id, status, is_h2h,
+      source_priority, source, confidence_score, imported_at, updated_at
+    )
+    select
+      ${input.recLeagueId}, ${input.recSeasonId}, ${input.legacySeasonId}, ${input.guildId},
+      ${input.legacyGameScheduleId ?? null}, ${input.legacyFranchiseScheduleId ?? null}, ${input.eaScheduleId ?? null}, ${input.processedGameId ?? null},
+      ${input.stableGameKey}, ${input.weekType}, ${input.weekNumber}, ${input.weekIndex},
+      ${input.awayTeamId}, ${input.homeTeamId}, ${input.awayTeamName}, ${input.homeTeamName},
+      ${input.awayDiscordId}, ${input.homeDiscordId}, ${input.awayScore}, ${input.homeScore},
+      ${input.winnerDiscordId}, ${input.importedWinnerDiscordId}, ${input.status}, ${input.isH2h},
+      ${input.sourcePriority}, ${input.source}, ${input.confidenceScore}, now(), now()
+    where not exists (
+      select 1 from rec_league_games g
+      where g.rec_league_id = ${input.recLeagueId}
+        and g.rec_season_id = ${input.recSeasonId}
+        and g.week_number = ${input.weekNumber}
+        and coalesce(least(g.away_discord_id, g.home_discord_id), g.away_team_name) =
+            coalesce(least(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.awayTeamName})
+        and coalesce(greatest(g.away_discord_id, g.home_discord_id), g.home_team_name) =
+            coalesce(greatest(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.homeTeamName})
+    )
+    and not exists (
+      select 1 from rec_league_games g
+      where g.stable_game_key = ${input.stableGameKey}
+    )
+    returning id
+  `);
+
+  return inserted.length > 0;
 }
 
 export async function syncCanonicalGamesFromSchedulePayload(
@@ -283,90 +319,179 @@ export async function syncCanonicalGamesFromSchedulePayload(
 ): Promise<{ upserted: number; h2h: number }> {
   const ctx = await getCanonicalSeason(eaLeagueId, guildId);
   const games = extractList(body, "scheduleInfoList", "gameScheduleInfoList", "schedules");
-  const weekNumber = canonicalWeekNumber(weekType, weekNum);
-
-  const teams = await rowsOf<any>(sql`
-    select team_id, full_name, nick_name, discord_id
-    from franchise_mca_teams
-    where season_id = ${ctx.legacySeasonId}
-  `);
-  const teamMap = new Map(teams.map(t => [Number(t.team_id), t]));
+  const teamMap = await loadTeamMap(ctx.legacySeasonId);
 
   let upserted = 0;
   let h2h = 0;
 
   for (const g of games) {
-    const homeTeamId = Number(g?.homeTeamId ?? -1);
-    const awayTeamId = Number(g?.awayTeamId ?? -1);
+    const homeTeamId = asInt(g?.homeTeamId, -1)!;
+    const awayTeamId = asInt(g?.awayTeamId, -1)!;
     if (homeTeamId < 0 || awayTeamId < 0) continue;
+
+    const gameWeekNumber = weekNumberForGame(g, weekNum, weekType);
+    if (gameWeekNumber <= 0) continue;
 
     const home = teamMap.get(homeTeamId);
     const away = teamMap.get(awayTeamId);
-    const homeDiscord = String(home?.discord_id ?? "").trim() || null;
-    const awayDiscord = String(away?.discord_id ?? "").trim() || null;
+    const homeDiscord = asText(home?.discord_id);
+    const awayDiscord = asText(away?.discord_id);
     const isH2H = Boolean(homeDiscord && awayDiscord);
     if (isH2H) h2h++;
 
-    const homeScore = g?.homeScore != null ? Number(g.homeScore) : null;
-    const awayScore = g?.awayScore != null ? Number(g.awayScore) : null;
-    const statusNum = Number(g?.status ?? g?.scheduleStatus ?? 0);
-    const finished = statusNum >= 2 || (homeScore != null && awayScore != null && (homeScore > 0 || awayScore > 0));
+    const homeScore = asInt(g?.homeScore, null);
+    const awayScore = asInt(g?.awayScore, null);
+    const statusNum = asInt(g?.status ?? g?.scheduleStatus, 0)!;
+    const finished = statusNum >= 2 || (homeScore !== null && awayScore !== null && (homeScore > 0 || awayScore > 0));
     const winner =
-      finished && awayScore != null && homeScore != null && awayScore > homeScore ? awayDiscord :
-      finished && awayScore != null && homeScore != null && homeScore > awayScore ? homeDiscord :
+      finished && awayScore !== null && homeScore !== null && awayScore > homeScore ? awayDiscord :
+      finished && awayScore !== null && homeScore !== null && homeScore > awayScore ? homeDiscord :
       null;
 
-    const key = stableGameKey({
+    const eaScheduleId = asText(g?.scheduleId ?? g?.gameId ?? g?.id);
+    const key = stableGameKey({ recSeasonId: ctx.recSeasonId, weekNumber: gameWeekNumber, awayTeamId, homeTeamId, awayDiscord, homeDiscord, eaScheduleId });
+
+    await upsertCanonicalGameByIdentity({
+      recLeagueId: ctx.recLeagueId,
       recSeasonId: ctx.recSeasonId,
-      weekNumber,
+      legacySeasonId: ctx.legacySeasonId,
+      guildId: ctx.guildId,
+      stableGameKey: key,
+      eaScheduleId,
+      weekType,
+      weekNumber: gameWeekNumber,
+      weekIndex: gameWeekNumber,
       awayTeamId,
       homeTeamId,
-      awayDiscord,
-      homeDiscord,
-      eaScheduleId: String(g?.scheduleId ?? "").trim() || null,
+      awayTeamName: String(away?.full_name ?? away?.nick_name ?? g?.awayTeamName ?? `Team${awayTeamId}`),
+      homeTeamName: String(home?.full_name ?? home?.nick_name ?? g?.homeTeamName ?? `Team${homeTeamId}`),
+      awayDiscordId: awayDiscord,
+      homeDiscordId: homeDiscord,
+      awayScore,
+      homeScore,
+      winnerDiscordId: winner,
+      importedWinnerDiscordId: winner,
+      status: finished ? "finished" : "scheduled",
+      isH2h: isH2H,
+      sourcePriority: 100,
+      source: "mca_schedule_import",
+      confidenceScore: finished ? 100 : 80,
     });
-
-    await db.execute(sql`
-      insert into rec_league_games (
-        rec_league_id, rec_season_id, guild_id, legacy_season_id,
-        stable_game_key, ea_schedule_id, week_type, week_number, week_index,
-        away_team_id, home_team_id, away_team_name, home_team_name,
-        away_discord_id, home_discord_id, away_score, home_score,
-        winner_discord_id, imported_winner_discord_id, status, is_h2h,
-        source_priority, source, confidence_score, imported_at, updated_at
-      )
-      values (
-        ${ctx.recLeagueId}, ${ctx.recSeasonId}, ${ctx.guildId}, ${ctx.legacySeasonId},
-        ${key}, ${String(g?.scheduleId ?? "").trim() || null}, ${weekType}, ${weekNumber}, ${weekNumber},
-        ${awayTeamId}, ${homeTeamId}, ${String(away?.full_name ?? away?.nick_name ?? g?.awayTeamName ?? `Team${awayTeamId}`)}, ${String(home?.full_name ?? home?.nick_name ?? g?.homeTeamName ?? `Team${homeTeamId}`)},
-        ${awayDiscord}, ${homeDiscord}, ${awayScore}, ${homeScore},
-        ${winner}, ${winner}, ${finished ? "finished" : "scheduled"}, ${isH2H},
-        100, 'mca_schedule_import', ${finished ? 100 : 80}, now(), now()
-      )
-      on conflict (rec_season_id, stable_game_key) do update set
-        guild_id = coalesce(rec_league_games.guild_id, excluded.guild_id),
-        legacy_season_id = coalesce(rec_league_games.legacy_season_id, excluded.legacy_season_id),
-        rec_league_id = excluded.rec_league_id,
-        ea_schedule_id = coalesce(excluded.ea_schedule_id, rec_league_games.ea_schedule_id),
-        away_team_id = coalesce(excluded.away_team_id, rec_league_games.away_team_id),
-        home_team_id = coalesce(excluded.home_team_id, rec_league_games.home_team_id),
-        away_team_name = excluded.away_team_name,
-        home_team_name = excluded.home_team_name,
-        away_discord_id = coalesce(excluded.away_discord_id, rec_league_games.away_discord_id),
-        home_discord_id = coalesce(excluded.home_discord_id, rec_league_games.home_discord_id),
-        away_score = coalesce(excluded.away_score, rec_league_games.away_score),
-        home_score = coalesce(excluded.home_score, rec_league_games.home_score),
-        winner_discord_id = coalesce(excluded.winner_discord_id, rec_league_games.winner_discord_id),
-        imported_winner_discord_id = coalesce(excluded.imported_winner_discord_id, rec_league_games.imported_winner_discord_id),
-        status = case when excluded.status = 'finished' then 'finished' else rec_league_games.status end,
-        is_h2h = excluded.is_h2h,
-        source_priority = greatest(rec_league_games.source_priority, excluded.source_priority),
-        confidence_score = greatest(rec_league_games.confidence_score, excluded.confidence_score),
-        imported_at = coalesce(excluded.imported_at, rec_league_games.imported_at),
-        updated_at = now()
-    `);
     upserted++;
   }
 
   return { upserted, h2h };
+}
+
+export async function backfillCanonicalGamesFromLegacy(eaLeagueId: number, guildId?: string): Promise<{ gameSchedules: number; franchiseSchedules: number }> {
+  const ctx = await getCanonicalSeason(eaLeagueId, guildId);
+
+  const fromGameSchedules = await rowsOf<any>(sql`
+    select id, week_index, away_discord_id, home_discord_id, away_team_name, home_team_name, away_score, home_score,
+           winner_discord_id, imported_winner_discord_id, status
+    from game_schedules
+    where guild_id = ${ctx.guildId} and season_id = ${ctx.legacySeasonId}
+  `).catch(() => [] as any[]);
+
+  let gameSchedules = 0;
+  for (const g of fromGameSchedules) {
+    const weekNumber = asInt(g.week_index, 0)!;
+    if (weekNumber <= 0) continue;
+    const awayDiscord = asText(g.away_discord_id);
+    const homeDiscord = asText(g.home_discord_id);
+    const awayScore = asInt(g.away_score, null);
+    const homeScore = asInt(g.home_score, null);
+    const winner = asText(g.imported_winner_discord_id ?? g.winner_discord_id) ?? (
+      awayScore !== null && homeScore !== null && awayScore > homeScore ? awayDiscord :
+      awayScore !== null && homeScore !== null && homeScore > awayScore ? homeDiscord : null
+    );
+    const awayName = String(g.away_team_name ?? "Away");
+    const homeName = String(g.home_team_name ?? "Home");
+    const key = `legacy-gs:${ctx.recSeasonId}:${g.id}`;
+
+    await upsertCanonicalGameByIdentity({
+      recLeagueId: ctx.recLeagueId,
+      recSeasonId: ctx.recSeasonId,
+      legacySeasonId: ctx.legacySeasonId,
+      guildId: ctx.guildId,
+      legacyGameScheduleId: Number(g.id),
+      stableGameKey: key,
+      weekType: "regular",
+      weekNumber,
+      weekIndex: weekNumber,
+      awayTeamId: null,
+      homeTeamId: null,
+      awayTeamName: awayName,
+      homeTeamName: homeName,
+      awayDiscordId: awayDiscord,
+      homeDiscordId: homeDiscord,
+      awayScore,
+      homeScore,
+      winnerDiscordId: winner,
+      importedWinnerDiscordId: winner,
+      status: String(g.status ?? "").toLowerCase() === "finished" || winner ? "finished" : "scheduled",
+      isH2h: Boolean(awayDiscord && homeDiscord),
+      sourcePriority: 70,
+      source: "legacy_game_schedules_backfill",
+      confidenceScore: winner ? 90 : 60,
+    });
+    gameSchedules++;
+  }
+
+  const fromFranchise = await rowsOf<any>(sql`
+    select id, week_index, away_team_id, home_team_id, away_team_name, home_team_name, away_score, home_score, status, processed_game_id
+    from franchise_schedule
+    where season_id = ${ctx.legacySeasonId}
+  `).catch(() => [] as any[]);
+
+  const teamMap = await loadTeamMap(ctx.legacySeasonId);
+  let franchiseSchedules = 0;
+  for (const g of fromFranchise) {
+    const rawWeek = asInt(g.week_index, 0)!;
+    const weekNumber = rawWeek >= 0 && rawWeek <= 17 ? rawWeek + 1 : rawWeek;
+    if (weekNumber <= 0) continue;
+    const awayTeamId = asInt(g.away_team_id, null);
+    const homeTeamId = asInt(g.home_team_id, null);
+    const away = awayTeamId == null ? null : teamMap.get(awayTeamId);
+    const home = homeTeamId == null ? null : teamMap.get(homeTeamId);
+    const awayDiscord = asText(away?.discord_id);
+    const homeDiscord = asText(home?.discord_id);
+    const awayScore = asInt(g.away_score, null);
+    const homeScore = asInt(g.home_score, null);
+    const winner =
+      awayScore !== null && homeScore !== null && awayScore > homeScore ? awayDiscord :
+      awayScore !== null && homeScore !== null && homeScore > awayScore ? homeDiscord : null;
+    const key = stableGameKey({ recSeasonId: ctx.recSeasonId, weekNumber, awayTeamId, homeTeamId, awayDiscord, homeDiscord, eaScheduleId: asText(g.processed_game_id) });
+
+    await upsertCanonicalGameByIdentity({
+      recLeagueId: ctx.recLeagueId,
+      recSeasonId: ctx.recSeasonId,
+      legacySeasonId: ctx.legacySeasonId,
+      guildId: ctx.guildId,
+      legacyFranchiseScheduleId: Number(g.id),
+      processedGameId: asText(g.processed_game_id),
+      stableGameKey: key,
+      weekType: "regular",
+      weekNumber,
+      weekIndex: weekNumber,
+      awayTeamId,
+      homeTeamId,
+      awayTeamName: String(g.away_team_name ?? away?.full_name ?? "Away"),
+      homeTeamName: String(g.home_team_name ?? home?.full_name ?? "Home"),
+      awayDiscordId: awayDiscord,
+      homeDiscordId: homeDiscord,
+      awayScore,
+      homeScore,
+      winnerDiscordId: winner,
+      importedWinnerDiscordId: winner,
+      status: winner ? "finished" : "scheduled",
+      isH2h: Boolean(awayDiscord && homeDiscord),
+      sourcePriority: 60,
+      source: "legacy_franchise_schedule_backfill",
+      confidenceScore: winner ? 85 : 55,
+    });
+    franchiseSchedules++;
+  }
+
+  return { gameSchedules, franchiseSchedules };
 }
