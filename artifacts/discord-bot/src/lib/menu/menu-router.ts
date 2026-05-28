@@ -66,47 +66,6 @@ async function loadContext(interaction: ButtonInteraction | StringSelectMenuInte
   };
 }
 
-
-async function dispatchMenuLeafAction(
-  interaction: StringSelectMenuInteraction,
-  action: string,
-): Promise<boolean> {
-  // Media Room actions are domain-owned and must bypass the legacy ac_* handler.
-  // The old direct call to handleActionsInteraction swallowed these IDs because GOTW
-  // still existed in the legacy file while POTY/GOTY/Active Streams had moved out.
-  if (action === "ac_active_streams") {
-    const { renderActiveStreams } = await import("../media/media-room.js");
-    await renderActiveStreams(interaction as any);
-    return true;
-  }
-
-  if (action === "ac_goty_hub" || action === "ac_goty_vote") {
-    const { renderGotyHub } = await import("../media/media-room.js");
-    await renderGotyHub(interaction as any);
-    return true;
-  }
-
-  if (action === "ac_poty_vote") {
-    const { renderPotyVote } = await import("../media/play-of-the-year.js");
-    await renderPotyVote(interaction as any);
-    return true;
-  }
-
-  if (action === "ac_gotw_vote") {
-    const { handleActionsInteraction } = await import("../handlers/actions-handlers.js");
-    await handleActionsInteraction(interaction as any, "ac_gotw_vote");
-    return true;
-  }
-
-  if (action === "ac_view_roles") {
-    const { renderLeagueRoles } = await import("../roles/league-roles.js");
-    await renderLeagueRoles(interaction as any, 0);
-    return true;
-  }
-
-  return handleActionsInteraction(interaction, action);
-}
-
 /** Returns true if the interaction was handled. */
 export async function handleMenuSelect(interaction: StringSelectMenuInteraction): Promise<boolean> {
   const id = interaction.customId;
@@ -120,7 +79,27 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
   if (id === "menu_cat") {
     const node = findNode(value);
     if (node?.kind === "action") {
-      const handled = await dispatchMenuLeafAction(interaction, node.action);
+      const action = node.action;
+
+      if (action === "ac_active_streams") {
+        const { renderActiveStreams } = await import("../media/media-room.js");
+        await renderActiveStreams(interaction as any);
+        return true;
+      }
+
+      if (action === "ac_goty_hub" || action === "ac_goty_vote") {
+        const { renderGotyHub } = await import("../media/media-room.js");
+        await renderGotyHub(interaction as any);
+        return true;
+      }
+
+      if (action === "ac_poty_vote") {
+        const { renderPotyVote } = await import("../media/play-of-the-year.js");
+        await renderPotyVote(interaction as any);
+        return true;
+      }
+
+      const handled = await handleActionsInteraction(interaction, action);
       if (!handled) {
         await interaction.reply({ content: "❌ That action couldn't be opened. Try again.", ephemeral: true });
       }
@@ -261,7 +240,33 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
   }
 
   if (node.kind === "action") {
-    const handled = await dispatchMenuLeafAction(interaction, node.action);
+    const action = node.action;
+
+    if (action === "ac_active_streams") {
+      const { renderActiveStreams } = await import("../media/media-room.js");
+      await renderActiveStreams(interaction as any);
+      return true;
+    }
+
+    if (action === "ac_goty_hub") {
+      const { renderGotyHub } = await import("../media/media-room.js");
+      await renderGotyHub(interaction as any);
+      return true;
+    }
+
+    if (action === "ac_poty_vote") {
+      const { renderPotyVote } = await import("../media/play-of-the-year.js");
+      await renderPotyVote(interaction as any);
+      return true;
+    }
+
+    if (action === "ac_view_roles") {
+      const { renderLeagueRoles } = await import("../roles/league-roles.js");
+      await renderLeagueRoles(interaction as any, 0);
+      return true;
+    }
+
+    const handled = await handleActionsInteraction(interaction, action);
     if (handled) return true;
   }
 

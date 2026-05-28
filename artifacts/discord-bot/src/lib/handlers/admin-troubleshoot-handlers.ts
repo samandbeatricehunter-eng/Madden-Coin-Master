@@ -1123,7 +1123,7 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
         .setColor(Colors.Blurple)
         .setTitle("🧪 Running Isolated MCA Import Diagnostics…")
         .setDescription(
-          "Fetching the current EA/MCA payload in **dry-run diagnostics mode**.\n\n" +
+          "Fetching the current EA/MCA payload and probing likely Blaze/WAL endpoints in **dry-run diagnostics mode**.\n\n" +
           "This does **not** write league stats, schedules, rosters, records, cap data, or payouts. " +
           "The previous diagnostic review for this server will be cleared and replaced."
         )
@@ -1165,6 +1165,9 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
   const capPayload = payloads.find(p => p.label === "teamStats");
   const capKeys = (capPayload?.nestedKeys ?? []).filter(k => /cap|salary|spend|spent|penalt|reserve|rollover/i.test(k));
   const warnings = result.warnings ?? [];
+  const endpointProbeCount = result.endpointProbeCount ?? 0;
+  const availableEndpointCount = result.availableEndpointCount ?? 0;
+  const capEndpointHits = result.capEndpointHits ?? [];
 
   const payloadLines = payloads
     .map(p => `• **${p.label}** — ${p.kind}${p.itemCount == null ? "" : ` · ${p.itemCount} item(s)`} · ${p.nestedKeys.length} key path(s)`)
@@ -1185,11 +1188,13 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
       { name: "Run ID", value: String(result.runId), inline: true },
       { name: "Week", value: result.weekLabel ?? "unknown", inline: true },
       { name: "Payloads Audited", value: String(payloads.length), inline: true },
+      { name: "Endpoints Probed", value: `${endpointProbeCount} checked · ${availableEndpointCount} available`, inline: true },
       { name: "Payload Summary", value: payloadLines || "No payloads captured.", inline: false },
       { name: "Cap-related teamStats keys", value: capKeys.length ? capKeys.slice(0, 30).join("\n") : "No cap/salary-related keys detected in teamStats.", inline: false },
+      { name: "Cap-related endpoint hits", value: capEndpointHits.length ? capEndpointHits.slice(0, 10).join("\n") : "No alternate cap/contract endpoints discovered yet.", inline: false },
       { name: "Warnings", value: warnings.length ? warnings.slice(0, 8).join("\n") : "None", inline: false },
     )
-    .setFooter({ text: "Review table: mca_import_diagnostic_payloads" })
+    .setFooter({ text: "Review tables: mca_import_diagnostic_payloads + mca_endpoint_probe_results" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });

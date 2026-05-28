@@ -68,6 +68,7 @@ import {
   fetchNewsData,
   fetchLeagueTeamsAndRosters,
   fetchAllWeekSchedules,
+  probeMcaExportEndpoints,
   updateStoredToken,
   refreshTokenIfNeeded,
   type BlazeSession,
@@ -1661,6 +1662,40 @@ function summarizeDiagnosticPayload(label: string, payload: unknown): Diagnostic
   };
 }
 
+const MCA_ENDPOINT_DISCOVERY_KEYWORDS = [
+  "cap", "salary", "spend", "spent", "penalt", "reserve", "rollover", "room",
+  "available", "contract", "bonus", "dead", "release", "guaranteed", "savings",
+];
+
+function extractCapHits(keys: string[]): string[] {
+  return keys.filter(k => MCA_ENDPOINT_DISCOVERY_KEYWORDS.some(term => k.toLowerCase().includes(term))).slice(0, 80);
+}
+
+function summarizeProbePayload(payload: unknown): { kind: string; itemCount: number | null; topLevelKeys: string[]; nestedKeys: string[]; sample: unknown } {
+  const topValue = Array.isArray(payload)
+    ? payload.find(v => v && typeof v === "object") ?? null
+    : payload;
+
+  const topLevelKeys = topValue && typeof topValue === "object" && !Array.isArray(topValue)
+    ? Object.keys(topValue as Record<string, unknown>).sort()
+    : [];
+
+  const nestedKeys = [...collectObjectKeys(payload)].sort();
+  const itemCount = Array.isArray(payload)
+    ? payload.length
+    : payload && typeof payload === "object"
+      ? Object.keys(payload as Record<string, unknown>).length
+      : null;
+
+  return {
+    kind: Array.isArray(payload) ? "array" : typeof payload,
+    itemCount,
+    topLevelKeys,
+    nestedKeys,
+    sample: diagnosticSafeSample(Array.isArray(payload) ? payload.slice(0, 2) : payload),
+  };
+}
+
 async function ensureImportDiagnosticTables(): Promise<void> {
   await db.execute(sql`
     create table if not exists mca_import_diagnostic_runs (
@@ -1695,6 +1730,28 @@ async function ensureImportDiagnosticTables(): Promise<void> {
       created_at timestamp with time zone not null default now()
     )
   `);
+
+  await db.execute(sql`
+    create table if not exists mca_endpoint_probe_results (
+      id bigserial primary key,
+      run_id bigint not null references mca_import_diagnostic_runs(id) on delete cascade,
+      guild_id text not null,
+      season_id bigint,
+      endpoint_label text not null,
+      endpoint_name text not null,
+      request_body jsonb not null default '{}'::jsonb,
+      available boolean not null default false,
+      payload_kind text,
+      item_count integer,
+      top_level_keys jsonb not null default '[]'::jsonb,
+      nested_keys jsonb not null default '[]'::jsonb,
+      cap_score integer not null default 0,
+      cap_key_hits jsonb not null default '[]'::jsonb,
+      sample_json jsonb,
+      error_message text,
+      created_at timestamp with time zone not null default now()
+    )
+  `);
 }
 
 export async function runMcaImportDiagnostics(ctx: {
@@ -1706,6 +1763,9 @@ export async function runMcaImportDiagnostics(ctx: {
   runId?: number;
   weekLabel?: string;
   payloads?: DiagnosticPayloadSummary[];
+  endpointProbeCount?: number;
+  availableEndpointCount?: number;
+  capEndpointHits?: string[];
   warnings?: string[];
   error?: "no_connection" | "token_refresh_failed" | "fetch_failed" | "no_active_season";
 }> {
@@ -1795,16 +1855,76 @@ export async function runMcaImportDiagnostics(ctx: {
       `);
     }
 
+    const teamList = (((rosterData?.leagueTeams as any)?.leagueTeamInfoList ?? []) as Array<{ teamId?: number }>)
+      .map((team, listIndex) => ({ teamId: Number(team.teamId ?? 0), listIndex }))
+      .filter(t => Number.isFinite(t.teamId) && t.teamId > 0)
+      .slice(0, 3);
+
+    const endpointProbes = await probeMcaExportEndpoints(token, eaLeagueId, weekIndex, 1, blazeSession, teamList)
+      .catch((err) => {
+        warnings.push(`endpointDiscovery: ${err instanceof Error ? err.message : String(err)}`);
+        return [];
+      });
+
+    const capEndpointHits: string[] = [];
+    let availableEndpointCount = 0;
+
+    for (const probe of endpointProbes) {
+      const summary = summarizeProbePayload(probe.payload);
+      const capHits = extractCapHits(summary.nestedKeys);
+      const capScore = capHits.length;
+
+      if (probe.available) availableEndpointCount += 1;
+      if (capScore > 0) capEndpointHits.push(`${probe.endpointName} (${capScore})`);
+
+      await db.execute(sql`
+        insert into mca_endpoint_probe_results (
+          run_id, guild_id, season_id, endpoint_label, endpoint_name, request_body,
+          available, payload_kind, item_count, top_level_keys, nested_keys,
+          cap_score, cap_key_hits, sample_json, error_message
+        ) values (
+          ${runId}, ${guildId}, ${season.id}, ${probe.label}, ${probe.endpointName},
+          ${JSON.stringify(probe.requestBody)}::jsonb,
+          ${probe.available}, ${summary.kind}, ${summary.itemCount},
+          ${JSON.stringify(summary.topLevelKeys)}::jsonb,
+          ${JSON.stringify(summary.nestedKeys)}::jsonb,
+          ${capScore},
+          ${JSON.stringify(capHits)}::jsonb,
+          ${JSON.stringify(summary.sample)}::jsonb,
+          ${probe.errorMessage ?? null}
+        )
+      `);
+    }
+
     await db.execute(sql`
       update mca_import_diagnostic_runs
       set status='complete',
-          summary=${JSON.stringify({ payloadCount: payloads.length, weekLabel: wkLabel, dryRun: true, leagueDataWrites: 0, payoutsTriggered: false })}::jsonb,
+          summary=${JSON.stringify({
+            payloadCount: payloads.length,
+            endpointProbeCount: endpointProbes.length,
+            availableEndpointCount,
+            capEndpointHits: capEndpointHits.slice(0, 20),
+            weekLabel: wkLabel,
+            dryRun: true,
+            leagueDataWrites: 0,
+            payoutsTriggered: false,
+            endpointDiscovery: true,
+          })}::jsonb,
           warnings=${JSON.stringify(warnings)}::jsonb,
           completed_at=now()
       where id=${runId}
     `);
 
-    return { ok: true, runId, weekLabel: wkLabel, payloads, warnings };
+    return {
+      ok: true,
+      runId,
+      weekLabel: wkLabel,
+      payloads,
+      endpointProbeCount: endpointProbes.length,
+      availableEndpointCount,
+      capEndpointHits: capEndpointHits.slice(0, 20),
+      warnings,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db.execute(sql`
