@@ -58,7 +58,45 @@ async function replyEphemeral(interaction: GamedayInteraction, content: string):
   }
 }
 
-export async function resolveGamedayContext(interaction: GamedayInteraction): Promise<GamedayContext | null> {
+type ResolveGamedayContextOptions = { silentNoMatchup?: boolean };
+
+type Cached<T> = { value: T; expiresAt: number };
+const CONTEXT_TTL_MS = 45_000;
+const SHORT_TTL_MS = 20_000;
+const cache = new Map<string, Cached<any>>();
+
+function getCached<T>(key: string): T | null {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.value as T;
+}
+
+function setCached<T>(key: string, value: T, ttlMs = CONTEXT_TTL_MS): T {
+  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  return value;
+}
+
+async function cached<T>(key: string, loader: () => Promise<T>, ttlMs = CONTEXT_TTL_MS): Promise<T> {
+  const hit = getCached<T>(key);
+  if (hit !== null) return hit;
+  return setCached(key, await loader(), ttlMs);
+}
+
+export function invalidateGamedayContextCache(guildId?: string): void {
+  if (!guildId) {
+    cache.clear();
+    return;
+  }
+  for (const key of cache.keys()) {
+    if (key.includes(`:${guildId}:`) || key.startsWith(`${guildId}:`)) cache.delete(key);
+  }
+}
+
+export async function resolveGamedayContext(interaction: GamedayInteraction, options: ResolveGamedayContextOptions = {}): Promise<GamedayContext | null> {
   const guildId = interaction.guildId;
   if (!guildId) {
     await replyEphemeral(interaction, "❌ Gameday actions can only be used inside a server.");
@@ -67,34 +105,38 @@ export async function resolveGamedayContext(interaction: GamedayInteraction): Pr
 
   await ensureGamedaySchema();
 
-  const activeChannelId = await getGuildChannel(guildId, "gameday_active" as any).catch(() => null);
+  const activeChannelId = await cached(`${guildId}:gameday_active_channel`, () => getGuildChannel(guildId, "gameday_active" as any).catch(() => null), CONTEXT_TTL_MS);
   if (!activeChannelId) {
-    await replyEphemeral(interaction, "❌ No active weekly gameday channel is configured yet.");
+    if (!options.silentNoMatchup) await replyEphemeral(interaction, "❌ No active weekly gameday channel is configured yet.");
     return null;
   }
 
-  const season = await getOrCreateActiveSeason(guildId);
+  const season = await cached(`${guildId}:active_season`, () => getOrCreateActiveSeason(guildId), SHORT_TTL_MS);
   const weekIndex = currentWeekIndexFor((season as any).currentWeek);
   if (weekIndex == null) {
-    await replyEphemeral(interaction, "❌ There is no active H2H gameday dashboard for the current league week.");
+    if (!options.silentNoMatchup) await replyEphemeral(interaction, "❌ There is no active H2H gameday dashboard for the current league week.");
     return null;
   }
 
-  const scheduleSeasonId = await getScheduleSeasonId(guildId);
-  const [games, mcaTeams, users] = await Promise.all([
-    db.select().from(franchiseScheduleTable).where(and(
-      eq(franchiseScheduleTable.seasonId, scheduleSeasonId),
-      eq(franchiseScheduleTable.weekIndex, weekIndex),
-    )),
-    db.select({
-      fullName: franchiseMcaTeamsTable.fullName,
-      nickName: franchiseMcaTeamsTable.nickName,
-      discordId: franchiseMcaTeamsTable.discordId,
-    }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, scheduleSeasonId)),
-    db.select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable)
-      .where(eq(usersTable.guildId, guildId)),
-  ]);
+  const scheduleSeasonId = await cached(`${guildId}:schedule_season_id`, () => getScheduleSeasonId(guildId), CONTEXT_TTL_MS);
+  const hydrated = await cached(`${guildId}:${scheduleSeasonId}:week:${weekIndex}:gameday_hydrated`, async () => {
+    const [games, mcaTeams, users] = await Promise.all([
+      db.select().from(franchiseScheduleTable).where(and(
+        eq(franchiseScheduleTable.seasonId, scheduleSeasonId),
+        eq(franchiseScheduleTable.weekIndex, weekIndex),
+      )),
+      db.select({
+        fullName: franchiseMcaTeamsTable.fullName,
+        nickName: franchiseMcaTeamsTable.nickName,
+        discordId: franchiseMcaTeamsTable.discordId,
+      }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, scheduleSeasonId)),
+      db.select({ discordId: usersTable.discordId, team: usersTable.team })
+        .from(usersTable)
+        .where(eq(usersTable.guildId, guildId)),
+    ]);
+    return { games, mcaTeams, users };
+  }, SHORT_TTL_MS);
+  const { games, mcaTeams, users } = hydrated;
 
   const teamToDiscord = new Map<string, string>();
   for (const t of mcaTeams) {
@@ -139,7 +181,7 @@ export async function resolveGamedayContext(interaction: GamedayInteraction): Pr
         homeAway: "Home",
       };
     }
-    await replyEphemeral(interaction, "❌ You do not have a matchup this week, so no gameday actions are available.");
+    if (!options.silentNoMatchup) await replyEphemeral(interaction, "❌ You do not have a matchup this week, so no gameday actions are available.");
     return null;
   }
 

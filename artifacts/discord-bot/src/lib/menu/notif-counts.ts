@@ -15,6 +15,36 @@ import {
 } from "@workspace/db";
 import { eq, and, inArray, sql, desc, isNotNull } from "drizzle-orm";
 
+
+type Cached<T> = { value: T; expiresAt: number };
+const MENU_COUNT_TTL_MS = 45_000;
+const countCache = new Map<string, Cached<any>>();
+
+function getCountCache<T>(key: string): T | null {
+  const hit = countCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    countCache.delete(key);
+    return null;
+  }
+  return hit.value as T;
+}
+
+function setCountCache<T>(key: string, value: T, ttl = MENU_COUNT_TTL_MS): T {
+  countCache.set(key, { value, expiresAt: Date.now() + ttl });
+  return value;
+}
+
+export function invalidateMenuCountCache(guildId?: string): void {
+  if (!guildId) {
+    countCache.clear();
+    return;
+  }
+  for (const key of countCache.keys()) {
+    if (key.includes(`:${guildId}:`) || key.endsWith(`:${guildId}`)) countCache.delete(key);
+  }
+}
+
 export interface CommOfficeCounts {
   purchases:       number;
   customPlayers:   number;
@@ -25,6 +55,9 @@ export interface CommOfficeCounts {
 }
 
 export async function getCommOfficeCounts(guildId: string): Promise<CommOfficeCounts> {
+  const cacheKey = `comm:${guildId}`;
+  const cached = getCountCache<CommOfficeCounts>(cacheKey);
+  if (cached) return cached;
   // Guild-scoped users (for tables without guildId)
   const userRows = await db.select({ id: usersTable.discordId }).from(usersTable).where(eq(usersTable.guildId, guildId));
   const userIds = userRows.map(r => r.id);
@@ -75,28 +108,31 @@ export async function getCommOfficeCounts(guildId: string): Promise<CommOfficeCo
   const interviews      = interviewsRow?.cnt ?? 0;
   const streamHighlight = channelRow?.cnt ?? 0;
 
-  return {
+  return setCountCache(cacheKey, {
     purchases, customPlayers, payouts, interviews, streamHighlight,
     total: purchases + customPlayers + payouts + interviews + streamHighlight,
-  };
+  });
 }
 
 /** Returns the number of open GOTW matchups the user has not voted on yet. */
 export async function getGotwUnvotedCount(userId: string, seasonId: number): Promise<number> {
+  const cacheKey = `gotw:${seasonId}:${userId}`;
+  const cached = getCountCache<number>(cacheKey);
+  if (cached !== null) return cached;
   // Find latest week in this season's gotw_history
   const recent = await db.select({ weekIndex: gotwHistoryTable.weekIndex })
     .from(gotwHistoryTable)
     .where(eq(gotwHistoryTable.seasonId, seasonId))
     .orderBy(desc(gotwHistoryTable.weekIndex))
     .limit(1);
-  if (recent.length === 0) return 0;
+  if (recent.length === 0) return setCountCache(cacheKey, 0);
   const weekIndex = recent[0]!.weekIndex;
 
   const matchups = await db.select().from(gotwHistoryTable).where(and(
     eq(gotwHistoryTable.seasonId, seasonId),
     eq(gotwHistoryTable.weekIndex, weekIndex),
   ));
-  if (matchups.length === 0) return 0;
+  if (matchups.length === 0) return setCountCache(cacheKey, 0);
 
   const scheds = await db.select().from(gameSchedulesTable).where(and(
     eq(gameSchedulesTable.seasonId, seasonId),
@@ -129,17 +165,20 @@ export async function getGotwUnvotedCount(userId: string, seasonId: number): Pro
     if (isLocked(m)) continue;
     if (!voted.has(m.matchupIndex)) count++;
   }
-  return count;
+  return setCountCache(cacheKey, count);
 }
 
 /** Returns 1 if there is an open GOTY round the user hasn't voted in, else 0. Also returns whether a round exists at all. */
 export async function getGotyStatus(userId: string, seasonId: number): Promise<{ unvoted: number; active: boolean }> {
+  const cacheKey = `goty:${seasonId}:${userId}`;
+  const cached = getCountCache<{ unvoted: number; active: boolean }>(cacheKey);
+  if (cached) return cached;
   const [round] = await db.select().from(gotyRoundsTable).where(eq(gotyRoundsTable.seasonId, seasonId)).limit(1);
-  if (!round) return { unvoted: 0, active: false };
+  if (!round) return setCountCache(cacheKey, { unvoted: 0, active: false });
   const isOpen = round.status === "open" && round.voteEndsAt.getTime() > Date.now();
-  if (!isOpen) return { unvoted: 0, active: false };
+  if (!isOpen) return setCountCache(cacheKey, { unvoted: 0, active: false });
   const [myVote] = await db.select().from(gotyVotesTable)
     .where(and(eq(gotyVotesTable.seasonId, seasonId), eq(gotyVotesTable.voterId, userId)))
     .limit(1);
-  return { unvoted: myVote ? 0 : 1, active: true };
+  return setCountCache(cacheKey, { unvoted: myVote ? 0 : 1, active: true });
 }

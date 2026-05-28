@@ -48,6 +48,89 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
   return ((result as any).rows ?? result) as T[];
 }
 
+
+type Cached<T> = { value: T; expiresAt: number };
+const REVIEW_TTL_MS = 30_000;
+const reviewCache = new Map<string, Cached<any>>();
+
+function getReviewCached<T>(key: string): T | null {
+  const hit = reviewCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    reviewCache.delete(key);
+    return null;
+  }
+  return hit.value as T;
+}
+
+function setReviewCached<T>(key: string, value: T, ttl = REVIEW_TTL_MS): T {
+  reviewCache.set(key, { value, expiresAt: Date.now() + ttl });
+  return value;
+}
+
+export function invalidateCommissionerReviewCache(guildId?: string): void {
+  if (!guildId) {
+    reviewCache.clear();
+    return;
+  }
+  for (const key of reviewCache.keys()) {
+    if (key.startsWith(`${guildId}:`)) reviewCache.delete(key);
+  }
+}
+
+async function loadReviewCounts(guildId: string) {
+  const cacheKey = `${guildId}:review_counts`;
+  const cached = getReviewCached<any>(cacheKey);
+  if (cached) return cached;
+
+  const [requestRows, acceptedRows, payoutRows, scheduleRows] = await Promise.all([
+    rowsOf<{ request_type: string; count: number }>(sql`
+      select request_type, count(*)::int as count
+      from gameday_commissioner_requests
+      where guild_id = ${guildId}
+        and status = 'pending'
+      group by request_type
+    `),
+    rowsOf<{ count: number }>(sql`
+      select count(*)::int as count
+      from game_schedules
+      where guild_id = ${guildId}
+        and scheduled_at is not null
+        and status in ('scheduled','accepted','started')
+    `),
+    rowsOf<{ count: number }>(sql`
+      select count(*)::int as count
+      from pending_channel_payouts
+      where guild_id = ${guildId}
+        and type in ('stream','highlight')
+        and status = 'approved'
+        and created_at >= now() - interval '7 days'
+    `),
+    rowsOf<{ count: number }>(sql`
+      select count(*)::int as count
+      from gameday_schedule_offers
+      where guild_id = ${guildId}
+        and created_at >= now() - interval '7 days'
+    `),
+  ]);
+
+  const byType = new Map(requestRows.map((r) => [r.request_type, Number(r.count ?? 0)]));
+  const result = {
+    fw: (byType.get('force_win') ?? 0) + (byType.get('checkin_force_win') ?? 0),
+    fs: byType.get('fair_sim') ?? 0,
+    violations: byType.get('violation') ?? 0,
+    dashed: byType.get('dashed_report') ?? 0,
+    desync: byType.get('desync_retry') ?? 0,
+    connection: byType.get('connection_issue') ?? 0,
+    delays: byType.get('advance_delay') ?? 0,
+    acceptedSchedules: Number(acceptedRows[0]?.count ?? 0),
+    payouts: Number(payoutRows[0]?.count ?? 0),
+    schedules: Number(scheduleRows[0]?.count ?? 0),
+  };
+
+  return setReviewCached(cacheKey, result);
+}
+
 async function countPending(guildId: string, type: string): Promise<number> {
   const rows = await rowsOf<{ count: number }>(sql`
     select count(*)::int as count
@@ -108,18 +191,7 @@ async function countAcceptedScheduledGames(guildId: string): Promise<number> {
 export async function renderCommissionerGamedayReview(interaction: ButtonInteraction | StringSelectMenuInteraction) {
   const guildId = interaction.guildId!;
 
-  const [fw, fs, violations, dashed, desync, connection, delays, acceptedSchedules, payouts, schedules] = await Promise.all([
-    countPending(guildId, "force_win"),
-    countPending(guildId, "fair_sim"),
-    countPending(guildId, "violation"),
-    countPending(guildId, "dashed_report"),
-    countPending(guildId, "desync_retry"),
-    countPending(guildId, "connection_issue"),
-    countPending(guildId, "advance_delay"),
-    countAcceptedScheduledGames(guildId),
-    countPayouts(guildId),
-    countScheduleAttempts(guildId),
-  ]);
+  const { fw, fs, violations, dashed, desync, connection, delays, acceptedSchedules, payouts, schedules } = await loadReviewCounts(guildId);
 
   const embed = new EmbedBuilder()
     .setColor(Colors.DarkBlue)
