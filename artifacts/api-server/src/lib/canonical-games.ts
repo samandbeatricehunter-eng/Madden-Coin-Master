@@ -26,6 +26,22 @@ export function canonicalWeekNumber(weekType: string, weekNum: number): number {
   return weekNum;
 }
 
+function stableGameKey(parts: {
+  recSeasonId: number;
+  weekNumber: number;
+  awayTeamId: number | null;
+  homeTeamId: number | null;
+  awayDiscord: string | null;
+  homeDiscord: string | null;
+  eaScheduleId?: string | null;
+}): string {
+  const ea = String(parts.eaScheduleId ?? '').trim();
+  if (ea) return `ea:${parts.recSeasonId}:${ea}`;
+  const away = parts.awayTeamId != null && parts.awayTeamId >= 0 ? `t${parts.awayTeamId}` : `u${parts.awayDiscord ?? 'unknownAway'}`;
+  const home = parts.homeTeamId != null && parts.homeTeamId >= 0 ? `t${parts.homeTeamId}` : `u${parts.homeDiscord ?? 'unknownHome'}`;
+  return `wk:${parts.recSeasonId}:${parts.weekNumber}:${away}:${home}`;
+}
+
 export async function ensureCanonicalLeagueLayerApi(): Promise<void> {
   await db.execute(sql`
     create table if not exists rec_leagues (
@@ -181,20 +197,37 @@ export async function syncCanonicalGamesFromSchedulePayload(
 
     await db.execute(sql`
       insert into rec_league_games (
-        rec_league_id, rec_season_id, ea_schedule_id, week_type, week_number, week_index,
+        rec_league_id, rec_season_id, stable_game_key, ea_schedule_id, week_type, week_number, week_index,
         away_team_id, home_team_id, away_team_name, home_team_name,
         away_discord_id, home_discord_id, away_score, home_score,
         winner_discord_id, imported_winner_discord_id, status, is_h2h,
         source_priority, source, confidence_score, imported_at, updated_at
       )
       values (
-        ${ctx.recLeagueId}, ${ctx.recSeasonId}, ${String(g?.scheduleId ?? "") || null}, ${weekType}, ${weekNumber}, ${weekNumber},
+        ${ctx.recLeagueId}, ${ctx.recSeasonId}, ${stableGameKey({ recSeasonId: ctx.recSeasonId, weekNumber, awayTeamId, homeTeamId, awayDiscord, homeDiscord, eaScheduleId: String(g?.scheduleId ?? "") || null })}, ${String(g?.scheduleId ?? "") || null}, ${weekType}, ${weekNumber}, ${weekNumber},
         ${awayTeamId}, ${homeTeamId}, ${String(away?.full_name ?? away?.nick_name ?? g?.awayTeamName ?? `Team${awayTeamId}`)}, ${String(home?.full_name ?? home?.nick_name ?? g?.homeTeamName ?? `Team${homeTeamId}`)},
         ${awayDiscord}, ${homeDiscord}, ${awayScore}, ${homeScore},
         ${winner}, ${winner}, ${finished ? "finished" : "scheduled"}, ${isH2H},
         100, 'mca_schedule_import', ${finished ? 100 : 80}, now(), now()
       )
-      on conflict do nothing
+      on conflict (rec_season_id, stable_game_key) do update set
+        ea_schedule_id = coalesce(excluded.ea_schedule_id, rec_league_games.ea_schedule_id),
+        away_team_id = coalesce(excluded.away_team_id, rec_league_games.away_team_id),
+        home_team_id = coalesce(excluded.home_team_id, rec_league_games.home_team_id),
+        away_team_name = excluded.away_team_name,
+        home_team_name = excluded.home_team_name,
+        away_discord_id = coalesce(excluded.away_discord_id, rec_league_games.away_discord_id),
+        home_discord_id = coalesce(excluded.home_discord_id, rec_league_games.home_discord_id),
+        away_score = coalesce(excluded.away_score, rec_league_games.away_score),
+        home_score = coalesce(excluded.home_score, rec_league_games.home_score),
+        winner_discord_id = coalesce(excluded.winner_discord_id, rec_league_games.winner_discord_id),
+        imported_winner_discord_id = coalesce(excluded.imported_winner_discord_id, rec_league_games.imported_winner_discord_id),
+        status = case when excluded.status = 'finished' then 'finished' else rec_league_games.status end,
+        is_h2h = excluded.is_h2h,
+        source_priority = greatest(rec_league_games.source_priority, excluded.source_priority),
+        confidence_score = greatest(rec_league_games.confidence_score, excluded.confidence_score),
+        imported_at = coalesce(excluded.imported_at, rec_league_games.imported_at),
+        updated_at = now()
     `);
     upserted++;
   }

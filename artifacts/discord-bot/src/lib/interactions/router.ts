@@ -93,7 +93,6 @@ const routes: PrefixRoute[] = [
     "ac_poty_vote",
     "ac_goty_hub",
     "ac_goty_vote",
-    "ac_gotw_vote",
   ],
   handler: async (interaction) => {
     const { handleMediaRoomInteraction } = await import("../media/media-room.js");

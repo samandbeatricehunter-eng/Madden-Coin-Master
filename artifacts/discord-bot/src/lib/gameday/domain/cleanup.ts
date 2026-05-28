@@ -8,12 +8,26 @@ export type GamedayCleanupSummary = {
 };
 
 export async function cleanupGamedayState(): Promise<GamedayCleanupSummary> {
-  const expiredOffers = await db.execute(sql`
-    update gameday_schedule_offers
-    set status = 'expired', updated_at = now()
-    where status = 'pending'
-      and created_at < now() - interval '24 hours'
-  `);
+  // Some production schemas still had a restrictive status CHECK that did not
+  // include `expired`. The Phase 3 SQL expands the constraint, but this fallback
+  // prevents the reconciliation worker from crashing if the migration lags.
+  let expiredOffers: any;
+  try {
+    expiredOffers = await db.execute(sql`
+      update gameday_schedule_offers
+      set status = 'expired', updated_at = now()
+      where status = 'pending'
+        and created_at < now() - interval '24 hours'
+    `);
+  } catch (err) {
+    console.warn('[gameday-cleanup] expired status unavailable; falling back to cancelled:', err);
+    expiredOffers = await db.execute(sql`
+      update gameday_schedule_offers
+      set status = 'cancelled', updated_at = now()
+      where status = 'pending'
+        and created_at < now() - interval '24 hours'
+    `);
+  }
 
   const staleForceReviews = await db.execute(sql`
     update game_schedules

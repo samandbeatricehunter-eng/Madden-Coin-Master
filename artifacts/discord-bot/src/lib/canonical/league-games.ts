@@ -64,6 +64,7 @@ export async function ensureCanonicalLeagueLayer(): Promise<void> {
       rec_season_id bigint not null references rec_league_seasons(id) on delete cascade,
       legacy_game_schedule_id bigint,
       legacy_franchise_schedule_id bigint,
+      stable_game_key text,
       ea_schedule_id text,
       processed_game_id text,
       week_type text not null default 'regular',
@@ -91,6 +92,9 @@ export async function ensureCanonicalLeagueLayer(): Promise<void> {
       updated_at timestamp with time zone not null default now()
     )
   `);
+  await db.execute(sql`alter table rec_league_games add column if not exists stable_game_key text`).catch(() => null);
+  await db.execute(sql`create unique index if not exists rec_league_games_stable_key_idx on rec_league_games(rec_season_id, stable_game_key) where stable_game_key is not null`).catch(() => null);
+
   await db.execute(sql`
     alter table media_goty_candidates
       add column if not exists rec_game_id bigint,

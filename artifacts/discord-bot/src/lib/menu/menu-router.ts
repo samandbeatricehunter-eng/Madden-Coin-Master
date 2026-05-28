@@ -73,13 +73,40 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
 
   const value = interaction.values[0] ?? "";
 
-  // ── Leaf actions: dispatch BEFORE any async work ──────────────────────────
-  // handleActionsInteraction does its own deferReply — calling deferUpdate here
-  // first would cause 40060 when it tries to respond.
+  // ── Leaf actions that own their own response lifecycle ─────────────────────
+  // Media/GOTW actions were split out of actions-handlers during the canonical
+  // pivot. Route them before the legacy ac_* dispatcher so they are not swallowed
+  // by the old member-action router.
   if (id === "menu_cat") {
     const node = findNode(value);
     if (node?.kind === "action") {
-      const handled = await handleActionsInteraction(interaction, node.action);
+      const action = node.action;
+
+      if (action === "ac_active_streams") {
+        const { renderActiveStreams } = await import("../media/media-room.js");
+        await renderActiveStreams(interaction as any);
+        return true;
+      }
+
+      if (action === "ac_goty_hub" || action === "ac_goty_vote") {
+        const { renderGotyHub } = await import("../media/media-room.js");
+        await renderGotyHub(interaction as any);
+        return true;
+      }
+
+      if (action === "ac_poty_vote") {
+        const { renderPotyVote } = await import("../media/play-of-the-year.js");
+        await renderPotyVote(interaction as any);
+        return true;
+      }
+
+      if (action === "ac_gotw_vote") {
+        const { openGotwVote } = await import("../handlers/gotw-voting-handlers.js");
+        await openGotwVote(interaction as any);
+        return true;
+      }
+
+      const handled = await handleActionsInteraction(interaction, action);
       if (!handled) {
         await interaction.reply({ content: "❌ That action couldn't be opened. Try again.", ephemeral: true });
       }
