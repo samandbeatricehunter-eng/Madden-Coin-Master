@@ -35,7 +35,12 @@ export async function processGamedayReminderTick(client: Client): Promise<void> 
   const offers = await rowsOf<any>(sql`
     select o.*
     from gameday_schedule_offers o
+    inner join seasons s
+      on s.id = o.season_id
+     and s.guild_id = o.guild_id
+     and s.is_active = true
     where o.status = 'pending'
+      and cast(o.week_index as text) = cast(s.current_week as text)
       and o.created_at <= now() - interval '10 minutes'
     order by o.created_at asc
     limit 100
@@ -54,6 +59,7 @@ export async function processGamedayReminderTick(client: Client): Promise<void> 
           and stage = ${stage.key}
         limit 1
       `);
+
       if (existing.length > 0) continue;
 
       await db.execute(sql`
@@ -75,14 +81,19 @@ async function activeGamedayChannel(client: Client, guildId: string): Promise<Te
       and channel_key = 'gameday_active'
     limit 1
   `);
+
   const channelId = channels[0]?.channel_id;
-  return channelId ? await client.channels.fetch(channelId).catch(() => null) as TextChannel | null : null;
+
+  return channelId
+    ? await client.channels.fetch(channelId).catch(() => null) as TextChannel | null
+    : null;
 }
 
 function baseMessage(offer: any): string {
   return (
     `🗓️ **Scheduling Offer Reminder**\n\n` +
     `Matchup: <@${offer.away_discord_id}> @ <@${offer.home_discord_id}>\n` +
+    `Week: **${offer.week_index}**\n` +
     `Proposed time: **${offer.proposed_for} ${offer.proposed_tz ?? ""}**\n` +
     `Offer from: <@${offer.proposer_discord_id}>\n\n` +
     `Open \`/gameday\` to accept, counter, or reject.`
@@ -99,11 +110,13 @@ async function sendReminder(client: Client, offer: any, stage: ReminderStage): P
     await proposer?.send(`⚠️ Your scheduling offer to <@${offer.recipient_discord_id}> has gone unanswered for **4+ hours**. This is a warning only; Force Win review is not eligible until **9+ hours**.`).catch(() => null);
 
     const channel = await activeGamedayChannel(client, offer.guild_id);
+
     await channel?.send(
       `⚠️ **Scheduling Response Reminder**\n` +
       `<@${offer.recipient_discord_id}> has not responded to a scheduling offer from <@${offer.proposer_discord_id}> for **4+ hours**.\n\n` +
       `If no response is received within **9 hours**, <@${offer.proposer_discord_id}> may request commissioner review through \`/gameday\`.`,
     ).catch(() => null);
+
     return;
   }
 
@@ -112,11 +125,14 @@ async function sendReminder(client: Client, offer: any, stage: ReminderStage): P
     await proposer?.send(`🚨 Your scheduling offer to <@${offer.recipient_discord_id}> has gone unanswered for **9+ hours**. You may request commissioner review through \`/gameday\`. Force Win remains commissioner discretion.`).catch(() => null);
 
     const channel = await activeGamedayChannel(client, offer.guild_id);
+
     await channel?.send(
       `🚨 **Scheduling Escalation Eligible**\n` +
       `<@${offer.recipient_discord_id}> has not responded to scheduling outreach from <@${offer.proposer_discord_id}> for **9+ hours**.\n\n` +
+      `Week: **${offer.week_index}**\n` +
       `<@${offer.proposer_discord_id}> may now request commissioner review through \`/gameday\`. Force Win is not automatic.`,
     ).catch(() => null);
+
     return;
   }
 
