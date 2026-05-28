@@ -3758,6 +3758,151 @@ function capEfficiency(p: CapRosterPlayer): number {
   return Number((Number(p.overall ?? 0) / p.capHitM).toFixed(2));
 }
 
+
+type CapEngineSnapshot = {
+  seasonLabel: string;
+  baseCapM: number;
+  rolloverM: number;
+  adjustedCapM: number;
+  capSpaceM: number;
+  salariesM: number;
+  capPenaltyM: number;
+  totalSpendingM: number;
+  rookieReserveM: number;
+  effectiveSpaceM: number;
+  source: "snapshot" | "team_season_stats" | "roster_estimate";
+};
+
+const DEFAULT_MADDEN_BASE_CAP_M = Number(process.env.MADDEN_BASE_CAP_M ?? 304);
+const DEFAULT_ROOKIE_RESERVE_M = Number(process.env.MADDEN_ROOKIE_RESERVE_M ?? 0);
+
+function safeCapNumber(value: unknown): number {
+  const n = normalizeCapM(Number(value ?? 0));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function currentSeasonLabel(): string {
+  const y = new Date().getFullYear();
+  return String(y);
+}
+
+function hasImportedCapValue(value: unknown): boolean {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+function buildFallbackCapEngine(args: {
+  teamStats: any;
+  roster: CapRosterPlayer[];
+  capLimitM: number;
+  capSpentM: number;
+  capAvailableM: number;
+}): CapEngineSnapshot {
+  // Madden/MCA standings cap columns are not named like the in-game labels.
+  // Correct live mapping:
+  //   team_season_stats.cap_available -> Adjusted Cap / total cap limit
+  //   team_season_stats.cap_spent     -> Total Spending
+  //   team_season_stats.cap_room      -> Cap Space, including negative values
+  // Do not clamp negative cap_room to 0; over-cap teams need to display correctly.
+  const hasAdjustedCap = hasImportedCapValue(args.teamStats?.cap_available);
+  const hasCapSpace = hasImportedCapValue(args.teamStats?.cap_room);
+  const hasTotalSpending = hasImportedCapValue(args.teamStats?.cap_spent);
+
+  const adjustedCapM = hasAdjustedCap ? safeCapNumber(args.teamStats.cap_available) : args.capLimitM;
+  const capSpaceM = hasCapSpace ? safeCapNumber(args.teamStats.cap_room) : args.capAvailableM;
+  const totalSpendingM = hasTotalSpending ? safeCapNumber(args.teamStats.cap_spent) : args.capSpentM;
+
+  const baseCapM = adjustedCapM > 0
+    ? Math.min(DEFAULT_MADDEN_BASE_CAP_M, adjustedCapM)
+    : DEFAULT_MADDEN_BASE_CAP_M;
+  const rolloverM = Math.max(0, adjustedCapM - baseCapM);
+
+  // team_season_stats currently does not import Madden's separate cap-penalty or rookie-reserve fields.
+  // Those populate from cap_team_snapshots once seeded/imported; fallback keeps them explicit instead of inventing values.
+  const capPenaltyM = 0;
+  const salariesM = Math.max(0, totalSpendingM - capPenaltyM);
+  const rookieReserveM = Math.max(0, DEFAULT_ROOKIE_RESERVE_M);
+  return {
+    seasonLabel: currentSeasonLabel(),
+    baseCapM,
+    rolloverM,
+    adjustedCapM,
+    capSpaceM,
+    salariesM,
+    capPenaltyM,
+    totalSpendingM,
+    rookieReserveM,
+    effectiveSpaceM: capSpaceM - rookieReserveM,
+    source: args.teamStats ? "team_season_stats" : "roster_estimate",
+  };
+}
+
+async function getStoredCapEngineSnapshot(guildId: string, seasonId: number, teamId: number): Promise<CapEngineSnapshot | null> {
+  const rows = await rowsOf<any>(sql`
+    select
+      season_label,
+      base_cap,
+      rollover,
+      adjusted_cap,
+      cap_space,
+      salaries,
+      cap_penalty,
+      total_spending,
+      rookie_reserve,
+      effective_space
+    from cap_team_snapshots
+    where guild_id in (${guildId}, 'global')
+      and season_id = ${seasonId}
+      and team_id = ${teamId}
+    order by case when guild_id = ${guildId} then 0 else 1 end, imported_at desc, id desc
+    limit 1
+  `).catch(() => []);
+
+  const row = rows[0];
+  if (!row) return null;
+  const capSpaceM = safeCapNumber(row.cap_space);
+  const rookieReserveM = safeCapNumber(row.rookie_reserve);
+  return {
+    seasonLabel: String(row.season_label ?? currentSeasonLabel()),
+    baseCapM: safeCapNumber(row.base_cap),
+    rolloverM: safeCapNumber(row.rollover),
+    adjustedCapM: safeCapNumber(row.adjusted_cap),
+    capSpaceM,
+    salariesM: safeCapNumber(row.salaries),
+    capPenaltyM: safeCapNumber(row.cap_penalty),
+    totalSpendingM: safeCapNumber(row.total_spending),
+    rookieReserveM,
+    effectiveSpaceM: safeCapNumber(row.effective_space) || (capSpaceM - rookieReserveM),
+    source: "snapshot",
+  };
+}
+
+function buildCapEngineFields(engine: CapEngineSnapshot) {
+  const label = engine.seasonLabel || currentSeasonLabel();
+  return [
+    { name: `${label} Cap`, value: moneyM(engine.baseCapM), inline: true },
+    { name: `Rollover`, value: moneyM(engine.rolloverM), inline: true },
+    { name: `Adjusted Cap`, value: moneyM(engine.adjustedCapM), inline: true },
+    { name: `Cap Space`, value: moneyM(engine.capSpaceM), inline: true },
+    { name: `${label} Salaries`, value: moneyM(engine.salariesM), inline: true },
+    { name: `${label} Cap Penalty`, value: moneyM(engine.capPenaltyM), inline: true },
+    { name: `${label} Total Spending`, value: moneyM(engine.totalSpendingM), inline: true },
+    { name: `${Number(label) + 1 || "Next"} Rookie Reserve`, value: moneyM(engine.rookieReserveM), inline: true },
+    { name: `Effective Space`, value: `${moneyM(engine.effectiveSpaceM)}\n_after rookie reserve_`, inline: true },
+  ];
+}
+
+function capEngineNotes(engine: CapEngineSnapshot): string[] {
+  const notes: string[] = [];
+  if (engine.source === "team_season_stats") {
+    notes.push("Using imported team cap fields: cap_available → Adjusted Cap, cap_spent → Total Spending, cap_room → Cap Space. Detailed penalty/rookie-reserve fields populate when cap snapshots are imported or manually seeded.");
+  } else if (engine.source === "roster_estimate") {
+    notes.push("Using roster-estimated fallback because no imported team cap snapshot was found.");
+  }
+  if (engine.effectiveSpaceM < 0) notes.push("Effective space is negative after reserve. Avoid new spending until cap is cleared.");
+  else if (engine.effectiveSpaceM < 10) notes.push("Effective space is tight after reserve. Prioritize positive-net releases or restructures.");
+  return notes;
+}
+
 function targetToRange(value: string, currentOpen: number, capLimit: number): { label: string; min: number; max: number } {
   switch (value) {
     case "10_20": return { label: "$10–20M", min: 10, max: 20 };
@@ -3848,35 +3993,41 @@ async function getUserCapContext(interaction: ButtonInteraction | StringSelectMe
   const teamStats = capRows[0] ?? null;
   const rosterCapUsedM = bestRosterCapUsed(roster);
 
-  // Source of truth for Madden cap summary from team_season_stats / MCA standings:
-  //   cap_room      = current cap space/open room (ex: Cowboys $54.1M)
-  //   cap_spent     = total spending / used cap (ex: Cowboys ~$285M)
-  //   cap_available = adjusted team cap / available cap ceiling (ex: Cowboys ~$339M)
-  // Older comments incorrectly treated cap_room as the cap limit and cap_available as
-  // open space, which made Cap Manager route the right stored values to the wrong labels.
-  // Roster cap-hit sum remains diagnostic only because imported roster tables may include
-  // more than the active cap-accounting roster.
-  const importedOpenM = normalizeCapM(Number(teamStats?.cap_room ?? 0));
-  const importedCapSpentM = normalizeCapM(Number(teamStats?.cap_spent ?? 0));
-  const importedAdjustedCapM = normalizeCapM(Number(teamStats?.cap_available ?? 0));
+  // Source of truth for Madden cap summary from team_season_stats:
+  //   cap_available = Adjusted Cap / total cap limit
+  //   cap_spent     = Total Spending
+  //   cap_room      = Cap Space, including negative over-cap values
+  // Roster cap-hit sum is diagnostic only because MCA roster tables may include more than the active roster.
+  const hasAdjustedCap = hasImportedCapValue(teamStats?.cap_available);
+  const hasTotalSpending = hasImportedCapValue(teamStats?.cap_spent);
+  const hasCapSpace = hasImportedCapValue(teamStats?.cap_room);
 
-  const capAvailableM = importedOpenM > 0
-    ? importedOpenM
-    : importedAdjustedCapM > 0 && importedCapSpentM > 0
-      ? Math.max(0, importedAdjustedCapM - importedCapSpentM)
-      : 0;
-  const capLimitM = importedAdjustedCapM > 0
+  const importedAdjustedCapM = safeCapNumber(teamStats?.cap_available);
+  const importedCapSpentM = safeCapNumber(teamStats?.cap_spent);
+  const importedCapSpaceM = safeCapNumber(teamStats?.cap_room);
+
+  const capLimitM = hasAdjustedCap && importedAdjustedCapM > 0
     ? importedAdjustedCapM
-    : importedCapSpentM > 0 || capAvailableM > 0
-      ? importedCapSpentM + capAvailableM
-      : Math.max(255, rosterCapUsedM + Math.max(capAvailableM, 0));
-  const capSpentM = importedCapSpentM > 0 ? importedCapSpentM : Math.max(0, capLimitM - capAvailableM);
+    : Math.max(DEFAULT_MADDEN_BASE_CAP_M, rosterCapUsedM + Math.max(importedCapSpaceM, 0));
+  const capSpentM = hasTotalSpending && importedCapSpentM > 0
+    ? importedCapSpentM
+    : Math.max(0, capLimitM - (hasCapSpace ? importedCapSpaceM : 0));
+  const capAvailableM = hasCapSpace
+    ? importedCapSpaceM
+    : capLimitM - capSpentM;
 
   // Estimated release exposure = the combined dead money only for currently shown top positive-net cut candidates.
   // It is not "current dead cap" and should not be read as already owed money.
   const deadM = topCutCandidates(roster, 5).reduce((s,p)=>s+(p.deadM > 0 ? p.deadM : 0),0);
 
-  return { gid, user, seasonId, teamRow, roster, teamStats, wallet, savingsBalance: Number((savings as any)?.balance ?? 0), capSpentM, capAvailableM, capLimitM, deadM };
+  const storedCapEngine = await getStoredCapEngineSnapshot(gid, Number(seasonId), teamId);
+  const capEngine = storedCapEngine ?? buildFallbackCapEngine({ teamStats, roster, capLimitM, capSpentM, capAvailableM });
+
+  return {
+    gid, user, seasonId, teamRow, roster, teamStats, wallet,
+    savingsBalance: Number((savings as any)?.balance ?? 0),
+    capSpentM, capAvailableM, capLimitM, deadM, capEngine,
+  };
 }
 
 function summarizeCapHealth(openM: number, capLimitM: number): string {
@@ -4153,23 +4304,21 @@ async function handleCapManager(interaction: ButtonInteraction, _sess: ActionsSe
     const ctx = await getUserCapContext(interaction);
     const expiring = expiringPlayers(ctx.roster);
     const cut = topCutCandidates(ctx.roster, 5);
-    const health = summarizeCapHealth(ctx.capAvailableM, ctx.capLimitM);
+    const health = summarizeCapHealth(ctx.capEngine.effectiveSpaceM, ctx.capEngine.adjustedCapM || ctx.capLimitM);
 
     const embed = new EmbedBuilder()
       .setColor(Colors.Gold)
       .setTitle("💰 Cap Manager")
-      .setDescription(`**${ctx.teamRow.fullName}** cap snapshot and planning tools.`)
+      .setDescription(`**${ctx.teamRow.fullName}** cap snapshot and planning tools.\nStatus: ${health}`)
       .addFields(
-        { name: "Adjusted Cap", value: moneyM(ctx.capLimitM), inline: true },
-        { name: "Total Spending", value: moneyM(ctx.capSpentM), inline: true },
-        { name: "Cap Space", value: `${moneyM(ctx.capAvailableM)}\n${health}`, inline: true },
+        ...buildCapEngineFields(ctx.capEngine),
         { name: "Projected Cut Penalty", value: `${moneyM(ctx.deadM)}\n_if all listed flex candidates were released_`, inline: true },
         { name: "Expiring Contracts", value: String(expiring.length), inline: true },
         { name: "Wallet / Savings", value: `${ctx.wallet.toLocaleString()} / ${ctx.savingsBalance.toLocaleString()} coins`, inline: true },
         { name: "Top Cap Flex Candidates", value: cut.length ? cut.map(p => `• ${p.firstName} ${p.lastName} (${p.position}) — save ${moneyM(p.savingsM)}, dead ${moneyM(p.deadM)}, **${releaseNetLabel(p)}**`).join("\n").slice(0,1000) : "_No positive-savings cuts found._", inline: false },
       );
 
-    const notes = capHealthNotes(ctx);
+    const notes = [...capEngineNotes(ctx.capEngine), ...capHealthNotes(ctx)];
     const pfaNotes = await potentialFaAlternatives(ctx, 4);
     if (notes.length) embed.addFields({ name: "Cap Strategy Notes", value: notes.join("\n").slice(0, 1000), inline: false });
     if (pfaNotes.length) embed.addFields({ name: "Potential FA / Internal Replacement Angles", value: pfaNotes.join("\n").slice(0, 1200), inline: false });
@@ -4239,18 +4388,18 @@ function capProjectionText(ctx: Awaited<ReturnType<typeof getUserCapContext>>, c
     gained,
     addedDead,
     netGain,
-    projected: ctx.capAvailableM + gained,
+    projected: ctx.capEngine.effectiveSpaceM + gained,
     released,
   };
 }
 
 async function renderCapScenario(interaction: ButtonInteraction | StringSelectMenuInteraction, sess: ActionsSession) {
   const ctx = await getUserCapContext(interaction);
-  const target = targetToRange(sess.capTargetValue ?? "ideal", ctx.capAvailableM, ctx.capLimitM);
+  const target = targetToRange(sess.capTargetValue ?? "ideal", ctx.capEngine.effectiveSpaceM, ctx.capEngine.adjustedCapM || ctx.capLimitM);
   const candidates = topCutCandidates(ctx.roster, 12);
   const releaseIds = sess.capReleaseIds ?? [];
   const proj = capProjectionText(ctx, candidates, releaseIds);
-  const needed = Math.max(0, target.min - ctx.capAvailableM);
+  const needed = Math.max(0, target.min - ctx.capEngine.effectiveSpaceM);
 
   const candidateText = candidates.length
     ? candidates.slice(0, 10).map((p) => {
@@ -4265,7 +4414,7 @@ async function renderCapScenario(interaction: ButtonInteraction | StringSelectMe
     .setColor(Colors.Gold)
     .setTitle(`📈 Cap Scenario — ${target.label}`)
     .setDescription(
-      `Current open space: **${moneyM(ctx.capAvailableM)}**\n` +
+      `Effective open space: **${moneyM(ctx.capEngine.effectiveSpaceM)}**\n` +
       `Goal minimum: **${moneyM(target.min)}**\n` +
       `Needed to goal: **${moneyM(needed)}**`
     )
@@ -4370,7 +4519,7 @@ async function handleCapNegotiations(interaction: ButtonInteraction, _sess: Acti
     const embed = new EmbedBuilder()
       .setColor(Colors.Blue)
       .setTitle("🤝 Negotiations & Resign Plan")
-      .setDescription(`Contract-year review for **${ctx.teamRow.fullName}**.\nOpen cap: **${moneyM(ctx.capAvailableM)}** · Expiring players: **${exp.length}**`);
+      .setDescription(`Contract-year review for **${ctx.teamRow.fullName}**.\nEffective space: **${moneyM(ctx.capEngine.effectiveSpaceM)}** · Expiring players: **${exp.length}**`);
 
     for (const [tier, lines] of Object.entries(groups)) {
       embed.addFields({ name: tier, value: lines.length ? lines.join("\n").slice(0,1000) : "_None_", inline: false });
