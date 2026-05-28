@@ -61,12 +61,12 @@ import {
 } from "../economy/purchase-shared.js";
 import { ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../constants.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../economy/stat-categories.js";
+import { customPlayersOpen, legendPurchasesOpen } from "../store/cutoff-notices.js";
 import { createSession } from "./custom-player-session.js";
 
 
 import { canUseCommissionerOffice } from "../roles/rec-role-access.js";
 import { REC_ALL_ROLES_FOR_DISPLAY } from "../roles/rec-metric-roles.js";
-import { customPlayersOpen, legendPurchasesOpen } from "../menu/actions/store/cutoff-notices.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

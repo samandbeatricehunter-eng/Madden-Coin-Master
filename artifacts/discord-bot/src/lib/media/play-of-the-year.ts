@@ -125,14 +125,20 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
     const [, guildId, channelId, messageId] = interaction.customId.split(":");
     const category = interaction.values[0]!;
 
-    if (!guildId || !channelId || !messageId) {
+    if (!guildId || !channelId || !messageId || messageId === "undefined") {
       await interaction.update({
-        content: "❌ This nomination menu is missing highlight context. Please have the highlight reposted or re-approved.",
+        content: "❌ This highlight nomination menu is malformed or expired. Please repost the highlight or ask a commissioner to resend the nomination prompt.",
         embeds: [],
         components: [],
+      }).catch(async () => {
+        await interaction.reply({
+          content: "❌ This highlight nomination menu is malformed or expired. Please repost the highlight or ask a commissioner to resend the nomination prompt.",
+          ephemeral: true,
+        }).catch(() => null);
       });
       return true;
     }
+
     if (category === "none") {
       await interaction.update({ content: "Nomination closed. Your highlight still received the weekly upload payout.", embeds: [], components: [] });
       return true;
@@ -172,12 +178,6 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
   if (interaction.isButton() && interaction.customId === "poty_media_home") {
     const { renderMediaRoomHome } = await import("./media-room.js");
     await renderMediaRoomHome(interaction);
-    return true;
-  }
-
-  if (interaction.isStringSelectMenu() && interaction.customId === "poty_category") {
-    const category = interaction.values[0];
-    await renderPotyVote(interaction, category, 0);
     return true;
   }
 

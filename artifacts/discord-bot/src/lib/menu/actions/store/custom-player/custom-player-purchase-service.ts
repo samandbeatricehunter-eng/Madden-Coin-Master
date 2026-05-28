@@ -1,6 +1,6 @@
 import { getInventoryCount, getOrCreateActiveSeason } from "../../../../db/db-helpers.js";
 import { LIMITS } from "../../../../constants.js";
-import { customPlayersOpen } from "../cutoff-notices.js";
+import { customPlayersOpen } from "../../../../store/cutoff-notices.js";
 import { createSession } from "../../../../handlers/custom-player-session.js";
 
 export type CustomPlayerStartValidation =

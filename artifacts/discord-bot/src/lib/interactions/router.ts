@@ -30,6 +30,13 @@ async function safeReply(interaction: RoutedInteraction, content: string): Promi
 
 const routes: PrefixRoute[] = [
   {
+    prefixes: ["mr_", "ac_active_streams", "ac_poty_vote", "ac_goty_hub"],
+    handler: async (interaction) => {
+      const { handleMediaRoomInteraction } = await import("../media/media-room.js");
+      return handleMediaRoomInteraction(interaction as any);
+    },
+  },
+  {
     prefixes: ["gd_"],
     handler: async (interaction) => {
       const { handleGamedayInteraction } = await import("../gameday/gameday-dashboard.js");

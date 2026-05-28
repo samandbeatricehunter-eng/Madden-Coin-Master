@@ -23,6 +23,9 @@ const PAYOUT_ACTIONS = new Set([
 const VOTING_AWARD_ACTIONS = new Set([
   "ac_gotw_vote",
   "ac_goty_vote",
+  "ac_goty_hub",
+  "ac_poty_vote",
+  "ac_active_streams",
 ]);
 
 const WATCH_LIST_ACTIONS = new Set([

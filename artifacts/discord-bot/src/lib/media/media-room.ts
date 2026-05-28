@@ -139,9 +139,12 @@ export async function renderActiveStreams(interaction: any): Promise<void> {
     select *
     from gameday_matchup_status
     where guild_id = ${guildId}
-      and stream_url is not null
       and begun_at is not null
       and begun_at >= now() - interval '90 minutes'
+      and (
+        nullif(trim(coalesce(stream_url, '')), '') is not null
+        or lower(coalesce(stream_platform, '')) = 'discord'
+      )
     order by begun_at desc
     limit 20
   `);
@@ -160,9 +163,11 @@ export async function renderActiveStreams(interaction: any): Promise<void> {
   const lines: string[] = [];
 
   for (const s of h2h) {
-    const stream = String(s.stream_url ?? "").trim().toLowerCase() === "discord"
+    const rawStream = String(s.stream_url ?? "").trim();
+    const platform = String(s.stream_platform ?? "").trim().toLowerCase();
+    const stream = platform === "discord" || rawStream.toLowerCase() === "discord"
       ? "**Discord Stream**"
-      : String(s.stream_url ?? "");
+      : rawStream;
     lines.push(
       `**H2H:** <@${s.away_discord_id}> @ <@${s.home_discord_id}>\n` +
       `Stream: ${stream}\n` +
