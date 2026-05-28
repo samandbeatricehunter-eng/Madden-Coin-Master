@@ -39,9 +39,6 @@ const routes: PrefixRoute[] = [
   {
     prefixes: ["gdrev_"],
     handler: async (interaction) => {
-      if ((interaction.isButton() || interaction.isStringSelectMenu()) && !(interaction as any).deferred && !(interaction as any).replied) {
-        await (interaction as any).deferUpdate().catch(() => null);
-      }
       const { handleCommissionerGamedayReviewInteraction } = await import("../gameday/commissioner-gameday-review.js");
       await handleCommissionerGamedayReviewInteraction(interaction as any);
       return true;

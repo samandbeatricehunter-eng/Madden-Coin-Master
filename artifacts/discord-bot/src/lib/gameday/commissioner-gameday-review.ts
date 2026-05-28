@@ -43,17 +43,6 @@ function kindLabel(kind: string): string {
   return labels[kind] ?? kind;
 }
 
-
-async function respondReview(interaction: ButtonInteraction | StringSelectMenuInteraction, payload: any): Promise<void> {
-  if ((interaction as any).deferred || (interaction as any).replied) {
-    await (interaction as any).editReply(payload).catch(async () => (interaction as any).followUp({ ...payload, ephemeral: true }).catch(() => null));
-    return;
-  }
-  await (interaction as any).update(payload).catch(async () => {
-    await (interaction as any).reply({ ...payload, ephemeral: true }).catch(async () => (interaction as any).followUp({ ...payload, ephemeral: true }).catch(() => null));
-  });
-}
-
 async function rowsOf<T = any>(q: any): Promise<T[]> {
   const result = await db.execute(q);
   return ((result as any).rows ?? result) as T[];
@@ -177,7 +166,17 @@ export async function renderCommissionerGamedayReview(interaction: ButtonInterac
     ],
   };
 
-  await respondReview(interaction, payload);
+  if ((interaction as any).deferred || (interaction as any).replied) {
+    await (interaction as any).editReply(payload).catch(async () => {
+      await (interaction as any).followUp({ ...payload, ephemeral: true }).catch(() => null);
+    });
+  } else if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    await (interaction as any).update(payload).catch(async () => {
+      if (!(interaction as any).deferred && !(interaction as any).replied) {
+        await (interaction as any).reply({ ...payload, ephemeral: true }).catch(() => null);
+      }
+    });
+  }
 }
 
 export async function renderReviewCategory(interaction: StringSelectMenuInteraction | ButtonInteraction, kind: ReviewKind, page = 0) {
@@ -357,7 +356,8 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
     ),
   );
 
-  await respondReview(interaction, { embeds: [embed], components });
+  if ((interaction as any).deferred || (interaction as any).replied) await (interaction as any).editReply({ embeds: [embed], components });
+  else await (interaction as any).update({ embeds: [embed], components });
 }
 
 function formatReviewRow(kind: string, r: any, n: number): string {
@@ -419,7 +419,7 @@ export async function renderReviewDetail(interaction: StringSelectMenuInteractio
 
   const item = rows[0];
   if (!item) {
-    await respondReview(interaction, { content: "Item not found.", embeds: [], components: [] });
+    await interaction.update({ content: "Item not found.", embeds: [], components: [] });
     return;
   }
 
@@ -457,7 +457,7 @@ export async function renderReviewDetail(interaction: StringSelectMenuInteractio
   }
 
   row.addComponents(new ButtonBuilder().setCustomId(`gdrev_page:${kind}:0`).setLabel("← Back").setStyle(ButtonStyle.Secondary));
-  await respondReview(interaction, { embeds: [embed], components: [row] });
+  await interaction.update({ embeds: [embed], components: [row] });
 }
 
 export async function resolveReviewItem(interaction: ButtonInteraction, kind: ReviewKind, id: number, action: string) {
@@ -474,7 +474,7 @@ export async function resolveReviewItem(interaction: ButtonInteraction, kind: Re
     `);
     const score = rows[0];
     if (!score) {
-      await respondReview(interaction, { content: "Score dispute not found.", embeds: [], components: [] });
+      await interaction.reply({ ephemeral: true, content: "Score dispute not found." });
       return;
     }
 
@@ -510,7 +510,7 @@ export async function resolveReviewItem(interaction: ButtonInteraction, kind: Re
       await channel?.send(`❌ **Score Submission Voided**\nDisputed final #${id} was voided by <@${interaction.user.id}>. Users should resubmit or await commissioner ruling.`);
     }
 
-    await respondReview(interaction, { embeds: [new EmbedBuilder().setColor(Colors.Green).setDescription("Resolved.")], components: [] });
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Green).setDescription("Resolved.")], components: [] });
     return;
   }
 
@@ -523,7 +523,7 @@ export async function resolveReviewItem(interaction: ButtonInteraction, kind: Re
   `);
   const req = rows[0];
   if (!req) {
-    await respondReview(interaction, { content: "Request not found.", embeds: [], components: [] });
+    await interaction.reply({ ephemeral: true, content: "Request not found." });
     return;
   }
 
@@ -554,7 +554,7 @@ Confirmed by <@${interaction.user.id}>.`);
       await channel?.send(`❌ **Dashed Report Denied**
 Dashed report #${id} was denied by <@${interaction.user.id}>.`);
     }
-    await respondReview(interaction, { embeds: [new EmbedBuilder().setColor(Colors.Green).setDescription("Resolved.")], components: [] });
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Green).setDescription("Resolved.")], components: [] });
     return;
   }
 

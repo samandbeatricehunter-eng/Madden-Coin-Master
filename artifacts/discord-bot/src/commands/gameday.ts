@@ -9,5 +9,8 @@ export const data = new SlashCommandBuilder()
   .setDescription("Open your private dashboard for this week's H2H matchup.");
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true }).catch(() => null);
+  }
   await openGamedayDashboard(interaction);
 }

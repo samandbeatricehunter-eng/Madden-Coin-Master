@@ -91,72 +91,22 @@ function patchDraft(ctx: GamedayContext, patch: Partial<ScheduleDraft>): Schedul
 
 async function respond(interaction: GamedayInteraction, payload: any): Promise<void> {
   const full = { ephemeral: true, ...payload };
-  if (!interaction.isRepliable()) return;
-
   if (interaction.isChatInputCommand()) {
-    if ((interaction as any).replied || (interaction as any).deferred) {
-      await interaction.editReply(full).catch(async () => (interaction as any).followUp(full).catch(() => null));
-    } else {
-      await interaction.reply(full).catch(() => null);
-    }
+    if ((interaction as any).replied || (interaction as any).deferred) await interaction.editReply(full).catch(() => null);
+    else await interaction.reply(full).catch(() => null);
     return;
   }
-
-  if ((interaction as any).deferred || (interaction as any).replied) {
+  if ((interaction as any).replied || (interaction as any).deferred) {
     await (interaction as any).editReply(full).catch(async () => (interaction as any).followUp(full).catch(() => null));
     return;
   }
-
   if (interaction.isModalSubmit()) {
     await interaction.reply(full).catch(() => null);
     return;
   }
-
   await (interaction as ButtonInteraction | StringSelectMenuInteraction).update(full).catch(async () => {
-    await (interaction as any).reply(full).catch(async () => (interaction as any).followUp(full).catch(() => null));
+    await (interaction as any).reply(full).catch(() => null);
   });
-}
-
-const MODAL_BUTTON_ACTIONS = new Set([
-  "gd_offer_counter",
-  "gd_offer_reject",
-  "gd_mark_begun",
-  "gd_message_opponent",
-  "gd_sched_note",
-  "gd_cpu_stream",
-  "gd_submit_final", // legacy fallback; not exposed
-  "gd_score_dispute", // legacy fallback; not exposed
-]);
-
-function opensModalFromButton(action: string): boolean {
-  return MODAL_BUTTON_ACTIONS.has(action) || action.startsWith("gd_assist_");
-}
-
-function opensModalFromSelect(interaction: StringSelectMenuInteraction, action: string): boolean {
-  return action === "gd_desync_choice" && (interaction.values[0] ?? "") === "force_win";
-}
-
-async function acknowledgeGamedayInteraction(
-  interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
-  action: string,
-): Promise<void> {
-  if ((interaction as any).deferred || (interaction as any).replied) return;
-
-  if (interaction.isModalSubmit()) {
-    await interaction.deferReply({ ephemeral: true }).catch(() => null);
-    return;
-  }
-
-  if (interaction.isButton()) {
-    if (opensModalFromButton(action)) return;
-    await interaction.deferUpdate().catch(() => null);
-    return;
-  }
-
-  if (interaction.isStringSelectMenu()) {
-    if (opensModalFromSelect(interaction, action)) return;
-    await interaction.deferUpdate().catch(() => null);
-  }
 }
 
 function dashboardRows(activeCount: number, pendingCount: number) {
@@ -205,24 +155,33 @@ async function renderDashboard(interaction: GamedayInteraction, ctx: GamedayCont
 }
 
 async function renderCpuDashboard(interaction: GamedayInteraction, ctx: GamedayContext): Promise<void> {
+  const isCommish = isCommissionerMember(interaction);
+  const isBye = !ctx.cpuTeamName && !ctx.scheduleId;
   const embed = new EmbedBuilder()
     .setColor(Colors.Greyple)
-    .setTitle("🎮 CPU Gameday Dashboard")
+    .setTitle(isBye ? "🎮 Gameday Dashboard — Bye Week" : "🎮 CPU Gameday Dashboard")
     .setDescription([
       `**Week:** ${weekLabel(String((ctx.season as any).currentWeek ?? ""))}`,
       `**Your Team:** ${ctx.userTeamName ?? "Unknown"}`,
-      `**CPU Team:** ${ctx.cpuTeamName ?? "Unknown"}`,
-      "CPU games use a simplified flow: stream/report through Commissioner assistance when needed.",
+      isBye ? "**Matchup:** Bye week / no playable matchup found" : `**CPU Team:** ${ctx.cpuTeamName ?? "Unknown"}`,
+      isBye
+        ? "CPU stream and CPU FW controls are disabled during bye weeks. Commissioner review remains available to commissioners."
+        : "CPU games use a simplified flow: stream/report through Commissioner assistance when needed.",
     ].join("\n"));
+
+  const buttons: ButtonBuilder[] = [
+    new ButtonBuilder().setCustomId("gd_cpu_stream").setLabel("📺 Report CPU Stream").setStyle(ButtonStyle.Primary).setDisabled(isBye),
+    new ButtonBuilder().setCustomId("gd_cpu_fw").setLabel("🏳️ Request CPU FW").setStyle(ButtonStyle.Danger).setDisabled(isBye),
+    new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
+  ];
+
+  if (isCommish) {
+    buttons.splice(2, 0, new ButtonBuilder().setCustomId("gd_commish_review").setLabel("🎮 Commissioner Review").setStyle(ButtonStyle.Secondary));
+  }
+
   await respond(interaction, {
     embeds: [embed],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("gd_cpu_stream").setLabel("📺 Report CPU Stream").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("gd_cpu_fw").setLabel("🏳️ Request CPU FW").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
-      ),
-    ] as any,
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)] as any,
   });
 }
 
@@ -371,7 +330,7 @@ async function sendOffer(interaction: ButtonInteraction, ctx: GamedayContext): P
   const draft = getDraft(ctx);
   if (!draft.tz || !draft.dayIso || !draft.time) return showTimezoneSelect(interaction, ctx);
   if ((await countActiveOffers(ctx)) >= 3) {
-    await respond(interaction, { content: "❌ You already have 3 active offers. Cancel one before sending another.", embeds: [], components: [backRow()] as any });
+    await interaction.reply({ ephemeral: true, content: "❌ You already have 3 active offers. Cancel one before sending another." });
     return;
   }
   const proposedFor = `${draft.dayIso} ${displayTime(draft.time)}`;
@@ -580,7 +539,7 @@ async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: Ga
   if (!(await requireBothCheckedIn(interaction, ctx))) return;
   const streamInput = interaction.fields.getTextInputValue("stream_url").trim();
   const streamChoice = parseStreamPostingChoice(streamInput);
-  if (!streamChoice) return respond(interaction, { content: "❌ Paste a valid http:// or https:// stream URL, type **Discord**, or leave it blank.", embeds: [], components: [backRow()] as any });
+  if (!streamChoice) return interaction.reply({ ephemeral: true, content: "❌ Paste a valid http:// or https:// stream URL, type **Discord**, or leave it blank." });
   await db.execute(sql`
     update gameday_matchup_status
     set begun_by = ${ctx.userId},
@@ -620,14 +579,14 @@ async function handleFinalModal(interaction: ModalSubmitInteraction, ctx: Gameda
   const awayScore = Number(interaction.fields.getTextInputValue("away_score").trim());
   const homeScore = Number(interaction.fields.getTextInputValue("home_score").trim());
   if (!Number.isInteger(awayScore) || !Number.isInteger(homeScore) || awayScore < 0 || homeScore < 0) {
-    await respond(interaction, { content: "❌ Scores must be non-negative whole numbers.", embeds: [], components: [backRow()] as any });
+    await interaction.reply({ ephemeral: true, content: "❌ Scores must be non-negative whole numbers." });
     return;
   }
   try {
     const id = await createScoreSubmission(interaction, ctx, awayScore, homeScore);
     await respond(interaction, { embeds: [new EmbedBuilder().setColor(Colors.Green).setTitle("🏁 Final Score Submitted").setDescription(`Score submission #${id} was sent to <@${ctx.opponentId}> for approval.`)], components: [backRow()] as any });
   } catch (err: any) {
-    await respond(interaction, { content: `❌ ${err?.message ?? "Could not submit final score."}`, embeds: [], components: [backRow()] as any });
+    await interaction.reply({ ephemeral: true, content: `❌ ${err?.message ?? "Could not submit final score."}` });
   }
 }
 
@@ -882,7 +841,7 @@ async function showCpuStreamModal(interaction: ButtonInteraction): Promise<void>
 
 async function handleCpuStreamModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
   const streamUrl = interaction.fields.getTextInputValue("stream_url").trim();
-  if (!validUrl(streamUrl)) return respond(interaction, { content: "❌ Use a valid http:// or https:// stream URL.", embeds: [], components: [backRow()] as any });
+  if (!validUrl(streamUrl)) return interaction.reply({ ephemeral: true, content: "❌ Use a valid http:// or https:// stream URL." });
   await db.execute(sql`
     insert into gameday_cpu_actions (guild_id, season_id, week_index, user_discord_id, user_team_name, cpu_team_name, schedule_id, cpu_stream_link)
     values (${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.userId}, ${ctx.userTeamName ?? null}, ${ctx.cpuTeamName ?? null}, ${ctx.scheduleId ?? null}, ${streamUrl})
@@ -949,18 +908,20 @@ export async function openGamedayDashboard(interaction: ChatInputCommandInteract
     return;
   }
 
-  await interaction.reply({ ephemeral: true, content: "❌ You do not have a matchup this week, so no gameday actions are available." }).catch(() => null);
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply({ content: "❌ You do not have a matchup this week, so no gameday actions are available.", embeds: [], components: [] }).catch(() => null);
+  } else {
+    await interaction.reply({ ephemeral: true, content: "❌ You do not have a matchup this week, so no gameday actions are available." }).catch(() => null);
+  }
 }
 
 export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("gd_")) return false;
+  await ensureGamedaySchema();
 
   const parts = interaction.customId.split(":");
   const action = parts[0]!;
   const id = parts[1] ? Number(parts[1]) : null;
-
-  await acknowledgeGamedayInteraction(interaction, action);
-  await ensureGamedaySchema();
 
   if (interaction.isButton()) {
     if (action === "gd_offer_counter" && id != null) return void (await showCounterModal(interaction, id)), true;
@@ -976,18 +937,23 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
 
   if (action === "gd_commish_review") {
     if (!isCommissionerMember(interaction)) {
-      await respond(interaction, { content: "❌ Commissioner access required.", embeds: [], components: [] });
+      if (!interaction.deferred && !interaction.replied) await interaction.reply({ ephemeral: true, content: "❌ Commissioner access required." }).catch(() => null);
+      else await (interaction as any).followUp({ ephemeral: true, content: "❌ Commissioner access required." }).catch(() => null);
       return true;
+    }
+    if (!interaction.deferred && !interaction.replied && (interaction.isButton() || interaction.isStringSelectMenu())) {
+      await interaction.deferUpdate().catch(() => null);
     }
     await renderCommissionerGamedayReview(interaction as any);
     return true;
   }
 
-  const ctx = await resolveGamedayContext(interaction);
-  if (!ctx) {
-    await respond(interaction, { content: "❌ No active gameday matchup was found for you this week.", embeds: [], components: [] });
-    return true;
+  if (!interaction.isModalSubmit() && !interaction.deferred && !interaction.replied && (interaction.isButton() || interaction.isStringSelectMenu())) {
+    await interaction.deferUpdate().catch(() => null);
   }
+
+  const ctx = await resolveGamedayContext(interaction);
+  if (!ctx) return true;
 
   if (interaction.isStringSelectMenu()) {
     if (action === "gd_sched_tz") {
@@ -1022,7 +988,7 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
       const proposedTz = interaction.fields.getTextInputValue("proposed_tz").trim().toUpperCase();
       const notes = interaction.fields.getTextInputValue("notes").trim() || null;
       const newId = await counterOffer(ctx, id, proposedFor, proposedTz, notes);
-      if (!newId) return void (await respond(interaction, { content: "❌ Offer not found or no longer pending.", embeds: [], components: [backRow()] as any })), true;
+      if (!newId) return void (await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." })), true;
       await dmUser(interaction, ctx.opponentId, `🔁 <@${ctx.userId}> countered with **${proposedFor} ${proposedTz}** for ${ctx.awayTeamName} @ ${ctx.homeTeamName}.`);
       await respond(interaction, { content: `✅ Counter offer #${newId} sent.`, embeds: [], components: [backRow()] as any });
       return true;
@@ -1030,7 +996,7 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (action === "gd_modal_reject" && id != null) {
       const reason = interaction.fields.getTextInputValue("reason").trim();
       const offer = await rejectOffer(ctx, id, reason);
-      if (!offer) return void (await respond(interaction, { content: "❌ Offer not found or no longer pending.", embeds: [], components: [backRow()] as any })), true;
+      if (!offer) return void (await interaction.reply({ ephemeral: true, content: "❌ Offer not found or no longer pending." })), true;
       await dmUser(interaction, offer.proposer_discord_id, `❌ Your scheduling offer was rejected by <@${ctx.userId}>.\n\n**Reason:** ${reason}`);
       await respond(interaction, { content: "✅ Offer rejected and proposer notified.", embeds: [], components: [backRow()] as any });
       return true;
@@ -1040,7 +1006,7 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (action === "gd_modal_score_dispute" && id != null) {
       const reason = interaction.fields.getTextInputValue("reason").trim();
       const score = await disputeScore(ctx, id, reason);
-      if (!score) return void (await respond(interaction, { content: "❌ Score submission not found or no longer pending.", embeds: [], components: [backRow()] as any })), true;
+      if (!score) return void (await interaction.reply({ ephemeral: true, content: "❌ Score submission not found or no longer pending." })), true;
       await postToGamedayChannel(interaction, ctx, `⚠️ **Final Score Disputed**\nScore #${score.id} disputed by <@${ctx.userId}>. Commissioner review required.`);
       await respond(interaction, { content: "✅ Dispute submitted for commissioner review.", embeds: [], components: [backRow()] as any });
       return true;
@@ -1098,7 +1064,7 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     case "gd_rivalries": await handleAcRivalries(interaction as any); break;
     case "gd_cpu_fw": await handleCpuFw(interaction, ctx); break;
     default:
-      await respond(interaction, { content: "❌ Unknown gameday action. Reopen `/gameday` and try again.", embeds: [], components: [] });
+      await interaction.reply({ ephemeral: true, content: "❌ Unknown gameday action. Reopen `/gameday` and try again." });
   }
   return true;
 }
