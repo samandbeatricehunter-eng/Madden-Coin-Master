@@ -67,21 +67,43 @@ type RecordRow = { voterId: string; wins: number; losses: number };
 
 async function computeVoterRecordGlobal(voterId: string): Promise<{ wins: number; losses: number }> {
   const res = await db.execute(sql`
-    SELECT
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS wins,
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS losses
-    FROM gotw_votes v
-    JOIN gotw_history h
-      ON h.season_id    = v.season_id
-     AND h.week_index   = v.week_index
-     AND h.matchup_index = v.matchup_index
-    JOIN game_schedules s
-      ON s.season_id  = v.season_id
-     AND s.week_index = v.week_index
-     AND ((s.away_discord_id = h.discord_id_1 AND s.home_discord_id = h.discord_id_2)
-       OR (s.away_discord_id = h.discord_id_2 AND s.home_discord_id = h.discord_id_1))
-    WHERE coalesce(s.winner_discord_id, s.imported_winner_discord_id) IS NOT NULL
-      AND v.voter_id = ${voterId}
+    with vote_games as (
+      select
+        v.voter_id,
+        v.voted_for_discord_id,
+        coalesce(
+          s.winner_discord_id,
+          s.imported_winner_discord_id,
+          case
+            when fs.home_score is not null and fs.away_score is not null and fs.home_score > fs.away_score and lower(fs.home_team_name) = lower(h.team_name_1) then h.discord_id_1
+            when fs.home_score is not null and fs.away_score is not null and fs.home_score > fs.away_score and lower(fs.home_team_name) = lower(h.team_name_2) then h.discord_id_2
+            when fs.home_score is not null and fs.away_score is not null and fs.away_score > fs.home_score and lower(fs.away_team_name) = lower(h.team_name_1) then h.discord_id_1
+            when fs.home_score is not null and fs.away_score is not null and fs.away_score > fs.home_score and lower(fs.away_team_name) = lower(h.team_name_2) then h.discord_id_2
+            else null
+          end
+        ) as resolved_winner_discord_id
+      from gotw_votes v
+      join gotw_history h
+        on h.season_id = v.season_id
+       and h.week_index = v.week_index
+       and h.matchup_index = v.matchup_index
+      left join game_schedules s
+        on s.season_id = v.season_id
+       and s.week_index = v.week_index
+       and ((s.away_discord_id = h.discord_id_1 and s.home_discord_id = h.discord_id_2)
+         or (s.away_discord_id = h.discord_id_2 and s.home_discord_id = h.discord_id_1))
+      left join franchise_schedule fs
+        on fs.season_id = v.season_id
+       and fs.week_index = v.week_index
+       and ((lower(fs.away_team_name) = lower(h.team_name_1) and lower(fs.home_team_name) = lower(h.team_name_2))
+         or (lower(fs.away_team_name) = lower(h.team_name_2) and lower(fs.home_team_name) = lower(h.team_name_1)))
+      where v.voter_id = ${voterId}
+    )
+    select
+      count(*) filter (where voted_for_discord_id = resolved_winner_discord_id)::int as wins,
+      count(*) filter (where voted_for_discord_id <> resolved_winner_discord_id)::int as losses
+    from vote_games
+    where resolved_winner_discord_id is not null
   `);
   const row: any = (res as any).rows?.[0] ?? (res as any)[0] ?? {};
   return { wins: Number(row.wins ?? 0), losses: Number(row.losses ?? 0) };
@@ -89,26 +111,48 @@ async function computeVoterRecordGlobal(voterId: string): Promise<{ wins: number
 
 async function computeTopVotersForGuild(guildId: string, limit = 5): Promise<RecordRow[]> {
   const res = await db.execute(sql`
-    SELECT
-      v.voter_id AS voter_id,
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id =  coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS wins,
-      COUNT(*) FILTER (WHERE v.voted_for_discord_id <> coalesce(s.winner_discord_id, s.imported_winner_discord_id))::int AS losses
-    FROM gotw_votes v
-    JOIN gotw_history h
-      ON h.season_id    = v.season_id
-     AND h.week_index   = v.week_index
-     AND h.matchup_index = v.matchup_index
-    JOIN game_schedules s
-      ON s.season_id  = v.season_id
-     AND s.week_index = v.week_index
-     AND ((s.away_discord_id = h.discord_id_1 AND s.home_discord_id = h.discord_id_2)
-       OR (s.away_discord_id = h.discord_id_2 AND s.home_discord_id = h.discord_id_1))
-    JOIN seasons se ON se.id = v.season_id
-    WHERE coalesce(s.winner_discord_id, s.imported_winner_discord_id) IS NOT NULL
-      AND se.guild_id = ${guildId}
-    GROUP BY v.voter_id
-    ORDER BY wins DESC, losses ASC, voter_id ASC
-    LIMIT ${limit}
+    with vote_games as (
+      select
+        v.voter_id,
+        v.voted_for_discord_id,
+        coalesce(
+          s.winner_discord_id,
+          s.imported_winner_discord_id,
+          case
+            when fs.home_score is not null and fs.away_score is not null and fs.home_score > fs.away_score and lower(fs.home_team_name) = lower(h.team_name_1) then h.discord_id_1
+            when fs.home_score is not null and fs.away_score is not null and fs.home_score > fs.away_score and lower(fs.home_team_name) = lower(h.team_name_2) then h.discord_id_2
+            when fs.home_score is not null and fs.away_score is not null and fs.away_score > fs.home_score and lower(fs.away_team_name) = lower(h.team_name_1) then h.discord_id_1
+            when fs.home_score is not null and fs.away_score is not null and fs.away_score > fs.home_score and lower(fs.away_team_name) = lower(h.team_name_2) then h.discord_id_2
+            else null
+          end
+        ) as resolved_winner_discord_id
+      from gotw_votes v
+      join gotw_history h
+        on h.season_id = v.season_id
+       and h.week_index = v.week_index
+       and h.matchup_index = v.matchup_index
+      join seasons se on se.id = v.season_id
+      left join game_schedules s
+        on s.season_id = v.season_id
+       and s.week_index = v.week_index
+       and ((s.away_discord_id = h.discord_id_1 and s.home_discord_id = h.discord_id_2)
+         or (s.away_discord_id = h.discord_id_2 and s.home_discord_id = h.discord_id_1))
+      left join franchise_schedule fs
+        on fs.season_id = v.season_id
+       and fs.week_index = v.week_index
+       and ((lower(fs.away_team_name) = lower(h.team_name_1) and lower(fs.home_team_name) = lower(h.team_name_2))
+         or (lower(fs.away_team_name) = lower(h.team_name_2) and lower(fs.home_team_name) = lower(h.team_name_1)))
+      where se.guild_id = ${guildId}
+    )
+    select
+      voter_id,
+      count(*) filter (where voted_for_discord_id = resolved_winner_discord_id)::int as wins,
+      count(*) filter (where voted_for_discord_id <> resolved_winner_discord_id)::int as losses
+    from vote_games
+    where resolved_winner_discord_id is not null
+    group by voter_id
+    order by wins desc, losses asc, voter_id asc
+    limit ${limit}
   `);
   const rows: any[] = (res as any).rows ?? (res as any) ?? [];
   return rows.map(r => ({ voterId: String(r.voter_id), wins: Number(r.wins ?? 0), losses: Number(r.losses ?? 0) }));

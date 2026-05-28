@@ -79,27 +79,7 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
   if (id === "menu_cat") {
     const node = findNode(value);
     if (node?.kind === "action") {
-      const action = node.action;
-
-      if (action === "ac_active_streams") {
-        const { renderActiveStreams } = await import("../media/media-room.js");
-        await renderActiveStreams(interaction as any);
-        return true;
-      }
-
-      if (action === "ac_goty_hub" || action === "ac_goty_vote") {
-        const { renderGotyHub } = await import("../media/media-room.js");
-        await renderGotyHub(interaction as any);
-        return true;
-      }
-
-      if (action === "ac_poty_vote") {
-        const { renderPotyVote } = await import("../media/play-of-the-year.js");
-        await renderPotyVote(interaction as any);
-        return true;
-      }
-
-      const handled = await handleActionsInteraction(interaction, action);
+      const handled = await handleActionsInteraction(interaction, node.action);
       if (!handled) {
         await interaction.reply({ content: "❌ That action couldn't be opened. Try again.", ephemeral: true });
       }

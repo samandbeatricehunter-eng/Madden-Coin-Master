@@ -73,6 +73,30 @@ async function ensureRoleTables(): Promise<void> {
       unique(guild_id, event_key)
     )
   `);
+  await db.execute(sql`
+    create table if not exists rec_guild_defending_champions (
+      id serial primary key,
+      guild_id text not null,
+      season_id integer not null,
+      champion_discord_id text not null,
+      source text,
+      created_at timestamp with time zone not null default now(),
+      updated_at timestamp with time zone not null default now(),
+      unique(guild_id, season_id)
+    )
+  `);
+  await db.execute(sql`
+    create table if not exists rec_guild_role_aliases (
+      id serial primary key,
+      guild_id text not null,
+      role_key text not null,
+      canonical_role_id text not null,
+      canonical_role_name text not null,
+      duplicate_role_ids text[] not null default '{}',
+      updated_at timestamp with time zone not null default now(),
+      unique(guild_id, role_key)
+    )
+  `);
 }
 
 function cleanNickname(name: string): string {
@@ -82,8 +106,35 @@ function cleanNickname(name: string): string {
 }
 
 async function ensureRole(guild: Guild, name: string) {
-  const existing = guild.roles.cache.find((r) => r.name.toLowerCase() === name.toLowerCase());
-  if (existing) return existing;
+  await guild.roles.fetch().catch(() => null);
+  const matches = guild.roles.cache
+    .filter((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase())
+    .sort((a, b) => a.position - b.position);
+
+  const existing = matches.first();
+  if (existing) {
+    if (name.toLowerCase() === "rec league og" && matches.size > 1) {
+      const duplicates = matches.filter((r) => r.id !== existing.id);
+      for (const duplicate of duplicates.values()) {
+        for (const member of duplicate.members.values()) {
+          if (!member.roles.cache.has(existing.id)) {
+            await member.roles.add(existing, "Consolidating duplicate REC League OG role").catch(() => null);
+            await delay(RATE_LIMIT_DELAY_MS);
+          }
+          await member.roles.remove(duplicate, "Consolidating duplicate REC League OG role").catch(() => null);
+          await delay(RATE_LIMIT_DELAY_MS);
+        }
+      }
+      await db.execute(sql`
+        insert into rec_guild_role_aliases (guild_id, role_key, canonical_role_id, canonical_role_name, duplicate_role_ids, updated_at)
+        values (${guild.id}, 'rec_og', ${existing.id}, ${existing.name}, ${duplicates.map((r) => r.id)}, now())
+        on conflict (guild_id, role_key)
+        do update set canonical_role_id = excluded.canonical_role_id, canonical_role_name = excluded.canonical_role_name, duplicate_role_ids = excluded.duplicate_role_ids, updated_at = now()
+      `).catch(() => null);
+    }
+    return existing;
+  }
+
   return guild.roles.create({
     name,
     reason: "REC League automated role system",
@@ -486,6 +537,54 @@ async function applyGlobalRoleEntitlements(member: GuildMember, entitlements: Se
   }
 }
 
+
+async function getDefendingChampionId(guildId: string): Promise<string | null> {
+  const active = await getOrCreateActiveSeason(guildId).catch(() => null);
+  if (!active) return null;
+  const rows = await rowsOf<{ champion_discord_id: string }>(sql`
+    select champion_discord_id
+    from rec_guild_defending_champions
+    where guild_id = ${guildId}
+      and season_id = ${active.id}
+    order by updated_at desc
+    limit 1
+  `).catch(() => []);
+  if (rows[0]?.champion_discord_id) return String(rows[0].champion_discord_id);
+
+  const priorSeason = await rowsOf<{ id: number }>(sql`
+    select id
+    from seasons
+    where guild_id = ${guildId}
+      and id < ${active.id}
+    order by id desc
+    limit 1
+  `).catch(() => []);
+  const priorSeasonId = priorSeason[0]?.id;
+  if (!priorSeasonId) return null;
+
+  const sb = await rowsOf<{ winner_discord_id: string }>(sql`
+    select coalesce(winner_discord_id, imported_winner_discord_id) as winner_discord_id
+    from game_schedules
+    where guild_id = ${guildId}
+      and season_id = ${priorSeasonId}
+      and week_index in (1022, 22)
+      and coalesce(winner_discord_id, imported_winner_discord_id) is not null
+    order by coalesce(finished_at, updated_at, created_at) desc
+    limit 1
+  `).catch(() => []);
+
+  const championId = sb[0]?.winner_discord_id ? String(sb[0].winner_discord_id) : null;
+  if (championId) {
+    await db.execute(sql`
+      insert into rec_guild_defending_champions (guild_id, season_id, champion_discord_id, source)
+      values (${guildId}, ${active.id}, ${championId}, 'game_schedules_previous_super_bowl')
+      on conflict (guild_id, season_id)
+      do update set champion_discord_id = excluded.champion_discord_id, source = excluded.source, updated_at = now()
+    `).catch(() => null);
+  }
+  return championId;
+}
+
 export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<void> {
   await ensureRoleTables();
   const guildId = guild.id;
@@ -496,7 +595,8 @@ export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<voi
   await seedOgOnce(guildId, changes);
   await seedLeagueVeterans(guildId, changes);
   await seedMrPerfectIfWildcard(guildId, changes);
-  const sbWinners = await seedSbWinners(guildId, changes);
+  await seedSbWinners(guildId, changes);
+  const defendingChampionId = await getDefendingChampionId(guildId);
 
   const [users, steady, sweaters, trenchesLeader, gimmeLeader, playcalls] = await Promise.all([
     getGuildUsers(guildId),
@@ -525,7 +625,7 @@ export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<voi
     const hotCold = await getHotColdTag(guildId, u.discord_id);
     if (hotCold) emojis.push(hotCold);
     if (await hasAccurateBettor(guildId, u.discord_id)) emojis.push("🎯");
-    if (sbWinners.has(u.discord_id)) emojis.push("🏆");
+    if (defendingChampionId === u.discord_id) emojis.push("🏆");
     if (await hasSchedulingRisk(guildId, u.discord_id)) emojis.push("⚠️");
 
     await updateNicknameTags(member, emojis, changes);

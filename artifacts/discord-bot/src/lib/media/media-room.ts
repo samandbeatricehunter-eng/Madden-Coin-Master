@@ -271,6 +271,15 @@ function displayWeekLabel(displayWeek: number): string {
   return `Week ${displayWeek}`;
 }
 
+function displayWeekFromScheduleWeekIndex(weekIndex: number): number | null {
+  if (weekIndex >= 0 && weekIndex <= 17) return weekIndex + 1;
+  if (weekIndex === 1018) return 19;
+  if (weekIndex === 1019) return 20;
+  if (weekIndex === 1020) return 21;
+  if (weekIndex === 1022) return 22;
+  return null;
+}
+
 async function showGotyWeekSelect(interaction: any): Promise<void> {
   const guildId = interaction.guildId!;
   const season = await getOrCreateActiveSeason(guildId);
@@ -281,17 +290,54 @@ async function showGotyWeekSelect(interaction: any): Promise<void> {
     return;
   }
 
-  const displayWeeks = [...new Set([currentDisplayWeek, Math.max(1, currentDisplayWeek - 1)])]
-    .filter((w) => w >= 1 && w <= 22);
+  const currentWeekIndex = scheduleWeekIndexFromDisplayWeek(currentDisplayWeek);
+  const weekRows = await rowsOf<{ week_index: number }>(sql`
+    select distinct week_index::int as week_index
+    from game_schedules
+    where guild_id = ${guildId}
+      and season_id = ${season.id}
+      and week_index < ${currentWeekIndex}
+      and away_discord_id is not null
+      and home_discord_id is not null
+      and away_discord_id <> ''
+      and home_discord_id <> ''
+      and away_discord_id not like 'unlinked_%'
+      and home_discord_id not like 'unlinked_%'
+    order by week_index asc
+    limit 25
+  `);
+
+  const displayWeeks = weekRows
+    .map((r) => displayWeekFromScheduleWeekIndex(Number(r.week_index)))
+    .filter((w): w is number => Number.isInteger(w) && w >= 1 && w <= 22);
+
+  if (!displayWeeks.length) {
+    await respondPanel(interaction, {
+      ephemeral: true,
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Greyple)
+          .setTitle("🎮 GOTY Nomination — No Previous H2H Weeks")
+          .setDescription("No previous H2H weeks were found for the current active season in this server."),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("mr_goty_home").setLabel("← GOTY Home").setStyle(ButtonStyle.Secondary),
+        ),
+        mediaRoomBackRow(),
+      ],
+    });
+    return;
+  }
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId("mr_goty_week")
-    .setPlaceholder("Select week to nominate from…")
+    .setPlaceholder("Select previous week to nominate from…")
     .addOptions(
       displayWeeks.map((w) =>
         new StringSelectMenuOptionBuilder()
           .setLabel(displayWeekLabel(w))
-          .setDescription(w === currentDisplayWeek ? "Current week" : "Previous week")
+          .setDescription("Previous week from this active season")
           .setValue(String(w)),
       ),
     );
@@ -302,7 +348,7 @@ async function showGotyWeekSelect(interaction: any): Promise<void> {
       new EmbedBuilder()
         .setColor(Colors.Gold)
         .setTitle("🎮 GOTY Nomination — Select Week")
-        .setDescription("Choose either the current week or previous week. The next step will show only H2H matchups from that week."),
+        .setDescription("Choose any previous H2H week from this server’s current active season. The next step will show matchups from that week."),
     ],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),

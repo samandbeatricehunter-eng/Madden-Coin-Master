@@ -28,6 +28,15 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
   return ((result as any).rows ?? result) as T[];
 }
 
+function potyWeekKey(season: any): string {
+  return String(season?.currentWeek ?? "").toLowerCase().trim();
+}
+
+function isPotyVotingOpen(season: any): boolean {
+  const wk = potyWeekKey(season);
+  return ["wildcard", "divisional", "conference", "superbowl"].includes(wk);
+}
+
 export async function ensureHighlightTables(): Promise<void> {
   await db.execute(sql`
     create table if not exists highlight_nominees (
@@ -193,7 +202,10 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
   }
 
   if (interaction.isButton() && interaction.customId === "poty_closeout") {
-    await closeoutPoty(interaction);
+    await interaction.reply({
+      ephemeral: true,
+      content: "POTY no longer uses commissioner close/tally. Voting opens automatically at the end of the regular season and closes when the league advances from Super Bowl to offseason.",
+    });
     return true;
   }
 
@@ -212,6 +224,12 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
       await interaction.reply({ ephemeral: true, content: "Nominee not found." });
       return true;
     }
+    const season = await getOrCreateActiveSeason(nominee.guild_id);
+    if (!isPotyVotingOpen(season)) {
+      await interaction.reply({ ephemeral: true, content: "❌ POTY voting is not open right now." });
+      return true;
+    }
+
     await db.execute(sql`
       insert into highlight_votes (guild_id, season_id, category, nominee_id, voter_discord_id)
       values (${nominee.guild_id}, ${nominee.season_id}, ${nominee.category}, ${nominee.id}, ${interaction.user.id})
@@ -235,13 +253,22 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
       .setCustomId("poty_category")
       .setPlaceholder("Select Play of the Year category…")
       .addOptions(POTY_CATEGORIES.map((c) => new StringSelectMenuOptionBuilder().setLabel(c.label).setValue(c.key)));
+    const open = isPotyVotingOpen(season);
     const payload = {
       ephemeral: true,
-      embeds: [new EmbedBuilder().setColor(Colors.Gold).setTitle("🏆 Play of the Year Voting").setDescription("Select a category to view nominees and vote. Commissioners can close/tally voting from this panel.")],
+      embeds: [
+        new EmbedBuilder()
+          .setColor(open ? Colors.Gold : Colors.Greyple)
+          .setTitle("🏆 Play of the Year Voting")
+          .setDescription(
+            open
+              ? "Select a category to view nominees and vote. Voting closes automatically when the league advances from Super Bowl to offseason."
+              : "POTY voting is closed. It opens automatically at regular-season end and closes at the Super Bowl-to-offseason advance.",
+          ),
+      ],
       components: [
-        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu.setDisabled(!open)),
         new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("poty_closeout").setLabel("Commissioner: Close/Tally POTY").setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("poty_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary),
         ),
       ],
@@ -284,6 +311,8 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
     return;
   }
 
+  const votingOpen = isPotyVotingOpen(season);
+
   await (interaction as any).update({
     ephemeral: true,
     embeds: [
@@ -300,7 +329,7 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`poty_page:${category}:${Math.max(0, page - 1)}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
-        new ButtonBuilder().setCustomId(`poty_vote:${nominee.id}`).setLabel("✅ Vote").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`poty_vote:${nominee.id}`).setLabel("✅ Vote").setStyle(ButtonStyle.Success).setDisabled(!votingOpen),
         new ButtonBuilder().setCustomId(`poty_page:${category}:${page + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= total - 1),
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("poty_home").setLabel("← Categories").setStyle(ButtonStyle.Secondary)),
