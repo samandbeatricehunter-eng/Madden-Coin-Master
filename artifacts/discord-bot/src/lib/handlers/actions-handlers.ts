@@ -66,6 +66,7 @@ import { createSession } from "./custom-player-session.js";
 
 import { canUseCommissionerOffice } from "../roles/rec-role-access.js";
 import { REC_ALL_ROLES_FOR_DISPLAY } from "../roles/rec-metric-roles.js";
+import { customPlayersOpen, legendPurchasesOpen } from "../menu/actions/store/cutoff-notices.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
