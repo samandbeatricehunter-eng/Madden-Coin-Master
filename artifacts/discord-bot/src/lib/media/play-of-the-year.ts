@@ -269,10 +269,19 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
   const season = await getOrCreateActiveSeason(guildId);
 
   if (!category) {
+    const countRows = await rowsOf<{ category: string; count: number }>(sql`
+      select category, count(*)::int as count
+      from highlight_nominees
+      where guild_id = ${guildId}
+        and season_id = ${season.id}
+        and status = 'nominated'
+      group by category
+    `);
+    const counts = new Map(countRows.map((r) => [r.category, Number(r.count ?? 0)]));
     const menu = new StringSelectMenuBuilder()
       .setCustomId("poty_category")
       .setPlaceholder("Select Play of the Year category…")
-      .addOptions(POTY_CATEGORIES.map((c) => new StringSelectMenuOptionBuilder().setLabel(c.label).setValue(c.key)));
+      .addOptions(POTY_CATEGORIES.map((c) => new StringSelectMenuOptionBuilder().setLabel(`${c.label} (${counts.get(c.key) ?? 0})`.slice(0, 100)).setValue(c.key)));
     const open = isPotyVotingOpen(season);
     const payload = {
       ephemeral: true,

@@ -1,6 +1,7 @@
 import type {
   ButtonInteraction,
   ChatInputCommandInteraction,
+  GuildMember,
   ModalSubmitInteraction,
   StringSelectMenuInteraction,
 } from "discord.js";
@@ -12,6 +13,7 @@ import {
 } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { getGuildChannel, getOrCreateActiveSeason, getScheduleSeasonId } from "../../db/db-helpers.js";
+import { canUseCommissionerOffice } from "../../roles/rec-role-access.js";
 import { currentWeekIndexFor } from "../../helpers/week-helpers.js";
 import { ensureGamedaySchema, oneOf } from "./db.js";
 
@@ -23,6 +25,7 @@ export type GamedayContext = {
   channelId: string;
   userId: string;
   isCpuGame?: boolean;
+  isByeWeek?: boolean;
   userTeamName?: string;
   cpuTeamName?: string;
   scheduleId?: number;
@@ -55,10 +58,7 @@ async function replyEphemeral(interaction: GamedayInteraction, content: string):
   }
 }
 
-export async function resolveGamedayContext(
-  interaction: GamedayInteraction,
-  options: { silentNoMatchup?: boolean } = {},
-): Promise<GamedayContext | null> {
+export async function resolveGamedayContext(interaction: GamedayInteraction): Promise<GamedayContext | null> {
   const guildId = interaction.guildId;
   if (!guildId) {
     await replyEphemeral(interaction, "❌ Gameday actions can only be used inside a server.");
@@ -116,9 +116,30 @@ export async function resolveGamedayContext(
   const myGame = mappedGames.find((g) => g.awayDiscordId === userId || g.homeDiscordId === userId);
 
   if (!myGame) {
-    if (!options.silentNoMatchup) {
-      await replyEphemeral(interaction, "❌ You do not have a matchup this week, so no gameday actions are available.");
+    const isCommissioner = canUseCommissionerOffice(interaction.member as GuildMember | null | undefined, true);
+    if (isCommissioner) {
+      return {
+        guildId,
+        season,
+        weekIndex,
+        scheduleSeasonId,
+        channelId: activeChannelId,
+        userId,
+        isCpuGame: true,
+        isByeWeek: true,
+        userTeamName: "Bye Week / No Matchup",
+        cpuTeamName: "No opponent",
+        scheduleId: 0,
+        awayDiscordId: userId,
+        homeDiscordId: userId,
+        opponentId: "",
+        awayTeamName: "Bye Week",
+        homeTeamName: "No Matchup",
+        matchupKey: `bye:${userId}:${weekIndex}`,
+        homeAway: "Home",
+      };
     }
+    await replyEphemeral(interaction, "❌ You do not have a matchup this week, so no gameday actions are available.");
     return null;
   }
 

@@ -179,6 +179,7 @@ export async function handleTsRepairRecords(interaction: ButtonInteraction): Pro
   await interaction.editReply({ embeds: [embed] });
 }
 
+
 // ── 2. Resync Rosters & Data ──────────────────────────────────────────────────
 export async function handleTsResyncData(interaction: ButtonInteraction): Promise<void> {
   if (!(await guardAdmin(interaction))) return;
@@ -1123,7 +1124,7 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
         .setColor(Colors.Blurple)
         .setTitle("🧬 Running Isolated Data Diagnostics…")
         .setDescription(
-          "Mirroring the current EA/MCA import payload, probing Blaze/WAL endpoints, and storing all results in isolated review tables.\n\n" +
+          "Fetching the current EA/MCA payload and probing likely Blaze/WAL endpoints in **dry-run diagnostics mode**.\n\n" +
           "This does **not** write league stats, schedules, rosters, records, cap data, or payouts. " +
           "The previous diagnostic review for this server will be cleared and replaced."
         )
@@ -1149,7 +1150,7 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
       embeds: [
         new EmbedBuilder()
           .setColor(Colors.Red)
-          .setTitle("❌ Data Diagnostics Failed")
+          .setTitle("❌ Import Diagnostics Failed")
           .setDescription(msgs[result.error ?? ""] ?? "Unknown diagnostics failure.")
           .addFields(
             { name: "Run ID", value: result.runId ? String(result.runId) : "not created", inline: true },
@@ -1168,6 +1169,7 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
   const endpointProbeCount = result.endpointProbeCount ?? 0;
   const availableEndpointCount = result.availableEndpointCount ?? 0;
   const capEndpointHits = result.capEndpointHits ?? [];
+  const endpointSummaries = result.endpointSummaries ?? [];
 
   const payloadLines = payloads
     .map(p => `• **${p.label}** — ${p.kind}${p.itemCount == null ? "" : ` · ${p.itemCount} item(s)`} · ${p.nestedKeys.length} key path(s)`)
@@ -1197,7 +1199,22 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
     .setFooter({ text: "Review tables: mca_import_diagnostic_payloads + mca_endpoint_probe_results" })
     .setTimestamp();
 
-  await interaction.editReply({ embeds: [embed] });
+  const endpointLines = endpointSummaries
+    .map((e) => {
+      const keys = e.topLevelKeys.length ? e.topLevelKeys.join(", ") : "no top-level keys";
+      const cap = e.capHits.length ? `\nCap/contract hits: ${e.capHits.slice(0, 6).join(", ")}` : "";
+      return `• **${e.label}** — \`${e.name}\` · ${e.itemCount ?? 0} item(s)\nKeys: ${keys}${cap}`;
+    })
+    .slice(0, 12);
+
+  const endpointEmbed = new EmbedBuilder()
+    .setColor(Colors.Blurple)
+    .setTitle("🛰 Available / Unused Endpoint Details")
+    .setDescription(endpointLines.length ? endpointLines.join("\n\n").slice(0, 3900) : "No available endpoints were captured in this run.")
+    .setFooter({ text: "These are dry-run endpoint probes only. No league data was changed." })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: endpointLines.length ? [embed, endpointEmbed] : [embed] });
 }
 
 export async function handleTsSchedDelete(interaction: ButtonInteraction): Promise<void> {

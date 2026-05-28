@@ -1593,7 +1593,7 @@ export async function runWeekImport(ctx: {
 }
 
 
-// ── Isolated MCA Data Diagnostics (Troubleshoot Hub) ─────────────────────────
+// ── Isolated MCA Import Diagnostics (Troubleshoot Hub) ───────────────────────
 type DiagnosticPayloadSummary = {
   label: string;
   kind: string;
@@ -1774,6 +1774,7 @@ export async function runMcaImportDiagnostics(ctx: {
   endpointProbeCount?: number;
   availableEndpointCount?: number;
   capEndpointHits?: string[];
+  endpointSummaries?: Array<{ label: string; name: string; available: boolean; itemCount: number | null; topLevelKeys: string[]; capHits: string[] }>;
   warnings?: string[];
   error?: "no_connection" | "token_refresh_failed" | "fetch_failed" | "no_active_season";
 }> {
@@ -1876,6 +1877,7 @@ export async function runMcaImportDiagnostics(ctx: {
       });
 
     const capEndpointHits: string[] = [];
+    const endpointSummaries: Array<{ label: string; name: string; available: boolean; itemCount: number | null; topLevelKeys: string[]; capHits: string[] }> = [];
     let availableEndpointCount = 0;
 
     for (const probe of endpointProbes) {
@@ -1885,6 +1887,16 @@ export async function runMcaImportDiagnostics(ctx: {
 
       if (probe.available) availableEndpointCount += 1;
       if (capScore > 0) capEndpointHits.push(`${probe.endpointName} (${capScore})`);
+      if (probe.available) {
+        endpointSummaries.push({
+          label: probe.label,
+          name: probe.endpointName,
+          available: probe.available,
+          itemCount: summary.itemCount,
+          topLevelKeys: summary.topLevelKeys.slice(0, 12),
+          capHits: capHits.slice(0, 12),
+        });
+      }
 
       await db.execute(sql`
         insert into mca_endpoint_probe_results (
@@ -1918,6 +1930,7 @@ export async function runMcaImportDiagnostics(ctx: {
             leagueDataWrites: 0,
             payoutsTriggered: false,
             endpointDiscovery: true,
+            availableEndpoints: endpointSummaries.slice(0, 25),
           })}::jsonb,
           warnings=${JSON.stringify(warnings)}::jsonb,
           completed_at=now()
@@ -1932,6 +1945,7 @@ export async function runMcaImportDiagnostics(ctx: {
       endpointProbeCount: endpointProbes.length,
       availableEndpointCount,
       capEndpointHits: capEndpointHits.slice(0, 20),
+      endpointSummaries: endpointSummaries.slice(0, 25),
       warnings,
     };
   } catch (err) {

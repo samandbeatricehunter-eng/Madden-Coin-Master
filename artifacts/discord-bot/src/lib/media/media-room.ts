@@ -568,13 +568,25 @@ export async function handleMediaRoomInteraction(interaction: any): Promise<bool
   if (id === "mr_goty_week") { await showGotyMatchupSelect(interaction, Number(interaction.values[0])); return true; }
   if (id.startsWith("mr_goty_week_back:")) { await showGotyMatchupSelect(interaction, Number(id.split(":")[1])); return true; }
   if (id.startsWith("mr_goty_matchup:")) {
-    const [, , weekRaw] = id.split(":");
-    await showGotyNotesModal(interaction, Number(weekRaw), Number(interaction.values[0]));
+    const [, weekRaw] = id.split(":");
+    const weekNumber = Number(weekRaw);
+    const recGameId = Number(interaction.values[0]);
+    if (!Number.isFinite(weekNumber) || !Number.isFinite(recGameId)) {
+      await interaction.reply({ ephemeral: true, content: "❌ Invalid GOTY matchup selection. Reopen Media Room and try again." }).catch(() => null);
+      return true;
+    }
+    await showGotyNotesModal(interaction, weekNumber, recGameId);
     return true;
   }
   if (id.startsWith("mr_goty_notes:")) {
-    const [, , weekRaw, recGameIdRaw] = id.split(":");
-    await handleGotyNotesModal(interaction, Number(weekRaw), Number(recGameIdRaw));
+    const [, weekRaw, recGameIdRaw] = id.split(":");
+    const weekNumber = Number(weekRaw);
+    const recGameId = Number(recGameIdRaw);
+    if (!Number.isFinite(weekNumber) || !Number.isFinite(recGameId)) {
+      await interaction.reply({ ephemeral: true, content: "❌ Invalid GOTY nomination form. Reopen Media Room and try again." }).catch(() => null);
+      return true;
+    }
+    await handleGotyNotesModal(interaction, weekNumber, recGameId);
     return true;
   }
   if (id === "mr_goty_browse") { await renderGotyNominees(interaction, false, 0); return true; }

@@ -89,12 +89,12 @@ async function computeVoterRecordGlobal(voterId: string): Promise<{ wins: number
        and h.matchup_index = v.matchup_index
       left join game_schedules s
         on s.season_id = v.season_id
-       and s.week_index = v.week_index
+       and s.week_index in (v.week_index, v.week_index + 1, greatest(v.week_index - 1, 0))
        and ((s.away_discord_id = h.discord_id_1 and s.home_discord_id = h.discord_id_2)
          or (s.away_discord_id = h.discord_id_2 and s.home_discord_id = h.discord_id_1))
       left join franchise_schedule fs
         on fs.season_id = v.season_id
-       and fs.week_index = v.week_index
+       and fs.week_index in (v.week_index, v.week_index + 1, greatest(v.week_index - 1, 0))
        and ((lower(fs.away_team_name) = lower(h.team_name_1) and lower(fs.home_team_name) = lower(h.team_name_2))
          or (lower(fs.away_team_name) = lower(h.team_name_2) and lower(fs.home_team_name) = lower(h.team_name_1)))
       where v.voter_id = ${voterId}
@@ -134,12 +134,12 @@ async function computeTopVotersForGuild(guildId: string, limit = 5): Promise<Rec
       join seasons se on se.id = v.season_id
       left join game_schedules s
         on s.season_id = v.season_id
-       and s.week_index = v.week_index
+       and s.week_index in (v.week_index, v.week_index + 1, greatest(v.week_index - 1, 0))
        and ((s.away_discord_id = h.discord_id_1 and s.home_discord_id = h.discord_id_2)
          or (s.away_discord_id = h.discord_id_2 and s.home_discord_id = h.discord_id_1))
       left join franchise_schedule fs
         on fs.season_id = v.season_id
-       and fs.week_index = v.week_index
+       and fs.week_index in (v.week_index, v.week_index + 1, greatest(v.week_index - 1, 0))
        and ((lower(fs.away_team_name) = lower(h.team_name_1) and lower(fs.home_team_name) = lower(h.team_name_2))
          or (lower(fs.away_team_name) = lower(h.team_name_2) and lower(fs.home_team_name) = lower(h.team_name_1)))
       where se.guild_id = ${guildId}

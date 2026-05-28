@@ -155,25 +155,37 @@ async function renderDashboard(interaction: GamedayInteraction, ctx: GamedayCont
 }
 
 async function renderCpuDashboard(interaction: GamedayInteraction, ctx: GamedayContext): Promise<void> {
+  const isBye = Boolean((ctx as any).isByeWeek);
+  const isCommissioner = isCommissionerMember(interaction);
   const embed = new EmbedBuilder()
-    .setColor(Colors.Greyple)
-    .setTitle("🎮 CPU Gameday Dashboard")
+    .setColor(isBye ? Colors.DarkGrey : Colors.Greyple)
+    .setTitle(isBye ? "🎮 Gameday Dashboard — Bye Week" : "🎮 CPU Gameday Dashboard")
     .setDescription([
       `**Week:** ${weekLabel(String((ctx.season as any).currentWeek ?? ""))}`,
-      `**Your Team:** ${ctx.userTeamName ?? "Unknown"}`,
-      `**CPU Team:** ${ctx.cpuTeamName ?? "Unknown"}`,
-      "CPU games use a simplified flow: stream/report through Commissioner assistance when needed.",
+      isBye ? "**Status:** No matchup found for you this week." : `**Your Team:** ${ctx.userTeamName ?? "Unknown"}`,
+      isBye ? "Commissioner Review remains available below." : `**CPU Team:** ${ctx.cpuTeamName ?? "Unknown"}`,
+      isBye
+        ? "CPU stream and CPU FW controls are disabled during a bye/no-matchup week."
+        : "CPU games use a simplified flow: stream/report through Commissioner assistance when needed.",
     ].join("\n"));
-  await respond(interaction, {
-    embeds: [embed],
-    components: [
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("gd_cpu_stream").setLabel("📺 Report CPU Stream").setStyle(ButtonStyle.Primary).setDisabled(isBye),
+      new ButtonBuilder().setCustomId("gd_cpu_fw").setLabel("🏳️ Request CPU FW").setStyle(ButtonStyle.Danger).setDisabled(isBye),
+      new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+
+  if (isCommissioner) {
+    rows.push(
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("gd_cpu_stream").setLabel("📺 Report CPU Stream").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("gd_cpu_fw").setLabel("🏳️ Request CPU FW").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("gd_commish_review").setLabel("🎮 Commissioner Review").setStyle(ButtonStyle.Secondary),
       ),
-    ] as any,
-  });
+    );
+  }
+
+  await respond(interaction, { embeds: [embed], components: rows as any });
 }
 
 async function getAdvanceDeadline(ctx: GamedayContext): Promise<Date> {
@@ -844,10 +856,6 @@ async function handleCpuStreamModal(interaction: ModalSubmitInteraction, ctx: Ga
 }
 
 async function handleCpuFw(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferUpdate().catch(() => null);
-  }
-
   await db.execute(sql`
     insert into gameday_cpu_actions (guild_id, season_id, week_index, user_discord_id, user_team_name, cpu_team_name, schedule_id, fw_requested, fw_status)
     values (${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.userId}, ${ctx.userTeamName ?? null}, ${ctx.cpuTeamName ?? null}, ${ctx.scheduleId ?? null}, true, 'pending')
@@ -867,39 +875,10 @@ async function handleCpuFw(interaction: ButtonInteraction, ctx: GamedayContext):
   await respond(interaction, { content: "✅ CPU force-win request logged.", embeds: [], components: [backRow()] as any });
 }
 
-async function renderCommissionerOnlyDashboard(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Blurple)
-    .setTitle("🎮 Gameday Dashboard")
-    .setDescription([
-      "No H2H matchup was found for you this week.",
-      "Commissioner tools remain available from this menu.",
-      "If this is a bye week, CPU stream and CPU FW controls are intentionally unavailable.",
-    ].join("\n"));
-
-  await respond(interaction as any, {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("gd_commish_review").setLabel("🎮 Commissioner Review").setStyle(ButtonStyle.Secondary),
-      ),
-    ] as any,
-  });
-}
-
 export async function openGamedayDashboard(interaction: ChatInputCommandInteraction): Promise<void> {
-  const ctx = await resolveGamedayContext(interaction, { silentNoMatchup: true });
-  if (ctx) {
-    await renderDashboard(interaction, ctx);
-    return;
-  }
-
-  if (isCommissionerMember(interaction)) {
-    await renderCommissionerOnlyDashboard(interaction);
-    return;
-  }
-
-  await interaction.reply({ ephemeral: true, content: "❌ You do not have a matchup this week, so no gameday actions are available." }).catch(() => null);
+  const ctx = await resolveGamedayContext(interaction);
+  if (!ctx) return;
+  await renderDashboard(interaction, ctx);
 }
 
 export async function handleGamedayInteraction(interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction): Promise<boolean> {
@@ -920,15 +899,6 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     if (action === "gd_sched_note") return void (await showNoteModal(interaction)), true;
     if (action.startsWith("gd_assist_")) return void (await showAssistModal(interaction, action.replace("gd_assist_", ""))), true;
     if (action === "gd_cpu_stream") return void (await showCpuStreamModal(interaction)), true;
-  }
-
-  if (action === "gd_commish_review") {
-    if (!isCommissionerMember(interaction)) {
-      await interaction.reply({ ephemeral: true, content: "❌ Commissioner access required." }).catch(() => null);
-      return true;
-    }
-    await renderCommissionerGamedayReview(interaction as any);
-    return true;
   }
 
   const ctx = await resolveGamedayContext(interaction);
@@ -1038,10 +1008,20 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     case "gd_report_desync": await showDesyncSelect(interaction, ctx); break;
     case "gd_report_dasher": await handleDashedReport(interaction, ctx); break;
     case "gd_report_connection": await handleConnectionIssue(interaction, ctx); break;
+    case "gd_commish_review": {
+      if (!isCommissionerMember(interaction)) {
+        await interaction.reply({ ephemeral: true, content: "❌ Commissioner access required." });
+        break;
+      }
+      await renderCommissionerGamedayReview(interaction as any);
+      break;
+    }
     case "gd_assist": await showAssist(interaction, ctx); break;
     case "gd_press": await handleAcPressOpen(interaction as any); break;
     case "gd_rivalries": await handleAcRivalries(interaction as any); break;
-    case "gd_cpu_fw": await handleCpuFw(interaction, ctx); break;
+    case "gd_cpu_fw":
+      if ((ctx as any).isByeWeek) { await respond(interaction, { content: "❌ CPU FW is not available during a bye/no-matchup week.", embeds: [], components: [backRow()] as any }); break; }
+      await handleCpuFw(interaction, ctx); break;
     default:
       await interaction.reply({ ephemeral: true, content: "❌ Unknown gameday action. Reopen `/gameday` and try again." });
   }
