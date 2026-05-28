@@ -61,7 +61,6 @@ import {
 } from "../economy/purchase-shared.js";
 import { ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../constants.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../economy/stat-categories.js";
-import { customPlayersOpen, legendPurchasesOpen } from "../store/cutoff-notices.js";
 import { createSession } from "./custom-player-session.js";
 
 
@@ -3849,15 +3848,28 @@ async function getUserCapContext(interaction: ButtonInteraction | StringSelectMe
   const teamStats = capRows[0] ?? null;
   const rosterCapUsedM = bestRosterCapUsed(roster);
 
-  // Source of truth for Madden cap summary:
-  // cap_room = cap limit, cap_spent = used cap, cap_available = open cap space.
-  // Roster cap-hit sum is diagnostic only because MCA roster tables may include more than the active roster.
-  const importedCapLimitM = normalizeCapM(Number(teamStats?.cap_room ?? 0));
+  // Source of truth for Madden cap summary from team_season_stats / MCA standings:
+  //   cap_room      = current cap space/open room (ex: Cowboys $54.1M)
+  //   cap_spent     = total spending / used cap (ex: Cowboys ~$285M)
+  //   cap_available = adjusted team cap / available cap ceiling (ex: Cowboys ~$339M)
+  // Older comments incorrectly treated cap_room as the cap limit and cap_available as
+  // open space, which made Cap Manager route the right stored values to the wrong labels.
+  // Roster cap-hit sum remains diagnostic only because imported roster tables may include
+  // more than the active cap-accounting roster.
+  const importedOpenM = normalizeCapM(Number(teamStats?.cap_room ?? 0));
   const importedCapSpentM = normalizeCapM(Number(teamStats?.cap_spent ?? 0));
-  const importedOpenM = normalizeCapM(Number(teamStats?.cap_available ?? 0));
+  const importedAdjustedCapM = normalizeCapM(Number(teamStats?.cap_available ?? 0));
 
-  const capLimitM = importedCapLimitM > 0 ? importedCapLimitM : Math.max(255, rosterCapUsedM + Math.max(importedOpenM, 0));
-  const capAvailableM = importedOpenM > 0 ? importedOpenM : Math.max(0, capLimitM - Math.max(importedCapSpentM, 0));
+  const capAvailableM = importedOpenM > 0
+    ? importedOpenM
+    : importedAdjustedCapM > 0 && importedCapSpentM > 0
+      ? Math.max(0, importedAdjustedCapM - importedCapSpentM)
+      : 0;
+  const capLimitM = importedAdjustedCapM > 0
+    ? importedAdjustedCapM
+    : importedCapSpentM > 0 || capAvailableM > 0
+      ? importedCapSpentM + capAvailableM
+      : Math.max(255, rosterCapUsedM + Math.max(capAvailableM, 0));
   const capSpentM = importedCapSpentM > 0 ? importedCapSpentM : Math.max(0, capLimitM - capAvailableM);
 
   // Estimated release exposure = the combined dead money only for currently shown top positive-net cut candidates.
@@ -4148,9 +4160,9 @@ async function handleCapManager(interaction: ButtonInteraction, _sess: ActionsSe
       .setTitle("💰 Cap Manager")
       .setDescription(`**${ctx.teamRow.fullName}** cap snapshot and planning tools.`)
       .addFields(
-        { name: "Cap Limit", value: moneyM(ctx.capLimitM), inline: true },
-        { name: "Cap Used", value: moneyM(ctx.capSpentM), inline: true },
-        { name: "Open Space", value: `${moneyM(ctx.capAvailableM)}\n${health}`, inline: true },
+        { name: "Adjusted Cap", value: moneyM(ctx.capLimitM), inline: true },
+        { name: "Total Spending", value: moneyM(ctx.capSpentM), inline: true },
+        { name: "Cap Space", value: `${moneyM(ctx.capAvailableM)}\n${health}`, inline: true },
         { name: "Projected Cut Penalty", value: `${moneyM(ctx.deadM)}\n_if all listed flex candidates were released_`, inline: true },
         { name: "Expiring Contracts", value: String(expiring.length), inline: true },
         { name: "Wallet / Savings", value: `${ctx.wallet.toLocaleString()} / ${ctx.savingsBalance.toLocaleString()} coins`, inline: true },
