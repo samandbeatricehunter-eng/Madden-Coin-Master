@@ -21,7 +21,7 @@ import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaSt
 import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable, guildChannelsTable, eaConnectionsTable, franchiseScheduleTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
-import { syncCanonicalGamesFromSchedulePayload } from "../lib/canonical-games.js";
+import { syncCanonicalGamesFromSchedulePayload, backfillCanonicalGamesFromLegacy } from "../lib/canonical-games.js";
 
 const router: IRouter = Router();
 
@@ -228,7 +228,9 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
   ]);
   const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, 0, "season", leagueId, guildId)
     .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
-  console.log("[mca/schedules] Result:", result.message, "| canonical:", JSON.stringify(canonical));
+  const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
+    .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
+  console.log("[mca/schedules] Result:", result.message, "| canonical:", JSON.stringify(canonical), "| backfill:", JSON.stringify(backfill));
   void channels;
 });
 
@@ -362,7 +364,9 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     const count = await syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, true, doReset, guildId);
     const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
       .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
-    res.status(200).json({ ok: true, count, week: weekNum, canonical });
+    const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
+      .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
+    res.status(200).json({ ok: true, count, week: weekNum, canonical, backfill });
   } catch (err) {
     res.status(500).json({ ok: false, count: 0, week: weekNum, error: String(err) });
   }
@@ -391,6 +395,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
     ]);
     const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
       .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
+    const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
+      .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
     const { commCh, genCh } = channels;
 
     const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts, guildId).catch(err => ({
@@ -419,6 +425,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       gamesUnregistered: result.gamesUnregistered,
       message:         result.message,
       canonical,
+      backfill,
     });
   } catch (err) {
     console.error(`[mca/week${weekNum}/schedules] Error:`, err);
@@ -499,6 +506,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
     ]);
     const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
       .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
+    const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
+      .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
     const { commCh, genCh } = channels;
 
     const result = await processWeekScores(req.body, weekNum, weekType, leagueId, false, guildId).catch(err => ({
@@ -529,6 +538,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       gamesUnregistered: result.gamesUnregistered,
       message:         result.message,
       canonical,
+      backfill,
     });
   } catch (err) {
     console.error(`[mca/week${weekNum}/scores] Error:`, err);

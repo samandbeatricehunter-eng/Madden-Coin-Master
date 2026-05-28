@@ -8253,14 +8253,22 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
     return;
   }
 
-  // Per-user trainersHired cap check
-  const stats = await getSeasonStats(interaction.user.id, season.id);
-  const hired = (stats as any).trainersHired as number ?? 0;
-  const HIRE_CAP = 2;
-  if (hired >= HIRE_CAP) {
+  // Active trainer cap: users may only carry 2 ACTIVE trainers at one time.
+  // This is not a season-long hiring cap; expired contracts do not block future hires.
+  const activeTrainerRows = await db.select({ id: positionalTrainersTable.id })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId, gid),
+      eq(positionalTrainersTable.seasonId, season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.status, "active"),
+    ));
+  const activeTrainerCount = activeTrainerRows.length;
+  const ACTIVE_TRAINER_CAP = 2;
+  if (activeTrainerCount >= ACTIVE_TRAINER_CAP) {
     await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
-        .setDescription(`❌ You have already hired the maximum of **${HIRE_CAP} trainers** this season.`)],
+        .setDescription(`❌ You already have **${ACTIVE_TRAINER_CAP} active trainers**. You can hire another trainer after one of your current trainer contracts expires.`)],
       components: [backToHubRow()],
     });
     return;
@@ -8297,7 +8305,7 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
         "Cooldown reduces the hit chance for **2 weeks** after each successful roll.",
         `Per-player season caps: **Speed +3**, **Strength/COD/Accel/Agility +4** (combined with Training Packages).`,
         "",
-        `**Your balance:** ${user.balance.toLocaleString()} coins · **Hires used:** ${hired}/${HIRE_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
+        `**Your balance:** ${user.balance.toLocaleString()} coins · **Active trainers:** ${activeTrainerCount}/${ACTIVE_TRAINER_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
       ].join("\n"))],
     components: [row, cancelRow()],
   });
@@ -8537,14 +8545,20 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
 
   // Re-validate everything (race-safe).
   const user      = await getOrCreateUser(interaction.user.id, interaction.user.username, gid);
-  const stats     = await getSeasonStats(interaction.user.id, season.id);
-  const hired     = (stats as any).trainersHired as number ?? 0;
   const weeksLeft = weeksLeftInRegularSeason(season.currentWeek);
   const infl      = await getInflationBpsForGuild(gid);
   const q         = quoteHire(sess.trainerTier, sess.trainerWeeks, infl);
 
-  if (hired >= 2) {
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ You have already hired the maximum of 2 trainers this season.")], components: [backToHubRow()] });
+  const activeTrainerRows = await db.select({ id: positionalTrainersTable.id })
+    .from(positionalTrainersTable)
+    .where(and(
+      eq(positionalTrainersTable.guildId, gid),
+      eq(positionalTrainersTable.seasonId, season.id),
+      eq(positionalTrainersTable.ownerDiscordId, interaction.user.id),
+      eq(positionalTrainersTable.status, "active"),
+    ));
+  if (activeTrainerRows.length >= 2) {
+    await interaction.update({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ You already have **2 active trainers**. You can hire another trainer after one of your current trainer contracts expires.")], components: [backToHubRow()] });
     return;
   }
   if (sess.trainerWeeks > weeksLeft) {

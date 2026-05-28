@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { bigint, bigserial, boolean, index, integer, json, pgEnum, pgTable, primaryKey, real, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -204,7 +205,8 @@ export const positionalTrainersTable = pgTable("positional_trainers", {
   expiredAt:        timestamp("expired_at", { withTimezone: true }),
 }, (t) => ({
   trainerOwnerSeasonIdx: uniqueIndex("trainer_owner_season_player_active_idx")
-    .on(t.guildId, t.ownerDiscordId, t.seasonId, t.playerName, t.status),
+    .on(t.guildId, t.ownerDiscordId, t.seasonId, t.playerName)
+    .where(sql`${t.status} = 'active'`),
 }));
 export type PositionalTrainer = typeof positionalTrainersTable.$inferSelect;
 
