@@ -55,7 +55,10 @@ async function replyEphemeral(interaction: GamedayInteraction, content: string):
   }
 }
 
-export async function resolveGamedayContext(interaction: GamedayInteraction): Promise<GamedayContext | null> {
+export async function resolveGamedayContext(
+  interaction: GamedayInteraction,
+  options: { silentNoMatchup?: boolean } = {},
+): Promise<GamedayContext | null> {
   const guildId = interaction.guildId;
   if (!guildId) {
     await replyEphemeral(interaction, "❌ Gameday actions can only be used inside a server.");
@@ -113,7 +116,9 @@ export async function resolveGamedayContext(interaction: GamedayInteraction): Pr
   const myGame = mappedGames.find((g) => g.awayDiscordId === userId || g.homeDiscordId === userId);
 
   if (!myGame) {
-    await replyEphemeral(interaction, "❌ You do not have a matchup this week, so no gameday actions are available.");
+    if (!options.silentNoMatchup) {
+      await replyEphemeral(interaction, "❌ You do not have a matchup this week, so no gameday actions are available.");
+    }
     return null;
   }
 

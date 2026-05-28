@@ -1593,7 +1593,7 @@ export async function runWeekImport(ctx: {
 }
 
 
-// ── Isolated MCA Import Diagnostics (Troubleshoot Hub) ───────────────────────
+// ── Isolated MCA Data Diagnostics (Troubleshoot Hub) ─────────────────────────
 type DiagnosticPayloadSummary = {
   label: string;
   kind: string;

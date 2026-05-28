@@ -8,9 +8,6 @@ export type GamedayCleanupSummary = {
 };
 
 export async function cleanupGamedayState(): Promise<GamedayCleanupSummary> {
-  // Some production schemas still had a restrictive status CHECK that did not
-  // include `expired`. The Phase 3 SQL expands the constraint, but this fallback
-  // prevents the reconciliation worker from crashing if the migration lags.
   let expiredOffers: any;
   try {
     expiredOffers = await db.execute(sql`
@@ -20,10 +17,12 @@ export async function cleanupGamedayState(): Promise<GamedayCleanupSummary> {
         and created_at < now() - interval '24 hours'
     `);
   } catch (err) {
-    console.warn('[gameday-cleanup] expired status unavailable; falling back to cancelled:', err);
+    // Older databases had a status CHECK constraint that did not allow `expired`.
+    // Keep reconciliation alive even before the SQL hotfix is applied.
+    console.warn("[gameday-cleanup] failed to mark offers expired; falling back to superseded", err);
     expiredOffers = await db.execute(sql`
       update gameday_schedule_offers
-      set status = 'cancelled', updated_at = now()
+      set status = 'superseded', updated_at = now()
       where status = 'pending'
         and created_at < now() - interval '24 hours'
     `);

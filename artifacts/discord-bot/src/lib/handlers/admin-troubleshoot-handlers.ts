@@ -122,7 +122,7 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_repost_sched_headers").setLabel("📌 Re-post Scheduling Headers").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("ts_import_diagnostics").setLabel("🧪 Import Diagnostics").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ts_import_diagnostics").setLabel("🧬 Data Diagnostics").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   return [row1, row2, row3];
@@ -1121,9 +1121,9 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Blurple)
-        .setTitle("🧪 Running Isolated MCA Import Diagnostics…")
+        .setTitle("🧬 Running Isolated Data Diagnostics…")
         .setDescription(
-          "Fetching the current EA/MCA payload and probing likely Blaze/WAL endpoints in **dry-run diagnostics mode**.\n\n" +
+          "Mirroring the current EA/MCA import payload, probing Blaze/WAL endpoints, and storing all results in isolated review tables.\n\n" +
           "This does **not** write league stats, schedules, rosters, records, cap data, or payouts. " +
           "The previous diagnostic review for this server will be cleared and replaced."
         )
@@ -1149,7 +1149,7 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
       embeds: [
         new EmbedBuilder()
           .setColor(Colors.Red)
-          .setTitle("❌ Import Diagnostics Failed")
+          .setTitle("❌ Data Diagnostics Failed")
           .setDescription(msgs[result.error ?? ""] ?? "Unknown diagnostics failure.")
           .addFields(
             { name: "Run ID", value: result.runId ? String(result.runId) : "not created", inline: true },
@@ -1176,7 +1176,7 @@ export async function handleTsImportDiagnostics(interaction: ButtonInteraction):
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Green)
-    .setTitle("🧪 MCA Import Diagnostics Complete")
+    .setTitle("🧬 Data Diagnostics Complete")
     .setDescription(
       "Diagnostics completed in isolated dry-run mode.\n\n" +
       "✅ No league data altered\n" +
