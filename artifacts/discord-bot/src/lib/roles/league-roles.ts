@@ -28,7 +28,7 @@ type RoleDef = {
 export const LEAGUE_ROLE_DEFS: RoleDef[] = [
   { key: "rec_og", label: "REC League OG", type: "core", permanent: true, description: "Linked to a team when this one-time legacy grant ran in any REC bot league.", criteria: "One-time server grant on the next advance after deployment. Follows user across REC bot leagues." },
   { key: "league_veteran", label: "League Veteran", type: "core", permanent: true, description: "Completed at least 40 tracked H2H games across REC bot leagues.", criteria: "Auto-assigned at 40+ combined H2H wins/losses across all REC bot servers." },
-  { key: "steady_streamer", label: "Steady Streamer", type: "performance", permanent: false, description: "Streams H2H games at least 90% of the time.", criteria: "9+ streams in last 10 recorded completed H2H games." },
+  { key: "steady_streamer", label: "Steady Streamer", type: "performance", permanent: false, description: "Consistently posts/records streams across tracked H2H games globally.", criteria: "60%+ streamer-paid H2H weeks across global completed H2H games, minimum 5 tracked games; 9+ recent approved stream payouts also qualifies." },
   { key: "heavy_sweater", label: "Heavy Sweater", type: "performance", permanent: false, description: "Wins H2H games by a large all-time average margin.", criteria: "17+ average H2H margin of victory with at least 15 scored H2H games." },
   { key: "mr_perfect", label: "Mr Perfect", type: "performance", permanent: true, description: "Completed a 17-0 regular season.", criteria: "Permanent global role when a 17-0 record is detected on Week 18 → Wild Card advance." },
   { key: "sb_winner", label: "SB Winner", type: "performance", permanent: true, description: "Won a Super Bowl in a REC bot league.", criteria: "Permanent global role after any recorded Super Bowl win." },
@@ -305,17 +305,89 @@ async function seedSbWinners(guildId: string, changes: string[]): Promise<Set<st
   return out;
 }
 
-async function getStreamerUsers(guildId: string): Promise<Set<string>> {
-  const rows = await rowsOf<{ discord_id: string }>(sql`
-    select discord_id
-    from pending_channel_payouts
-    where guild_id = ${guildId}
-      and type = 'stream'
-      and status = 'approved'
-      and created_at >= now() - interval '120 days'
-    group by discord_id
-    having count(*) >= 9
+const STEADY_STREAMER_MIN_GLOBAL_H2H_GAMES = 5;
+const STEADY_STREAMER_MIN_STREAM_RATE = 0.6;
+const STEADY_STREAMER_RECENT_STREAM_FALLBACK_COUNT = 9;
+
+async function getStreamerUsers(_guildId: string): Promise<Set<string>> {
+  const rows = await rowsOf<{ discord_id: string; stream_events: number; eligible_games: number; stream_rate: string | number }>(sql`
+    with eligible_h2h_games as (
+      select away_discord_id as discord_id, coalesce(finished_at, updated_at, created_at, now()) as played_at
+      from game_schedules
+      where away_discord_id is not null
+        and home_discord_id is not null
+        and away_discord_id <> home_discord_id
+        and winner_discord_id is not null
+        and coalesce(status, '') not in ('cancelled', 'pending')
+      union all
+      select home_discord_id as discord_id, coalesce(finished_at, updated_at, created_at, now()) as played_at
+      from game_schedules
+      where away_discord_id is not null
+        and home_discord_id is not null
+        and away_discord_id <> home_discord_id
+        and winner_discord_id is not null
+        and coalesce(status, '') not in ('cancelled', 'pending')
+    ),
+    eligible_counts as (
+      select discord_id, count(*)::int as eligible_games
+      from eligible_h2h_games
+      group by discord_id
+    ),
+    streamer_paid_events as (
+      -- Primary source: approved stream payout records. Only the stream poster/primary recipient counts.
+      select
+        discord_id,
+        concat('pending:', coalesce(guild_id, ''), ':', coalesce(season_id::text, ''), ':', coalesce(week, ''), ':', coalesce(discord_id, '')) as stream_key,
+        created_at
+      from pending_channel_payouts
+      where type = 'stream'
+        and status = 'approved'
+        and discord_id is not null
+
+      union
+
+      -- Backfill/compat source: coin transaction logs from older auto stream payout paths.
+      select
+        discord_id,
+        concat('tx:', coalesce(guild_id, ''), ':', coalesce(description, ''), ':', created_at::date::text, ':', coalesce(discord_id, '')) as stream_key,
+        created_at
+      from coin_transactions
+      where discord_id is not null
+        and amount > 0
+        and type in ('payout', 'addcoins')
+        and (
+          related_user_id = 'stream'
+          or lower(description) like '%stream payout%'
+          or lower(description) like '%auto stream%'
+          or lower(description) like '%cpu stream%'
+        )
+    ),
+    stream_counts as (
+      select discord_id, count(distinct stream_key)::int as stream_events
+      from streamer_paid_events
+      group by discord_id
+    ),
+    recent_stream_counts as (
+      select discord_id, count(distinct stream_key)::int as recent_stream_events
+      from streamer_paid_events
+      where created_at >= now() - interval '120 days'
+      group by discord_id
+    )
+    select
+      ec.discord_id,
+      least(coalesce(sc.stream_events, 0), ec.eligible_games)::int as stream_events,
+      ec.eligible_games,
+      (least(coalesce(sc.stream_events, 0), ec.eligible_games)::numeric / greatest(ec.eligible_games, 1)) as stream_rate
+    from eligible_counts ec
+    left join stream_counts sc on sc.discord_id = ec.discord_id
+    left join recent_stream_counts rsc on rsc.discord_id = ec.discord_id
+    where (
+      ec.eligible_games >= ${STEADY_STREAMER_MIN_GLOBAL_H2H_GAMES}
+      and (least(coalesce(sc.stream_events, 0), ec.eligible_games)::numeric / greatest(ec.eligible_games, 1)) >= ${STEADY_STREAMER_MIN_STREAM_RATE}
+    )
+    or coalesce(rsc.recent_stream_events, 0) >= ${STEADY_STREAMER_RECENT_STREAM_FALLBACK_COUNT}
   `).catch(() => []);
+
   return new Set(rows.map((r) => String(r.discord_id)));
 }
 

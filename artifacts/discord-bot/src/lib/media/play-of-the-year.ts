@@ -122,8 +122,17 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
 
   if (interaction.isStringSelectMenu() && interaction.customId.startsWith("hlnom_pick:")) {
     await ensureHighlightTables();
-    const [, , guildId, channelId, messageId] = interaction.customId.split(":");
+    const [, guildId, channelId, messageId] = interaction.customId.split(":");
     const category = interaction.values[0]!;
+
+    if (!guildId || !channelId || !messageId) {
+      await interaction.update({
+        content: "❌ This nomination menu is missing highlight context. Please have the highlight reposted or re-approved.",
+        embeds: [],
+        components: [],
+      });
+      return true;
+    }
     if (category === "none") {
       await interaction.update({ content: "Nomination closed. Your highlight still received the weekly upload payout.", embeds: [], components: [] });
       return true;
@@ -163,6 +172,12 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
   if (interaction.isButton() && interaction.customId === "poty_media_home") {
     const { renderMediaRoomHome } = await import("./media-room.js");
     await renderMediaRoomHome(interaction);
+    return true;
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId === "poty_category") {
+    const category = interaction.values[0];
+    await renderPotyVote(interaction, category, 0);
     return true;
   }
 
