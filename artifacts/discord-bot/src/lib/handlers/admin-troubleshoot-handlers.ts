@@ -119,10 +119,10 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
     new ButtonBuilder().setCustomId("ao_milestone_audit").setLabel("🎯 Milestone Audit").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ts_import_schedule").setLabel("📅 Import Schedule Only").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ts_data_diagnostics").setLabel("🧬 Data Diagnostics").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_repost_sched_headers").setLabel("📌 Re-post Scheduling Headers").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
   return [row1, row2, row3];
