@@ -13,12 +13,15 @@ import {
   StringSelectMenuOptionBuilder,
   TextInputBuilder,
   TextInputStyle,
+  type GuildMember,
 } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { weekLabel } from "../helpers/week-helpers.js";
 import { handleAcPressOpen } from "../handlers/press-conference-handlers.js";
 import { handleAcRivalries } from "../handlers/rivalries-handlers.js";
+import { canUseCommissionerOffice } from "../roles/rec-role-access.js";
+import { renderCommissionerGamedayReview } from "./commissioner-gameday-review.js";
 import { nextAdvanceDeadline } from "../discord/timezones.js";
 import { getServerSettings } from "../db/server-settings.js";
 import {
@@ -116,7 +119,7 @@ function dashboardRows(activeCount: number, pendingCount: number) {
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("gd_manage_offers").setLabel(`⚙️ Sent (${activeCount})`).setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("gd_score_pending").setLabel("🏁 Score Approval").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("gd_commish_review").setLabel("🎮 Commissioner Review").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("gd_press").setLabel("🎙️ Press").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("gd_rivalries").setLabel("⚔️ Rivalries").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("gd_refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
@@ -126,11 +129,10 @@ function dashboardRows(activeCount: number, pendingCount: number) {
 
 async function renderDashboard(interaction: GamedayInteraction, ctx: GamedayContext): Promise<void> {
   if (ctx.isCpuGame) return renderCpuDashboard(interaction, ctx);
-  const [activeCount, pendingCount, status, scoreApproval] = await Promise.all([
+  const [activeCount, pendingCount, status] = await Promise.all([
     countActiveOffers(ctx),
     countPendingOffers(ctx),
     getMatchupStatus(ctx),
-    getPendingScoreApproval(ctx),
   ]);
 
   const embed = new EmbedBuilder()
@@ -146,7 +148,7 @@ async function renderDashboard(interaction: GamedayInteraction, ctx: GamedayCont
       { name: "Scheduling", value: `Sent offers: **${activeCount}** · Pending offers: **${pendingCount}**`, inline: false },
       { name: "Check-in", value: `Away: **${status?.away_checked_in ? "checked in" : "not checked in"}** · Home: **${status?.home_checked_in ? "checked in" : "not checked in"}**`, inline: false },
       { name: "Game State", value: status?.begun_at ? `Started: <t:${Math.floor(new Date(status.begun_at).getTime() / 1000)}:R>` : "Not marked begun yet", inline: false },
-      { name: "Final Score", value: scoreApproval ? `You have score submission **#${scoreApproval.id}** awaiting approval.` : "No score approval waiting on you.", inline: false },
+      { name: "Completion", value: "Final scores and winners are imported from MCA. Users only confirm that the game ended.", inline: false },
     );
 
   await respond(interaction, { embeds: [embed], components: dashboardRows(activeCount, pendingCount) as any });
@@ -461,7 +463,12 @@ async function showQueue(interaction: ButtonInteraction, ctx: GamedayContext): P
         new ButtonBuilder().setCustomId("gd_checkin").setLabel("✅ Check In").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("gd_message_opponent").setLabel("✉️ Message Opponent").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("gd_mark_begun").setLabel("▶️ Mark Begun").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("gd_submit_final").setLabel("🏁 Submit Final").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("gd_mark_complete").setLabel("✅ Mark Complete").setStyle(ButtonStyle.Success),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("gd_report_desync").setLabel("⚠️ Report Desync").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("gd_report_dasher").setLabel("🏃 Report Dashed").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("gd_report_connection").setLabel("📡 Connection Issues").setStyle(ButtonStyle.Secondary),
       ),
       backRow(),
     ] as any,
@@ -543,7 +550,7 @@ async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: Ga
       and week_index = ${ctx.weekIndex}
       and ((away_discord_id = ${ctx.awayDiscordId} and home_discord_id = ${ctx.homeDiscordId}) or (away_discord_id = ${ctx.homeDiscordId} and home_discord_id = ${ctx.awayDiscordId}))
   `);
-  await postToGamedayChannel(interaction, ctx, `▶️ **Game Begun**\n<@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>\nMarked by <@${ctx.userId}>.${streamUrl ? `\n📺 Stream: ${streamUrl}` : ""}`);
+  await postToGamedayChannel(interaction, ctx, `▶️ **Game Begun**\n<@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>\nMarked by <@${ctx.userId}>.${streamChoice.platform === "discord" ? "\n📺 Stream: Discord" : streamChoice.url ? `\n📺 Stream: ${streamChoice.url}` : ""}`);
   await respond(interaction, { content: "✅ Game marked begun.", embeds: [], components: [backRow()] as any });
 }
 
@@ -617,7 +624,6 @@ async function showAssist(interaction: ButtonInteraction, ctx: GamedayContext): 
     embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🚨 Gameday Assistance").setDescription("Submit one clean commissioner request. It will appear in Commissioner Gameday Review.")],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("gd_assist_contact").setLabel("Contact Commissioner").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("gd_assist_violation").setLabel("Report Violation").setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId("gd_assist_fw").setLabel("Request Force Win").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("gd_assist_fs").setLabel("Request Fair Sim").setStyle(ButtonStyle.Secondary),
@@ -635,8 +641,8 @@ async function showAssistModal(interaction: ButtonInteraction, type: string): Pr
 }
 
 async function handleAssistModal(interaction: ModalSubmitInteraction, ctx: GamedayContext, type: string): Promise<void> {
-  const map: Record<string, string> = { contact: "contact_commish", violation: "violation", fw: "force_win", fs: "fair_sim" };
-  const requestType = map[type] ?? "contact_commish";
+  const map: Record<string, string> = { violation: "violation", fw: "force_win", fs: "fair_sim" };
+  const requestType = map[type] ?? "violation";
   const reason = interaction.fields.getTextInputValue("reason").trim();
   await db.execute(sql`
     insert into gameday_commissioner_requests (
@@ -649,6 +655,173 @@ async function handleAssistModal(interaction: ModalSubmitInteraction, ctx: Gamed
   `);
   await postToGamedayChannel(interaction, ctx, `🚨 **Commissioner Review Request**\nType: **${requestType.replaceAll("_", " ")}**\nUser: <@${ctx.userId}>\nMatchup: <@${ctx.awayDiscordId}> @ <@${ctx.homeDiscordId}>`);
   await respond(interaction, { content: "✅ Request submitted for commissioner review.", embeds: [], components: [backRow()] as any });
+}
+
+
+async function commissionerMention(interaction: GamedayInteraction): Promise<string> {
+  const guild = interaction.guild;
+  const role = guild?.roles.cache.find((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
+  return role ? `<@&${role.id}>` : "@Commissioners";
+}
+
+function isCommissionerMember(interaction: GamedayInteraction): boolean {
+  return canUseCommissionerOffice(interaction.member as GuildMember | null | undefined, true);
+}
+
+async function showDesyncSelect(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("gd_desync_choice")
+    .setPlaceholder("Choose desync request type…")
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel("Request Retry").setValue("retry").setDescription("Tell opponent you are ready and willing to replay."),
+      new StringSelectMenuOptionBuilder().setLabel("Request Fair Sim").setValue("fair_sim").setDescription("Ask opponent to confirm fair sim request."),
+      new StringSelectMenuOptionBuilder().setLabel("Request Force Win").setValue("force_win").setDescription("Send FW reason to commissioners for decision."),
+    );
+  await respond(interaction, {
+    embeds: [new EmbedBuilder().setColor(Colors.Orange).setTitle("⚠️ Report Desync").setDescription("Select what you are requesting after the desync.")],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), backRow()] as any,
+  });
+  void ctx;
+}
+
+async function handleDesyncChoice(interaction: StringSelectMenuInteraction, ctx: GamedayContext): Promise<void> {
+  const choice = interaction.values[0] ?? "retry";
+  if (choice === "force_win") {
+    const modal = new ModalBuilder().setCustomId("gd_modal_desync_fw").setTitle("Desync Force Win Request");
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("Reason for FW request").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)));
+    await interaction.showModal(modal);
+    return;
+  }
+
+  const commish = await commissionerMention(interaction);
+  const requestType = choice === "fair_sim" ? "fair_sim" : "desync_retry";
+  const result = await db.execute(sql`
+    insert into gameday_issue_reports (
+      guild_id, season_id, week_index, matchup_key, issue_type,
+      requested_by, opponent_discord_id, status, details
+    ) values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, ${requestType},
+      ${ctx.userId}, ${ctx.opponentId}, 'pending', ${choice === "fair_sim" ? "Desync: fair sim requested." : "Desync: retry requested."}
+    ) returning id
+  `);
+  const rows = ((result as any).rows ?? result) as Array<{ id: number }>;
+  const issueId = Number(rows[0]?.id ?? 0);
+
+  if (choice === "retry") {
+    await dmUser(interaction, ctx.opponentId, `⚠️ <@${ctx.userId}> reported a desync and is ready and willing to replay your game.`);
+    await postToGamedayChannel(interaction, ctx, `${commish}\n⚠️ **Desync Reported — Retry Requested**\n<@${ctx.userId}> reported a desync vs <@${ctx.opponentId}> and is ready and willing to play again.`);
+  } else {
+    await dmUser(interaction, ctx.opponentId, `⚖️ <@${ctx.userId}> reported a desync and requested a Fair Sim. Use /gameday → Game Queue to respond if prompted.`);
+    await postToGamedayChannel(interaction, ctx, `${commish}\n⚖️ **Desync Reported — Fair Sim Requested**\n<@${ctx.userId}> requested a Fair Sim after a desync vs <@${ctx.opponentId}>. Opponent confirmation requested.\nIssue #${issueId}`);
+  }
+  await respond(interaction, { content: "✅ Desync report submitted.", embeds: [], components: [backRow()] as any });
+}
+
+async function handleDesyncFwModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
+  const reason = interaction.fields.getTextInputValue("reason").trim();
+  const commish = await commissionerMention(interaction);
+  await db.execute(sql`
+    insert into gameday_commissioner_requests (
+      guild_id, season_id, week_index, matchup_key, request_type,
+      requested_by, opponent_discord_id, reason, status
+    ) values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, 'force_win',
+      ${ctx.userId}, ${ctx.opponentId}, ${`Desync FW request: ${reason}`}, 'pending'
+    )
+  `);
+  await postToGamedayChannel(interaction, ctx, `${commish}\n🚨 **Desync Reported — Force Win Requested**\n<@${ctx.userId}> requested FW vs <@${ctx.opponentId}> after a desync.\n**Reason:** ${reason}\nFinal ruling is commissioner discretion.`);
+  await respond(interaction, { content: "✅ Desync FW request submitted to commissioners.", embeds: [], components: [backRow()] as any });
+}
+
+async function handleDashedReport(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const commish = await commissionerMention(interaction);
+  const result = await db.execute(sql`
+    insert into gameday_commissioner_requests (
+      guild_id, season_id, week_index, matchup_key, request_type,
+      requested_by, opponent_discord_id, reason, status
+    ) values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, 'dashed_report',
+      ${ctx.userId}, ${ctx.opponentId}, 'Opponent allegedly dashed without commissioner approval.', 'pending'
+    ) returning id
+  `);
+  const rows = ((result as any).rows ?? result) as Array<{ id: number }>;
+  const requestId = Number(rows[0]?.id ?? 0);
+  await postToGamedayChannel(interaction, ctx, `${commish}\n🏃 **Opponent Dashed Reported**\n<@${ctx.userId}> reported that <@${ctx.opponentId}> dashed without approval.\nCommissioners may confirm or deny the report in /gameday → Commissioner Review.\nRequest #${requestId}`);
+  await respond(interaction, { content: "✅ Dashed report submitted to commissioners.", embeds: [], components: [backRow()] as any });
+}
+
+async function handleConnectionIssue(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const commish = await commissionerMention(interaction);
+  const msg = await postToGamedayChannel(interaction, ctx, `${commish}\n📡 **Connection Issue Reported**\nConnection dropped between <@${ctx.awayDiscordId}> and <@${ctx.homeDiscordId}>. Both users should prepare to search again.\n\nReact with 🇫 if requesting a Fair Sim instead.\nReact with 🇼 if requesting a Force Win instead of searching and playing again.`);
+  const sent = msg as any;
+  await sent?.react?.("🇫").catch(() => null);
+  await sent?.react?.("🇼").catch(() => null);
+  await db.execute(sql`
+    insert into gameday_issue_reports (
+      guild_id, season_id, week_index, matchup_key, issue_type,
+      requested_by, opponent_discord_id, status, message_id, details
+    ) values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, 'connection_issue',
+      ${ctx.userId}, ${ctx.opponentId}, 'pending', ${sent?.id ?? null}, 'Connection issue reaction prompt posted.'
+    )
+  `);
+  await respond(interaction, { content: "✅ Connection issue posted in the game channel.", embeds: [], components: [backRow()] as any });
+}
+
+async function handleMarkComplete(interaction: ButtonInteraction, ctx: GamedayContext): Promise<void> {
+  const existing = await oneOf<any>(sql`
+    select *
+    from gameday_completion_confirmations
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+      and status = 'pending'
+    limit 1
+  `);
+
+  if (existing && existing.requested_by !== ctx.userId) {
+    await db.execute(sql`
+      update gameday_completion_confirmations
+      set status = 'confirmed', confirmed_by = ${ctx.userId}, confirmed_at = now(), updated_at = now()
+      where id = ${existing.id}
+    `);
+    await db.execute(sql`
+      update game_schedules
+      set status = 'completed_pending_import', finished_at = coalesce(finished_at, now()), updated_at = now()
+      where guild_id = ${ctx.guildId}
+        and season_id = ${ctx.season.id}
+        and week_index = ${ctx.weekIndex}
+        and ((away_discord_id = ${ctx.awayDiscordId} and home_discord_id = ${ctx.homeDiscordId}) or (away_discord_id = ${ctx.homeDiscordId} and home_discord_id = ${ctx.awayDiscordId}))
+    `);
+    await db.execute(sql`
+      update rec_league_games
+      set status = 'completed_pending_import', updated_at = now()
+      where guild_id = ${ctx.guildId}
+        and legacy_season_id = ${ctx.season.id}
+        and week_number = ${ctx.weekIndex}
+        and ((away_discord_id = ${ctx.awayDiscordId} and home_discord_id = ${ctx.homeDiscordId}) or (away_discord_id = ${ctx.homeDiscordId} and home_discord_id = ${ctx.awayDiscordId}))
+    `);
+    await postToGamedayChannel(interaction, ctx, `✅ **Game End Confirmed**\n<@${ctx.userId}> confirmed the game ended. Scores/winner will be updated by MCA import.`);
+    await respond(interaction, { content: "✅ Game completion confirmed. Awaiting import for scores and winner.", embeds: [], components: [backRow()] as any });
+    return;
+  }
+
+  if (existing && existing.requested_by === ctx.userId) {
+    await respond(interaction, { content: "⏳ You already marked this game complete. Waiting for your opponent to confirm the game ended.", embeds: [], components: [backRow()] as any });
+    return;
+  }
+
+  await db.execute(sql`
+    insert into gameday_completion_confirmations (
+      guild_id, season_id, week_index, matchup_key, requested_by, opponent_discord_id, status
+    ) values (
+      ${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.matchupKey}, ${ctx.userId}, ${ctx.opponentId}, 'pending'
+    )
+  `);
+  await dmUser(interaction, ctx.opponentId, `✅ <@${ctx.userId}> marked your game complete. Open /gameday → Game Queue and click Mark Complete to confirm the game ended. Scores and winner will come from import.`);
+  await postToGamedayChannel(interaction, ctx, `✅ **Game Completion Confirmation Requested**\n<@${ctx.userId}> marked the game complete. Waiting on <@${ctx.opponentId}> to confirm the game ended. Scores and winner will come from import.`);
+  await respond(interaction, { content: "✅ Completion confirmation requested from your opponent.", embeds: [], components: [backRow()] as any });
 }
 
 async function showCpuStreamModal(interaction: ButtonInteraction): Promise<void> {
@@ -738,6 +911,7 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
     }
     if (action === "gd_pending_select") return void (await showPendingOfferDetail(interaction, ctx)), true;
     if (action === "gd_manage_select") return void (await showSentOfferDetail(interaction, ctx)), true;
+    if (action === "gd_desync_choice") return void (await handleDesyncChoice(interaction, ctx)), true;
   }
 
   if (interaction.isModalSubmit()) {
@@ -775,7 +949,8 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
       return true;
     }
     if (action === "gd_modal_message_opponent") return void (await handleOpponentMessageModal(interaction, ctx)), true;
-    if (action === "gd_modal_assist") return void (await handleAssistModal(interaction, ctx, parts[1] ?? "contact")), true;
+    if (action === "gd_modal_assist") return void (await handleAssistModal(interaction, ctx, parts[1] ?? "violation")), true;
+    if (action === "gd_modal_desync_fw") return void (await handleDesyncFwModal(interaction, ctx)), true;
     if (action === "gd_modal_cpu_stream") return void (await handleCpuStreamModal(interaction, ctx)), true;
   }
 
@@ -804,6 +979,8 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
       break;
     }
     case "gd_queue": await showQueue(interaction, ctx); break;
+    case "gd_mark_begun": await showMarkBegunModal(interaction); break;
+    case "gd_message_opponent": await showOpponentMessageModal(interaction); break;
     case "gd_checkin": await handleCheckIn(interaction, ctx); break;
     case "gd_checkin_fw_request": {
       if (id == null) break;
@@ -815,11 +992,16 @@ export async function handleGamedayInteraction(interaction: ButtonInteraction | 
       await handleCheckinForceWinDecision(interaction, ctx, "decline", id);
       break;
     }
-    case "gd_score_pending": await showScoreApproval(interaction, ctx); break;
-    case "gd_score_approve": {
-      if (id == null) break;
-      const score = await approveScore(interaction, ctx, id);
-      await respond(interaction, score ? { content: "✅ Score approved.", embeds: [], components: [backRow()] as any } : { content: "❌ Score submission not found or no longer pending.", embeds: [], components: [] });
+    case "gd_mark_complete": await handleMarkComplete(interaction, ctx); break;
+    case "gd_report_desync": await showDesyncSelect(interaction, ctx); break;
+    case "gd_report_dasher": await handleDashedReport(interaction, ctx); break;
+    case "gd_report_connection": await handleConnectionIssue(interaction, ctx); break;
+    case "gd_commish_review": {
+      if (!isCommissionerMember(interaction)) {
+        await interaction.reply({ ephemeral: true, content: "❌ Commissioner access required." });
+        break;
+      }
+      await renderCommissionerGamedayReview(interaction as any);
       break;
     }
     case "gd_assist": await showAssist(interaction, ctx); break;

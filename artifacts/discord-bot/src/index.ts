@@ -13,6 +13,7 @@ import * as ready             from "./events/ready.js";
 import * as messageCreate     from "./events/messageCreate.js";
 import * as guildCreate       from "./events/guildCreate.js";
 import * as guildMemberAdd    from "./events/guildMemberAdd.js";
+import * as messageReactionAdd from "./events/messageReactionAdd.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 import { startSavingsInterestScheduler } from "./lib/scheduling/savings-interest.js";
@@ -49,6 +50,7 @@ if (!isProduction && !devBotEnabled) {
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.MessageContent,
     ],
   }) as Client & { commands: Collection<string, any> };
@@ -61,7 +63,7 @@ if (!isProduction && !devBotEnabled) {
     client.commands.set(command.data.name, command);
   }
 
-  const events = [interactionCreate, ready, messageCreate, guildCreate, guildMemberAdd];
+  const events = [interactionCreate, ready, messageCreate, guildCreate, guildMemberAdd, messageReactionAdd];
   for (const event of events) {
     if ((event as any).once) {
       client.once(event.name, (...args) => event.execute(...args as [any]));

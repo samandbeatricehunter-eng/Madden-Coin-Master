@@ -191,9 +191,10 @@ export async function getMatchupStatus(ctx: GamedayContext): Promise<any | null>
   `);
 }
 
-export async function postToGamedayChannel(interaction: GamedayInteraction, ctx: GamedayContext, content: string): Promise<void> {
+export async function postToGamedayChannel(interaction: GamedayInteraction, ctx: GamedayContext, content: string): Promise<any | null> {
   const ch = await interaction.client.channels.fetch(ctx.channelId).catch(() => null);
-  if (ch?.isTextBased()) await ch.send({ content }).catch(() => null);
+  if (ch?.isTextBased()) return await ch.send({ content }).catch(() => null);
+  return null;
 }
 
 export async function dmUser(interaction: GamedayInteraction, userId: string, content: string): Promise<void> {

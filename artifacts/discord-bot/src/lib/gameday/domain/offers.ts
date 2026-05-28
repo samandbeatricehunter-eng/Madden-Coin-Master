@@ -83,6 +83,27 @@ export async function getOffer(id: number): Promise<OfferRow | null> {
   return oneOf<OfferRow>(sql`select * from gameday_schedule_offers where id = ${id} limit 1`);
 }
 
+export async function cleanupScheduleAttemptsForMatchup(ctx: GamedayContext): Promise<void> {
+  await db.execute(sql`
+    delete from gameday_offer_reminders
+    where offer_id in (
+      select id from gameday_schedule_offers
+      where guild_id = ${ctx.guildId}
+        and season_id = ${ctx.season.id}
+        and week_index = ${ctx.weekIndex}
+        and matchup_key = ${ctx.matchupKey}
+    )
+  `).catch(() => null);
+  await db.execute(sql`
+    delete from gameday_schedule_offers
+    where guild_id = ${ctx.guildId}
+      and season_id = ${ctx.season.id}
+      and week_index = ${ctx.weekIndex}
+      and matchup_key = ${ctx.matchupKey}
+      and status <> 'accepted'
+  `);
+}
+
 export async function createOffer(ctx: GamedayContext, proposedFor: string, proposedTz: string, notes?: string | null): Promise<number> {
   await ensureGamedaySchema();
   const result = await db.execute(sql`
@@ -119,6 +140,25 @@ export async function acceptOffer(interaction: ButtonInteraction, ctx: GamedayCo
       and week_index = ${offer.week_index}
       and matchup_key = ${offer.matchup_key}
       and status = 'pending'
+      and id <> ${offer.id}
+  `);
+  await db.execute(sql`
+    delete from gameday_offer_reminders
+    where offer_id in (
+      select id from gameday_schedule_offers
+      where guild_id = ${offer.guild_id}
+        and season_id = ${offer.season_id}
+        and week_index = ${offer.week_index}
+        and matchup_key = ${offer.matchup_key}
+        and id <> ${offer.id}
+    )
+  `).catch(() => null);
+  await db.execute(sql`
+    delete from gameday_schedule_offers
+    where guild_id = ${offer.guild_id}
+      and season_id = ${offer.season_id}
+      and week_index = ${offer.week_index}
+      and matchup_key = ${offer.matchup_key}
       and id <> ${offer.id}
   `);
 
