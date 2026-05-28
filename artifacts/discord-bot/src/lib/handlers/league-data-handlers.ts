@@ -1582,3 +1582,236 @@ export async function runWeekImport(ctx: {
 
   await editReply({ embeds: [embed], components: [returnRow] });
 }
+
+
+// ── Isolated MCA Import Diagnostics (Troubleshoot Hub) ───────────────────────
+type DiagnosticPayloadSummary = {
+  label: string;
+  kind: string;
+  topLevelKeys: string[];
+  nestedKeys: string[];
+  itemCount: number | null;
+  sample: unknown;
+  warnings: string[];
+};
+
+function diagnosticSafeSample(value: unknown, maxJsonChars = 3000): unknown {
+  try {
+    const json = JSON.stringify(value, (_key, v) => {
+      if (typeof v === "string" && v.length > 500) return `${v.slice(0, 500)}…`;
+      return v;
+    });
+    if (!json) return null;
+    return JSON.parse(json.length > maxJsonChars ? `${json.slice(0, maxJsonChars)}"…truncated"}` : json);
+  } catch {
+    return null;
+  }
+}
+
+function collectObjectKeys(value: unknown, prefix = "", depth = 0, out = new Set<string>()): Set<string> {
+  if (depth > 4 || value == null) return out;
+  if (Array.isArray(value)) {
+    const first = value.find(v => v && typeof v === "object");
+    if (first) collectObjectKeys(first, prefix ? `${prefix}[]` : "[]", depth + 1, out);
+    return out;
+  }
+  if (typeof value !== "object") return out;
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    out.add(path);
+    const child = (value as Record<string, unknown>)[key];
+    if (child && typeof child === "object") collectObjectKeys(child, path, depth + 1, out);
+  }
+  return out;
+}
+
+function summarizeDiagnosticPayload(label: string, payload: unknown): DiagnosticPayloadSummary {
+  const topValue = Array.isArray(payload)
+    ? payload.find(v => v && typeof v === "object") ?? null
+    : payload;
+
+  const topLevelKeys = topValue && typeof topValue === "object" && !Array.isArray(topValue)
+    ? Object.keys(topValue as Record<string, unknown>).sort()
+    : [];
+
+  const nestedKeys = [...collectObjectKeys(payload)].sort();
+  const itemCount = Array.isArray(payload)
+    ? payload.length
+    : payload && typeof payload === "object"
+      ? Object.keys(payload as Record<string, unknown>).length
+      : null;
+
+  const keyText = nestedKeys.join(" ").toLowerCase();
+  const warnings: string[] = [];
+  if (label === "teamStats") {
+    const hasCapHints = ["cap", "salary", "spend", "spent", "penalty", "reserve", "rollover"].some(k => keyText.includes(k));
+    if (!hasCapHints) warnings.push("No obvious cap/salary/dead-cap keys found in teamStats payload.");
+  }
+  if (Array.isArray(payload) && payload.length === 0) warnings.push("Payload array is empty.");
+  if (payload == null) warnings.push("Payload is null/undefined.");
+
+  return {
+    label,
+    kind: Array.isArray(payload) ? "array" : typeof payload,
+    topLevelKeys,
+    nestedKeys,
+    itemCount,
+    sample: diagnosticSafeSample(Array.isArray(payload) ? payload.slice(0, 2) : payload),
+    warnings,
+  };
+}
+
+async function ensureImportDiagnosticTables(): Promise<void> {
+  await db.execute(sql`
+    create table if not exists mca_import_diagnostic_runs (
+      id bigserial primary key,
+      guild_id text not null,
+      season_id bigint,
+      requested_by text,
+      week_num integer,
+      week_type text not null default 'reg',
+      dry_run boolean not null default true,
+      status text not null default 'running',
+      summary jsonb not null default '{}'::jsonb,
+      warnings jsonb not null default '[]'::jsonb,
+      created_at timestamp with time zone not null default now(),
+      completed_at timestamp with time zone
+    )
+  `);
+
+  await db.execute(sql`
+    create table if not exists mca_import_diagnostic_payloads (
+      id bigserial primary key,
+      run_id bigint not null references mca_import_diagnostic_runs(id) on delete cascade,
+      guild_id text not null,
+      season_id bigint,
+      payload_label text not null,
+      payload_kind text,
+      item_count integer,
+      top_level_keys jsonb not null default '[]'::jsonb,
+      nested_keys jsonb not null default '[]'::jsonb,
+      sample_json jsonb,
+      warnings jsonb not null default '[]'::jsonb,
+      created_at timestamp with time zone not null default now()
+    )
+  `);
+}
+
+export async function runMcaImportDiagnostics(ctx: {
+  guildId: string;
+  requestedBy: string;
+  guild?: Guild | null;
+}): Promise<{
+  ok: boolean;
+  runId?: number;
+  weekLabel?: string;
+  payloads?: DiagnosticPayloadSummary[];
+  warnings?: string[];
+  error?: "no_connection" | "token_refresh_failed" | "fetch_failed" | "no_active_season";
+}> {
+  const { guildId, requestedBy } = ctx;
+  await ensureImportDiagnosticTables();
+
+  const [season] = await db.select({ id: seasonsTable.id, currentWeek: seasonsTable.currentWeek })
+    .from(seasonsTable)
+    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
+    .limit(1);
+
+  if (!season) return { ok: false, error: "no_active_season" };
+
+  // Clear the previous isolated diagnostic review for this guild before creating a new one.
+  await db.execute(sql`delete from mca_import_diagnostic_runs where guild_id = ${guildId}`);
+
+  const currentWeekNum = weekStringToNum(season.currentWeek);
+  const weekType: "reg" = "reg";
+  const weekIndex = currentWeekNum - 1;
+  const wkLabel = getWeekLabel(weekType, currentWeekNum);
+
+  const inserted = await db.execute(sql`
+    insert into mca_import_diagnostic_runs (guild_id, season_id, requested_by, week_num, week_type, dry_run, status)
+    values (${guildId}, ${season.id}, ${requestedBy}, ${currentWeekNum}, ${weekType}, true, 'running')
+    returning id
+  `);
+  const runId = Number((((inserted as any).rows ?? inserted)[0] as any)?.id);
+
+  const conn = await loadEAConnection(guildId);
+  if (!conn) {
+    await db.execute(sql`update mca_import_diagnostic_runs set status='failed', warnings=${JSON.stringify(["No EA connection found"])}::jsonb, completed_at=now() where id=${runId}`);
+    return { ok: false, runId, weekLabel: wkLabel, error: "no_connection" };
+  }
+
+  let { token, eaLeagueId } = conn;
+  let blazeSession: BlazeSession;
+  try {
+    const refreshed = await refreshTokenIfNeeded(token);
+    token = refreshed;
+    blazeSession = await createBlazeSession(token);
+  } catch {
+    await db.execute(sql`update mca_import_diagnostic_runs set status='failed', warnings=${JSON.stringify(["Token refresh or Blaze session creation failed"])}::jsonb, completed_at=now() where id=${runId}`);
+    return { ok: false, runId, weekLabel: wkLabel, error: "token_refresh_failed" };
+  }
+
+  try {
+    const stats = await fetchWeeklyStats(token, eaLeagueId, weekIndex, 1, blazeSession);
+    const rosterData = await fetchLeagueTeamsAndRosters(token, eaLeagueId, blazeSession).catch(() => null);
+    const newsData = await fetchNewsData(token, eaLeagueId, blazeSession).catch(() => null);
+    const scheduleData = await fetchAllWeekSchedules(token, eaLeagueId, currentWeekNum, 1, currentWeekNum, blazeSession).catch(() => null);
+
+    const payloads: DiagnosticPayloadSummary[] = [];
+    for (const [label, payload] of [
+      ["passing", stats.passing],
+      ["rushing", stats.rushing],
+      ["receiving", stats.receiving],
+      ["defense", stats.defense],
+      ["kicking", stats.kicking],
+      ["punting", stats.punting],
+      ["kickReturn", stats.kickReturn],
+      ["puntReturn", stats.puntReturn],
+      ["teamStats", stats.teamStats],
+      ["schedules", stats.schedules],
+      ["leagueTeams", rosterData?.leagueTeams],
+      ["teamRosters", rosterData?.teamRosters],
+      ["freeAgents", rosterData?.freeAgents],
+      ["news", newsData],
+      ["scheduleOnlyWeekResults", scheduleData?.weekResults],
+    ] as const) {
+      payloads.push(summarizeDiagnosticPayload(label, payload));
+    }
+
+    const warnings = payloads.flatMap(p => p.warnings.map(w => `${p.label}: ${w}`));
+
+    for (const payload of payloads) {
+      await db.execute(sql`
+        insert into mca_import_diagnostic_payloads (
+          run_id, guild_id, season_id, payload_label, payload_kind, item_count,
+          top_level_keys, nested_keys, sample_json, warnings
+        ) values (
+          ${runId}, ${guildId}, ${season.id}, ${payload.label}, ${payload.kind}, ${payload.itemCount},
+          ${JSON.stringify(payload.topLevelKeys)}::jsonb,
+          ${JSON.stringify(payload.nestedKeys)}::jsonb,
+          ${JSON.stringify(payload.sample)}::jsonb,
+          ${JSON.stringify(payload.warnings)}::jsonb
+        )
+      `);
+    }
+
+    await db.execute(sql`
+      update mca_import_diagnostic_runs
+      set status='complete',
+          summary=${JSON.stringify({ payloadCount: payloads.length, weekLabel: wkLabel, dryRun: true, leagueDataWrites: 0, payoutsTriggered: false })}::jsonb,
+          warnings=${JSON.stringify(warnings)}::jsonb,
+          completed_at=now()
+      where id=${runId}
+    `);
+
+    return { ok: true, runId, weekLabel: wkLabel, payloads, warnings };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db.execute(sql`
+      update mca_import_diagnostic_runs
+      set status='failed', warnings=${JSON.stringify([message])}::jsonb, completed_at=now()
+      where id=${runId}
+    `);
+    return { ok: false, runId, weekLabel: wkLabel, error: "fetch_failed", warnings: [message] };
+  }
+}

@@ -54,12 +54,12 @@ export async function renderMediaRoomHome(interaction: any): Promise<void> {
 
   const rows = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_active_streams").setLabel("📺 Active Stream Links").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ac_gotw_vote").setLabel("🏆 GOTW Voting").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("mr_active_streams").setLabel("📺 Active Stream Links").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("mr_gotw_vote").setLabel("🏆 GOTW Voting").setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ac_poty_vote").setLabel("🎬 Play of the Year").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("ac_goty_hub").setLabel("🎮 Game of the Year").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("mr_poty_vote").setLabel("🎬 Play of the Year").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("mr_goty_hub").setLabel("🎮 Game of the Year").setStyle(ButtonStyle.Success),
     ),
   ];
 
@@ -139,12 +139,9 @@ export async function renderActiveStreams(interaction: any): Promise<void> {
     select *
     from gameday_matchup_status
     where guild_id = ${guildId}
+      and stream_url is not null
       and begun_at is not null
       and begun_at >= now() - interval '90 minutes'
-      and (
-        nullif(trim(coalesce(stream_url, '')), '') is not null
-        or lower(coalesce(stream_platform, '')) = 'discord'
-      )
     order by begun_at desc
     limit 20
   `);
@@ -163,11 +160,9 @@ export async function renderActiveStreams(interaction: any): Promise<void> {
   const lines: string[] = [];
 
   for (const s of h2h) {
-    const rawStream = String(s.stream_url ?? "").trim();
-    const platform = String(s.stream_platform ?? "").trim().toLowerCase();
-    const stream = platform === "discord" || rawStream.toLowerCase() === "discord"
+    const stream = String(s.stream_url ?? "").trim().toLowerCase() === "discord"
       ? "**Discord Stream**"
-      : rawStream;
+      : String(s.stream_url ?? "");
     lines.push(
       `**H2H:** <@${s.away_discord_id}> @ <@${s.home_discord_id}>\n` +
       `Stream: ${stream}\n` +
@@ -624,10 +619,15 @@ export async function handleMediaRoomInteraction(interaction: any): Promise<bool
   if (!id.startsWith("mr_") && !id.startsWith("ac_")) return false;
 
   if (id === "mr_media_home") { await renderMediaRoomHome(interaction); return true; }
-  if (id === "ac_active_streams") { await renderActiveStreams(interaction); return true; }
-  if (id === "ac_poty_vote") { await renderPotyVote(interaction); return true; }
-  if (id === "ac_goty_hub") { await renderGotyHub(interaction); return true; }
-  if (id === "ac_gotw_vote") {
+
+  // Media Room entrypoints can arrive from either:
+  // - the top-level /menu action IDs (ac_*)
+  // - Media Room internal buttons (mr_*)
+  // Keep both sets supported so old Discord components do not break after deploy.
+  if (id === "ac_active_streams" || id === "mr_active_streams") { await renderActiveStreams(interaction); return true; }
+  if (id === "ac_poty_vote" || id === "mr_poty_vote") { await renderPotyVote(interaction); return true; }
+  if (id === "ac_goty_hub" || id === "ac_goty_vote" || id === "mr_goty_hub") { await renderGotyHub(interaction); return true; }
+  if (id === "ac_gotw_vote" || id === "mr_gotw_vote") {
     const { handleActionsInteraction } = await import("../handlers/actions-handlers.js");
     await handleActionsInteraction(interaction, "ac_gotw_vote");
     return true;

@@ -127,6 +127,7 @@ import {
   handleTsSchedSel,
   handleTsSchedDelete,
   handleTsImportSchedule,
+  handleTsImportDiagnostics,
   handleTsRepostSchedulingHeaders,
 } from "../lib/handlers/admin-troubleshoot-handlers.js";
 import {
@@ -339,6 +340,7 @@ async function handleButton(interaction: ButtonInteraction) {
   if (action === "ts_sched_review_week")    { await handleTsSchedReviewWeek(interaction);          return; }
   if (action === "ts_sched_delete")         { await handleTsSchedDelete(interaction);              return; }
   if (action === "ts_import_schedule")      { await handleTsImportSchedule(interaction);           return; }
+  if (action === "ts_import_diagnostics")   { await handleTsImportDiagnostics(interaction);        return; }
   if (action === "ts_repost_sched_headers") { await handleTsRepostSchedulingHeaders(interaction);  return; }
 
   // ── League Data wizard — all ld_ prefixed buttons ─────────────────────────
