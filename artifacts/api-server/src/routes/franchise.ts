@@ -21,6 +21,7 @@ import { saveMcaPayload, readMcaPayload, listMcaPayloadKeys } from "../lib/mcaSt
 import { db, statPaddingViolationsTable, usersTable, playerSeasonStatsTable, playerStatWeekProcessedTable, guildChannelsTable, eaConnectionsTable, franchiseScheduleTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import type { ViolationRecord } from "../lib/stat-padding-detector.js";
+import { syncCanonicalGamesFromSchedulePayload } from "../lib/canonical-games.js";
 
 const router: IRouter = Router();
 
@@ -145,23 +146,25 @@ router.post("/madden/:leagueKey/:platform/:leagueId/repair-teamlinks", validateK
   res.status(result.ok ? 200 : 500).json(result);
 });
 
-// ── /standings — league standings; log structure so we know what fields arrive ─
+// ── /standings — league standings + cap totals from CareerMode_GetStandingsExport ─
 router.post("/madden/:leagueKey/:platform/:leagueId/standings", validateKey, async (req, res) => {
   const leagueId = parseInt(String(req.params.leagueId ?? "0"), 10);
-  const guildId = String(req.query["guildId"] ?? "");
+  const guildId  = String(req.query["guildId"] ?? "");
   saveMcaPayload("mca/standings.json", req.body);
-  res.status(200).json({ status: "received" });
+  console.log("[mca/standings] Received standings payload, processing cap/seed data...");
 
-  const body = req.body as Record<string, unknown>;
-  const keys = Object.keys(body ?? {});
-  const firstKey = keys[0];
-  const sample = firstKey && Array.isArray(body[firstKey]) ? (body[firstKey] as any[])[0] : body;
-  console.log("[mca/standings] Top-level keys:", keys);
-  console.log("[mca/standings] First item sample:", JSON.stringify(sample)?.slice(0, 500));
-
-  const result = await processStandingsSeedings(req.body, leagueId, guildId)
-    .catch(err => ({ ok: false, message: String(err) }));
-  console.log("[mca/standings] Result:", result.message);
+  try {
+    const result = await processStandingsSeedings(req.body, leagueId, guildId).catch(err => ({ ok: false, message: String(err) }));
+    return res.status(result.ok ? 200 : 500).json({
+      ok: result.ok,
+      status: result.ok ? "processed" : "error",
+      message: result.message,
+      details: (result as any).details ?? undefined,
+    });
+  } catch (err) {
+    console.error("[mca/standings] Error:", err);
+    return res.status(500).json({ ok: false, status: "error", message: String(err) });
+  }
 });
 
 // ── /teamstats — season-level team stats (some MCA versions send this) ────────
@@ -223,7 +226,9 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
     processSchedules(req.body, leagueId, guildId).catch(err => ({ ok: false, message: String(err) })),
     resolveLeagueChannels(leagueId),
   ]);
-  console.log("[mca/schedules] Result:", result.message);
+  const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, 0, "season", leagueId, guildId)
+    .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
+  console.log("[mca/schedules] Result:", result.message, "| canonical:", JSON.stringify(canonical));
   void channels;
 });
 
@@ -355,7 +360,9 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   const doReset   = String(req.query["reset"] ?? "false").toLowerCase() === "true";
   try {
     const count = await syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, true, doReset, guildId);
-    res.status(200).json({ ok: true, count, week: weekNum });
+    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
+      .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
+    res.status(200).json({ ok: true, count, week: weekNum, canonical });
   } catch (err) {
     res.status(500).json({ ok: false, count: 0, week: weekNum, error: String(err) });
   }
@@ -382,6 +389,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
       resolveLeagueChannels(leagueId),
     ]);
+    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
+      .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
     const { commCh, genCh } = channels;
 
     const result = await processWeekScores(req.body, weekNum, weekType, leagueId, skipPayouts, guildId).catch(err => ({
@@ -409,6 +418,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       gamesCpuVsCpu:   result.gamesCpuVsCpu,
       gamesUnregistered: result.gamesUnregistered,
       message:         result.message,
+      canonical,
     });
   } catch (err) {
     console.error(`[mca/week${weekNum}/schedules] Error:`, err);
@@ -487,6 +497,8 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
       resolveLeagueChannels(leagueId),
     ]);
+    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
+      .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
     const { commCh, genCh } = channels;
 
     const result = await processWeekScores(req.body, weekNum, weekType, leagueId, false, guildId).catch(err => ({
@@ -516,6 +528,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       gamesCpuVsCpu:   result.gamesCpuVsCpu,
       gamesUnregistered: result.gamesUnregistered,
       message:         result.message,
+      canonical,
     });
   } catch (err) {
     console.error(`[mca/week${weekNum}/scores] Error:`, err);

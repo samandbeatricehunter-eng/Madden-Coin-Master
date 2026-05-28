@@ -37,6 +37,12 @@ function isPotyVotingOpen(season: any): boolean {
   return ["wildcard", "divisional", "conference", "superbowl"].includes(wk);
 }
 
+function isPotyNominationOpen(season: any): boolean {
+  const wk = potyWeekKey(season);
+  const n = Number(wk);
+  return Number.isInteger(n) && n >= 1 && n <= 18;
+}
+
 export async function ensureHighlightTables(): Promise<void> {
   await db.execute(sql`
     create table if not exists highlight_nominees (
@@ -154,6 +160,20 @@ export async function handleHighlightNominationInteraction(interaction: StringSe
     }
 
     const season = await getOrCreateActiveSeason(guildId!);
+    if (!isPotyNominationOpen(season)) {
+      await interaction.update({
+        content: "❌ POTY nominations are closed for this season. Users can still browse nominees, and voting is available from Wild Card through Super Bowl.",
+        embeds: [],
+        components: [],
+      }).catch(async () => {
+        await interaction.reply({
+          content: "❌ POTY nominations are closed for this season. Users can still browse nominees, and voting is available from Wild Card through Super Bowl.",
+          ephemeral: true,
+        }).catch(() => null);
+      });
+      return true;
+    }
+
     const existing = await rowsOf<{ count: number }>(sql`
       select count(*)::int as count
       from highlight_nominees
@@ -262,12 +282,12 @@ export async function renderPotyVote(interaction: ButtonInteraction | StringSele
           .setTitle("🏆 Play of the Year Voting")
           .setDescription(
             open
-              ? "Select a category to view nominees and vote. Voting closes automatically when the league advances from Super Bowl to offseason."
-              : "POTY voting is closed. It opens automatically at regular-season end and closes at the Super Bowl-to-offseason advance.",
+              ? "Select a category to browse nominees and vote. Voting closes automatically when the league advances from Super Bowl to offseason."
+              : "Select a category to browse current-season nominations. Voting buttons unlock automatically from Wild Card through Super Bowl.",
           ),
       ],
       components: [
-        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu.setDisabled(!open)),
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder().setCustomId("poty_media_home").setLabel("← Media Room").setStyle(ButtonStyle.Secondary),
         ),

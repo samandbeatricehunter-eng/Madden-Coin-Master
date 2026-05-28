@@ -76,35 +76,10 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
   // ── Leaf actions: dispatch BEFORE any async work ──────────────────────────
   // handleActionsInteraction does its own deferReply — calling deferUpdate here
   // first would cause 40060 when it tries to respond.
-  //
-  // Media Room actions must be routed before the legacy ac_* action handler.
-  // GOTW still lives in the legacy handler, but Active Streams / POTY / GOTY
-  // now live in media modules. Sending those through handleActionsInteraction()
-  // makes the select option appear to do nothing.
   if (id === "menu_cat") {
     const node = findNode(value);
     if (node?.kind === "action") {
-      const action = node.action;
-
-      if (action === "ac_active_streams") {
-        const { renderActiveStreams } = await import("../media/media-room.js");
-        await renderActiveStreams(interaction as any);
-        return true;
-      }
-
-      if (action === "ac_goty_hub" || action === "ac_goty_vote") {
-        const { renderGotyHub } = await import("../media/media-room.js");
-        await renderGotyHub(interaction as any);
-        return true;
-      }
-
-      if (action === "ac_poty_vote") {
-        const { renderPotyVote } = await import("../media/play-of-the-year.js");
-        await renderPotyVote(interaction as any);
-        return true;
-      }
-
-      const handled = await handleActionsInteraction(interaction, action);
+      const handled = await handleActionsInteraction(interaction, node.action);
       if (!handled) {
         await interaction.reply({ content: "❌ That action couldn't be opened. Try again.", ephemeral: true });
       }
