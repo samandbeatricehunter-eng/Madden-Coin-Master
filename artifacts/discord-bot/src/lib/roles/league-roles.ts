@@ -606,10 +606,10 @@ export async function renderLeagueRoles(interaction: any, page = 0): Promise<voi
   const group = groups[safePage]!;
   const lines = group.items.map((def) => {
     let holders = "_None currently._";
-    const role = guild.roles.cache.find((r) => r.name.toLowerCase() === def.label.toLowerCase());
+    const role = guild.roles.cache.find((r: any) => r.name.toLowerCase() === def.label.toLowerCase());
     if (role) {
-      const members = guild.members.cache.filter((m) => m.roles.cache.has(role.id));
-      holders = members.size ? members.map((m) => `<@${m.id}>`).slice(0, 12).join(", ") : holders;
+      const members = guild.members.cache.filter((m: any) => m.roles.cache.has(role.id));
+      holders = members.size ? members.map((m: any) => `<@${m.id}>`).slice(0, 12).join(", ") : holders;
     }
 
     return `**${def.label}**

@@ -32,7 +32,7 @@ import { lookupNflDivision } from "../constants.js";
 import { runWildcardAutomation, runOffseasonHistoricalPost } from "../franchise/wildcard-automation.js";
 import { runEosAutoPost } from "../franchise/eos-auto-post.js";
 import { getPayoutValue, PAYOUT_KEYS } from "../economy/payout-config.js";
-import { runWeeklyMatchupsFlow } from "../franchise/weekly-matchups-runner.js";
+import { buildTeamToDiscord, runGotwPrompt, runWeeklyMatchupsFlow } from "../franchise/weekly-matchups-runner.js";
 import { PLAYOFF_WEEK_META, runPlayoffMatchupsFlow, payoutPlayoffRoundResults, autoDivisionBonus } from "../franchise/playoff-matchups-runner.js";
 import axios from "axios";
 import { autoPayoutPlayoffGotw, purgeChannel } from "../helpers/gotw-helpers.js";
@@ -637,18 +637,17 @@ async function handlePostMatchups(interaction: ButtonInteraction) {
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Yellow)
-        .setTitle("📋 Post Matchups/GOTW")
+        .setTitle("🏆 Re-Run GOTW")
         .setDescription(
-          `This will re-run the full weekly matchups flow for **${week}**.\n\n` +
-          "• Posts matchup embeds to the matchups channel\n" +
-          "• Posts a GOTW poll to the GOTW channel\n" +
-          "• Creates game channels if not already created\n\n" +
-          "⚠️ This does **not** award payouts or advance the week."
+          `This will re-run only the GOTW selection prompt for **${week}**.\n\n` +
+          "• Scores eligible H2H matchups for the current week\n" +
+          "• Sends the commissioner a Confirm / Choose Different GOTW prompt\n" +
+          "• Does not post matchups, create channels, award payouts, or advance the week."
         ),
     ],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ao_post_matchups_confirm").setLabel("✅ Confirm & Post").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("ao_post_matchups_confirm").setLabel("✅ Confirm Re-Run GOTW").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
       ) as ActionRowBuilder<any>,
     ],
@@ -661,81 +660,64 @@ async function handlePostMatchupsConfirm(interaction: ButtonInteraction) {
     embeds: [
       new EmbedBuilder()
         .setColor(Colors.Yellow)
-        .setTitle("📋 Posting Matchups...")
-        .setDescription("Running the matchups flow — please wait."),
+        .setTitle("🏆 Re-Running GOTW...")
+        .setDescription("Scoring current-week H2H matchups and rebuilding the GOTW selection prompt."),
     ],
     components: [],
   });
 
   try {
-    const season      = await getOrCreateActiveSeason(guildId);
+    const season = await getOrCreateActiveSeason(guildId);
     const currentWeek = season.currentWeek ?? "1";
-    const backRow     = [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
-      ) as ActionRowBuilder<any>,
-    ];
-
-    if (PLAYOFF_WEEK_META[currentWeek]) {
-      // ── Playoff week — use the playoff matchups / GOTW flow ──────────────────
-      const summary = await runPlayoffMatchupsFlow(
-        interaction.client,
-        season,
-        currentWeek as keyof typeof PLAYOFF_WEEK_META,
-        guildId,
-      );
+    const weekNum = parseInt(currentWeek, 10);
+    if (!Number.isFinite(weekNum) || weekNum < 1 || weekNum > 18) {
       await interaction.editReply({
         embeds: [
           new EmbedBuilder()
-            .setColor(Colors.Green)
-            .setTitle("✅ Playoff Matchups Posted")
-            .setDescription(summary || `Playoff matchup flow completed for **${weekLabel(currentWeek)}**.`),
+            .setColor(Colors.Red)
+            .setTitle("❌ GOTW Re-Run Not Available")
+            .setDescription(`GOTW re-run is only available for regular-season weeks. Current week: **${weekLabel(currentWeek)}**.`),
         ],
-        components: backRow,
+        components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary)) as ActionRowBuilder<any>],
       });
-    } else {
-      // ── Regular season week ───────────────────────────────────────────────────
-      const weekNum        = parseInt(currentWeek, 10);
-      const displayWeekNum = isNaN(weekNum) ? 1 : weekNum;
-
-      await runWeeklyMatchupsFlow({
-        client:          interaction.client,
-        guild:           interaction.guild,
-        season,
-        displayWeekNum,
-        payoutWeekIndex: null,
-        guildId,
-        replyFn: async ({ content, components }) => {
-          await interaction.followUp({ content, components: components ?? [], ephemeral: true }).catch(() => {});
-        },
-      });
-
-      await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(Colors.Green)
-            .setTitle("✅ Matchups Posted")
-            .setDescription(`Matchup flow completed for **${weekLabel(currentWeek)}**.`),
-        ],
-        components: backRow,
-      });
+      return;
     }
-  } catch (err) {
-    console.error("[admin-operations] Post Matchups error:", err);
+
+    const scheduleSeasonId = await getScheduleSeasonId(guildId);
+    const games = await db.select({
+      awayTeamName: franchiseScheduleTable.awayTeamName,
+      homeTeamName: franchiseScheduleTable.homeTeamName,
+    })
+      .from(franchiseScheduleTable)
+      .where(and(eq(franchiseScheduleTable.seasonId, scheduleSeasonId), eq(franchiseScheduleTable.weekIndex, weekNum - 1)));
+
+    const teamToDiscord = await buildTeamToDiscord(guildId);
+    await runGotwPrompt({
+      season,
+      weekNum,
+      teamToDiscord,
+      games,
+      baseContent: `🏆 **GOTW Re-Run — ${weekLabel(currentWeek)}**`,
+      replyFn: async ({ content, components }) => {
+        await interaction.followUp({ content, components: components ?? [], ephemeral: true }).catch(() => {});
+      },
+    });
+
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
-          .setColor(Colors.Red)
-          .setTitle("❌ Matchups Post Failed")
-          .setDescription(`Error: ${err}`),
+          .setColor(Colors.Green)
+          .setTitle("✅ GOTW Selection Re-Run")
+          .setDescription(`GOTW selection prompt rebuilt for **${weekLabel(currentWeek)}**.`),
       ],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-        ) as ActionRowBuilder<any>,
-      ],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary)) as ActionRowBuilder<any>],
     });
+  } catch (err) {
+    console.error("[admin-operations] Re-run GOTW error:", err);
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("❌ GOTW Re-Run Failed").setDescription(String(err))],
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary)) as ActionRowBuilder<any>],
+    }).catch(() => {});
   }
 }
 

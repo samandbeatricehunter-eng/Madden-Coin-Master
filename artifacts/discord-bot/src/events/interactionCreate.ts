@@ -2422,13 +2422,6 @@ async function handleModal(interaction: ModalSubmitInteraction) {
     return;
   }
 
-  // ── GOTY nomination modal submissions ───────────────────────────────────────
-  if (action?.startsWith("gotyv_")) {
-    const { handleGotyvInteraction } = await import("../lib/handlers/goty-voting-handlers.js");
-    await handleGotyvInteraction(interaction);
-    return;
-  }
-
   // ── Actions hub — dispatch all ac_ prefixed modal submissions ─────────────────
   if (action?.startsWith("ac_")) {
     const handled = await handleActionsInteraction(interaction);

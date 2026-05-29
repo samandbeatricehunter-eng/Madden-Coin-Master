@@ -514,6 +514,15 @@ type StreamPostingChoice = {
   label: string | null;
 };
 
+
+function validUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 function parseStreamPostingChoice(raw: string): StreamPostingChoice | null {
   const value = raw.trim();
   if (!value) return { platform: "none", url: null, label: null };
@@ -539,7 +548,7 @@ async function handleMarkBegunModal(interaction: ModalSubmitInteraction, ctx: Ga
   if (!(await requireBothCheckedIn(interaction, ctx))) return;
   const streamInput = interaction.fields.getTextInputValue("stream_url").trim();
   const streamChoice = parseStreamPostingChoice(streamInput);
-  if (!streamChoice) return interaction.reply({ ephemeral: true, content: "❌ Paste a valid http:// or https:// stream URL, type **Discord**, or leave it blank." });
+  if (!streamChoice) { await interaction.reply({ ephemeral: true, content: "❌ Paste a valid http:// or https:// stream URL, type **Discord**, or leave it blank." }); return; }
   await db.execute(sql`
     update gameday_matchup_status
     set begun_by = ${ctx.userId},
@@ -841,7 +850,7 @@ async function showCpuStreamModal(interaction: ButtonInteraction): Promise<void>
 
 async function handleCpuStreamModal(interaction: ModalSubmitInteraction, ctx: GamedayContext): Promise<void> {
   const streamUrl = interaction.fields.getTextInputValue("stream_url").trim();
-  if (!validUrl(streamUrl)) return interaction.reply({ ephemeral: true, content: "❌ Use a valid http:// or https:// stream URL." });
+  if (!validUrl(streamUrl)) { await interaction.reply({ ephemeral: true, content: "❌ Use a valid http:// or https:// stream URL." }); return; }
   await db.execute(sql`
     insert into gameday_cpu_actions (guild_id, season_id, week_index, user_discord_id, user_team_name, cpu_team_name, schedule_id, cpu_stream_link)
     values (${ctx.guildId}, ${ctx.season.id}, ${ctx.weekIndex}, ${ctx.userId}, ${ctx.userTeamName ?? null}, ${ctx.cpuTeamName ?? null}, ${ctx.scheduleId ?? null}, ${streamUrl})

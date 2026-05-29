@@ -62,6 +62,7 @@ import {
 import { ATTRIBUTES, NFL_TEAMS, NFL_DIVISION_MAP, LIMITS, lookupNflDivision, eaPortraitUrl, LEGEND_CUSTOM_PURCHASE_WEEKS } from "../constants.js";
 import { STAT_CATEGORIES, STAT_TIER_DEFAULTS } from "../economy/stat-categories.js";
 import { createSession } from "./custom-player-session.js";
+import { legendPurchasesOpen, customPlayersOpen } from "../store/cutoff-notices.js";
 
 
 import { canUseCommissionerOffice } from "../roles/rec-role-access.js";
@@ -151,6 +152,12 @@ interface ActionsSession {
   apDevFilters?: number[];   // multi-select: 0=normal,1=star,2=ss,3=xf (empty=all)
   apSortStack?: string[];    // ordered sort keys, priority = index 0 first (max 5)
   apSortPage?: number;       // current sort-button page (0=special, 1-5=attrs)
+  // cap-manager potential FA / release planning flow
+  capFaPos?: string;
+  capFaPage?: number;
+  capFaPlayerId?: number;
+  capTargetValue?: string;
+  capReleaseIds?: number[];
   expiresAt: number;
 }
 

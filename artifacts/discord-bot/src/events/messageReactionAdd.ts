@@ -67,6 +67,6 @@ export async function execute(reaction: MessageReaction, user: User): Promise<vo
   `);
 
   if (message.channel?.isTextBased()) {
-    await message.channel.send(`${commish}\n${emoji} **Connection Issue Escalated — ${label} Requested**\n<@${userId}> requested **${label}** after the connection issue. Commissioner review required.`).catch(() => null);
+    await (message.channel as any).send(`${commish}\n${emoji} **Connection Issue Escalated — ${label} Requested**\n<@${userId}> requested **${label}** after the connection issue. Commissioner review required.`).catch(() => null);
   }
 }

@@ -55,6 +55,11 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, isNotNull, ne, inArray, or } from "drizzle-orm";
 
+async function rowsOf<T = any>(q: any): Promise<T[]> {
+  const result = await db.execute(q);
+  return ((result as any).rows ?? result) as T[];
+}
+
 import {
   EA_LOGIN_URL,
   exchangeCodeForToken,
@@ -1676,7 +1681,7 @@ export async function runMissingDataDiagnostics(guildId: string): Promise<{
     `);
   }
 
-  const uniqueWeeks = [...new Set(missingRows.map((r) => Number(r.week_number)).filter((n) => Number.isInteger(n) && n >= 1 && n <= 23))].sort((a, b) => a - b);
+  const uniqueWeeks = Array.from(new Set(missingRows.map((r: any) => Number(r.week_number)).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 23))).sort((a: number, b: number) => a - b);
   let weeksSynced = 0;
   const weekSummary: string[] = [];
 

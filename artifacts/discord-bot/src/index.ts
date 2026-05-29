@@ -65,9 +65,9 @@ if (!isProduction && !devBotEnabled) {
   const events = [interactionCreate, ready, messageCreate, guildCreate, guildMemberAdd, messageReactionAdd];
   for (const event of events) {
     if ((event as any).once) {
-      client.once(event.name, (...args) => event.execute(...args as [any]));
+      client.once(event.name, (...args) => (event as any).execute(...args));
     } else {
-      client.on(event.name, (...args) => event.execute(...args as [any]));
+      client.on(event.name, (...args) => (event as any).execute(...args));
     }
   }
 

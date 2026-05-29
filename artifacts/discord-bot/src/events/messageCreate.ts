@@ -145,7 +145,7 @@ async function handleStreamPost(message: Message): Promise<void> {
     });
 
     await addBalance(message.author.id, streamPayout, guildId);
-    await logTransaction(message.author.id, streamPayout, "payout", `Auto stream payout — ${currentWeek}`, guildId, "stream");
+    await logTransaction(message.author.id, streamPayout, "addcoins", `Auto stream payout — ${currentWeek}`, guildId, "stream");
 
     await reactOk(message);
     await dmUser(message, `✅ Your stream link was logged and **${streamPayout} coins** were paid automatically.`);
@@ -209,7 +209,7 @@ async function handleHighlightPost(message: Message): Promise<void> {
     });
 
     await addBalance(message.author.id, HIGHLIGHT_AUTO_PAYOUT, guildId);
-    await logTransaction(message.author.id, HIGHLIGHT_AUTO_PAYOUT, "payout", `Auto highlight payout — ${currentWeek}`, guildId, "highlight");
+    await logTransaction(message.author.id, HIGHLIGHT_AUTO_PAYOUT, "addcoins", `Auto highlight payout — ${currentWeek}`, guildId, "highlight");
 
     await reactOk(message);
     await dmUser(
