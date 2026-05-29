@@ -629,18 +629,18 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
 
   const guildMember = await interaction.guild?.members.fetch(discordId).catch(() => null);
   if (guildMember) {
-    // Add "Approved Member" role
+    // Add member access role
     await interaction.guild!.roles.fetch().catch(() => null);
-    const approvedRole = interaction.guild!.roles.cache.find(r => r.name === "Approved Member");
+    const approvedRole = interaction.guild!.roles.cache.find(r => /^(locker room approved|approved member)$/i.test(r.name));
     if (approvedRole) {
       const added = await guildMember.roles.add(approvedRole).then(() => true).catch(err => {
-        console.error(`[ud_link] Failed to add Approved Member role to ${discordId}:`, err);
+        console.error(`[ud_link] Failed to add Locker Room Approved role to ${discordId}:`, err);
         return false;
       });
-      if (added) discordStatusLines.push(`✅ Assigned **Approved Member** role`);
-      else       discordStatusLines.push(`⚠️ Could not assign **Approved Member** role (check bot permissions)`);
+      if (added) discordStatusLines.push(`✅ Assigned **Locker Room Approved** role`);
+      else       discordStatusLines.push(`⚠️ Could not assign **Locker Room Approved** role (check bot permissions)`);
     } else {
-      discordStatusLines.push(`⚠️ **Approved Member** role not found in this server`);
+      discordStatusLines.push(`⚠️ **Locker Room Approved** role not found in this server`);
     }
 
     // Resolve short team nickname (e.g. "Cowboys") from MCA table, fallback to last word of fullName
