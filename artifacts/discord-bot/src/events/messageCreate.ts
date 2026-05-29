@@ -98,10 +98,10 @@ async function handleGamedayChannelMessage(message: Message): Promise<boolean> {
     .limit(1);
 
   if (!active || active.channelId !== message.channelId) return false;
-  if (await isCommissionerOrAdminMessage(message)) return true;
-
-  await message.delete().catch(() => null);
-  return true;
+  // Phase 4.1: gameday channel permissions prevent regular users from sending.
+  // Do not auto-delete user messages anymore; return false so stream/highlight
+  // handlers can still operate in their configured channels if needed.
+  return false;
 }
 
 async function handleStreamPost(message: Message): Promise<void> {

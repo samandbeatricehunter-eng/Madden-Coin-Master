@@ -136,6 +136,7 @@ import {
   handleLeagueDataSelect,
 } from "../lib/handlers/league-data-handlers.js";
 import { handleMenuButton, handleMenuSelect } from "../lib/menu/menu-router.js";
+import { handleReactionGamedayButton, handleReactionGamedaySelect, handleReactionGamedayModal } from "../lib/gameday/reaction-panels/service.js";
 
 
 export const name = "interactionCreate";
@@ -245,6 +246,8 @@ export async function execute(interaction: Interaction) {
 async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(":");
   const [action, secondPart, userId, purchaseType] = parts;
+
+  if (await handleReactionGamedayButton(interaction)) return;
 
   // ── Team request commissioner buttons (treq_link|uid|team, treq_deny|uid|team) ─
   if (interaction.customId.startsWith("treq_link|")) { await handleTreqLinkButton(interaction); return; }
@@ -2073,6 +2076,8 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   const action    = parts[0]!;
   const sessionId = parts[1] ?? "";
 
+  if (await handleReactionGamedaySelect(interaction)) return;
+
   // ── League Data wizard — all ld_ prefixed select menus ───────────────────────
   if (action?.startsWith("ld_")) {
     await handleLeagueDataSelect(interaction);
@@ -2387,6 +2392,8 @@ async function handleModal(interaction: ModalSubmitInteraction) {
   const parts  = interaction.customId.split(":");
   const action = parts[0]!;
   const idStr  = parts[1];
+
+  if (await handleReactionGamedayModal(interaction)) return;
 
   // ── Commissioner's Office — edit-amount modals (co_modal_edit_*) ────────────
   if (interaction.customId.startsWith("co_modal_edit_")) {
