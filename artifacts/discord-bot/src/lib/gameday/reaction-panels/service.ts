@@ -333,7 +333,7 @@ async function dm(user: User, content: string, components?: any[]) { await user.
 async function showSchedulingDm(user: User, row: PanelRow) {
   const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_action:${row.id}`).setPlaceholder("Choose scheduling action…").addOptions([
     new StringSelectMenuOptionBuilder().setLabel("Send New Time").setValue("new"),
-    new StringSelectMenuOptionBuilder().setLabel("View Pending Offers").setValue("pending"),
+    new StringSelectMenuOptionBuilder().setLabel("View Pending Offers (#)").setDescription("Review offers received, sent, edit, or delete").setValue("pending"),
     new StringSelectMenuOptionBuilder().setLabel("Reschedule Accepted Time").setValue("reschedule"),
     new StringSelectMenuOptionBuilder().setLabel("Cancel").setValue("cancel"),
   ]);
@@ -444,6 +444,8 @@ export async function handleReactionGamedaySelect(interaction: StringSelectMenuI
   if (id.startsWith("rgd_sched_time:")) { const [, panelId, action, day, win] = id.split(":"); const minute = interaction.values[0]; if (minute === "back") { const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_window:${panelId}:${action}:${day}`).setPlaceholder("Choose time window…").addOptions(timeWindowOptions(), new StringSelectMenuOptionBuilder().setLabel("← Back").setValue("back").setDescription("Return to date selection.")); await interaction.update({ content:"Choose a time window.", components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] }); return true; } if (minute === "none") return true; const tz = await getUserTz(interaction.user.id); const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_tz:${panelId}:${action}:${day}:${win}:${minute}`).setPlaceholder("Choose timezone…").addOptions(...timezoneOptions(tz), new StringSelectMenuOptionBuilder().setLabel("← Back").setValue("back").setDescription("Return to exact time selection.")); await interaction.update({ content:"Choose timezone. Your current default is shown as an option and can be selected to continue.", components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] }); return true; }
   if (id.startsWith("rgd_sched_tz:")) { const [, panelId, action, day, win, minute] = id.split(":"); const selectedTz = interaction.values[0]; if (selectedTz === "back") { const tz = await getUserTz(interaction.user.id); const opts = exactTimeOptions(win, Number(day), tz); const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_time:${panelId}:${action}:${day}:${win}`).setPlaceholder("Choose exact time…").addOptions(...(opts.length ? opts : [new StringSelectMenuOptionBuilder().setLabel("No remaining times").setValue("none")]), new StringSelectMenuOptionBuilder().setLabel("← Back").setValue("back").setDescription("Return to time window selection.")); await interaction.update({ content:"Choose exact time.", components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] }); return true; } await submitScheduleOffer(interaction, Number(panelId), action, Number(day), Number(minute), selectedTz as TzCode); return true; }
   if (id.startsWith("rgd_issue:")) { const panelId = Number(id.split(":")[1]); const issue = interaction.values[0]; if (issue === "violation") { const modal = new ModalBuilder().setCustomId(`rgd_violation_modal:${panelId}`).setTitle("Report Violation").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("details").setLabel("Describe the violation").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000))); await interaction.showModal(modal); return true; } await submitIssue(interaction, panelId, issue); return true; }
+
+  if (id.startsWith("rgd_offer_manage:")) { const [, panelId, offerId] = id.split(":"); await manageOfferAction(interaction, Number(panelId), Number(offerId), interaction.values[0]); return true; }
   if (id.startsWith("rgd_fw_for:")) { await submitFw(interaction, Number(id.split(":")[1]), interaction.values[0]); return true; }
   return false;
 }
@@ -455,7 +457,8 @@ async function submitScheduleOffer(interaction: StringSelectMenuInteraction, pan
   const label = `${fmtDate(proposed, tz)} ${tz}`;
   const opp = opponent(row, interaction.user.id)!;
   const result = await db.execute(sql`insert into gameday_schedule_offers (guild_id, season_id, week_index, matchup_key, proposer_discord_id, recipient_discord_id, away_discord_id, home_discord_id, away_team_name, home_team_name, proposed_for, proposed_tz, notes, status, offer_kind) values (${row.guild_id}, ${row.season_id}, ${row.week_index}, ${row.matchup_key}, ${interaction.user.id}, ${opp}, ${row.away_discord_id}, ${row.home_discord_id}, ${row.away_team_name}, ${row.home_team_name}, ${proposed.toISOString()}, ${tz}, ${action === "reschedule" ? "Reschedule request" : null}, 'pending', ${action === "reschedule" ? "reschedule" : "schedule"}) returning id`);
-  const state = safeState(row); state.schedule = { status:"pending", from:interaction.user.id, to:opp, label, converted: formatAllSixZones(proposed) };
+  const state = safeState(row); state.schedule = { status:"pending", from:interaction.user.id, to:opp, label, converted: formatAllSixZones(proposed), offerId: Number((result as any).rows?.[0]?.id ?? 0) };
+  state.lastAction = `<@${interaction.user.id}> sent a schedule offer to <@${opp}>.`;
   await updatePanel(row,state);
   const oppUser = await interaction.client.users.fetch(opp).catch(()=>null);
   if (oppUser) await oppUser.send(`🕒 **Schedule Offer**\n<@${interaction.user.id}> proposed a game time.\n\n${selectedTimeBlock(proposed,tz)}\n\nOpen your pending offers from the matchup panel 🕒 to accept, counter, or reject.`).catch(()=>null);
@@ -464,12 +467,94 @@ async function submitScheduleOffer(interaction: StringSelectMenuInteraction, pan
 
 async function showPendingOffers(interaction: StringSelectMenuInteraction, panelId: number) {
   const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`); if (!row) return;
-  const offers = await rowsOf<any>(sql`select * from gameday_schedule_offers where guild_id=${row.guild_id} and season_id=${row.season_id} and week_index=${row.week_index} and matchup_key=${row.matchup_key} and status='pending' order by created_at desc limit 10`);
-  if (!offers.length) { await interaction.update({ content:"No pending schedule offers.", components:[] }); return; }
-  const lines = offers.map((o,i)=>`**Offer #${i+1}**\nFrom: <@${o.proposer_discord_id}>\nTo: <@${o.recipient_discord_id}>\nTime: ${o.proposed_for} ${o.proposed_tz ?? ""}\nStatus: Waiting on <@${o.recipient_discord_id}>`).join("\n\n");
-  const menu = new StringSelectMenuBuilder().setCustomId(`rgd_offer_action:${panelId}`).setPlaceholder("Offer actions coming next…").addOptions(new StringSelectMenuOptionBuilder().setLabel("Close").setValue("close"));
-  await interaction.update({ content:`**Pending Schedule Offers**\n\n${lines}`.slice(0,1900), components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
+  if (!isParticipant(row, interaction.user.id)) { await interaction.update({ content:"Not authorized.", components:[] }).catch(()=>null); return; }
+  const offers = await rowsOf<any>(sql`select * from gameday_schedule_offers where guild_id=${row.guild_id} and season_id=${row.season_id} and week_index=${row.week_index} and matchup_key=${row.matchup_key} and status='pending' order by created_at desc limit 25`);
+  if (!offers.length) { await interaction.update({ content:"No pending schedule offers.", components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(`rgd_sched_action:${panelId}`).setPlaceholder("Choose scheduling action…").addOptions(new StringSelectMenuOptionBuilder().setLabel("Send New Time").setValue("new"), new StringSelectMenuOptionBuilder().setLabel("Cancel").setValue("cancel")))] }).catch(()=>null); return; }
+  const received = offers.filter((o)=>o.recipient_discord_id === interaction.user.id);
+  const sent = offers.filter((o)=>o.proposer_discord_id === interaction.user.id);
+  const other = offers.filter((o)=>o.proposer_discord_id !== interaction.user.id && o.recipient_discord_id !== interaction.user.id);
+  const fmt = (o:any) => `${new Date(o.proposed_for).toLocaleString("en-US", { timeZone: "America/Chicago" })} ${o.proposed_tz ?? ""}`;
+  const lines = [
+    `**Received (${received.length})**`,
+    received.length ? received.map((o,i)=>`${i+1}. From <@${o.proposer_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("
+") : "None",
+    "",
+    `**Sent (${sent.length})**`,
+    sent.length ? sent.map((o,i)=>`${i+1}. To <@${o.recipient_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("
+") : "None",
+    other.length ? `
+**Other pending (${other.length})**
+${other.map((o,i)=>`${i+1}. <@${o.proposer_discord_id}> → <@${o.recipient_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("
+")}` : "",
+  ].filter(Boolean).join("
+");
+  const menu = new StringSelectMenuBuilder().setCustomId(`rgd_offer_action:${panelId}`).setPlaceholder("Select a pending offer to accept, edit, or delete…");
+  for (const o of offers.slice(0,25)) {
+    const mine = o.proposer_discord_id === interaction.user.id ? "Sent" : o.recipient_discord_id === interaction.user.id ? "Received" : "Other";
+    menu.addOptions(new StringSelectMenuOptionBuilder().setLabel(`${mine} #${o.id}`.slice(0,100)).setDescription(`${fmt(o)} ${mine === "Sent" ? `to ${o.recipient_discord_id}` : `from ${o.proposer_discord_id}`}`.slice(0,100)).setValue(String(o.id)));
+  }
+  await interaction.update({ content:`**Pending Schedule Offers (#${offers.length})**
+
+${lines}`.slice(0,1900), components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
 }
+
+async function showOfferActions(interaction: StringSelectMenuInteraction, panelId: number, offerId: number) {
+  const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`); if (!row || !isParticipant(row, interaction.user.id)) return;
+  const offer = await oneOf<any>(sql`select * from gameday_schedule_offers where id=${offerId} and status='pending' limit 1`); if (!offer) { await interaction.update({ content:"That offer is no longer pending.", components:[] }).catch(()=>null); return; }
+  const isSender = offer.proposer_discord_id === interaction.user.id;
+  const isReceiver = offer.recipient_discord_id === interaction.user.id;
+  const menu = new StringSelectMenuBuilder().setCustomId(`rgd_offer_manage:${panelId}:${offerId}`).setPlaceholder("Choose what to do with this offer…");
+  if (isReceiver) menu.addOptions(new StringSelectMenuOptionBuilder().setLabel("Accept Offer").setValue("accept"), new StringSelectMenuOptionBuilder().setLabel("Reject Offer").setValue("reject"));
+  if (isSender) menu.addOptions(new StringSelectMenuOptionBuilder().setLabel("Edit / Replace Offer").setValue("edit"), new StringSelectMenuOptionBuilder().setLabel("Delete Offer").setValue("delete"));
+  menu.addOptions(new StringSelectMenuOptionBuilder().setLabel("Back to Pending Offers").setValue("back"));
+  await interaction.update({ content:`**Offer #${offer.id}**
+From: <@${offer.proposer_discord_id}>
+To: <@${offer.recipient_discord_id}>
+Time: ${offer.proposed_for} ${offer.proposed_tz ?? ""}`, components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
+}
+
+async function manageOfferAction(interaction: StringSelectMenuInteraction, panelId: number, offerId: number, action: string) {
+  const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`); if (!row || !isParticipant(row, interaction.user.id)) return;
+  if (action === "back") return showPendingOffers(interaction, panelId);
+  const offer = await oneOf<any>(sql`select * from gameday_schedule_offers where id=${offerId} and status='pending' limit 1`); if (!offer) { await interaction.update({ content:"That offer is no longer pending.", components:[] }).catch(()=>null); return; }
+  const state = safeState(row);
+  if (action === "accept" && offer.recipient_discord_id === interaction.user.id) {
+    await db.execute(sql`update gameday_schedule_offers set status='accepted', accepted_at=now(), updated_at=now() where id=${offerId}`);
+    await db.execute(sql`update gameday_schedule_offers set status='expired', updated_at=now() where guild_id=${row.guild_id} and season_id=${row.season_id} and week_index=${row.week_index} and matchup_key=${row.matchup_key} and status='pending' and id <> ${offerId}`).catch(()=>null);
+    state.schedule = { status:"accepted", from:offer.proposer_discord_id, to:offer.recipient_discord_id, label:`${offer.proposed_for} ${offer.proposed_tz ?? ""}`, converted: offer.proposed_for };
+    state.lastAction = `<@${interaction.user.id}> accepted schedule offer #${offerId}.`;
+    await updatePanel(row,state);
+    await interaction.update({ content:`✅ Accepted offer #${offerId}. The matchup panel has been updated.`, components:[] });
+    return;
+  }
+  if (action === "reject" && offer.recipient_discord_id === interaction.user.id) {
+    await db.execute(sql`update gameday_schedule_offers set status='rejected', updated_at=now() where id=${offerId}`);
+    state.lastAction = `<@${interaction.user.id}> rejected schedule offer #${offerId}.`;
+    await updatePanel(row,state);
+    await interaction.update({ content:`❌ Rejected offer #${offerId}.`, components:[] });
+    return;
+  }
+  if (action === "delete" && offer.proposer_discord_id === interaction.user.id) {
+    await db.execute(sql`update gameday_schedule_offers set status='cancelled', updated_at=now() where id=${offerId}`);
+    state.lastAction = `<@${interaction.user.id}> deleted schedule offer #${offerId}.`;
+    const stillPending = await oneOf<{count:number}>(sql`select count(*)::int as count from gameday_schedule_offers where guild_id=${row.guild_id} and season_id=${row.season_id} and week_index=${row.week_index} and matchup_key=${row.matchup_key} and status='pending'`);
+    if (!Number(stillPending?.count ?? 0)) state.schedule = { status:"none" };
+    await updatePanel(row,state);
+    await interaction.update({ content:`🗑️ Deleted offer #${offerId}.`, components:[] });
+    return;
+  }
+  if (action === "edit" && offer.proposer_discord_id === interaction.user.id) {
+    await db.execute(sql`update gameday_schedule_offers set status='cancelled', updated_at=now() where id=${offerId}`);
+    state.lastAction = `<@${interaction.user.id}> is replacing schedule offer #${offerId}.`;
+    await updatePanel(row,state);
+    const tz = await getUserTz(interaction.user.id);
+    const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_date:${panelId}:new`).setPlaceholder("Choose replacement date…").addOptions(dateOptions());
+    await interaction.update({ content:`Choose a replacement date. Your default timezone is **${tz}**.`, components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
+    return;
+  }
+  await interaction.update({ content:"Not authorized for that action.", components:[] }).catch(()=>null);
+}
+
 
 async function postImmediateDecisionRequest(row: PanelRow, state: any, requestType: "force_win" | "fair_sim", title: string, body: string, channel: TextChannel, guild: Guild) {
   const mention = staffRoleMentions(guild);
