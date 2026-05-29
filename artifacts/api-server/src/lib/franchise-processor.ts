@@ -49,6 +49,16 @@ async function getGamePayout(key: PayoutKnob): Promise<number> {
   return v;
 }
 const MIN_COMPLETED_STATUS = 2;
+const DEBUG_IMPORTS = process.env.DEBUG_IMPORTS === "true" || process.env.DEBUG_IMPORTS === "1";
+function importDebug(message: string, ...args: unknown[]): void {
+  if (DEBUG_IMPORTS) console.log(message, ...args);
+}
+
+async function runBatched<T>(items: T[], batchSize: number, fn: (batch: T[]) => Promise<void>): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    await fn(items.slice(i, i + batchSize));
+  }
+}
 
 // ── Win milestones ─────────────────────────────────────────────────────────────
 // 25 tiers, read from payout_config (shared with the Discord bot's
@@ -1964,7 +1974,7 @@ export async function syncWeekScoresToSchedule(
     }
 
     await Promise.all(upserts);
-    console.log(`[syncWeekScores] Stored ${upserts.length} schedule entries for season ${season.id} week ${weekNum} (weekIndex=${weekIndex}, playoff=${isPlayoff}, scheduleOnly=${scheduleOnly})`);
+    importDebug(`[syncWeekScores] Stored ${upserts.length} schedule entries for season ${season.id} week ${weekNum} (weekIndex=${weekIndex}, playoff=${isPlayoff}, scheduleOnly=${scheduleOnly})`);
     return upserts.length;
   } catch (err) {
     console.error("[syncWeekScores] Error:", err);
@@ -2295,7 +2305,7 @@ export async function processWeekScores(
       );
 
       if (isH2H) {
-        console.log(
+        importDebug(
           `[h2h-detect] ${hData.fullName} vs ${aData.fullName}` +
           ` status=${status} hasForceFlag=${hasForceFlag}` +
           ` keys=[${Object.keys(g as Record<string,unknown>).join(",")}]`
@@ -2941,13 +2951,13 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     // Always log body structure so we can debug key-name mismatches
     const bodyKeys = body && typeof body === "object" ? Object.keys(body as Record<string, unknown>) : [];
-    console.log(`[roster/team/${mcaTeamId}] Body keys: [${bodyKeys.join(", ")}]`);
+    importDebug(`[roster/team/${mcaTeamId}] Body keys: [${bodyKeys.join(", ")}]`);
 
     const rawPlayers = normalizePlayers(body);
-    console.log(`[roster/team/${mcaTeamId}] normalizePlayers returned ${rawPlayers.length} entries`);
+    importDebug(`[roster/team/${mcaTeamId}] normalizePlayers returned ${rawPlayers.length} entries`);
     if (rawPlayers.length > 0) {
       const p0 = rawPlayers[0] as Record<string, unknown>;
-      console.log(`[roster/team/${mcaTeamId}] First player keys: ${Object.keys(p0).slice(0, 20).join(", ")}`);
+      importDebug(`[roster/team/${mcaTeamId}] First player keys: ${Object.keys(p0).slice(0, 20).join(", ")}`);
     }
 
     const ACTIVE_ROS_TYPE = 0;
@@ -2972,7 +2982,7 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
           if (/xp|experience|award|points/i.test(k)) xpFields[k] = (p as Record<string, unknown>)[k];
         }
         const xpStr = Object.keys(xpFields).length > 0 ? JSON.stringify(xpFields) : "none";
-        console.log(`[roster/player] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) archetype=${row.archetypeAbbrev ?? "null"} xp_fields=${xpStr}`);
+        importDebug(`[roster/player] ${row.firstName ?? ""} ${row.lastName ?? ""} (${row.position ?? "?"}) archetype=${row.archetypeAbbrev ?? "null"} xp_fields=${xpStr}`);
       }
       rows.push(row);
     }
@@ -3131,9 +3141,58 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     await db.insert(franchiseRostersTable).values(rowsWithPortraits);
 
-    const contractOps = rowsWithPortraits.map((r: any) => {
+    type ContractSnapshotRow = {
+      guildId: string;
+      legacySeasonId: number;
+      teamId: number;
+      teamName: string;
+      discordId: string | null;
+      playerId: number;
+      playerName: string;
+      position: string | null;
+      overall: number | null;
+      contractYearsLeft: number | null;
+      contractSalary: number | null;
+      contractBonus: number | null;
+      capHit: number | null;
+      capReleasePenalty: number | null;
+      capReleaseNetSavings: number | null;
+      rawJson: Record<string, unknown>;
+    };
+
+    const contractRows: ContractSnapshotRow[] = rowsWithPortraits.map((r: any) => {
       const attrs = (r.attributes ?? {}) as Record<string, unknown>;
-      return db.execute(sql`
+      return {
+        guildId: season.guildId ?? guildId ?? "",
+        legacySeasonId: season.id,
+        teamId: mcaTeamId,
+        teamName: teamEntry.fullName,
+        discordId: teamEntry.discordId ?? null,
+        playerId: Number(r.playerId),
+        playerName: [r.firstName, r.lastName].filter(Boolean).join(" "),
+        position: r.position ?? null,
+        overall: r.overall ?? null,
+        contractYearsLeft: r.contractYearsLeft ?? null,
+        contractSalary: attrs.contractSalary != null ? Number(attrs.contractSalary) : null,
+        contractBonus: attrs.contractBonus != null ? Number(attrs.contractBonus) : null,
+        capHit: attrs.capHit != null ? Number(attrs.capHit) : null,
+        capReleasePenalty: attrs.capReleasePenalty != null ? Number(attrs.capReleasePenalty) : null,
+        capReleaseNetSavings: attrs.capReleaseNetSavings != null ? Number(attrs.capReleaseNetSavings) : null,
+        rawJson: attrs,
+      };
+    }).filter((r) => Number.isFinite(r.playerId));
+
+    await runBatched(contractRows, 250, async (batch) => {
+      if (!batch.length) return;
+      const values = sql.join(batch.map((r) => sql`(
+        ${r.guildId}, ${r.legacySeasonId}, ${r.teamId}, ${r.teamName}, ${r.discordId},
+        ${r.playerId}, ${r.playerName}, ${r.position}, ${r.overall},
+        ${r.contractYearsLeft}, ${r.contractSalary}, ${r.contractBonus},
+        ${r.capHit}, ${r.capReleasePenalty}, ${r.capReleaseNetSavings},
+        ${JSON.stringify(r.rawJson)}::jsonb, now()
+      )`), sql`, `);
+
+      await db.execute(sql`
         insert into rec_contract_snapshots (
           guild_id, legacy_season_id, team_id, team_name, discord_id,
           player_id, player_name, position, overall,
@@ -3141,13 +3200,7 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
           cap_hit, cap_release_penalty, cap_release_net_savings,
           raw_json, updated_at
         )
-        values (
-          ${season.guildId ?? guildId ?? ""}, ${season.id}, ${mcaTeamId}, ${teamEntry.fullName}, ${teamEntry.discordId ?? null},
-          ${r.playerId}, ${[r.firstName, r.lastName].filter(Boolean).join(" ")}, ${r.position ?? null}, ${r.overall ?? null},
-          ${r.contractYearsLeft ?? null}, ${attrs.contractSalary != null ? Number(attrs.contractSalary) : null}, ${attrs.contractBonus != null ? Number(attrs.contractBonus) : null},
-          ${attrs.capHit != null ? Number(attrs.capHit) : null}, ${attrs.capReleasePenalty != null ? Number(attrs.capReleasePenalty) : null}, ${attrs.capReleaseNetSavings != null ? Number(attrs.capReleaseNetSavings) : null},
-          ${JSON.stringify(attrs)}::jsonb, now()
-        )
+        values ${values}
         on conflict (guild_id, legacy_season_id, player_id) do update
         set team_id = excluded.team_id,
             team_name = excluded.team_name,
@@ -3165,7 +3218,6 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
             updated_at = now()
       `);
     });
-    await Promise.all(contractOps);
 
     invalidateRostersCache(season.id);
 
