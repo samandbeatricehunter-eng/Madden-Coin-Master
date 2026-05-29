@@ -85,7 +85,6 @@ const ROOT_NODES: MenuNode[] = [
     visible: MCA_VISIBLE,
     kind: "branch",
     children: [
-      { path: "coaches_office.myteam", emoji: "📋", label: "My Team", description: "Open your roster and team card", kind: "action", action: "ac_myroster" },
       {
         path: "coaches_office.rosters", emoji: "👥",
         label: "Rosters",

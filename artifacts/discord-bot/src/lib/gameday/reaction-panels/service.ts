@@ -476,18 +476,12 @@ async function showPendingOffers(interaction: StringSelectMenuInteraction, panel
   const fmt = (o:any) => `${new Date(o.proposed_for).toLocaleString("en-US", { timeZone: "America/Chicago" })} ${o.proposed_tz ?? ""}`;
   const lines = [
     `**Received (${received.length})**`,
-    received.length ? received.map((o,i)=>`${i+1}. From <@${o.proposer_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("
-") : "None",
+    received.length ? received.map((o,i)=>`${i+1}. From <@${o.proposer_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("\n") : "None",
     "",
     `**Sent (${sent.length})**`,
-    sent.length ? sent.map((o,i)=>`${i+1}. To <@${o.recipient_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("
-") : "None",
-    other.length ? `
-**Other pending (${other.length})**
-${other.map((o,i)=>`${i+1}. <@${o.proposer_discord_id}> → <@${o.recipient_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("
-")}` : "",
-  ].filter(Boolean).join("
-");
+    sent.length ? sent.map((o,i)=>`${i+1}. To <@${o.recipient_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("\n") : "None",
+    other.length ? `\n**Other pending (${other.length})**\n${other.map((o,i)=>`${i+1}. <@${o.proposer_discord_id}> → <@${o.recipient_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n");
   const menu = new StringSelectMenuBuilder().setCustomId(`rgd_offer_action:${panelId}`).setPlaceholder("Select a pending offer to accept, edit, or delete…");
   for (const o of offers.slice(0,25)) {
     const mine = o.proposer_discord_id === interaction.user.id ? "Sent" : o.recipient_discord_id === interaction.user.id ? "Received" : "Other";
