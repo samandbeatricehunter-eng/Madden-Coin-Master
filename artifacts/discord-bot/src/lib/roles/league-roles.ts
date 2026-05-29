@@ -11,6 +11,7 @@ import {
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { CHANNEL_KEYS, getGuildChannel, getOrCreateActiveSeason } from "../db/db-helpers.js";
+import { recordAdvanceRoleDelta } from "../handlers/admin-operations-handlers.js";
 
 const RATE_LIMIT_DELAY_MS = 800;
 
@@ -166,10 +167,12 @@ async function setMemberRole(member: GuildMember, roleName: string, shouldHave: 
   if (shouldHave && !has) {
     await member.roles.add(role, "REC League automated role assignment").catch(() => null);
     changes.push(`<@${member.id}> earned **${roleName}**`);
+    recordAdvanceRoleDelta(member.id, { added: [roleName], removed: [] });
     await delay(RATE_LIMIT_DELAY_MS);
   } else if (!shouldHave && has) {
     await member.roles.remove(role, "REC League automated role removal").catch(() => null);
     changes.push(`<@${member.id}> lost **${roleName}**`);
+    recordAdvanceRoleDelta(member.id, { added: [], removed: [roleName] });
     await delay(RATE_LIMIT_DELAY_MS);
   }
 }
@@ -520,6 +523,7 @@ async function removeUnknownManagedRoles(member: GuildMember, shouldHave: Set<st
     if (shouldHave.has(role.name)) continue;
     await member.roles.remove(role, "REC League automated role cleanup").catch(() => null);
     changes.push(`<@${member.id}> lost **${role.name}**`);
+    recordAdvanceRoleDelta(member.id, { added: [], removed: [role.name] });
     await delay(RATE_LIMIT_DELAY_MS);
   }
 }

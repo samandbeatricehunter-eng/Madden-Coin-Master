@@ -18,9 +18,9 @@ import {
   gameLogTable, userRecordsTable, statPaddingViolationsTable,
   defaultTeamLogosTable, waitlistTable,
   serverSettingsTable, franchiseRostersTable, inventoryTable, legendsTable, customPlayersTable,
-  guildChannelsTable, gameSchedulesTable,
+  guildChannelsTable, gameSchedulesTable, coinTransactionsTable, userSavingsTable, positionalTrainersTable, purchasesTable,
 } from "@workspace/db";
-import { eq, and, sql, ne, desc, inArray } from "drizzle-orm";
+import { eq, and, sql, ne, desc, inArray, gt, gte } from "drizzle-orm";
 import {
   getOrCreateActiveSeason, getActiveSeason, addBalance, logTransaction,
   getGuildChannel, CHANNEL_KEYS,
@@ -57,6 +57,7 @@ import { nextAdvanceDeadline, formatAllZones, discordTimestampLong } from "../di
 import { createWeeklyGamedayChannel, gamedayWeekNumFromWeekKey } from "../gameday/gameday-channel.js";
 import { renderCommissionerGamedayReview, handleCommissionerGamedayReviewInteraction } from "../gameday/commissioner-gameday-review.js";
 import { recalculateLeagueRolesOnAdvance } from "../roles/league-roles.js";
+import { legendPurchasesOpen, customPlayersOpen } from "../store/cutoff-notices.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,108 @@ function getAoSession(guildId: string, userId: string): AoSession {
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
+
+
+
+type AdvanceDmRoleDelta = { added: string[]; removed: string[] };
+
+const advanceDmRoleDeltas = new Map<string, AdvanceDmRoleDelta>();
+
+export function recordAdvanceRoleDelta(discordId: string, delta: AdvanceDmRoleDelta): void {
+  const current = advanceDmRoleDeltas.get(discordId) ?? { added: [], removed: [] };
+  for (const role of delta.added) if (!current.added.includes(role)) current.added.push(role);
+  for (const role of delta.removed) if (!current.removed.includes(role)) current.removed.push(role);
+  advanceDmRoleDeltas.set(discordId, current);
+}
+
+async function sendAdvanceUserDms(args: {
+  guild: import("discord.js").Guild;
+  guildId: string;
+  leagueName: string;
+  since: Date;
+  seasonId: number;
+  oldWeekLabel: string;
+  newWeekLabel: string;
+}): Promise<{ sent: number; failed: number }> {
+  const { guild, guildId, leagueName, since, seasonId, oldWeekLabel, newWeekLabel } = args;
+  const deadlineWeekKey = newWeekLabel.toLowerCase().includes('week')
+    ? newWeekLabel.replace(/.*week\s*/i, '').trim()
+    : newWeekLabel.toLowerCase().includes('divisional')
+      ? 'divisional'
+      : newWeekLabel.toLowerCase().includes('conference')
+        ? 'conference'
+        : newWeekLabel.toLowerCase().includes('super')
+          ? 'superbowl'
+          : newWeekLabel.toLowerCase().includes('wild')
+            ? 'wildcard'
+            : newWeekLabel;
+
+  const users = await db
+    .select({ discordId: usersTable.discordId, team: usersTable.team, balance: usersTable.balance })
+    .from(usersTable)
+    .where(and(eq(usersTable.guildId, guildId), sql`${usersTable.discordId} not like 'unlinked_%'`, sql`${usersTable.team} is not null and ${usersTable.team} <> ''`));
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const user of users) {
+    const [coinRows, savingsRow, expiredTrainers, pendingPurchases] = await Promise.all([
+      db.select({ amount: coinTransactionsTable.amount, type: coinTransactionsTable.type, description: coinTransactionsTable.description })
+        .from(coinTransactionsTable)
+        .where(and(eq(coinTransactionsTable.guildId, guildId), eq(coinTransactionsTable.discordId, user.discordId), gte(coinTransactionsTable.createdAt, since)))
+        .orderBy(desc(coinTransactionsTable.createdAt))
+        .limit(20),
+      db.select({ balance: userSavingsTable.balance })
+        .from(userSavingsTable)
+        .where(eq(userSavingsTable.discordId, user.discordId))
+        .limit(1)
+        .then((r) => r[0] ?? null),
+      db.select({ playerName: positionalTrainersTable.playerName, tier: positionalTrainersTable.tier, focus: positionalTrainersTable.focus })
+        .from(positionalTrainersTable)
+        .where(and(eq(positionalTrainersTable.guildId, guildId), eq(positionalTrainersTable.seasonId, seasonId), eq(positionalTrainersTable.ownerDiscordId, user.discordId), eq(positionalTrainersTable.status, 'expired'), gte(positionalTrainersTable.expiredAt, since)))
+        .limit(10),
+      db.select({ purchaseType: purchasesTable.purchaseType, playerName: purchasesTable.playerName, cost: purchasesTable.cost })
+        .from(purchasesTable)
+        .where(and(eq(purchasesTable.guildId, guildId), eq(purchasesTable.seasonId, seasonId), eq(purchasesTable.discordId, user.discordId), eq(purchasesTable.status, 'pending')))
+        .orderBy(desc(purchasesTable.createdAt))
+        .limit(10),
+    ]);
+
+    const roleDelta = advanceDmRoleDeltas.get(user.discordId) ?? { added: [], removed: [] };
+    const wallet = Number(user.balance ?? 0);
+    const savings = Number(savingsRow?.balance ?? 0);
+    const coinLines = coinRows.filter((r) => Number(r.amount) !== 0).map((r) => `${Number(r.amount) > 0 ? '+' : ''}${Number(r.amount).toLocaleString()} — ${r.description}`);
+
+    const fields: { name: string; value: string }[] = [
+      { name: 'League', value: `**${leagueName}**\n${oldWeekLabel} → **${newWeekLabel}**` },
+      { name: 'Wallet', value: `Current wallet: **${wallet.toLocaleString()}** coins\nSavings: **${savings.toLocaleString()}** coins` },
+      { name: 'Coins received this advance', value: coinLines.length ? coinLines.slice(0, 8).join('\n').slice(0, 1024) : 'No coin payouts were recorded for you during this advance.' },
+      { name: 'Expired trainers', value: expiredTrainers.length ? expiredTrainers.map((t) => `${t.playerName} — ${t.tier} ${t.focus}`).join('\n').slice(0, 1024) : 'No trainers expired this advance.' },
+      { name: 'Purchase deadlines / pending purchases', value: [
+        pendingPurchases.length ? pendingPurchases.map((p) => `${p.purchaseType}${p.playerName ? ` — ${p.playerName}` : ''} (${Number(p.cost).toLocaleString()} coins)`).join('\n') : 'No pending purchases currently need commissioner application.',
+        legendPurchasesOpen(deadlineWeekKey) ? 'Legends are still open.' : 'Legend purchases are closed.',
+        customPlayersOpen(deadlineWeekKey) ? 'Custom players are still open.' : 'Custom player submissions are closed.',
+      ].join('\n').slice(0, 1024) },
+      { name: 'Role changes', value: [roleDelta.added.length ? `Added: ${roleDelta.added.join(', ')}` : '', roleDelta.removed.length ? `Removed: ${roleDelta.removed.join(', ')}` : ''].filter(Boolean).join('\n') || 'No role changes this advance.' },
+    ];
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Gold)
+      .setTitle('📬 Advance Update')
+      .setDescription(`Your league advanced in **${leagueName}**.`)
+      .addFields(fields)
+      .setTimestamp();
+
+    const member = await guild.members.fetch(user.discordId).catch(() => null);
+    const target = member?.user ?? await guild.client.users.fetch(user.discordId).catch(() => null);
+    if (!target) { failed++; continue; }
+    const ok = await target.send({ embeds: [embed] }).then(() => true).catch(() => false);
+    if (ok) sent++; else failed++;
+  }
+
+  for (const user of users) advanceDmRoleDeltas.delete(user.discordId);
+  return { sent, failed };
+}
 
 const RULES_PAGE_CHAR_LIMIT = 3800;
 
@@ -2987,6 +3090,8 @@ async function performAdvanceWeek(interaction: ButtonInteraction, selectedGameda
   }
 
   const nextIdx = isTrainingEnd ? 0 : (currentIdx === -1 ? 0 : Math.min(currentIdx + 1, WEEK_SEQUENCE.length - 1));
+  const oldWeekForDm = season.currentWeek ?? "?";
+  const oldSeasonIdForDm = season.id;
   const newWeek = WEEK_SEQUENCE[nextIdx]!;
 
   await db.update(seasonsTable)
@@ -3329,11 +3434,28 @@ async function performAdvanceWeek(interaction: ButtonInteraction, selectedGameda
 
   await interaction.editReply({ embeds: [embed], components: [backRow] });
 
-  // ── League role + nickname tag recalculation ───────────────────────────────
+  // ── League role recalculation + per-user advance DM summaries ───────────────
   if (guild) {
-    recalculateLeagueRolesOnAdvance(guild).catch((err) =>
-      console.error("[league-roles] advance recalculation failed:", err),
-    );
+    try {
+      await recalculateLeagueRolesOnAdvance(guild);
+    } catch (err) {
+      console.error("[league-roles] advance recalculation failed:", err);
+    }
+
+    try {
+      const dmSummary = await sendAdvanceUserDms({
+        guild,
+        guildId,
+        leagueName: guild.name,
+        since: advanceStampedAt,
+        seasonId: oldSeasonIdForDm,
+        oldWeekLabel: weekLabel(oldWeekForDm),
+        newWeekLabel: weekLabel(newWeek),
+      });
+      channelLines.push(`📬 Advance DM summaries sent: ${dmSummary.sent}${dmSummary.failed ? ` (${dmSummary.failed} failed)` : ""}.`);
+    } catch (err) {
+      console.error("[advance-dm] failed:", err);
+    }
   }
 
   // ── Wildcard automation + auto-reseed + division bonus + matchup flow ─────

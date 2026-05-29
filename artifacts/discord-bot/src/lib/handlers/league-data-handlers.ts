@@ -300,6 +300,10 @@ function buildImportModeContent() {
       .setLabel("📦 Reimport — No Payouts")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
+      .setCustomId("ld_full_schedule")
+      .setLabel("🗓️ Full Schedule")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId("ld_cancel_to_main")
       .setLabel("✕ Cancel")
       .setStyle(ButtonStyle.Secondary),
@@ -535,6 +539,47 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
     const skipPayouts = param === "1";
     const content = await buildWeekSelectContent(guildId, undefined, skipPayouts);
     await interaction.update(content as any);
+    return;
+  }
+
+  // ── Dedicated full-season schedule sync ────────────────────────────────────
+  if (action === "ld_full_schedule") {
+    await interaction.deferUpdate();
+    const conn = await loadEAConnection(guildId).catch(() => null);
+    if (!conn) {
+      await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription("❌ No EA connection found for this server.")], components: [cancelRow()] });
+      return;
+    }
+    let { token, eaLeagueId } = conn;
+    try {
+      const refreshed = await refreshTokenIfNeeded(token);
+      if (refreshed.accessToken !== token.accessToken) {
+        await updateStoredToken(eaLeagueId, refreshed);
+        token = refreshed;
+      }
+      await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription("⏳ Syncing full regular-season schedule for Weeks 1–18…")], components: [] });
+      const platform = token.platform;
+      const apiBase = getApiBase();
+      const key = getWebhookKey();
+      const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
+      const guildQs = `?guildId=${encodeURIComponent(guildId)}&reset=false&fullScheduleSync=1`;
+      let synced = 0;
+      for (let wk = 1; wk <= 18; wk++) {
+        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, wk, 1, wk);
+        const payload = weekResults.find((r) => r.weekNum === wk)?.data;
+        if (!payload) continue;
+        const r = await postToApi(`${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`, payload);
+        if (r.ok) synced++;
+      }
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(synced === 18 ? Colors.Green : Colors.Yellow).setTitle("🗓️ Full Season Schedule Sync").setDescription(`Synced **${synced}/18** regular-season weeks.
+
+Playoff rounds are not included because their week indexes are generated dynamically as the league advances.`)],
+        components: [cancelRow()],
+      });
+    } catch (err: any) {
+      await interaction.editReply({ embeds: [new EmbedBuilder().setColor(Colors.Red).setDescription(`❌ Full schedule sync failed: ${err?.message ?? String(err)}`)], components: [cancelRow()] });
+    }
     return;
   }
 
@@ -1098,11 +1143,19 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
   const leagueBase = `${apiBase}/madden/${key}/${platform}/${eaLeagueId}`;
   const guildQs    = `?guildId=${encodeURIComponent(guildId)}`;
 
-  // Fetch only the current week — startWeek = totalWeeks = currentWeekNum
-  let weekResults: { weekNum: number; data: unknown }[];
+  // Fetch only current + upcoming week for regular-season advances.
+  // Playoff indexing is handled by asking for the current playoff week and its next round when present.
+  const NEXT_PLAYOFF_WEEK: Record<number, number> = { 18: 19, 19: 20, 20: 21, 21: 23 };
+  const scheduleWeeks = currentWeekNum >= 18
+    ? [currentWeekNum, NEXT_PLAYOFF_WEEK[currentWeekNum]].filter((w): w is number => Number.isInteger(w))
+    : [currentWeekNum, Math.min(currentWeekNum + 1, 18)];
+
+  let weekResults: { weekNum: number; data: unknown }[] = [];
   try {
-    const result = await fetchAllWeekSchedules(token, eaLeagueId, currentWeekNum, 1, currentWeekNum);
-    weekResults = result.weekResults;
+    for (const wk of [...new Set(scheduleWeeks)]) {
+      const result = await fetchAllWeekSchedules(token, eaLeagueId, wk, 1, wk);
+      weekResults.push(...result.weekResults);
+    }
   } catch {
     return { ok: false, synced: 0, total: 0, weekLabel: wkLabel, error: "fetch_failed" };
   }
@@ -1471,29 +1524,20 @@ export async function runWeekImport(ctx: {
   } catch { /* non-fatal */ }
 
   // ── Schedule sync ─────────────────────────────────────────────────────────────
-  // Regular season (weeks 1-17): fetch all 18 reg-season weeks so /seasonschedule
-  // can show the full schedule immediately.
-  // Weeks 18-21: only fetch the NEXT playoff round — prior weeks already stored.
-  //   week 18 → fetch week 19 (Wild Card matchups)
-  //   week 19 → fetch week 20 (Divisional matchups)
-  //   week 20 → fetch week 21 (Conf Championship matchups)
-  //   week 21 → fetch week 23 (Super Bowl matchup)
-  // Week 23 (Super Bowl): no next round — skip.
+  // Import now syncs only the current and upcoming week by default.
+  // Full 18-week regular-season refresh belongs in the dedicated troubleshoot/import full-season workflow.
   const NEXT_PLAYOFF_WEEK: Record<number, number> = { 18: 19, 19: 20, 20: 21, 21: 23 };
   const nextPlayoffWeek = NEXT_PLAYOFF_WEEK[weekNum];
-  const isPlayoffOrWk18 = weekType !== "pre" && weekNum >= 18;
+  const scheduleWeeks = weekType === "pre"
+    ? []
+    : weekNum >= 18
+      ? [weekNum, nextPlayoffWeek].filter((w): w is number => Number.isInteger(w))
+      : [weekNum, Math.min(weekNum + 1, 18)];
 
-  let schedSyncLabel: string;
-  if (weekType === "pre") {
-    schedSyncLabel = "preseason";
-  } else if (weekNum < 18) {
-    schedSyncLabel = "reg season (weeks 1-18)";
-  } else if (nextPlayoffWeek) {
-    const ROUND_LABEL: Record<number, string> = { 19: "Wild Card", 20: "Divisional", 21: "Conf. Championship", 23: "Super Bowl" };
-    schedSyncLabel = `next round (${ROUND_LABEL[nextPlayoffWeek] ?? `week ${nextPlayoffWeek}`})`;
-  } else {
-    schedSyncLabel = "none (Super Bowl — no next round)";
-  }
+  const ROUND_LABEL: Record<number, string> = { 19: "Wild Card", 20: "Divisional", 21: "Conf. Championship", 23: "Super Bowl" };
+  let schedSyncLabel = weekType === "pre"
+    ? "preseason"
+    : scheduleWeeks.map((w) => w > 18 ? (ROUND_LABEL[w] ?? `week ${w}`) : `week ${w}`).join(" + ");
 
   await editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing schedule: ${schedSyncLabel}…`)],
@@ -1502,31 +1546,21 @@ export async function runWeekImport(ctx: {
 
   let schedulesSynced = 0;
   let schedSkipped    = false;
-  if (weekType !== "pre") {
+  if (weekType !== "pre" && scheduleWeeks.length > 0) {
     try {
-      if (!isPlayoffOrWk18) {
-        // Regular season weeks 1-17: fetch all 18 weeks
-        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, 18, 1, 1, blazeSession);
-        for (const { weekNum: wk, data } of weekResults) {
-          const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
+      for (const wk of [...new Set(scheduleWeeks)]) {
+        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, wk, 1, wk, blazeSession);
+        for (const { weekNum: fetchedWeek, data } of weekResults) {
+          const url = `${leagueBase}/week/reg/${fetchedWeek}/schedule-import${guildQs}`;
           const r = await postToApi(url, data);
           if (r.ok) schedulesSynced++;
         }
-      } else if (nextPlayoffWeek) {
-        // Week 18-21: fetch only the next playoff round's schedule
-        const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, nextPlayoffWeek, 1, nextPlayoffWeek, blazeSession);
-        for (const { weekNum: wk, data } of weekResults) {
-          const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
-          const r = await postToApi(url, data);
-          if (r.ok) schedulesSynced++;
-        }
-      } else {
-        // Super Bowl — no next round to pre-fetch
-        schedSkipped = true;
       }
     } catch (err) {
       console.warn("[ld/import] Schedule sync failed (non-fatal):", err);
     }
+  } else {
+    schedSkipped = true;
   }
 
   const failCount    = results.filter(r => !r.ok && !r.skipped).length;
