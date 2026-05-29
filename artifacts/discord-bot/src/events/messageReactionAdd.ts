@@ -12,8 +12,8 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
 }
 
 async function commissionerMention(guild: any): Promise<string> {
-  const role = guild?.roles?.cache?.find((r: any) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
-  return role ? `<@&${role.id}>` : "@Commissioners";
+  const role = guild?.roles?.cache?.find((r: any) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
+  return role ? `<@&${role.id}>` : "League Architect / Competition Council";
 }
 
 export async function execute(reaction: MessageReaction, user: User): Promise<void> {

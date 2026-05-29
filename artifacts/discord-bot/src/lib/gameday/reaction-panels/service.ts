@@ -19,6 +19,7 @@ import {
   ButtonInteraction,
   ModalSubmitInteraction,
   MessageReaction,
+  ComponentType,
 } from "discord.js";
 import { db } from "@workspace/db";
 import {
@@ -39,6 +40,26 @@ export const COMMISSIONER_EMOJIS = ["⚙️", "🕒", "📣", "📬", "🔁", "�
 export const CPU_EMOJIS = ["📺"] as const;
 const TZ_CODES = ["EST", "CST", "MST", "PST", "AKST", "HST"] as const;
 type TzCode = typeof TZ_CODES[number];
+
+const STAFF_ROLE_RE = /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i;
+const MEMBER_ROLE_RE = /approved\s*member|locker\s*room\s*approved/i;
+
+function staffRoles(guild: Guild) {
+  return guild.roles.cache.filter((r) => STAFF_ROLE_RE.test(r.name));
+}
+
+function staffRoleMentions(guild: Guild): string {
+  const roles = staffRoles(guild);
+  return roles.size ? roles.map((r) => `<@&${r.id}>`).join(" ") : "League Architect / Competition Council";
+}
+
+async function memberHasStaffRole(guild: Guild, userId: string): Promise<boolean> {
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return false;
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  return member.roles.cache.some((r) => STAFF_ROLE_RE.test(r.name));
+}
+
 
 type ScheduleGame = typeof franchiseScheduleTable.$inferSelect & { awayDiscordId?: string; homeDiscordId?: string };
 
@@ -127,14 +148,10 @@ async function rowsOf<T=any>(query: any): Promise<T[]> { const r = await db.exec
 async function oneOf<T=any>(query: any): Promise<T | null> { const rows = await rowsOf<T>(query); return rows[0] ?? null; }
 
 async function memberIsCommissioner(guild: Guild, userId: string): Promise<boolean> {
-  const member = await guild.members.fetch(userId).catch(() => null);
-  if (!member) return false;
-  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
-  return member.roles.cache.some((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
+  return memberHasStaffRole(guild, userId);
 }
 function commissionerRoleMentions(guild: Guild): string {
-  const roles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
-  return roles.size ? roles.map((r) => `<@&${r.id}>`).join(" ") : "@Commissioners";
+  return staffRoleMentions(guild);
 }
 async function guildDisplayName(guildId: string, fallback?: string | null): Promise<string> {
   const row = await oneOf<{ display_name?: string; guild_id: string }>(sql`select display_name, guild_id from rec_leagues where guild_id = ${guildId} limit 1`).catch(() => null);
@@ -211,7 +228,7 @@ async function resolveScheduleGames(guildId: string, weekNum: number): Promise<{
   const h2h = hydrated.filter((g) => g.awayDiscordId && g.homeDiscordId);
   const cpu = hydrated.filter((g) => Boolean(g.awayDiscordId) !== Boolean(g.homeDiscordId));
   const activeIds = new Set(hydrated.flatMap((g) => [g.awayDiscordId, g.homeDiscordId]).filter(Boolean) as string[]);
-  const byeUsers = allUsers.filter((u) => u.discordId && u.team && !activeIds.has(u.discordId)).map((u) => ({ discordId: u.discordId, team: u.team! }));
+  const byeUsers = allUsers.filter((u) => u.discordId && !u.discordId.startsWith("unlinked_") && u.team && !activeIds.has(u.discordId)).map((u) => ({ discordId: u.discordId, team: u.team! }));
   return { season, weekIndex, games: hydrated, h2h, cpu, byeUsers };
 }
 
@@ -265,7 +282,7 @@ export async function createReactionBasedGamedayChannel(args: { guild: Guild; gu
     const prev = await getGuildChannel(guildId, "gameday_active" as any).catch(() => null);
     if (prev) { const ch = await guild.channels.fetch(prev).catch(() => null); if (ch) { await ch.delete("Weekly advance — replacing active gameday channel").catch(() => null); deletedPrevious = true; } }
   }
-  const commissionerRoles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
+  const commissionerRoles = staffRoles(guild);
   const everyone = guild.roles.everyone;
   const overwrites: any[] = [
     { id: everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AddReactions], deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads, PermissionFlagsBits.SendMessagesInThreads, PermissionFlagsBits.AttachFiles] },
@@ -449,14 +466,59 @@ async function showPendingOffers(interaction: StringSelectMenuInteraction, panel
   await interaction.update({ content:`**Pending Schedule Offers**\n\n${lines}`.slice(0,1900), components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
 }
 
+async function postImmediateDecisionRequest(row: PanelRow, state: any, requestType: "force_win" | "fair_sim", title: string, body: string, channel: TextChannel, guild: Guild) {
+  const mention = staffRoleMentions(guild);
+  const nonce = `${requestType}:${row.id}:${Date.now()}`;
+  const approve = new ButtonBuilder().setCustomId(`rgd_decide:${nonce}:approve`).setLabel("Approve").setEmoji("✅").setStyle(ButtonStyle.Success);
+  const deny = new ButtonBuilder().setCustomId(`rgd_decide:${nonce}:deny`).setLabel("Deny").setEmoji("✖️").setStyle(ButtonStyle.Danger);
+  const msg = await channel.send({
+    content: `${mention}\n${title}\n${body}`,
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(approve, deny)],
+    allowedMentions: { roles: staffRoles(guild).map((r) => r.id), users: [] },
+  });
+  state.reviewMessageId = msg.id;
+  state.reviewRequestType = requestType;
+  state.reviewStatus = "pending";
+  await db.execute(sql`
+    insert into gameday_commissioner_requests (guild_id, season_id, week_index, matchup_key, request_type, requested_by, opponent_discord_id, reason, status)
+    values (${row.guild_id}, ${row.season_id}, ${row.week_index}, ${row.matchup_key}, ${requestType}, ${safeState(row).lastRequester ?? row.away_discord_id}, ${row.home_discord_id}, ${body}, 'pending')
+  `).catch(() => null);
+}
+
 async function submitFw(interaction: StringSelectMenuInteraction, panelId: number, selected: string) {
-  const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`); if (!row || !isParticipant(row, interaction.user.id)) return;
-  const state = safeState(row); state.fw ??= {}; state.fw[interaction.user.id] = selected;
+  const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`);
+  if (!row || !isParticipant(row, interaction.user.id)) return;
+
+  const state = safeState(row);
+  state.fw ??= {};
+  state.fw[interaction.user.id] = selected;
+  state.lastRequester = interaction.user.id;
+
   const a = row.away_discord_id, h = row.home_discord_id;
-  if (a && h && state.fw[a] && state.fw[h]) state.requests = state.fw[a] === state.fw[h] ? `Both users requested Force Win in favor of <@${selected}>. Commissioners have been notified.` : `Force Win dispute.\n<@${a}> requested FW for <@${state.fw[a]}>.\n<@${h}> requested FW for <@${state.fw[h]}>.\nCommissioners have been notified.`;
-  else state.requests = `<@${interaction.user.id}> requested a Force Win in favor of <@${selected}>. Commissioners have been notified.`;
-  await updatePanel(row,state); const ch = await interaction.client.channels.fetch(row.channel_id).catch(()=>null); if (ch?.isTextBased()) await (ch as TextChannel).send(`${commissionerRoleMentions((interaction as any).guild ?? (ch as any).guild)}\n${state.requests}`).catch(()=>null);
-  await interaction.update({ content:"✅ Force Win request recorded.", components:[] });
+  if (a && h && state.fw[a] && state.fw[h]) {
+    state.requests = state.fw[a] === state.fw[h]
+      ? `Both users requested Force Win in favor of <@${selected}>. League Architect / Competition Council review pending.`
+      : `Force Win dispute.\n<@${a}> requested FW for <@${state.fw[a]}>.\n<@${h}> requested FW for <@${state.fw[h]}>.\nLeague Architect / Competition Council review pending.`;
+  } else {
+    state.requests = `<@${interaction.user.id}> requested a Force Win in favor of <@${selected}>. League Architect / Competition Council review pending.`;
+  }
+
+  await updatePanel(row, state);
+  const ch = await interaction.client.channels.fetch(row.channel_id).catch(() => null);
+  const guild = interaction.guild ?? (ch as any)?.guild;
+  if (ch?.isTextBased() && guild) {
+    await postImmediateDecisionRequest(
+      row,
+      state,
+      "force_win",
+      "🇼 **Force Win Requested**",
+      state.requests,
+      ch as TextChannel,
+      guild,
+    ).catch(() => null);
+    await updatePanel(row, state);
+  }
+  await interaction.update({ content: "✅ Force Win request recorded for League Architect / Competition Council review.", components: [] });
 }
 
 async function submitIssue(interaction: StringSelectMenuInteraction, panelId: number, issue: string, details?: string) {
@@ -470,6 +532,28 @@ async function submitIssue(interaction: StringSelectMenuInteraction, panelId: nu
 
 export async function handleReactionGamedayButton(interaction: ButtonInteraction): Promise<boolean> {
   if (!interaction.customId.startsWith("rgd_")) return false;
+  if (interaction.customId.startsWith("rgd_decide:")) {
+    if (!interaction.guild || !(await memberHasStaffRole(interaction.guild, interaction.user.id))) {
+      await interaction.reply({ content: "Only League Architect or Competition Council can decide this request.", ephemeral: true });
+      return true;
+    }
+    const parts = interaction.customId.split(":");
+    const requestType = parts[1] as "force_win" | "fair_sim";
+    const panelId = Number(parts[2]);
+    const action = parts[4];
+    const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`);
+    if (!row) { await interaction.update({ content: "Request no longer exists.", components: [] }); return true; }
+    const state = safeState(row);
+    state.reviewStatus = action === "approve" ? "approved" : "denied";
+    state.requests = `${requestType === "force_win" ? "Force Win" : "Fair Sim"} request ${state.reviewStatus} by <@${interaction.user.id}>.`;
+    if (action === "approve") {
+      await db.execute(sql`update game_schedules set status = ${requestType}, updated_at = now() where guild_id = ${row.guild_id} and season_id = ${row.season_id} and week_index = ${row.week_index} and ((away_discord_id=${row.away_discord_id} and home_discord_id=${row.home_discord_id}) or (away_discord_id=${row.home_discord_id} and home_discord_id=${row.away_discord_id}))`).catch(()=>null);
+    }
+    await db.execute(sql`update gameday_commissioner_requests set status = ${action === "approve" ? "approved" : "denied"}, resolved_by = ${interaction.user.id}, resolved_at = now(), updated_at = now() where guild_id = ${row.guild_id} and season_id = ${row.season_id} and week_index = ${row.week_index} and matchup_key = ${row.matchup_key} and request_type = ${requestType} and status = 'pending'`).catch(()=>null);
+    await updatePanel(row, state);
+    await interaction.update({ content: `${action === "approve" ? "✅ Approved" : "✖️ Denied"} by <@${interaction.user.id}>.\n${state.requests}`, components: [] });
+    return true;
+  }
   if (interaction.customId.startsWith("rgd_stream_open:")) {
     const panelId = interaction.customId.split(":")[1];
     const modal = new ModalBuilder().setCustomId(`rgd_stream_modal:${panelId}`).setTitle("Submit Stream Link").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("url").setLabel("Stream URL or discord").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300)));
