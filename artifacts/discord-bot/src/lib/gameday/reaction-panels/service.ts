@@ -130,10 +130,10 @@ async function memberIsCommissioner(guild: Guild, userId: string): Promise<boole
   const member = await guild.members.fetch(userId).catch(() => null);
   if (!member) return false;
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
-  return member.roles.cache.some((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
+  return member.roles.cache.some((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
 }
 function commissionerRoleMentions(guild: Guild): string {
-  const roles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
+  const roles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
   return roles.size ? roles.map((r) => `<@&${r.id}>`).join(" ") : "@Commissioners";
 }
 async function guildDisplayName(guildId: string, fallback?: string | null): Promise<string> {
@@ -146,9 +146,41 @@ async function userNick(guildId: string, discordId: string): Promise<string> {
 }
 
 export async function ensureReactionGamedaySchema(): Promise<void> {
-  // Phase 4.1 schema is managed by the Supabase migration:
-  // phase_4_1_gameday_reaction_panels.
-  // This function remains only for backwards-compatible call sites.
+  await db.execute(sql`
+    create table if not exists gameday_matchup_panels (
+      id serial primary key,
+      guild_id text not null,
+      channel_id text not null,
+      message_id text not null unique,
+      panel_type text not null,
+      rec_game_id bigint,
+      game_schedule_id integer,
+      season_id integer not null,
+      week_index integer not null,
+      matchup_key text,
+      away_discord_id text,
+      home_discord_id text,
+      away_team_name text,
+      home_team_name text,
+      state_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await db.execute(sql`
+    create table if not exists user_gameday_preferences (
+      discord_id text primary key,
+      default_timezone text not null default 'CST',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await db.execute(sql`alter table gameday_schedule_offers add column if not exists four_hour_reminder_sent_at timestamptz`);
+  await db.execute(sql`alter table gameday_schedule_offers add column if not exists eight_hour_notice_sent_at timestamptz`);
+  await db.execute(sql`alter table gameday_schedule_offers add column if not exists fw_eligible_at timestamptz`);
+  await db.execute(sql`create index if not exists gameday_matchup_panels_message_idx on gameday_matchup_panels(message_id)`);
+  await db.execute(sql`create index if not exists gameday_matchup_panels_lookup_idx on gameday_matchup_panels(guild_id, season_id, week_index, matchup_key)`);
+  await db.execute(sql`create index if not exists gameday_schedule_offers_pending_notice_idx on gameday_schedule_offers(status, created_at, four_hour_reminder_sent_at, eight_hour_notice_sent_at)`);
 }
 
 async function setUserTz(discordId: string, tz: TzCode) {
@@ -233,7 +265,7 @@ export async function createReactionBasedGamedayChannel(args: { guild: Guild; gu
     const prev = await getGuildChannel(guildId, "gameday_active" as any).catch(() => null);
     if (prev) { const ch = await guild.channels.fetch(prev).catch(() => null); if (ch) { await ch.delete("Weekly advance — replacing active gameday channel").catch(() => null); deletedPrevious = true; } }
   }
-  const commissionerRoles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
+  const commissionerRoles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
   const everyone = guild.roles.everyone;
   const overwrites: any[] = [
     { id: everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AddReactions], deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads, PermissionFlagsBits.SendMessagesInThreads, PermissionFlagsBits.AttachFiles] },
@@ -241,7 +273,7 @@ export async function createReactionBasedGamedayChannel(args: { guild: Guild; gu
   ];
   for (const r of commissionerRoles.values()) overwrites.push({ id: r.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AddReactions] });
   const name = `${weekNum > 18 ? `playoffs-${weekNum}` : `week-${weekNum}`}-gameday`;
-  const channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: categoryId ?? undefined, topic: "Public read-only gameday dashboard. Users react to bot panels; League Architects, Competition Council, and the bot may post updates.", permissionOverwrites: overwrites }) as TextChannel;
+  const channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: categoryId ?? undefined, topic: "Reaction-based gameday dashboard. Users react to bot panels; only commissioners and the bot can send messages.", permissionOverwrites: overwrites }) as TextChannel;
   await setGuildChannel(guildId, "gameday_active" as any, channel.id);
   if (categoryId) await setGuildChannel(guildId, "gameday_category" as any, categoryId);
   await db.execute(sql`delete from gameday_matchup_panels where guild_id = ${guildId} and season_id = ${season.id} and week_index = ${weekIndex}`);
