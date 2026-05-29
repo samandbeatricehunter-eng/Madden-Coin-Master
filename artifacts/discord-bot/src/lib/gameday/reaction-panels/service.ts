@@ -378,6 +378,10 @@ async function handleParticipantReaction(reaction: MessageReaction, user: User, 
   if (emoji === "🔚") { state.ended ??= {}; state.ended[user.id] = true; const both = state.ended[row.away_discord_id ?? ""] && state.ended[row.home_discord_id ?? ""]; if (both) { state.requests = "Both users confirmed the game ended. Status: completed_pending_import. Final score and winner will be imported from MCA."; await db.execute(sql`update game_schedules set status = 'completed_pending_import', updated_at = now() where guild_id = ${row.guild_id} and season_id = ${row.season_id} and week_index = ${row.week_index} and ((away_discord_id=${row.away_discord_id} and home_discord_id=${row.home_discord_id}) or (away_discord_id=${row.home_discord_id} and home_discord_id=${row.away_discord_id}))`).catch(()=>null); for (const id of [row.away_discord_id,row.home_discord_id].filter(Boolean) as string[]) { const u = await reaction.message.client.users.fetch(id).catch(()=>null); if (u) await dm(u, "🎮 Was this game Game of the Year worthy? Use `/menu` → Media Room → Game of the Year to nominate it. Notes/highlights are optional."); } } else { state.requests = `<@${user.id}> marked the game as ended. Waiting on <@${opp}> to confirm.`; await (await reaction.message.client.users.fetch(opp)).send(`<@${user.id}> marked your game as ended. Please click 🔚 on the matchup panel to confirm.`).catch(()=>null); } await updatePanel(row,state); return; }
 }
 
+async function removePanelReaction(reaction: MessageReaction, user: User): Promise<void> {
+  await reaction.users.remove(user.id).catch(() => null);
+}
+
 export async function handleReactionPanelAdd(reaction: MessageReaction, user: User): Promise<boolean> {
   if (user.bot) return false;
   if (reaction.partial) reaction = await reaction.fetch().catch(() => reaction);
@@ -387,29 +391,35 @@ export async function handleReactionPanelAdd(reaction: MessageReaction, user: Us
   const row = await panelForMessage(message.id);
   if (!row) return false;
   const emoji = reaction.emoji.name ?? "";
-  if (row.panel_type === "commissioner") {
-    if (!(COMMISSIONER_EMOJIS as readonly string[]).includes(emoji)) return true;
-    if (!(await memberIsCommissioner(guild, user.id))) return true;
-    if (emoji === "⚙️") { const fake: any = { guildId: guild.id, guild, user, deferred:false, replied:false, reply: (p:any)=>user.send(p), update: (p:any)=>user.send(p), editReply:(p:any)=>user.send(p), followUp:(p:any)=>user.send(p), isButton:()=>true, isStringSelectMenu:()=>false, customId:"gdrev_home" }; await renderCommissionerGamedayReview(fake as ButtonInteraction); return true; }
-    if (emoji === "📣") { await (message.channel as TextChannel).send("@everyone — advance reminder: please complete scheduling/check-ins for this week.").catch(()=>null); return true; }
-    if (emoji === "📬") { await dmUnscheduledUsers(guild, row); return true; }
-    if (emoji === "🧹") { await db.execute(sql`update gameday_schedule_offers set status='expired', updated_at=now() where guild_id=${row.guild_id} and status='pending' and created_at < now() - interval '24 hours'`).catch(()=>null); await user.send("🧹 Stale gameday state cleanup completed.").catch(()=>null); return true; }
-    if (emoji === "🔁") { await user.send("🔁 Regenerate panels through /menu → Admin Operations → Post Game Channels.").catch(()=>null); return true; }
-    if (emoji === "🕒") { await user.send("🕒 Advance time picker will be handled from /menu advance flow in this rollout.").catch(()=>null); return true; }
+
+  try {
+    if (row.panel_type === "commissioner") {
+      if (!(COMMISSIONER_EMOJIS as readonly string[]).includes(emoji)) return true;
+      if (!(await memberIsCommissioner(guild, user.id))) return true;
+      if (emoji === "⚙️") { const fake: any = { guildId: guild.id, guild, user, deferred:false, replied:false, reply: (p:any)=>user.send(p), update: (p:any)=>user.send(p), editReply:(p:any)=>user.send(p), followUp:(p:any)=>user.send(p), isButton:()=>true, isStringSelectMenu:()=>false, customId:"gdrev_home" }; await renderCommissionerGamedayReview(fake as ButtonInteraction); return true; }
+      if (emoji === "📣") { await (message.channel as TextChannel).send("@everyone — advance reminder: please complete scheduling/check-ins for this week.").catch(()=>null); return true; }
+      if (emoji === "📬") { await dmUnscheduledUsers(guild, row); return true; }
+      if (emoji === "🧹") { await db.execute(sql`update gameday_schedule_offers set status='expired', updated_at=now() where guild_id=${row.guild_id} and status='pending' and created_at < now() - interval '24 hours'`).catch(()=>null); await user.send("🧹 Stale gameday state cleanup completed.").catch(()=>null); return true; }
+      if (emoji === "🔁") { await user.send("🔁 Regenerate panels through /menu → Commissioner’s Office → Gameday Tools → Rebuild Current Gameday Panels.").catch(()=>null); return true; }
+      if (emoji === "🕒") { await user.send("🕒 Set the next advance time through /menu → Commissioner’s Office → Week Controls → Advance Week.").catch(()=>null); return true; }
+      return true;
+    }
+    if (row.panel_type === "cpu_summary") {
+      if (emoji !== "📺") return true;
+      const allowed = Array.isArray(safeState(row).allowedUsers) ? safeState(row).allowedUsers : [];
+      if (!allowed.includes(user.id)) return true;
+      await showStreamDm(user,row);
+      return true;
+    }
+    if (row.panel_type === "h2h") {
+      if (!isParticipant(row,user.id)) return true;
+      await handleParticipantReaction(reaction,user,row,emoji);
+      return true;
+    }
     return true;
+  } finally {
+    await removePanelReaction(reaction, user);
   }
-  if (row.panel_type === "cpu_summary") {
-    if (emoji !== "📺") return true;
-    const allowed = Array.isArray(safeState(row).allowedUsers) ? safeState(row).allowedUsers : [];
-    if (!allowed.includes(user.id)) return true;
-    return showStreamDm(user,row).then(()=>true);
-  }
-  if (row.panel_type === "h2h") {
-    if (!isParticipant(row,user.id)) return true;
-    await handleParticipantReaction(reaction,user,row,emoji);
-    return true;
-  }
-  return true;
 }
 
 async function dmUnscheduledUsers(guild: Guild, control: PanelRow) {
