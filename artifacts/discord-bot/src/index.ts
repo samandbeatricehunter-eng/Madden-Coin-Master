@@ -5,7 +5,6 @@ import { getOrCreateActiveSeason, normalizeDefensivePositions, PRIMARY_GUILD_ID 
 // ── Slash commands registered by the bot — everything else is accessed
 //    through menu hub buttons/selects routed via events/interactionCreate.ts ─
 import * as actions from "./commands/actions.js";
-import * as gameday from "./commands/gameday.js";
 
 // ── Events ────────────────────────────────────────────────────────────────────
 import * as interactionCreate from "./events/interactionCreate.js";
@@ -57,7 +56,7 @@ if (!isProduction && !devBotEnabled) {
 
   client.commands = new Collection();
 
-  const commands = [actions, gameday];
+  const commands = [actions];
 
   for (const command of commands) {
     client.commands.set(command.data.name, command);
