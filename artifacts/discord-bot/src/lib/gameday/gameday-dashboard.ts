@@ -669,7 +669,7 @@ async function handleAssistModal(interaction: ModalSubmitInteraction, ctx: Gamed
 
 async function commissionerMention(interaction: GamedayInteraction): Promise<string> {
   const guild = interaction.guild;
-  const role = guild?.roles.cache.find((r) => /commissioner|co[-\s]?commissioner|commish/i.test(r.name));
+  const role = guild?.roles.cache.find((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
   return role ? `<@&${role.id}>` : "@Commissioners";
 }
 
@@ -720,7 +720,7 @@ async function handleDesyncChoice(interaction: StringSelectMenuInteraction, ctx:
     await dmUser(interaction, ctx.opponentId, `⚠️ <@${ctx.userId}> reported a desync and is ready and willing to replay your game.`);
     await postToGamedayChannel(interaction, ctx, `${commish}\n⚠️ **Desync Reported — Retry Requested**\n<@${ctx.userId}> reported a desync vs <@${ctx.opponentId}> and is ready and willing to play again.`);
   } else {
-    await dmUser(interaction, ctx.opponentId, `⚖️ <@${ctx.userId}> reported a desync and requested a Fair Sim. Use /gameday → Game Queue to respond if prompted.`);
+    await dmUser(interaction, ctx.opponentId, `⚖️ <@${ctx.userId}> reported a desync and requested a Fair Sim. Use /menu → Team Hub → Schedule or the gameday panel to respond if prompted.`);
     await postToGamedayChannel(interaction, ctx, `${commish}\n⚖️ **Desync Reported — Fair Sim Requested**\n<@${ctx.userId}> requested a Fair Sim after a desync vs <@${ctx.opponentId}>. Opponent confirmation requested.\nIssue #${issueId}`);
   }
   await respond(interaction, { content: "✅ Desync report submitted.", embeds: [], components: [backRow()] as any });

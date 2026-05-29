@@ -98,7 +98,7 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "**📌 Re-post Scheduling Headers**\n" +
       "Finds every game channel for the active season that is missing its pinned scheduling " +
       "header (Schedule Game / Fair Sim / Force Win buttons). Also corrects channel " +
-      "permissions so only the two players, the Commissioner role, and bot-admins can see " +
+      "permissions so only the two players, the League Architect role, and bot-admins can see " +
       "each channel. Safe to run on channels that already exist — nothing is deleted.",
     )
     .setFooter({ text: "All operations are scoped to this server only" })
@@ -1375,7 +1375,7 @@ export async function handleTsRepostSchedulingHeaders(interaction: ButtonInterac
 
   const settings = await getServerSettings(guildId);
   const deadline = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
-  const commRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
+  const commRole = guild.roles.cache.find((r) => /^(league architect|commissioner)$/i.test(r.name));
   const botAdmins = await db.select({ discordId: usersTable.discordId })
     .from(usersTable)
     .where(and(eq(usersTable.guildId, guildId), eq(usersTable.isAdmin, true)));

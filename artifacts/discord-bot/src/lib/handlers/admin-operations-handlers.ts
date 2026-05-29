@@ -948,7 +948,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     }
   }
 
-  const staffRoles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect/i.test(r.name));
+  const staffRoles = guild.roles.cache.filter((r) => /^(league architect|competition council|commissioner|co[-\s]?commissioner|commish)$/i.test(r.name));
 
   const overwrites: import("discord.js").OverwriteResolvable[] = [
     {
@@ -999,7 +999,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
     name: channelName,
     type: ChannelType.GuildText,
     parent: selectedCategoryId ?? undefined,
-    topic: "Reaction-based gameday dashboard. Public read/reaction channel; only staff and the bot can send messages.",
+    topic: "Public read-only gameday dashboard. Users interact with bot panels through reactions and DMs; staff may post updates.",
     permissionOverwrites: overwrites,
   });
 
@@ -1039,9 +1039,8 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
         .setColor(Colors.Blurple)
         .setTitle(`🎮 OFFICIAL ${displayLabel.toUpperCase()} GAMEDAY CHANNEL`)
         .setDescription(
-          "This channel is used exclusively for H2H scheduling, gameday actions, stream tracking, final score confirmations, FW/FS requests, and commissioner assistance.\n\n" +
-          "Only commissioners may send normal messages here. All non-command user messages will be automatically deleted.\n\n" +
-          "Use `/gameday` to access your private matchup dashboard.",
+          "This public read-only channel is used for H2H scheduling, gameday actions, stream tracking, final score confirmations, FW/FS requests, and staff assistance.\n\n" +
+          "League members should use the bot panels, reactions, and DMs for game actions. League Architects and Competition Council may post updates here.",
         ),
     ],
   });
@@ -1617,14 +1616,14 @@ async function handleCommissionerAddSel(interaction: StringSelectMenuInteraction
 
   if (member) {
     await guild.roles.fetch().catch(() => null);
-    const commRole = guild.roles.cache.find(r => r.name === "Commissioner");
+    const commRole = guild.roles.cache.find(r => r.name === "League Architect");
     if (commRole) {
       await member.roles.add(commRole, "Promoted to Commissioner via admin hub").catch(err => {
-        console.error("[commissioner-add] Failed to add Commissioner role:", err);
-        notices.push("⚠️ Could not assign Commissioner role — check bot permissions.");
+        console.error("[commissioner-add] Failed to add League Architect role:", err);
+        notices.push("⚠️ Could not assign League Architect role — check bot permissions.");
       });
     } else {
-      notices.push("⚠️ 'Commissioner' role not found — run `/admin-initialize` to create it.");
+      notices.push("⚠️ 'League Architect' role not found — check server role setup.");
     }
 
     const baseNick = user.team ?? member.user.username;
@@ -1723,11 +1722,11 @@ async function handleCommissionerRemoveSel(interaction: StringSelectMenuInteract
   if (member) {
     await guild.roles.fetch().catch(() => null);
 
-    const commRole = guild.roles.cache.find(r => r.name === "Commissioner");
+    const commRole = guild.roles.cache.find(r => r.name === "League Architect");
     if (commRole && member.roles.cache.has(commRole.id)) {
       await member.roles.remove(commRole, "Demoted from Commissioner via admin hub").catch(err => {
-        console.error("[commissioner-remove] Failed to remove Commissioner role:", err);
-        notices.push("⚠️ Could not remove Commissioner role — check bot permissions.");
+        console.error("[commissioner-remove] Failed to remove League Architect role:", err);
+        notices.push("⚠️ Could not remove League Architect role — check bot permissions.");
       });
     }
 
@@ -2467,7 +2466,7 @@ const MANUAL_LINKABLE: { label: string; value: string; description: string }[] =
   { label: "Draft Purchases Log", value: CHANNEL_KEYS.DRAFT_PURCHASES_LOG, description: "Legend & custom player purchases" },
   { label: "Import Log",          value: CHANNEL_KEYS.IMPORT_LOG,          description: "Week import confirmations"       },
   { label: "Violation Log",       value: CHANNEL_KEYS.VIOLATION_LOG,       description: "Rule violation reports"         },
-  { label: "Commissioner",        value: CHANNEL_KEYS.COMMISSIONER,        description: "Legacy fallback channel"        },
+  { label: "League Architect",        value: CHANNEL_KEYS.COMMISSIONER,        description: "Legacy fallback channel"        },
   { label: "Transactions",        value: CHANNEL_KEYS.TRANSACTIONS,        description: "Legacy transaction channel"     },
   { label: "Announcements",       value: CHANNEL_KEYS.ANNOUNCEMENTS,       description: "League announcements"           },
   { label: "Matchups",            value: CHANNEL_KEYS.MATCHUPS,            description: "Weekly matchups post"           },

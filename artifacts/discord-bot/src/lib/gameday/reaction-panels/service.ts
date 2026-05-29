@@ -130,10 +130,10 @@ async function memberIsCommissioner(guild: Guild, userId: string): Promise<boole
   const member = await guild.members.fetch(userId).catch(() => null);
   if (!member) return false;
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
-  return member.roles.cache.some((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect/i.test(r.name));
+  return member.roles.cache.some((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
 }
 function commissionerRoleMentions(guild: Guild): string {
-  const roles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect/i.test(r.name));
+  const roles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
   return roles.size ? roles.map((r) => `<@&${r.id}>`).join(" ") : "@Commissioners";
 }
 async function guildDisplayName(guildId: string, fallback?: string | null): Promise<string> {
@@ -233,7 +233,7 @@ export async function createReactionBasedGamedayChannel(args: { guild: Guild; gu
     const prev = await getGuildChannel(guildId, "gameday_active" as any).catch(() => null);
     if (prev) { const ch = await guild.channels.fetch(prev).catch(() => null); if (ch) { await ch.delete("Weekly advance — replacing active gameday channel").catch(() => null); deletedPrevious = true; } }
   }
-  const commissionerRoles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect/i.test(r.name));
+  const commissionerRoles = guild.roles.cache.filter((r) => /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i.test(r.name));
   const everyone = guild.roles.everyone;
   const overwrites: any[] = [
     { id: everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AddReactions], deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads, PermissionFlagsBits.SendMessagesInThreads, PermissionFlagsBits.AttachFiles] },
@@ -241,7 +241,7 @@ export async function createReactionBasedGamedayChannel(args: { guild: Guild; gu
   ];
   for (const r of commissionerRoles.values()) overwrites.push({ id: r.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AddReactions] });
   const name = `${weekNum > 18 ? `playoffs-${weekNum}` : `week-${weekNum}`}-gameday`;
-  const channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: categoryId ?? undefined, topic: "Reaction-based gameday dashboard. Public read/reaction channel; only staff and the bot can send messages.", permissionOverwrites: overwrites }) as TextChannel;
+  const channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: categoryId ?? undefined, topic: "Public read-only gameday dashboard. Users react to bot panels; League Architects, Competition Council, and the bot may post updates.", permissionOverwrites: overwrites }) as TextChannel;
   await setGuildChannel(guildId, "gameday_active" as any, channel.id);
   if (categoryId) await setGuildChannel(guildId, "gameday_category" as any, categoryId);
   await db.execute(sql`delete from gameday_matchup_panels where guild_id = ${guildId} and season_id = ${season.id} and week_index = ${weekIndex}`);

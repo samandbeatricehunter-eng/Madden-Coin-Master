@@ -629,7 +629,7 @@ export async function handleUdLinkModal(interaction: ModalSubmitInteraction): Pr
 
   const guildMember = await interaction.guild?.members.fetch(discordId).catch(() => null);
   if (guildMember) {
-    // Add member access role
+    // Add "Locker Room Approved" role
     await interaction.guild!.roles.fetch().catch(() => null);
     const approvedRole = interaction.guild!.roles.cache.find(r => /^(locker room approved|approved member)$/i.test(r.name));
     if (approvedRole) {
