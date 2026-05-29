@@ -261,6 +261,11 @@ export async function handleAdminOperationsInteraction(interaction: AnyInteracti
     return true;
   }
 
+  if (id.startsWith("ao_advance_time:")) {
+    await handleAdvanceTimeSelect(interaction as StringSelectMenuInteraction);
+    return true;
+  }
+
   if (id.startsWith("ao_advance_confirm")) {
     await handleAdvanceConfirm(interaction as ButtonInteraction);
     return true;
@@ -862,9 +867,7 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
   };
 
   const guildId = interaction.guildId!;
-  const season = await getOrCreateActiveSeason(guildId);
   const guild = interaction.guild;
-
   if (!guild) {
     await reply({ content: "❌ Could not access guild." });
     return;
@@ -872,217 +875,39 @@ async function handlePostGameChannelsModal(interaction: ModalSubmitInteraction) 
 
   const categoryIdFromCustomId = interaction.customId.split(":")[1] ?? "none";
   const selectedCategoryId = categoryIdFromCustomId === "none" ? null : categoryIdFromCustomId;
-
   const raw = interaction.fields.getTextInputValue("week_num").trim();
   const weekNum = parseInt(raw, 10);
-  if (isNaN(weekNum) || weekNum < 1 || weekNum > 22) {
+  if (Number.isNaN(weekNum) || weekNum < 1 || weekNum > 22) {
     await reply({ content: "❌ Invalid week number. Enter 1–18 for regular season, 19–22 for playoffs." });
     return;
   }
 
-  const weekIndex = gamedayWeekIndexFromNum(weekNum);
-  if (weekIndex === -1) {
-    await reply({ content: "❌ Could not resolve week index." });
-    return;
-  }
-
-  const displayLabel = gamedayDisplayLabel(season.seasonNumber, weekNum);
-  const schedSeasonId = await getScheduleSeasonId(guildId);
-
-  const games = await db.select()
-    .from(franchiseScheduleTable)
-    .where(and(
-      eq(franchiseScheduleTable.seasonId, schedSeasonId),
-      eq(franchiseScheduleTable.weekIndex, weekIndex),
-    ));
-
-  if (games.length === 0) {
-    await reply({ content: `❌ No schedule data found for **${displayLabel}**. Import or sync the schedule first.` });
-    return;
-  }
-
-  const [mcaTeams, allUsers] = await Promise.all([
-    db.select({
-      fullName: franchiseMcaTeamsTable.fullName,
-      nickName: franchiseMcaTeamsTable.nickName,
-      discordId: franchiseMcaTeamsTable.discordId,
-    }).from(franchiseMcaTeamsTable).where(eq(franchiseMcaTeamsTable.seasonId, schedSeasonId)),
-    db.select({ discordId: usersTable.discordId, team: usersTable.team })
-      .from(usersTable).where(eq(usersTable.guildId, guildId)),
-  ]);
-
-  const teamToDiscord = new Map<string, string>();
-  for (const t of mcaTeams) {
-    if (!t.discordId || t.discordId.startsWith("unlinked_")) continue;
-    teamToDiscord.set(simpleTeamKey(t.fullName), t.discordId);
-    teamToDiscord.set(simpleTeamKey(t.nickName), t.discordId);
-  }
-  for (const u of allUsers) {
-    if (!u.team || !u.discordId || u.discordId.startsWith("unlinked_")) continue;
-    if (!teamToDiscord.has(simpleTeamKey(u.team))) teamToDiscord.set(simpleTeamKey(u.team), u.discordId);
-  }
-
-  const h2hGames = games
-    .map((g) => ({
-      ...g,
-      awayDiscordId: teamToDiscord.get(simpleTeamKey(g.awayTeamName)),
-      homeDiscordId: teamToDiscord.get(simpleTeamKey(g.homeTeamName)),
-    }))
-    .filter((g) => g.awayDiscordId && g.homeDiscordId);
-
-  if (h2hGames.length === 0) {
-    await reply({ content: `ℹ️ No H2H matchups found for **${displayLabel}**. No gameday channel created.` });
-    return;
-  }
-
-  await guild.channels.fetch().catch(() => null);
-
-  const previousActiveChannelId = await getGuildChannel(guildId, "gameday_active" as any).catch(() => null);
-  if (previousActiveChannelId) {
-    const previous = guild.channels.cache.get(previousActiveChannelId)
-      ?? await guild.channels.fetch(previousActiveChannelId).catch(() => null);
-    if (previous) {
-      await previous.delete("Weekly advance — replacing active gameday channel").catch((err) =>
-        console.warn(`[gameday] Could not delete previous channel ${previousActiveChannelId}:`, err),
-      );
-    }
-  }
-
-  const approvedRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "approved member");
-  const commissionerRole = guild.roles.cache.find((r) => r.name.toLowerCase() === "commissioner");
-
-  if (!approvedRole && !commissionerRole) {
-    await reply({ content: "❌ Could not find an **Approved Member** or **Commissioner** role to grant access to the gameday channel." });
-    return;
-  }
-
-  const overwrites: import("discord.js").OverwriteResolvable[] = [
-    {
-      id: guild.roles.everyone.id,
-      deny: [PermissionFlagsBits.ViewChannel],
-    },
-    {
-      id: guild.client.user!.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ManageMessages,
-        PermissionFlagsBits.ManageChannels,
-        PermissionFlagsBits.ReadMessageHistory,
-      ],
-    },
-  ];
-
-  if (approvedRole) {
-    overwrites.push({
-      id: approvedRole.id,
-      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+  try {
+    const result = await createWeeklyGamedayChannel({
+      guild,
+      guildId,
+      weekNum,
+      categoryId: selectedCategoryId,
+      deletePrevious: true,
     });
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle(`🎮 Weekly Gameday Channel Created — ${result.displayLabel}`)
+      .setDescription(`Created <#${result.channelId}> with reaction-based matchup panels.`)
+      .addFields(
+        { name: "H2H Matchups", value: String(result.h2hCount), inline: true },
+        { name: "Total Games", value: String(result.totalGames), inline: true },
+        { name: "Category", value: selectedCategoryId ? `<#${selectedCategoryId}>` : "None / top-level", inline: true },
+        { name: "Previous Channel", value: result.deletedPrevious ? "Replaced" : "None replaced", inline: true },
+      )
+      .setTimestamp();
+
+    await reply({ embeds: [embed] });
+  } catch (err) {
+    console.error("[handlePostGameChannelsModal] reaction gameday creation failed:", err);
+    await reply({ content: `❌ Failed to create reaction-based gameday channel: ${err}` });
   }
-
-  if (commissionerRole) {
-    overwrites.push({
-      id: commissionerRole.id,
-      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages],
-    });
-  }
-
-  const safeWeekName = weekNum > 18 ? `playoffs-${weekNum}` : `week-${weekNum}`;
-  const channelName = `${safeWeekName}-gameday`;
-
-  const newChannel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildText,
-    parent: selectedCategoryId ?? undefined,
-    topic: "Use /gameday for all matchup actions. Non-command user messages are automatically deleted.",
-    permissionOverwrites: overwrites,
-  });
-
-  await setGuildChannel(guildId, "gameday_active" as any, newChannel.id);
-  if (selectedCategoryId) await setGuildChannel(guildId, "gameday_category" as any, selectedCategoryId);
-
-  const settings = await getServerSettings(guildId);
-  const deadline = nextAdvanceDeadline(settings.lastAdvanceAt, settings.advancePeriodHours);
-  const deadlineText = formatAllZones(deadline);
-
-  const fullScheduleMsg = await newChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Blue)
-        .setTitle(`🏈 ${displayLabel.toUpperCase()} SCHEDULE`)
-        .setDescription(scheduleLines(games))
-        .addFields({ name: "Advance Deadline", value: deadlineText }),
-    ],
-  });
-
-  const h2hLines = h2hGames
-    .map((g, i) => `**${i + 1}.** <@${g.awayDiscordId}> @ <@${g.homeDiscordId}>`)
-    .join("\n");
-
-  await newChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Gold)
-        .setTitle(`🔥 ${displayLabel.toUpperCase()} H2H MATCHUPS 🔥`)
-        .setDescription(h2hLines),
-    ],
-  });
-
-  const header = await newChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Blurple)
-        .setTitle(`🎮 OFFICIAL ${displayLabel.toUpperCase()} GAMEDAY CHANNEL`)
-        .setDescription(
-          "This channel is used exclusively for H2H scheduling, gameday actions, stream tracking, final score confirmations, FW/FS requests, and commissioner assistance.\n\n" +
-          "Only commissioners may send normal messages here. All non-command user messages will be automatically deleted.\n\n" +
-          "Use `/gameday` to access your private matchup dashboard.",
-        ),
-    ],
-  });
-  await header.pin().catch(() => null);
-
-  const reminder = await newChannel.send({
-    content: "@everyone",
-    embeds: [
-      new EmbedBuilder()
-        .setColor(Colors.Red)
-        .setTitle(`🚨 ${displayLabel.toUpperCase()} ACTION REMINDERS 🚨`)
-        .setDescription(
-          `**ADVANCE DEADLINE**\n${deadlineText}\n\n` +
-          "**SCHEDULING POLICY**\n" +
-          "• If a scheduling proposal is sent and the opponent fails to respond within **4 hours**, the sender may request a Force Win due to lack of activity or extend the response window.\n\n" +
-          "**GAME CHECK-IN**\n" +
-          "• Players are expected to check in before their scheduled game time using `/gameday`.\n" +
-          "• Games must be marked as begun through `/gameday`. This is now the only way to post your stream link and receive stream payout review.\n\n" +
-          "**STREAMING POLICY**\n" +
-          "• Home team is expected to stream regular season games. Either user may stream.\n" +
-          "• In playoffs, home team is required to stream.\n" +
-          "• If away cannot or chooses not to stream, home may still be penalized for failing to uphold streaming responsibilities. Penalties may include coin fines, compensation to the opponent, or any reasonable commissioner discipline.\n\n" +
-          "**FINAL SCORES**\n" +
-          "• Final scores must be submitted through `/gameday` after the game is marked begun.\n" +
-          "• Opponents must approve or dispute submitted scores.\n" +
-          "• Commissioners may review unresolved score disputes.\n\n" +
-          "**ASSISTANCE**\n" +
-          "Use `/gameday` for FW requests, FS requests, violations, commissioner contact, and scheduling issues.",
-        ),
-    ],
-    allowedMentions: { parse: ["everyone"] },
-  });
-  await reminder.pin().catch(() => null);
-
-  const embed = new EmbedBuilder()
-    .setColor(Colors.Green)
-    .setTitle(`🎮 Weekly Gameday Channel Created — ${displayLabel}`)
-    .setDescription(`Created <#${newChannel.id}> with ${h2hGames.length} H2H matchup${h2hGames.length !== 1 ? "s" : ""}.`)
-    .addFields(
-      { name: "Category", value: selectedCategoryId ? `<#${selectedCategoryId}>` : "None / top-level", inline: true },
-      { name: "Full Schedule Post", value: `[Jump](${fullScheduleMsg.url})`, inline: true },
-      { name: "Advance Deadline", value: deadlineText, inline: false },
-    )
-    .setTimestamp();
-
-  await reply({ embeds: [embed] });
 }
 // ── Waitlist Hub ───────────────────────────────────────────────────────────────
 
@@ -2852,8 +2677,48 @@ async function handleAdvanceCategorySelect(interaction: StringSelectMenuInteract
   const nextWeek   = WEEK_SEQUENCE[nextIdx]!;
   const categoryId = interaction.values[0] ?? "none";
 
+  const timeMenu = new StringSelectMenuBuilder()
+    .setCustomId(`ao_advance_time:${categoryId}`)
+    .setPlaceholder("Select the next advance time…")
+    .addOptions([
+      new StringSelectMenuOptionBuilder().setLabel("24 hours from now").setValue("24").setDescription("Next advance deadline is now + 24 hours."),
+      new StringSelectMenuOptionBuilder().setLabel("48 hours from now").setValue("48").setDescription("Next advance deadline is now + 48 hours."),
+      new StringSelectMenuOptionBuilder().setLabel("72 hours from now").setValue("72").setDescription("Next advance deadline is now + 72 hours."),
+      new StringSelectMenuOptionBuilder().setLabel("96 hours from now").setValue("96").setDescription("Next advance deadline is now + 96 hours."),
+      new StringSelectMenuOptionBuilder().setLabel("120 hours from now").setValue("120").setDescription("Next advance deadline is now + 120 hours."),
+    ]);
+
+  await interaction.update({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Yellow)
+        .setTitle("⏩ Advance Week — Set Next Advance Time")
+        .setDescription(
+          `**Current week:** ${weekLabel(current)}\n` +
+          `**Next week:** **${weekLabel(nextWeek)}**\n` +
+          `**Gameday category:** ${categoryId === "none" ? "No category / top-level" : `<#${categoryId}>`}\n\n` +
+          "Choose when the next advance deadline should be. This updates the server advance period and drives the league announcement plus gameday control panel."
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(timeMenu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("ao_hub_back").setLabel("✖ Cancel").setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+}
+
+async function handleAdvanceTimeSelect(interaction: StringSelectMenuInteraction) {
+  const categoryId = interaction.customId.split(":")[1] ?? "none";
+  const hours = parseInt(interaction.values[0] ?? "72", 10);
+  if (![24, 48, 72, 96, 120].includes(hours)) {
+    await interaction.reply({ content: "Invalid advance time.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
   const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`ao_advance_confirm:${categoryId}`).setLabel("✅ Confirm Advance").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ao_advance_confirm:${categoryId}:${hours}`).setLabel("✅ Confirm Advance").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("✖ Cancel").setStyle(ButtonStyle.Danger),
   );
 
@@ -2863,15 +2728,14 @@ async function handleAdvanceCategorySelect(interaction: StringSelectMenuInteract
         .setColor(Colors.Yellow)
         .setTitle("⏩ Advance Week — Confirm")
         .setDescription(
-          `**Current week:** ${weekLabel(current)}\n` +
-          `**Next week:** **${weekLabel(nextWeek)}**\n` +
+          `**Next advance deadline:** ${hours} hours from this advance\n` +
           `**Gameday category:** ${categoryId === "none" ? "No category / top-level" : `<#${categoryId}>`}\n\n` +
           "This will run **all auto-actions**:\n" +
-          "• Create one weekly gameday channel for H2H actions\n" +
+          "• Create one weekly reaction-based gameday channel\n" +
           "• Award/update weekly automated systems\n" +
           "• Process playoff payouts if applicable\n" +
           "• Run trainer ticks and other advance actions\n\n" +
-          "**Are you sure?**",
+          "**Are you sure?**"
         ),
     ],
     components: [confirmRow],
@@ -2879,7 +2743,9 @@ async function handleAdvanceCategorySelect(interaction: StringSelectMenuInteract
 }
 
 async function handleAdvanceConfirm(interaction: ButtonInteraction) {
-  const selectedCategoryId = interaction.customId.split(":")[1] ?? "none";
+  const parts = interaction.customId.split(":");
+  const selectedCategoryId = parts[1] ?? "none";
+  const nextAdvanceHours = parseInt(parts[2] ?? "72", 10);
   await interaction.update({
     embeds: [
       new EmbedBuilder()
@@ -2891,7 +2757,7 @@ async function handleAdvanceConfirm(interaction: ButtonInteraction) {
   });
 
   try {
-    await performAdvanceWeek(interaction, selectedCategoryId === "none" ? null : selectedCategoryId);
+    await performAdvanceWeek(interaction, selectedCategoryId === "none" ? null : selectedCategoryId, nextAdvanceHours);
   } catch (err) {
     console.error("[admin-operations] Advance week error:", err);
     await interaction.editReply({
@@ -2938,7 +2804,7 @@ function toChannelName(teamName: string): string {
     .replace(/-$/, "");
 }
 
-async function performAdvanceWeek(interaction: ButtonInteraction, selectedGamedayCategoryId: string | null = null): Promise<void> {
+async function performAdvanceWeek(interaction: ButtonInteraction, selectedGamedayCategoryId: string | null = null, nextAdvanceHours = 72): Promise<void> {
   const guildId    = interaction.guildId!;
   const season     = await getOrCreateActiveSeason(guildId);
 
@@ -3150,7 +3016,7 @@ async function performAdvanceWeek(interaction: ButtonInteraction, selectedGameda
   const advanceStampedAt = new Date();
   try {
     await db.update(serverSettingsTable)
-      .set({ lastAdvanceAt: advanceStampedAt })
+      .set({ lastAdvanceAt: advanceStampedAt, advancePeriodHours: nextAdvanceHours, updatedAt: new Date() })
       .where(eq(serverSettingsTable.guildId, guildId));
   } catch (advErr) {
     console.error("[admin-operations] Failed to stamp lastAdvanceAt:", advErr);
@@ -3160,8 +3026,7 @@ async function performAdvanceWeek(interaction: ButtonInteraction, selectedGameda
   // advance deadline in all 4 league time zones. Silent no-op if the guild
   // hasn't set a General channel (admins can set one in Commissioner's Office). ─
   try {
-    const settingsForAnnounce = await getServerSettings(guildId);
-    const periodHours = settingsForAnnounce?.advancePeriodHours ?? 72;
+    const periodHours = nextAdvanceHours;
     const generalChannelId = await getGuildChannel(guildId, CHANNEL_KEYS.GENERAL);
     if (generalChannelId) {
       const ch = (interaction.client.channels.cache.get(generalChannelId)

@@ -39,6 +39,8 @@ export const LEAGUE_ROLE_DEFS: RoleDef[] = [
   { key: "champion", label: "Reigning Champion 🏆", type: "performance", permanent: false, description: "Current defending Super Bowl champion.", criteria: "Assigned to the current defending Super Bowl champion for this league." },
 ];
 
+const BOT_MANAGED_ROLE_NAMES = new Set(LEAGUE_ROLE_DEFS.map((role) => role.label));
+
 async function rowsOf<T = any>(q: any): Promise<T[]> {
   const result = await db.execute(q);
   return ((result as any).rows ?? result) as T[];
@@ -512,6 +514,16 @@ async function getDefendingChampionId(guildId: string): Promise<string | null> {
   return championId;
 }
 
+async function removeUnknownManagedRoles(member: GuildMember, shouldHave: Set<string>, changes: string[]): Promise<void> {
+  for (const role of member.roles.cache.values()) {
+    if (!BOT_MANAGED_ROLE_NAMES.has(role.name)) continue;
+    if (shouldHave.has(role.name)) continue;
+    await member.roles.remove(role, "REC League automated role cleanup").catch(() => null);
+    changes.push(`<@${member.id}> lost **${role.name}**`);
+    await delay(RATE_LIMIT_DELAY_MS);
+  }
+}
+
 export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<void> {
   await ensureRoleTables();
   const guildId = guild.id;
@@ -539,6 +551,29 @@ export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<voi
     if (!member) continue;
 
     const entitlements = await globalRoleKeys(u.discord_id);
+    const hotCold = await getHotColdRoleState(u.discord_id);
+    const shouldHave = new Set<string>();
+    const entitlementRoleMap: Record<string, string> = {
+      rec_og: "REC League OG",
+      league_veteran: "League Veteran",
+      mr_perfect: "Mr Perfect",
+      sb_winner: "SB Winner",
+    };
+    for (const key of entitlements) {
+      const roleName = entitlementRoleMap[key];
+      if (roleName) shouldHave.add(roleName);
+    }
+    if (steady.has(u.discord_id)) shouldHave.add("Steady Streamer");
+    if (sweaters.has(u.discord_id)) shouldHave.add("Heavy Sweater");
+    if (trenchesLeader === u.discord_id) shouldHave.add("Terror in the Trenches");
+    if (gimmeLeader === u.discord_id) shouldHave.add("Mr Gimme Dat");
+    if (playcalls.smash.has(u.discord_id)) shouldHave.add("Smashmouth Football");
+    if (playcalls.air.has(u.discord_id)) shouldHave.add("Air it Out");
+    if (hotCold === "hot") shouldHave.add("Hot Streak");
+    if (hotCold === "cold") shouldHave.add("Cold Streak");
+    if (defendingChampionId === u.discord_id) shouldHave.add("Reigning Champion 🏆");
+
+    await removeUnknownManagedRoles(member, shouldHave, changes);
     await applyGlobalRoleEntitlements(member, entitlements, changes);
 
     await setMemberRole(member, "Steady Streamer", steady.has(u.discord_id), changes);
@@ -548,7 +583,6 @@ export async function recalculateLeagueRolesOnAdvance(guild: Guild): Promise<voi
     await setMemberRole(member, "Smashmouth Football", playcalls.smash.has(u.discord_id), changes);
     await setMemberRole(member, "Air it Out", playcalls.air.has(u.discord_id), changes);
 
-    const hotCold = await getHotColdRoleState(u.discord_id);
     await setMemberRole(member, "Hot Streak", hotCold === "hot", changes);
     await setMemberRole(member, "Cold Streak", hotCold === "cold", changes);
     await setMemberRole(member, "Reigning Champion 🏆", defendingChampionId === u.discord_id, changes);

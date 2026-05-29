@@ -60,6 +60,65 @@ async function runBatched<T>(items: T[], batchSize: number, fn: (batch: T[]) => 
   }
 }
 
+async function withImportAdvisoryLock<T>(guildId: string | undefined, importType: string, fn: () => Promise<T>): Promise<T> {
+  const key = `${guildId ?? "global"}:${importType}`;
+  const lockRows = await db.execute(sql`select pg_try_advisory_lock(hashtext(${key})) as locked`);
+  const locked = Boolean(((lockRows as any).rows ?? lockRows)?.[0]?.locked);
+  if (!locked) {
+    throw new Error(`Import already running for ${key}. Try again when the current import finishes.`);
+  }
+  try {
+    return await fn();
+  } finally {
+    await db.execute(sql`select pg_advisory_unlock(hashtext(${key}))`).catch(() => null);
+  }
+}
+
+async function ensureImportJobTables(): Promise<void> {
+  await db.execute(sql`
+    create table if not exists import_jobs (
+      id bigserial primary key,
+      guild_id text not null,
+      import_type text not null,
+      status text not null default 'queued',
+      payload_ref text,
+      requested_by text,
+      progress_current integer not null default 0,
+      progress_total integer not null default 0,
+      error_message text,
+      started_at timestamptz,
+      completed_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `).catch(() => null);
+  await db.execute(sql`create index if not exists import_jobs_status_idx on import_jobs(status, created_at)`).catch(() => null);
+  await db.execute(sql`create index if not exists import_jobs_guild_idx on import_jobs(guild_id, import_type, status)`).catch(() => null);
+}
+
+async function recordImportJobStart(guildId: string | undefined, importType: string, total = 0): Promise<number | null> {
+  await ensureImportJobTables();
+  const rows = await db.execute(sql`
+    insert into import_jobs (guild_id, import_type, status, progress_total, started_at, updated_at)
+    values (${guildId ?? "global"}, ${importType}, 'running', ${total}, now(), now())
+    returning id
+  `).catch(() => null);
+  return Number(((rows as any)?.rows ?? rows)?.[0]?.id ?? 0) || null;
+}
+
+async function recordImportJobFinish(jobId: number | null, status: "completed" | "failed_retryable", progressCurrent?: number, error?: unknown): Promise<void> {
+  if (!jobId) return;
+  await db.execute(sql`
+    update import_jobs
+    set status = ${status},
+        progress_current = coalesce(${progressCurrent ?? null}, progress_current),
+        error_message = ${error ? String(error).slice(0, 2000) : null},
+        completed_at = now(),
+        updated_at = now()
+    where id = ${jobId}
+  `).catch(() => null);
+}
+
 // ── Win milestones ─────────────────────────────────────────────────────────────
 // 25 tiers, read from payout_config (shared with the Discord bot's
 // payout-config.ts DEFAULTS). Fallbacks below mirror those DEFAULTS so the
@@ -1973,7 +2032,7 @@ export async function syncWeekScoresToSchedule(
       }
     }
 
-    await Promise.all(upserts);
+    await runBatched(upserts, 8, async (batch) => { await Promise.all(batch); });
     importDebug(`[syncWeekScores] Stored ${upserts.length} schedule entries for season ${season.id} week ${weekNum} (weekIndex=${weekIndex}, playoff=${isPlayoff}, scheduleOnly=${scheduleOnly})`);
     return upserts.length;
   } catch (err) {
@@ -2910,7 +2969,9 @@ function friendlyAttrName(key: string): string {
 // ── /team/:teamId/roster → upsert active 53-man roster for one team ───────────
 
 export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeagueId = 0, guildId?: string): Promise<ProcessResult> {
-  try {
+  return withImportAdvisoryLock(guildId, `roster:${mcaTeamId}`, async () => {
+    const importJobId = await recordImportJobStart(guildId, "roster", 1);
+    try {
     const season = await getOrCreateActiveSeason(eaLeagueId, guildId);
 
     let [teamEntry] = await db.select()
@@ -3221,15 +3282,18 @@ export async function processTeamRoster(body: unknown, mcaTeamId: number, eaLeag
 
     invalidateRostersCache(season.id);
 
+    await recordImportJobFinish(importJobId, "completed", 1);
     return {
       ok: true,
       message: `${rows.length} players imported for team ${mcaTeamId} (${teamEntry.fullName})`,
       details: { transactions },
     };
-  } catch (err) {
-    console.error(`[roster/team/${mcaTeamId}] Error:`, err);
-    return { ok: false, message: String(err) };
-  }
+    } catch (err) {
+      await recordImportJobFinish(importJobId, "failed_retryable", 0, err);
+      console.error(`[roster/team/${mcaTeamId}] Error:`, err);
+      return { ok: false, message: String(err) };
+    }
+  });
 }
 
 // ── /draftpicks → import all teams' draft picks for the next 3 classes ────────

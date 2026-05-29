@@ -1510,6 +1510,28 @@ export const playerXpLogTable = pgTable("player_xp_log", {
   playerWeek: uniqueIndex("player_xp_log_player_week_idx").on(t.seasonId, t.playerId, t.weekNum, t.weekType),
 }));
 
+
+
+// ── Import jobs — tracks heavy MCA/roster/schedule imports for scaling ────────
+export const importJobsTable = pgTable("import_jobs", {
+  id:              bigserial("id", { mode: "number" }).primaryKey(),
+  guildId:         text("guild_id").notNull(),
+  importType:      text("import_type").notNull(),
+  status:          text("status").notNull().default("queued"),
+  payloadRef:      text("payload_ref"),
+  requestedBy:     text("requested_by"),
+  progressCurrent: integer("progress_current").notNull().default(0),
+  progressTotal:   integer("progress_total").notNull().default(0),
+  errorMessage:    text("error_message"),
+  startedAt:       timestamp("started_at", { withTimezone: true }),
+  completedAt:     timestamp("completed_at", { withTimezone: true }),
+  createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:       timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  statusIdx: index("import_jobs_status_idx").on(t.status, t.createdAt),
+  guildIdx:  index("import_jobs_guild_idx").on(t.guildId, t.importType, t.status),
+}));
+
 // ── Waitlist — prospective members waiting for an open team ─────────────────
 export const waitlistTable = pgTable("waitlist", {
   id:          serial("id").primaryKey(),
