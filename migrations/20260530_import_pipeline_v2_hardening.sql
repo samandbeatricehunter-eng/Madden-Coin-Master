@@ -25,7 +25,7 @@ create table if not exists rec_import_jobs (
 alter table rec_import_jobs add column if not exists stage text not null default 'started';
 alter table rec_import_jobs add column if not exists debug_json jsonb not null default '{}'::jsonb;
 alter table rec_import_jobs add column if not exists created_by_discord_id text;
-create index if not exists idx_rec_import_jobs_guild_created on rec_import_jobs(guild_id, created_at desc);
+create index if not exists idx_rec_import_jobs_guild_started on rec_import_jobs(guild_id, started_at desc);
 create index if not exists idx_rec_import_jobs_status_stage on rec_import_jobs(status, stage);
 
 create table if not exists rec_import_payloads (
@@ -45,3 +45,6 @@ alter table rec_league_games add column if not exists last_import_job_id bigint;
 create unique index if not exists rec_league_games_rec_season_identity_key_idx
   on rec_league_games(rec_season_id, identity_key)
   where identity_key is not null;
+
+
+alter table rec_import_jobs add column if not exists updated_at timestamptz not null default now();

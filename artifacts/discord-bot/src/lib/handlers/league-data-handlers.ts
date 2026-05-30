@@ -151,6 +151,10 @@ export async function buildLeagueDataMainMenu(guildId: string) {
 
   const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
+      .setCustomId("ld_companion_url")
+      .setLabel("🔗 Copy Export URL")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
       .setCustomId("ao_hub_back")
       .setLabel("← Back to Hub")
       .setStyle(ButtonStyle.Secondary),
@@ -517,6 +521,33 @@ export async function handleLeagueDataButton(interaction: ButtonInteraction): Pr
   // ── Step 2: Open URL modal ─────────────────────────────────────────────────
   if (action === "ld_next_to_url") {
     await interaction.showModal(buildUrlModal());
+    return;
+  }
+
+
+  if (action === "ld_companion_url") {
+    const conn = await loadEAConnection(guildId).catch(() => null);
+    const base = getApiBase().replace(/\/api$/, "");
+    const key = getWebhookKey();
+    const leagueId = conn?.eaLeagueId ?? "YOUR_EA_LEAGUE_ID";
+    const platform = conn?.token?.platform ?? "pc";
+    const legacyScheduleUrl = `${base}/api/madden/${key}/${platform}/${leagueId}/schedules?guildId=${encodeURIComponent(guildId)}`;
+    const companionScheduleUrl = `${base}/api/imports/companion/${guildId}/schedule?secret=${encodeURIComponent(process.env["REC_IMPORT_SECRET"] || key)}`;
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle("🔗 Companion Export URLs")
+        .setDescription(
+          "Copy one of these URLs into the Madden Companion exporter.\n\n" +
+          "**Recommended Canonical Schedule URL**\n" +
+          `\`${companionScheduleUrl}\`\n\n` +
+          "**Legacy MCA Full Export Base**\n" +
+          `\`${legacyScheduleUrl}\`\n\n` +
+          "For the canonical endpoint, use payload type paths like `/schedule`, `/roster`, `/passing`, etc. Schedule payloads route directly into `rec_league_games`."
+        )],
+      components: [],
+    });
     return;
   }
 

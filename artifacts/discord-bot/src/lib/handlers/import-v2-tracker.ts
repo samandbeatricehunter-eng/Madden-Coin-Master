@@ -57,7 +57,7 @@ export async function ensureImportV2Tables(): Promise<void> {
   await db.execute(sql`alter table rec_import_jobs add column if not exists stage text not null default 'started'`).catch(() => null);
   await db.execute(sql`alter table rec_import_jobs add column if not exists debug_json jsonb not null default '{}'::jsonb`).catch(() => null);
   await db.execute(sql`alter table rec_import_jobs add column if not exists created_by_discord_id text`).catch(() => null);
-  await db.execute(sql`create index if not exists idx_rec_import_jobs_guild_created on rec_import_jobs(guild_id, created_at desc)`).catch(() => null);
+  await db.execute(sql`create index if not exists idx_rec_import_jobs_guild_started on rec_import_jobs(guild_id, started_at desc)`).catch(() => null);
   await db.execute(sql`create index if not exists idx_rec_import_jobs_status_stage on rec_import_jobs(status, stage)`).catch(() => null);
 
   await db.execute(sql`

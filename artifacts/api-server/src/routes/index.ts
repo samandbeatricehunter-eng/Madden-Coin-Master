@@ -9,6 +9,7 @@ import debugReadRouter from "./debugRead.js";
 import v2ReadRouter from "./v2Read.js";
 import v2FranchiseRouter from "./v2Franchise.js";
 import v2AuthRouter from "./v2Auth.js";
+import companionImportRouter from "./companionImport.js";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(globalReadRouter);
 router.use(debugReadRouter);
 router.use(v2ReadRouter);
 router.use(v2AuthRouter);
+router.use(companionImportRouter);
 
 export default router;
