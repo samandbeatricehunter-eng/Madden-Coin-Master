@@ -1,5 +1,6 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { createHash } from "crypto";
 
 async function rowsOf<T = any>(q: any): Promise<T[]> {
   const result = await db.execute(q);
@@ -24,6 +25,18 @@ function asInt(value: unknown, fallback: number | null = null): number | null {
 function asText(value: unknown): string | null {
   const v = String(value ?? "").trim();
   return v.length ? v : null;
+}
+function payloadHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
+}
+
+function normIdentityPart(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function canonicalPairKey(a: unknown, b: unknown): string {
+  const parts = [normIdentityPart(a), normIdentityPart(b)].sort();
+  return `${parts[0]}:${parts[1]}`;
 }
 
 export function canonicalWeekNumber(weekType: string, weekNum: number): number {
@@ -135,10 +148,55 @@ export async function ensureCanonicalLeagueLayerApi(): Promise<void> {
   await db.execute(sql`alter table rec_league_games add column if not exists stable_game_key text`);
   await db.execute(sql`alter table rec_league_games add column if not exists legacy_season_id bigint`);
   await db.execute(sql`alter table rec_league_games add column if not exists guild_id text`);
+  await db.execute(sql`alter table rec_league_games add column if not exists identity_key text`);
+  await db.execute(sql`alter table rec_league_games add column if not exists source_hash text`);
+  await db.execute(sql`alter table rec_league_games add column if not exists last_import_job_id bigint`);
   await db.execute(sql`
     create unique index if not exists rec_league_games_rec_season_stable_key_idx
     on rec_league_games(rec_season_id, stable_game_key)
     where stable_game_key is not null
+  `);
+  await db.execute(sql`
+    create unique index if not exists rec_league_games_rec_season_identity_key_idx
+    on rec_league_games(rec_season_id, identity_key)
+    where identity_key is not null
+  `);
+  await db.execute(sql`
+    create table if not exists rec_import_jobs (
+      id bigserial primary key,
+      guild_id text not null,
+      ea_league_id bigint,
+      import_type text not null,
+      week_type text,
+      week_number integer,
+      stage text not null default 'started',
+      status text not null default 'running',
+      rows_received integer not null default 0,
+      rows_upserted integer not null default 0,
+      h2h_rows integer not null default 0,
+      payload_hash text,
+      error_message text,
+      debug_json jsonb not null default '{}'::jsonb,
+      created_by_discord_id text,
+      started_at timestamptz not null default now(),
+      finished_at timestamptz
+    )
+  `);
+  await db.execute(sql`alter table rec_import_jobs add column if not exists stage text not null default 'started'`).catch(() => null);
+  await db.execute(sql`alter table rec_import_jobs add column if not exists debug_json jsonb not null default '{}'::jsonb`).catch(() => null);
+  await db.execute(sql`alter table rec_import_jobs add column if not exists created_by_discord_id text`).catch(() => null);
+  await db.execute(sql`create index if not exists idx_rec_import_jobs_guild_created on rec_import_jobs(guild_id, created_at desc)`).catch(() => null);
+
+  await db.execute(sql`
+    create table if not exists rec_import_payloads (
+      id bigserial primary key,
+      import_job_id bigint references rec_import_jobs(id) on delete cascade,
+      guild_id text not null,
+      payload_type text not null,
+      payload_hash text not null,
+      raw_json jsonb not null,
+      created_at timestamptz not null default now()
+    )
   `);
 }
 
@@ -228,6 +286,9 @@ type CanonicalGameInput = {
   legacyFranchiseScheduleId?: number | null;
   eaScheduleId?: string | null;
   processedGameId?: string | null;
+  identityKey?: string | null;
+  sourceHash?: string | null;
+  importJobId?: number | null;
 };
 
 async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise<boolean> {
@@ -238,6 +299,9 @@ async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise
       legacy_season_id = coalesce(rec_league_games.legacy_season_id, ${input.legacySeasonId}),
       rec_league_id = coalesce(rec_league_games.rec_league_id, ${input.recLeagueId}),
       stable_game_key = coalesce(rec_league_games.stable_game_key, ${input.stableGameKey}),
+      identity_key = coalesce(rec_league_games.identity_key, ${input.identityKey ?? null}),
+      source_hash = coalesce(${input.sourceHash ?? null}, rec_league_games.source_hash),
+      last_import_job_id = coalesce(${input.importJobId ?? null}, rec_league_games.last_import_job_id),
       legacy_game_schedule_id = coalesce(rec_league_games.legacy_game_schedule_id, ${input.legacyGameScheduleId ?? null}),
       legacy_franchise_schedule_id = coalesce(rec_league_games.legacy_franchise_schedule_id, ${input.legacyFranchiseScheduleId ?? null}),
       ea_schedule_id = coalesce(rec_league_games.ea_schedule_id, ${input.eaScheduleId ?? null}),
@@ -262,11 +326,17 @@ async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise
       updated_at = now()
     where rec_league_id = ${input.recLeagueId}
       and rec_season_id = ${input.recSeasonId}
-      and week_number = ${input.weekNumber}
-      and coalesce(least(away_discord_id, home_discord_id), away_team_name) =
-          coalesce(least(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.awayTeamName})
-      and coalesce(greatest(away_discord_id, home_discord_id), home_team_name) =
-          coalesce(greatest(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.homeTeamName})
+      and (
+        (identity_key is not null and identity_key = ${input.identityKey ?? null})
+        or (stable_game_key is not null and stable_game_key = ${input.stableGameKey})
+        or (
+          week_number = ${input.weekNumber}
+          and coalesce(least(away_discord_id, home_discord_id), away_team_name) =
+              coalesce(least(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.awayTeamName})
+          and coalesce(greatest(away_discord_id, home_discord_id), home_team_name) =
+              coalesce(greatest(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.homeTeamName})
+        )
+      )
     returning id
   `);
 
@@ -276,7 +346,7 @@ async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise
     insert into rec_league_games (
       rec_league_id, rec_season_id, legacy_season_id, guild_id,
       legacy_game_schedule_id, legacy_franchise_schedule_id, ea_schedule_id, processed_game_id,
-      stable_game_key, week_type, week_number, week_index,
+      stable_game_key, identity_key, source_hash, last_import_job_id, week_type, week_number, week_index,
       away_team_id, home_team_id, away_team_name, home_team_name,
       away_discord_id, home_discord_id, away_score, home_score,
       winner_discord_id, imported_winner_discord_id, status, is_h2h,
@@ -285,7 +355,7 @@ async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise
     select
       ${input.recLeagueId}, ${input.recSeasonId}, ${input.legacySeasonId}, ${input.guildId},
       ${input.legacyGameScheduleId ?? null}, ${input.legacyFranchiseScheduleId ?? null}, ${input.eaScheduleId ?? null}, ${input.processedGameId ?? null},
-      ${input.stableGameKey}, ${input.weekType}, ${input.weekNumber}, ${input.weekIndex},
+      ${input.stableGameKey}, ${input.identityKey ?? null}, ${input.sourceHash ?? null}, ${input.importJobId ?? null}, ${input.weekType}, ${input.weekNumber}, ${input.weekIndex},
       ${input.awayTeamId}, ${input.homeTeamId}, ${input.awayTeamName}, ${input.homeTeamName},
       ${input.awayDiscordId}, ${input.homeDiscordId}, ${input.awayScore}, ${input.homeScore},
       ${input.winnerDiscordId}, ${input.importedWinnerDiscordId}, ${input.status}, ${input.isH2h},
@@ -294,11 +364,17 @@ async function upsertCanonicalGameByIdentity(input: CanonicalGameInput): Promise
       select 1 from rec_league_games g
       where g.rec_league_id = ${input.recLeagueId}
         and g.rec_season_id = ${input.recSeasonId}
-        and g.week_number = ${input.weekNumber}
-        and coalesce(least(g.away_discord_id, g.home_discord_id), g.away_team_name) =
-            coalesce(least(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.awayTeamName})
-        and coalesce(greatest(g.away_discord_id, g.home_discord_id), g.home_team_name) =
-            coalesce(greatest(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.homeTeamName})
+        and (
+          (g.identity_key is not null and g.identity_key = ${input.identityKey ?? null})
+          or (g.stable_game_key is not null and g.stable_game_key = ${input.stableGameKey})
+          or (
+            g.week_number = ${input.weekNumber}
+            and coalesce(least(g.away_discord_id, g.home_discord_id), g.away_team_name) =
+                coalesce(least(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.awayTeamName})
+            and coalesce(greatest(g.away_discord_id, g.home_discord_id), g.home_team_name) =
+                coalesce(greatest(${input.awayDiscordId}, ${input.homeDiscordId}), ${input.homeTeamName})
+          )
+        )
     )
     and not exists (
       select 1 from rec_league_games g
@@ -316,10 +392,30 @@ export async function syncCanonicalGamesFromSchedulePayload(
   weekType: string,
   eaLeagueId: number,
   guildId?: string,
-): Promise<{ upserted: number; h2h: number }> {
+  existingImportJobId?: number | null,
+): Promise<{ upserted: number; h2h: number; importJobId?: number | null }> {
   const ctx = await getCanonicalSeason(eaLeagueId, guildId);
   const games = extractList(body, "scheduleInfoList", "gameScheduleInfoList", "schedules");
   const teamMap = await loadTeamMap(ctx.legacySeasonId);
+  const hash = payloadHash(body);
+  let job: { id: number } | null = existingImportJobId ? { id: Number(existingImportJobId) } : null;
+  if (!job?.id) {
+    [job] = await rowsOf<{ id: number }>(sql`
+      insert into rec_import_jobs (guild_id, ea_league_id, import_type, week_type, week_number, stage, status, rows_received, payload_hash)
+      values (${ctx.guildId}, ${eaLeagueId}, 'schedule_payload', ${weekType}, ${weekNum}, 'schedule_writing', 'running', ${games.length}, ${hash})
+      returning id
+    `);
+  } else {
+    await db.execute(sql`
+      update rec_import_jobs
+      set stage='schedule_writing', status=case when status='failed' then status else 'running' end, rows_received=${games.length}, payload_hash=${hash}, updated_at=now()
+      where id=${job.id}
+    `).catch(() => null);
+  }
+  await db.execute(sql`
+    insert into rec_import_payloads (import_job_id, guild_id, payload_type, payload_hash, raw_json)
+    values (${job?.id ?? null}, ${ctx.guildId}, 'schedule_payload', ${hash}, ${JSON.stringify(body ?? null)}::jsonb)
+  `).catch(() => null);
 
   let upserted = 0;
   let h2h = 0;
@@ -350,6 +446,7 @@ export async function syncCanonicalGamesFromSchedulePayload(
 
     const eaScheduleId = asText(g?.scheduleId ?? g?.gameId ?? g?.id);
     const key = stableGameKey({ recSeasonId: ctx.recSeasonId, weekNumber: gameWeekNumber, awayTeamId, homeTeamId, awayDiscord, homeDiscord, eaScheduleId });
+    const identityKey = eaScheduleId ? `ea:${eaScheduleId}` : `wk:${gameWeekNumber}:${canonicalPairKey(awayTeamId ?? awayDiscord ?? away?.full_name, homeTeamId ?? homeDiscord ?? home?.full_name)}`;
 
     await upsertCanonicalGameByIdentity({
       recLeagueId: ctx.recLeagueId,
@@ -357,6 +454,9 @@ export async function syncCanonicalGamesFromSchedulePayload(
       legacySeasonId: ctx.legacySeasonId,
       guildId: ctx.guildId,
       stableGameKey: key,
+      identityKey,
+      sourceHash: hash,
+      importJobId: job?.id ?? null,
       eaScheduleId,
       weekType,
       weekNumber: gameWeekNumber,
@@ -380,7 +480,16 @@ export async function syncCanonicalGamesFromSchedulePayload(
     upserted++;
   }
 
-  return { upserted, h2h };
+  if (job?.id) {
+    await db.execute(sql`
+      update rec_import_jobs
+      set stage='schedule_done', rows_upserted=${upserted}, h2h_rows=${h2h}, updated_at=now(),
+          status=case when ${Boolean(existingImportJobId)} then status else 'completed' end,
+          finished_at=case when ${Boolean(existingImportJobId)} then finished_at else now() end
+      where id=${job.id}
+    `).catch(() => null);
+  }
+  return { upserted, h2h, importJobId: job?.id ?? null };
 }
 
 export async function backfillCanonicalGamesFromLegacy(eaLeagueId: number, guildId?: string): Promise<{ gameSchedules: number; franchiseSchedules: number }> {

@@ -137,6 +137,8 @@ import {
 } from "../lib/handlers/league-data-handlers.js";
 import { handleMenuButton, handleMenuSelect } from "../lib/menu/menu-router.js";
 import { handleReactionGamedayButton, handleReactionGamedaySelect, handleReactionGamedayModal } from "../lib/gameday/reaction-panels/service.js";
+import { handleCompetitiveRatingsButton } from "../lib/competitive/competitive-ratings.js";
+import { handleTrainerManagementButton, handleTrainerManagementSelect } from "../lib/economy/trainer-management.js";
 
 
 export const name = "interactionCreate";
@@ -248,6 +250,8 @@ async function handleButton(interaction: ButtonInteraction) {
   const [action, secondPart, userId, purchaseType] = parts;
 
   if (await handleReactionGamedayButton(interaction)) return;
+  if (await handleCompetitiveRatingsButton(interaction)) return;
+  if (await handleTrainerManagementButton(interaction)) return;
 
   // ── Team request commissioner buttons (treq_link|uid|team, treq_deny|uid|team) ─
   if (interaction.customId.startsWith("treq_link|")) { await handleTreqLinkButton(interaction); return; }
@@ -2077,6 +2081,7 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction) {
   const sessionId = parts[1] ?? "";
 
   if (await handleReactionGamedaySelect(interaction)) return;
+  if (await handleTrainerManagementSelect(interaction)) return;
 
   // ── League Data wizard — all ld_ prefixed select menus ───────────────────────
   if (action?.startsWith("ld_")) {

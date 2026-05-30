@@ -11,6 +11,9 @@ import { isAdminUser } from "./db-helpers.js";
 export type { ServerSettings };
 
 export async function getServerSettings(guildId: string): Promise<ServerSettings> {
+  if (!guildId) {
+    throw new Error("Missing guildId for getServerSettings");
+  }
   const [settings] = await db.select().from(serverSettingsTable)
     .where(eq(serverSettingsTable.guildId, guildId)).limit(1);
   if (settings) return settings;

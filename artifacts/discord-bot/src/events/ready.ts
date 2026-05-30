@@ -3,7 +3,6 @@ import { sql } from "drizzle-orm";
 import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { registerCommandsForGuild } from "../lib/discord/register-commands.js";
 import { setGuildChannel, getGuildChannel, KNOWN_GUILD_CHANNELS, CHANNEL_KEYS } from "../lib/db/db-helpers.js";
 
 export const name = "clientReady";
@@ -259,17 +258,18 @@ export async function execute(client: Client) {
   await migrateCoCommissioners(client);
   await syncCommissionerRoleWithDb(client);
 
-  const guilds = client.guilds.cache;
-  if (guilds.size === 0) return;
-
-  console.log(`🔄 Registering slash commands for ${guilds.size} guild(s) on startup...`);
-
-  for (const [guildId, guild] of guilds) {
-    try {
-      await registerCommandsForGuild(guildId);
-      console.log(`✅ Commands registered: ${guild.name} (${guildId})`);
-    } catch (err) {
-      console.error(`❌ Failed to register commands for guild ${guildId}:`, err);
+  if (process.env.REGISTER_COMMANDS_ON_STARTUP === "true" || process.env.REGISTER_COMMANDS_ON_STARTUP === "1") {
+    const { registerCommandsForGuild } = await import("../lib/discord/register-commands.js");
+    const guilds = client.guilds.cache;
+    if (guilds.size === 0) return;
+    console.log(`🔄 Registering slash commands for ${guilds.size} guild(s) on startup...`);
+    for (const [guildId, guild] of guilds) {
+      try {
+        await registerCommandsForGuild(guildId);
+        console.log(`✅ Commands registered: ${guild.name} (${guildId})`);
+      } catch (err) {
+        console.error(`❌ Failed to register commands for guild ${guildId}:`, err);
+      }
     }
   }
 }

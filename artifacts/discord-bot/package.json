@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "start": "tsx src/deploy-commands.ts && tsx src/index.ts",
+    "start": "tsx src/index.ts",
     "deploy-commands": "tsx src/deploy-commands.ts",
     "rollback-franchise": "tsx src/scripts/rollback-franchise-import.ts",
     "reconcile-gameday": "tsx src/scripts/run-gameday-reconciliation.ts"

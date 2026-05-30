@@ -82,6 +82,14 @@ import {
 
 import { isAdminUser, getGuildChannel, CHANNEL_KEYS } from "../db/db-helpers.js";
 
+import {
+  startImportV2Job,
+  updateImportV2Job,
+  storeImportV2Payload,
+  withTimeout,
+  importErrorMessage,
+} from "./import-v2-tracker.js";
+
 // ── In-memory pending sessions (multi-league selection flow) ──────────────────
 type PendingSession = {
   guildId: string;
@@ -1083,11 +1091,11 @@ function getWebhookKey(): string {
   return key;
 }
 
-async function postToApi(url: string, payload: unknown): Promise<{ ok: boolean; status: number; body?: any }> {
+async function postToApi(url: string, payload: unknown, importJobId?: number | null): Promise<{ ok: boolean; status: number; body?: any }> {
   try {
     const res = await axios.post(url, payload, {
-      headers:        { "Content-Type": "application/json" },
-      timeout:        60_000,
+      headers:        { "Content-Type": "application/json", ...(importJobId ? { "x-rec-import-job-id": String(importJobId) } : {}) },
+      timeout:        180_000,
       validateStatus: () => true,
     });
     return { ok: res.status >= 200 && res.status < 300, status: res.status, body: res.data };
@@ -1128,6 +1136,7 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
 
   let { token, eaLeagueId } = conn;
   try {
+    await updateImportV2Job(importJobId, { stage: "blaze_session", status: "running" });
     const refreshed = await refreshTokenIfNeeded(token);
     if (refreshed.accessToken !== token.accessToken) {
       await updateStoredToken(eaLeagueId, refreshed);
@@ -1164,7 +1173,7 @@ export async function runScheduleOnlyImport(guildId: string): Promise<{
   const total = weekResults.length;
   for (const { weekNum: wk, data } of weekResults) {
     const url = `${leagueBase}/week/reg/${wk}/schedule-import${guildQs}`;
-    const r = await postToApi(url, data);
+    const r = await postToApi(url, data, importJobId);
     if (r.ok) synced++;
   }
 
@@ -1357,6 +1366,15 @@ export async function runWeekImport(ctx: {
   }
 
   let { token, eaLeagueId } = conn;
+  const importJobId = await startImportV2Job({
+    guildId,
+    eaLeagueId,
+    importType: skipPayouts ? "week_reimport" : "week_import",
+    weekType,
+    weekNumber: weekNum,
+    debug: { skipPayouts, platform: token.platform },
+  });
+  await updateImportV2Job(importJobId, { stage: "started", status: "running" });
   // Playoffs (weeks 19/20/21/23) use stageIndex=1 (same as regular season), weekIndex = weekNum - 1.
   // Wild Card (wk 19) → index 18 | Divisional (wk 20) → index 19 | Conf Champ (wk 21) → index 20 | Super Bowl (wk 23) → index 22
   const stageIndex = weekType === "pre" ? 0 : 1;
@@ -1380,6 +1398,7 @@ export async function runWeekImport(ctx: {
     blazeSession = await createBlazeSession(token);
   } catch (err: any) {
     console.error("[ld/import] Blaze session creation failed:", err);
+    await updateImportV2Job(importJobId, { stage: "failed", status: "failed", errorMessage: importErrorMessage(err), finish: true });
     await editReply({
       embeds: [
         new EmbedBuilder()
@@ -1397,9 +1416,12 @@ export async function runWeekImport(ctx: {
 
   let stats: Awaited<ReturnType<typeof fetchWeeklyStats>>;
   try {
-    stats = await fetchWeeklyStats(token, eaLeagueId, weekIndex, stageIndex, blazeSession);
+    await updateImportV2Job(importJobId, { stage: "stats_fetching", status: "running" });
+    stats = await withTimeout("EA weekly stats fetch", 180_000, fetchWeeklyStats(token, eaLeagueId, weekIndex, stageIndex, blazeSession));
+    await updateImportV2Job(importJobId, { stage: "stats_done", status: "running", debug: { statFetchErrors: (stats as any).errors ?? {} } });
   } catch (err: any) {
     console.error("[ld/import] Fetch error:", err);
+    await updateImportV2Job(importJobId, { stage: "failed", status: "failed", errorMessage: importErrorMessage(err), finish: true });
     await editReply({
       embeds: [
         new EmbedBuilder()
@@ -1415,13 +1437,20 @@ export async function runWeekImport(ctx: {
     return;
   }
 
+  for (const [payloadType, payload] of Object.entries(stats as Record<string, unknown>)) {
+    if (payloadType === "errors" || payload == null) continue;
+    await storeImportV2Payload({ jobId: importJobId, guildId, payloadType: `bot_${payloadType}`, payload }).catch(() => null);
+  }
+
   await editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription("⏳ Syncing rosters from EA (~60s)…")],
     components: [],
   });
 
+  await updateImportV2Job(importJobId, { stage: "rosters_fetching", status: "running" });
   const { summaryLine: rosterSummary, allOk: rostersAllOk } =
-    await runRosterSync(token, eaLeagueId, guild, guildId, blazeSession);
+    await withTimeout("Roster sync", 240_000, runRosterSync(token, eaLeagueId, guild, guildId, blazeSession));
+  await updateImportV2Job(importJobId, { stage: rostersAllOk ? "rosters_done" : "rosters_failed", status: "running", debug: { rosterSummary } });
 
   const apiBase  = getApiBase();
   const key      = getWebhookKey();
@@ -1444,12 +1473,13 @@ export async function runWeekImport(ctx: {
       embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Clearing existing **${wkLabel}** data before reimport…`)],
       components: [],
     });
-    const clearRes = await postToApi(`${weekBase}/clear${guildQs}`, {});
+    const clearRes = await postToApi(`${weekBase}/clear${guildQs}`, {}, importJobId);
     if (!clearRes.ok) {
       console.warn(`[ld/import] clearWeek returned HTTP ${clearRes.status} — proceeding anyway`);
     }
   }
 
+  await updateImportV2Job(importJobId, { stage: "stats_writing", status: "running" });
   const results: { name: string; ok: boolean; status: number; skipped?: boolean }[] = [];
 
   for (const [statType, urlSuffix] of [
@@ -1464,17 +1494,17 @@ export async function runWeekImport(ctx: {
   ] as const) {
     const payload = stats[statType as keyof typeof stats];
     if (payload == null) { results.push({ name: statType, ok: true, status: 0, skipped: true }); continue; }
-    const res = await postToApi(`${weekBase}/${urlSuffix}${guildQs}`, payload);
+    const res = await postToApi(`${weekBase}/${urlSuffix}${guildQs}`, payload, importJobId);
     results.push({ name: statType, ...res });
   }
 
-  const teamRes = await postToApi(`${weekBase}/team${guildQs}`, stats.teamStats);
+  const teamRes = await postToApi(`${weekBase}/team${guildQs}`, stats.teamStats, importJobId);
   results.push({ name: "teamStats", ...teamRes });
 
   const schedulesUrl = skipPayouts
     ? `${weekBase}/schedules${guildQs}&skipPayouts=1`
     : `${weekBase}/schedules${guildQs}`;
-  const schedRes = await postToApi(schedulesUrl, stats.schedules);
+  const schedRes = await postToApi(schedulesUrl, stats.schedules, importJobId);
   // The /schedules endpoint now returns { scheduleCount, gamesProcessed, ... }
   // synchronously. Surface those counts so a silent "0 games written" failure
   // is visible. Detect EA's error-envelope shape directly from stats.schedules
@@ -1518,7 +1548,7 @@ export async function runWeekImport(ctx: {
   try {
     const newsData = await fetchNewsData(token, eaLeagueId, blazeSession);
     if (newsData != null) {
-      const newsRes = await postToApi(`${leagueBase}/news${guildQs}`, newsData);
+      const newsRes = await postToApi(`${leagueBase}/news${guildQs}`, newsData, importJobId);
       results.push({ name: "in-game news", ...newsRes });
     }
   } catch { /* non-fatal */ }
@@ -1539,6 +1569,7 @@ export async function runWeekImport(ctx: {
     ? "preseason"
     : scheduleWeeks.map((w) => w > 18 ? (ROUND_LABEL[w] ?? `week ${w}`) : `week ${w}`).join(" + ");
 
+  await updateImportV2Job(importJobId, { stage: "schedule_fetching", status: "running" });
   await editReply({
     embeds: [new EmbedBuilder().setColor(Colors.Yellow).setDescription(`⏳ Syncing schedule: ${schedSyncLabel}…`)],
     components: [],
@@ -1552,12 +1583,13 @@ export async function runWeekImport(ctx: {
         const { weekResults } = await fetchAllWeekSchedules(token, eaLeagueId, wk, 1, wk, blazeSession);
         for (const { weekNum: fetchedWeek, data } of weekResults) {
           const url = `${leagueBase}/week/reg/${fetchedWeek}/schedule-import${guildQs}`;
-          const r = await postToApi(url, data);
+          const r = await postToApi(url, data, importJobId);
           if (r.ok) schedulesSynced++;
         }
       }
     } catch (err) {
       console.warn("[ld/import] Schedule sync failed (non-fatal):", err);
+      await updateImportV2Job(importJobId, { stage: "schedule_failed", status: "running", errorMessage: importErrorMessage(err) });
     }
   } else {
     schedSkipped = true;
@@ -1619,6 +1651,15 @@ export async function runWeekImport(ctx: {
     }
   } catch { /* non-fatal */ }
 
+  await updateImportV2Job(importJobId, {
+    stage: overallOk ? "completed" : "partial",
+    status: overallOk ? "completed" : "partial",
+    rowsReceived: results.length,
+    rowsUpserted: successCount,
+    errorMessage: overallOk ? null : `${failCount} stat failures; ${rostersAllOk ? "rosters ok" : "roster errors"}; schedule sync ${schedulesSynced > 0 ? "ok" : "failed/skipped"}`,
+    debug: { results, rosterSummary, schedulesSynced, schedSyncLabel },
+    finish: true,
+  });
   await editReply({ embeds: [embed], components: [returnRow] });
 }
 

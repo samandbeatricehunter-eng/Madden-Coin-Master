@@ -1,7 +1,7 @@
 import { Events, MessageReaction, User } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { handleReactionPanelAdd } from "../lib/gameday/reaction-panels/service.js";
+import { handleReactionPanelAdd, shouldHandleGamedayReaction } from "../lib/gameday/reaction-panels/service.js";
 
 export const name = Events.MessageReactionAdd;
 export const once = false;
@@ -18,6 +18,15 @@ async function commissionerMention(guild: any): Promise<string> {
 
 export async function execute(reaction: MessageReaction, user: User): Promise<void> {
   if (user.bot) return;
+  if (process.env.DEBUG_GAMEDAY_REACTIONS === "true" || process.env.DEBUG_GAMEDAY_REACTIONS === "1") console.log("[message-reaction-add] received", {
+    messageId: reaction.message.id,
+    userId: user.id,
+    emoji: reaction.emoji.name ?? "",
+    partial: reaction.partial,
+    guildId: reaction.message.guild?.id ?? null,
+  });
+  const emojiName = reaction.emoji.name ?? "";
+  if (!shouldHandleGamedayReaction(reaction.message.id, user.id, emojiName)) return;
   if (await handleReactionPanelAdd(reaction, user).catch((err) => { console.error("[reaction-panel] failed:", err); return false; })) return;
 
   const emoji = reaction.emoji.name;

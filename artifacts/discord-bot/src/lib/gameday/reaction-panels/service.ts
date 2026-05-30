@@ -22,6 +22,7 @@ import {
   ComponentType,
 } from "discord.js";
 import { db } from "@workspace/db";
+import { findRecGameForPanel } from "../../canonical/canonical-game-service.js";
 import {
   franchiseScheduleTable,
   franchiseMcaTeamsTable,
@@ -29,6 +30,7 @@ import {
   pendingChannelPayoutsTable,
 } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
+import { createHash } from "crypto";
 import { getOrCreateActiveSeason, getScheduleSeasonId, getGuildChannel, setGuildChannel, addBalance } from "../../db/db-helpers.js";
 import { getServerSettings } from "../../db/server-settings.js";
 import { formatAllZones, nextAdvanceDeadline } from "../../discord/timezones.js";
@@ -40,6 +42,26 @@ export const COMMISSIONER_EMOJIS = ["⚙️", "🕒", "📣", "📬", "🔁", "�
 export const CPU_EMOJIS = ["📺"] as const;
 const TZ_CODES = ["EST", "CST", "MST", "PST", "AKST", "HST"] as const;
 type TzCode = typeof TZ_CODES[number];
+
+const DEBUG_GAMEDAY_REACTIONS = process.env.DEBUG_GAMEDAY_REACTIONS === "true" || process.env.DEBUG_GAMEDAY_REACTIONS === "1";
+const reactionDedupe = new Map<string, number>();
+const REACTION_DEDUPE_MS = 3_000;
+export function gamedayReactionKey(messageId: string, userId: string, emoji: string): string {
+  return `${messageId}:${userId}:${emoji}`;
+}
+export function shouldHandleGamedayReaction(messageId: string, userId: string, emoji: string): boolean {
+  const key = gamedayReactionKey(messageId, userId, emoji);
+  const now = Date.now();
+  const last = reactionDedupe.get(key) ?? 0;
+  reactionDedupe.set(key, now);
+  if (now - last < REACTION_DEDUPE_MS) return false;
+  for (const [k, ts] of reactionDedupe) if (now - ts > 60_000) reactionDedupe.delete(k);
+  return true;
+}
+function debugReactionLog(message: string, data?: Record<string, unknown>): void {
+  if (DEBUG_GAMEDAY_REACTIONS) console.log(message, data ?? {});
+}
+
 
 const STAFF_ROLE_RE = /commissioner|co[-\s]?commissioner|commish|league\s*architect|competition\s*council/i;
 const MEMBER_ROLE_RE = /approved\s*member|locker\s*room\s*approved/i;
@@ -97,6 +119,23 @@ function fmtDate(date: Date, tz: TzCode): string {
 }
 function formatAllSixZones(date: Date): string { return TZ_CODES.map((z) => `• **${z}** — ${fmtDate(date, z)}`).join("\n"); }
 function selectedTimeBlock(date: Date, tz: TzCode): string { return `**Selected Time:**\n${fmtDate(date, tz)} ${tz}\n\n**Converted:**\n${formatAllSixZones(date)}`; }
+
+function normalizeTz(value?: string | null): TzCode {
+  const raw = String(value ?? "CST").toUpperCase();
+  return (TZ_CODES as readonly string[]).includes(raw) ? raw as TzCode : "CST";
+}
+function formatScheduleTime(value: string | Date | null | undefined, tz: TzCode = "CST"): string {
+  if (!value) return "Not set";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${fmtDate(date, tz)} ${tz}`;
+}
+function formatScheduleTimeAllZones(value: string | Date | null | undefined): string {
+  if (!value) return "Not set";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return formatAllSixZones(date);
+}
 function parseChosenDate(dayOffset: number, minute: number, tz: TzCode): Date {
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zoneFor(tz), year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
@@ -258,12 +297,287 @@ function h2hEmbed(row: Partial<PanelRow>, state: any, displayLabel?: string): Em
   return e;
 }
 
-async function updatePanel(row: PanelRow, state: any, reason?: string): Promise<void> {
-  await db.execute(sql`update gameday_matchup_panels set state_json = ${JSON.stringify(state)}::jsonb, updated_at = now() where id = ${row.id}`);
+async function latestPendingScheduleState(row: PanelRow): Promise<any | null> {
+  const offer = await oneOf<any>(sql`
+    select *
+    from gameday_schedule_offers
+    where guild_id=${row.guild_id}
+      and season_id=${row.season_id}
+      and week_index=${row.week_index}
+      and matchup_key=${row.matchup_key}
+      and status='pending'
+    order by created_at desc
+    limit 1
+  `).catch(() => null);
+  if (!offer) return null;
+  return {
+    status: "pending",
+    from: offer.proposer_discord_id,
+    to: offer.recipient_discord_id,
+    label: formatScheduleTime(offer.proposed_for, "CST"),
+    converted: formatScheduleTimeAllZones(offer.proposed_for),
+    offerId: Number(offer.id ?? 0),
+  };
+}
+
+async function refreshPanelStateFromDb(row: PanelRow, state: any): Promise<any> {
+  if (row.panel_type !== "h2h") return state;
+  const nextState = { ...state };
+  delete nextState._renderHash;
+
+  const acceptedOffer = await oneOf<any>(sql`
+    select *
+    from gameday_schedule_offers
+    where guild_id=${row.guild_id}
+      and season_id=${row.season_id}
+      and week_index=${row.week_index}
+      and matchup_key=${row.matchup_key}
+      and status='accepted'
+    order by accepted_at desc nulls last, updated_at desc, created_at desc
+    limit 1
+  `).catch(() => null);
+
+  if (acceptedOffer) {
+    nextState.schedule = {
+      status: "accepted",
+      from: acceptedOffer.proposer_discord_id,
+      to: acceptedOffer.recipient_discord_id,
+      label: formatScheduleTime(acceptedOffer.proposed_for, "CST"),
+      converted: formatScheduleTimeAllZones(acceptedOffer.proposed_for),
+      offerId: Number(acceptedOffer.id ?? 0),
+    };
+  } else {
+    const pendingSchedule = await latestPendingScheduleState(row);
+    if (pendingSchedule) {
+      nextState.schedule = pendingSchedule;
+      nextState.lastAction = `<@${pendingSchedule.from}> sent a schedule offer to <@${pendingSchedule.to}>.`;
+    } else {
+      const schedule = row.game_schedule_id
+        ? await oneOf<any>(sql`select scheduled_at, scheduled_tz, status from game_schedules where id=${row.game_schedule_id} limit 1`).catch(() => null)
+        : await oneOf<any>(sql`
+            select scheduled_at, scheduled_tz, status
+            from game_schedules
+            where guild_id=${row.guild_id}
+              and season_id=${row.season_id}
+              and week_index=${row.week_index}
+              and away_discord_id=${row.away_discord_id}
+              and home_discord_id=${row.home_discord_id}
+            limit 1
+          `).catch(() => null);
+
+      if (schedule?.scheduled_at) {
+        nextState.schedule = {
+          status: "accepted",
+          label: formatScheduleTime(schedule.scheduled_at, "CST"),
+          converted: formatScheduleTimeAllZones(schedule.scheduled_at),
+        };
+      } else {
+        nextState.schedule = { status: "none" };
+      }
+    }
+  }
+
+  const requests = await rowsOf<any>(sql`
+    select request_type, requested_by_discord_id, requested_for_discord_id, status, created_at
+    from gameday_commissioner_requests
+    where guild_id=${row.guild_id}
+      and season_id=${row.season_id}
+      and week_index=${row.week_index}
+      and matchup_key=${row.matchup_key}
+      and status in ('pending','approved')
+    order by created_at desc
+    limit 5
+  `).catch(() => []);
+  if (requests.length) {
+    nextState.requests = requests.map((r:any) => `${r.status === "approved" ? "✅" : "⏳"} ${String(r.request_type ?? "request").replace(/_/g," ")} by <@${r.requested_by_discord_id}>`).join("\n");
+  }
+
+  return nextState;
+}
+
+function panelRenderHash(row: PanelRow, state: any, displayLabel?: string): string {
+  const payload = JSON.stringify(h2hEmbed(row, state, displayLabel).toJSON());
+  return createHash("sha1").update(payload).digest("hex");
+}
+
+async function linkPanelToRecLeagueGame(row: PanelRow): Promise<PanelRow> {
+  if (row.rec_game_id) return row;
+  const recGameId = await findRecGameForPanel(row).catch(() => null);
+  if (!recGameId) return row;
+  await db.execute(sql`update gameday_matchup_panels set rec_game_id=${recGameId}, updated_at=now() where id=${row.id}`).catch(() => null);
+  return { ...row, rec_game_id: recGameId };
+}
+
+async function linkPanelToGameSchedule(row: PanelRow): Promise<PanelRow> {
+  if (row.game_schedule_id) return row;
+  const found = await oneOf<{ id: number; matched_by: string }>(sql`
+    select id, 'discord_ids' as matched_by
+    from game_schedules
+    where guild_id=${row.guild_id}
+      and season_id=${row.season_id}
+      and week_index=${row.week_index}
+      and (
+        (away_discord_id=${row.away_discord_id} and home_discord_id=${row.home_discord_id})
+        or
+        (away_discord_id=${row.home_discord_id} and home_discord_id=${row.away_discord_id})
+      )
+    union all
+    select id, 'teams' as matched_by
+    from game_schedules
+    where guild_id=${row.guild_id}
+      and season_id=${row.season_id}
+      and week_index=${row.week_index}
+      and lower(coalesce(away_team_name,'')) in (lower(coalesce(${row.away_team_name},'')), lower(coalesce(${row.home_team_name},'')))
+      and lower(coalesce(home_team_name,'')) in (lower(coalesce(${row.away_team_name},'')), lower(coalesce(${row.home_team_name},'')))
+    limit 1
+  `).catch(() => null);
+
+  if (!found?.id) {
+    if (process.env.DEBUG_GAMEDAY_PANEL_SYNC === "true") {
+      console.log("[gameday-panel-sync] orphan lookup", { panelId: row.id, matchedBy: null, gameScheduleId: null });
+    }
+    return row;
+  }
+
+  await db.execute(sql`update gameday_matchup_panels set game_schedule_id=${found.id}, updated_at=now() where id=${row.id}`);
+  if (process.env.DEBUG_GAMEDAY_PANEL_SYNC === "true") {
+    console.log("[gameday-panel-sync] orphan lookup", { panelId: row.id, matchedBy: found.matched_by, gameScheduleId: found.id });
+  }
+  return { ...row, game_schedule_id: found.id };
+}
+
+async function fetchPanelMessage(row: PanelRow): Promise<Message | null> {
   const client = (globalThis as any).__recDiscordClient;
-  const ch = client?.channels ? await client.channels.fetch(row.channel_id).catch(() => null) : null;
-  const msg = ch?.isTextBased?.() ? await (ch as TextChannel).messages.fetch(row.message_id).catch(() => null) : null;
-  if (msg) await msg.edit({ embeds: [h2hEmbed(row, state, reason)] }).catch(() => null);
+  if (!client?.channels) return null;
+  const tryFetch = async (channelId?: string | null, messageId?: string | null): Promise<Message | null> => {
+    if (!channelId || !messageId) return null;
+    const ch = await client.channels.fetch(channelId).catch(() => null);
+    return ch?.isTextBased?.() ? await (ch as TextChannel).messages.fetch(messageId).catch(() => null) : null;
+  };
+
+  let msg = await tryFetch(row.channel_id, row.message_id);
+  if (msg) return msg;
+
+  const linked = await linkPanelToGameSchedule(await linkPanelToRecLeagueGame(row));
+  if (linked.game_schedule_id) {
+    const schedule = await oneOf<any>(sql`
+      select channel_id, header_message_id, schedule_message_id
+      from game_schedules
+      where id=${linked.game_schedule_id}
+      limit 1
+    `).catch(() => null);
+    msg = await tryFetch(schedule?.channel_id, schedule?.header_message_id);
+    if (msg) return msg;
+    msg = await tryFetch(schedule?.channel_id, schedule?.schedule_message_id);
+    if (msg) return msg;
+  }
+
+  return null;
+}
+
+async function recreatePanelMessage(row: PanelRow, state: any, displayLabel: string): Promise<Message | null> {
+  const client = (globalThis as any).__recDiscordClient;
+  if (!client?.channels || !row.channel_id) return null;
+  const ch = await client.channels.fetch(row.channel_id).catch(() => null);
+  if (!ch?.isTextBased?.()) return null;
+  const msg = await (ch as TextChannel).send({ embeds: [h2hEmbed(row, state, displayLabel)] }).catch(() => null);
+  if (!msg) return null;
+  await db.execute(sql`
+    update gameday_matchup_panels
+    set channel_id=${msg.channelId}, message_id=${msg.id}, updated_at=now()
+    where id=${row.id}
+  `);
+  for (const emoji of PANEL_EMOJIS) await msg.react(emoji).catch(() => null);
+  return msg;
+}
+
+export async function syncOneGamedayPanel(row: PanelRow, reason?: string, force = false): Promise<boolean> {
+  const linkedRow = await linkPanelToGameSchedule(await linkPanelToRecLeagueGame(row));
+  const currentState = safeState(linkedRow);
+  const nextState = await refreshPanelStateFromDb(linkedRow, currentState).catch(() => currentState);
+  const displayLabel = `Season ${linkedRow.season_id} — Week ${linkedRow.week_index + 1}`;
+  const nextHash = panelRenderHash(linkedRow, nextState, displayLabel);
+  if (!force && currentState?._renderHash === nextHash && currentState?.staleMessage !== true) return false;
+
+  let msg = await fetchPanelMessage(linkedRow);
+  if (!msg) msg = await recreatePanelMessage(linkedRow, nextState, displayLabel);
+
+  if (!msg) {
+    if (currentState?.staleMessage !== true || process.env.DEBUG_GAMEDAY_PANEL_SYNC === "true") {
+      console.warn("[gameday-panel-sync] unable to fetch or recreate panel message", {
+        panelId: linkedRow.id,
+        channelId: linkedRow.channel_id,
+        messageId: linkedRow.message_id,
+        gameScheduleId: linkedRow.game_schedule_id,
+      });
+    }
+    await db.execute(sql`
+      update gameday_matchup_panels
+      set state_json=${JSON.stringify({ ...nextState, _renderHash: nextHash, staleMessage: true, lastPanelSyncErrorAt: new Date().toISOString() })}::jsonb,
+          updated_at=now()
+      where id=${linkedRow.id}
+    `);
+    return false;
+  }
+
+  await msg.edit({ embeds: [h2hEmbed(linkedRow, nextState, displayLabel)] }).catch((err:any) =>
+    console.warn("[gameday-panel-sync] failed to edit panel", { panelId: linkedRow.id, error: err?.message ?? String(err) }),
+  );
+  await db.execute(sql`
+    update gameday_matchup_panels
+    set state_json=${JSON.stringify({ ...nextState, _renderHash: nextHash, staleMessage: false })}::jsonb,
+        channel_id=${msg.channelId},
+        message_id=${msg.id},
+        game_schedule_id=${linkedRow.game_schedule_id},
+        updated_at=now()
+    where id=${linkedRow.id}
+  `);
+  return true;
+}
+
+export async function syncActiveGamedayPanels(limit = 200): Promise<{ checked: number; edited: number; failed: number }> {
+  await ensureReactionGamedaySchema();
+  const rows = await rowsOf<PanelRow>(sql`
+    select *
+    from gameday_matchup_panels
+    where panel_type='h2h'
+      and created_at > now() - interval '21 days'
+    order by updated_at asc
+    limit ${limit}
+  `).catch(() => []);
+  let edited = 0, failed = 0;
+  for (const row of rows) {
+    try { if (await syncOneGamedayPanel(row)) edited++; }
+    catch (err:any) { failed++; console.warn("[gameday-panel-sync] panel sync failed", { panelId: row.id, error: err?.message ?? String(err) }); }
+  }
+  return { checked: rows.length, edited, failed };
+}
+
+let activePanelSyncTimer: NodeJS.Timeout | null = null;
+export function startGamedayPanelSyncScheduler(intervalMs = 900_000): void {
+  if (activePanelSyncTimer) return;
+  const run = async () => {
+    const result = await syncActiveGamedayPanels().catch((err:any) => {
+      console.warn("[gameday-panel-sync] scheduler failed", err?.message ?? err);
+      return null;
+    });
+    if (result && (result.edited > 0 || result.failed > 0 || process.env.DEBUG_GAMEDAY_PANEL_SYNC === "true")) {
+      console.log("[gameday-panel-sync]", result);
+    }
+  };
+  void run();
+  setTimeout(run, 60_000);
+  activePanelSyncTimer = setInterval(run, intervalMs);
+}
+
+async function updatePanel(row: PanelRow, state: any, reason?: string): Promise<void> {
+  await db.execute(sql`
+    update gameday_matchup_panels
+    set state_json = ${JSON.stringify(state)}::jsonb,
+        updated_at = now()
+    where id = ${row.id}
+  `);
+  await syncOneGamedayPanel({ ...row, state_json: state }, reason, true);
 }
 
 async function addReactions(msg: Message, emojis: readonly string[]) { for (const e of emojis) await msg.react(e).catch(() => null); }
@@ -330,15 +644,36 @@ function isParticipant(row: PanelRow, userId: string): boolean { return row.away
 function opponent(row: PanelRow, userId: string): string | null { if (row.away_discord_id === userId) return row.home_discord_id; if (row.home_discord_id === userId) return row.away_discord_id; return null; }
 async function dm(user: User, content: string, components?: any[]) { await user.send({ content, components }).catch(() => null); }
 
-async function showSchedulingDm(user: User, row: PanelRow) {
+async function pendingOfferCount(row: PanelRow): Promise<number> {
+  const countRow = await oneOf<{ count: number }>(sql`select count(*)::int as count from gameday_schedule_offers where guild_id=${row.guild_id} and season_id=${row.season_id} and week_index=${row.week_index} and matchup_key=${row.matchup_key} and status='pending'`).catch(() => null);
+  return Number(countRow?.count ?? 0);
+}
+
+async function showSchedulingDm(user: User, row: PanelRow): Promise<boolean> {
+  const pendingCount = await pendingOfferCount(row);
   const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_action:${row.id}`).setPlaceholder("Choose scheduling action…").addOptions([
     new StringSelectMenuOptionBuilder().setLabel("Send New Time").setValue("new"),
-    new StringSelectMenuOptionBuilder().setLabel("View Pending Offers (#)").setDescription("Review offers received, sent, edit, or delete").setValue("pending"),
+    new StringSelectMenuOptionBuilder().setLabel(`View Pending Offers (#${pendingCount})`).setDescription("Review offers received, sent, edit, or delete").setValue("pending"),
     new StringSelectMenuOptionBuilder().setLabel("Reschedule Accepted Time").setValue("reschedule"),
     new StringSelectMenuOptionBuilder().setLabel("Cancel").setValue("cancel"),
   ]);
-  await dm(user, `🕒 **Schedule Your Game**\n\n${formatTeamLine(row.away_discord_id, row.away_team_name)}\nvs\n${formatTeamLine(row.home_discord_id, row.home_team_name)}\n\nWhat do you want to do?`, [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)]);
+  return user
+    .send({
+      content: `🕒 **Schedule Your Game**\n\n${formatTeamLine(row.away_discord_id, row.away_team_name)}\nvs\n${formatTeamLine(row.home_discord_id, row.home_team_name)}\n\nWhat do you want to do?`,
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+    })
+    .then(() => true)
+    .catch((err) => {
+      console.warn("[gameday-reaction] failed to send schedule DM", {
+        panelId: row.id,
+        messageId: row.message_id,
+        userId: user.id,
+        error: err?.message ?? String(err),
+      });
+      return false;
+    });
 }
+
 async function showIssueDm(user: User, row: PanelRow) {
   const menu = new StringSelectMenuBuilder().setCustomId(`rgd_issue:${row.id}`).setPlaceholder("What issue are you reporting?").addOptions([
     new StringSelectMenuOptionBuilder().setLabel("Opponent dashed").setValue("dashed"),
@@ -379,7 +714,22 @@ async function handleParticipantReaction(reaction: MessageReaction, user: User, 
 }
 
 async function removePanelReaction(reaction: MessageReaction, user: User): Promise<void> {
-  await reaction.users.remove(user.id).catch(() => null);
+  await reaction.users.remove(user.id)
+    .then(() => {
+      debugReactionLog("[gameday-reaction] cleared user reaction", {
+        messageId: reaction.message.id,
+        userId: user.id,
+        emoji: reaction.emoji.name ?? "",
+      });
+    })
+    .catch((err) => {
+      console.warn("[gameday-reaction] failed to clear user reaction", {
+        messageId: reaction.message.id,
+        userId: user.id,
+        emoji: reaction.emoji.name ?? "",
+        error: err?.message ?? String(err),
+      });
+    });
 }
 
 export async function handleReactionPanelAdd(reaction: MessageReaction, user: User): Promise<boolean> {
@@ -388,9 +738,13 @@ export async function handleReactionPanelAdd(reaction: MessageReaction, user: Us
   const message = reaction.message;
   const guild = message.guild;
   if (!guild) return false;
-  const row = await panelForMessage(message.id);
-  if (!row) return false;
   const emoji = reaction.emoji.name ?? "";
+  const row = await panelForMessage(message.id);
+  if (!row) {
+    debugReactionLog("[gameday-reaction] panel not found", { messageId: message.id, userId: user.id, emoji });
+    return false;
+  }
+  debugReactionLog("[gameday-reaction] received", { panelId: row.id, messageId: message.id, panelType: row.panel_type, userId: user.id, emoji });
 
   try {
     if (row.panel_type === "commissioner") {
@@ -412,8 +766,15 @@ export async function handleReactionPanelAdd(reaction: MessageReaction, user: Us
       return true;
     }
     if (row.panel_type === "h2h") {
-      if (!isParticipant(row,user.id)) return true;
-      await handleParticipantReaction(reaction,user,row,emoji);
+      const participant = isParticipant(row, user.id);
+      debugReactionLog("[gameday-reaction] h2h participant check", { panelId: row.id, messageId: message.id, userId: user.id, emoji, participant });
+      if (!participant) return true;
+      if (emoji === "🕒") {
+        const sent = await showSchedulingDm(user, row);
+        debugReactionLog("[gameday-reaction] schedule dm result", { panelId: row.id, messageId: message.id, userId: user.id, sent });
+        return true;
+      }
+      await handleParticipantReaction(reaction, user, row, emoji);
       return true;
     }
     return true;
@@ -455,6 +816,12 @@ export async function handleReactionGamedaySelect(interaction: StringSelectMenuI
   if (id.startsWith("rgd_sched_tz:")) { const [, panelId, action, day, win, minute] = id.split(":"); const selectedTz = interaction.values[0]; if (selectedTz === "back") { const tz = await getUserTz(interaction.user.id); const opts = exactTimeOptions(win, Number(day), tz); const menu = new StringSelectMenuBuilder().setCustomId(`rgd_sched_time:${panelId}:${action}:${day}:${win}`).setPlaceholder("Choose exact time…").addOptions(...(opts.length ? opts : [new StringSelectMenuOptionBuilder().setLabel("No remaining times").setValue("none")]), new StringSelectMenuOptionBuilder().setLabel("← Back").setValue("back").setDescription("Return to time window selection.")); await interaction.update({ content:"Choose exact time.", components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] }); return true; } await submitScheduleOffer(interaction, Number(panelId), action, Number(day), Number(minute), selectedTz as TzCode); return true; }
   if (id.startsWith("rgd_issue:")) { const panelId = Number(id.split(":")[1]); const issue = interaction.values[0]; if (issue === "violation") { const modal = new ModalBuilder().setCustomId(`rgd_violation_modal:${panelId}`).setTitle("Report Violation").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("details").setLabel("Describe the violation").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000))); await interaction.showModal(modal); return true; } await submitIssue(interaction, panelId, issue); return true; }
 
+  if (id.startsWith("rgd_offer_action:")) {
+    const panelId = Number(id.split(":")[1]);
+    const offerId = Number(interaction.values[0]);
+    await showOfferActions(interaction, panelId, offerId);
+    return true;
+  }
   if (id.startsWith("rgd_offer_manage:")) { const [, panelId, offerId] = id.split(":"); await manageOfferAction(interaction, Number(panelId), Number(offerId), interaction.values[0]); return true; }
   if (id.startsWith("rgd_fw_for:")) { await submitFw(interaction, Number(id.split(":")[1]), interaction.values[0]); return true; }
   return false;
@@ -468,7 +835,7 @@ async function submitScheduleOffer(interaction: StringSelectMenuInteraction, pan
   const opp = opponent(row, interaction.user.id)!;
   const result = await db.execute(sql`insert into gameday_schedule_offers (guild_id, season_id, week_index, matchup_key, proposer_discord_id, recipient_discord_id, away_discord_id, home_discord_id, away_team_name, home_team_name, proposed_for, proposed_tz, notes, status, offer_kind) values (${row.guild_id}, ${row.season_id}, ${row.week_index}, ${row.matchup_key}, ${interaction.user.id}, ${opp}, ${row.away_discord_id}, ${row.home_discord_id}, ${row.away_team_name}, ${row.home_team_name}, ${proposed.toISOString()}, ${tz}, ${action === "reschedule" ? "Reschedule request" : null}, 'pending', ${action === "reschedule" ? "reschedule" : "schedule"}) returning id`);
   const state = safeState(row); state.schedule = { status:"pending", from:interaction.user.id, to:opp, label, converted: formatAllSixZones(proposed), offerId: Number((result as any).rows?.[0]?.id ?? 0) };
-  state.lastAction = `<@${interaction.user.id}> sent a schedule offer to <@${opp}>.`;
+  state.lastAction = `Most recent schedule offer: <@${interaction.user.id}> proposed ${formatScheduleTime(proposed, "CST")} to <@${opp}>.`;
   await updatePanel(row,state);
   const oppUser = await interaction.client.users.fetch(opp).catch(()=>null);
   if (oppUser) await oppUser.send(`🕒 **Schedule Offer**\n<@${interaction.user.id}> proposed a game time.\n\n${selectedTimeBlock(proposed,tz)}\n\nOpen your pending offers from the matchup panel 🕒 to accept, counter, or reject.`).catch(()=>null);
@@ -483,7 +850,7 @@ async function showPendingOffers(interaction: StringSelectMenuInteraction, panel
   const received = offers.filter((o)=>o.recipient_discord_id === interaction.user.id);
   const sent = offers.filter((o)=>o.proposer_discord_id === interaction.user.id);
   const other = offers.filter((o)=>o.proposer_discord_id !== interaction.user.id && o.recipient_discord_id !== interaction.user.id);
-  const fmt = (o:any) => `${new Date(o.proposed_for).toLocaleString("en-US", { timeZone: "America/Chicago" })} ${o.proposed_tz ?? ""}`;
+  const fmt = (o:any, tz: TzCode = "CST") => formatScheduleTime(o.proposed_for, tz);
   const lines = [
     `**Received (${received.length})**`,
     received.length ? received.map((o,i)=>`${i+1}. From <@${o.proposer_discord_id}> — ${fmt(o)} — offer #${o.id}`).join("\n") : "None",
@@ -503,6 +870,7 @@ ${lines}`.slice(0,1900), components:[new ActionRowBuilder<StringSelectMenuBuilde
 }
 
 async function showOfferActions(interaction: StringSelectMenuInteraction, panelId: number, offerId: number) {
+  await interaction.deferUpdate().catch(()=>null);
   const row = await oneOf<PanelRow>(sql`select * from gameday_matchup_panels where id=${panelId}`); if (!row || !isParticipant(row, interaction.user.id)) return;
   const offer = await oneOf<any>(sql`select * from gameday_schedule_offers where id=${offerId} and status='pending' limit 1`); if (!offer) { await interaction.update({ content:"That offer is no longer pending.", components:[] }).catch(()=>null); return; }
   const isSender = offer.proposer_discord_id === interaction.user.id;
@@ -511,10 +879,10 @@ async function showOfferActions(interaction: StringSelectMenuInteraction, panelI
   if (isReceiver) menu.addOptions(new StringSelectMenuOptionBuilder().setLabel("Accept Offer").setValue("accept"), new StringSelectMenuOptionBuilder().setLabel("Reject Offer").setValue("reject"));
   if (isSender) menu.addOptions(new StringSelectMenuOptionBuilder().setLabel("Edit / Replace Offer").setValue("edit"), new StringSelectMenuOptionBuilder().setLabel("Delete Offer").setValue("delete"));
   menu.addOptions(new StringSelectMenuOptionBuilder().setLabel("Back to Pending Offers").setValue("back"));
-  await interaction.update({ content:`**Offer #${offer.id}**
+  await interaction.editReply({ content:`**Offer #${offer.id}**
 From: <@${offer.proposer_discord_id}>
 To: <@${offer.recipient_discord_id}>
-Time: ${offer.proposed_for} ${offer.proposed_tz ?? ""}`, components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
+Time: ${formatScheduleTime(offer.proposed_for, "CST")}\nAll zones:\n${formatScheduleTimeAllZones(offer.proposed_for)}`, components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)] });
 }
 
 async function manageOfferAction(interaction: StringSelectMenuInteraction, panelId: number, offerId: number, action: string) {
@@ -525,7 +893,7 @@ async function manageOfferAction(interaction: StringSelectMenuInteraction, panel
   if (action === "accept" && offer.recipient_discord_id === interaction.user.id) {
     await db.execute(sql`update gameday_schedule_offers set status='accepted', accepted_at=now(), updated_at=now() where id=${offerId}`);
     await db.execute(sql`update gameday_schedule_offers set status='expired', updated_at=now() where guild_id=${row.guild_id} and season_id=${row.season_id} and week_index=${row.week_index} and matchup_key=${row.matchup_key} and status='pending' and id <> ${offerId}`).catch(()=>null);
-    state.schedule = { status:"accepted", from:offer.proposer_discord_id, to:offer.recipient_discord_id, label:`${offer.proposed_for} ${offer.proposed_tz ?? ""}`, converted: offer.proposed_for };
+    state.schedule = { status:"accepted", from:offer.proposer_discord_id, to:offer.recipient_discord_id, label: formatScheduleTime(offer.proposed_for, "CST"), converted: formatScheduleTimeAllZones(offer.proposed_for) };
     state.lastAction = `<@${interaction.user.id}> accepted schedule offer #${offerId}.`;
     await updatePanel(row,state);
     await interaction.update({ content:`✅ Accepted offer #${offerId}. The matchup panel has been updated.`, components:[] });

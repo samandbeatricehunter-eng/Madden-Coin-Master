@@ -39,6 +39,12 @@ interface LeagueChannels {
   genCh:  string;   // general / results
   txCh:   string;   // transactions
 }
+function requestImportJobId(req: Request): number | null {
+  const raw = String(req.headers["x-rec-import-job-id"] ?? "").trim();
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+}
+
 async function resolveLeagueChannels(eaLeagueId: number): Promise<LeagueChannels> {
   const defaults: LeagueChannels = {
     commCh: COMMISSIONER_CHANNEL_ID,
@@ -226,7 +232,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/schedules", validateKey, asy
     processSchedules(req.body, leagueId, guildId).catch(err => ({ ok: false, message: String(err) })),
     resolveLeagueChannels(leagueId),
   ]);
-  const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, 0, "season", leagueId, guildId)
+  const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, 0, "season", leagueId, guildId, requestImportJobId(req))
     .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
   const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
     .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
@@ -362,7 +368,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
   const doReset   = String(req.query["reset"] ?? "false").toLowerCase() === "true";
   try {
     const count = await syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, true, doReset, guildId);
-    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
+    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId, requestImportJobId(req))
       .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
     const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
       .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
@@ -393,7 +399,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/sche
       syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
       resolveLeagueChannels(leagueId),
     ]);
-    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
+    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId, requestImportJobId(req))
       .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
     const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
       .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));
@@ -504,7 +510,7 @@ router.post("/madden/:leagueKey/:platform/:leagueId/week/:weekType/:weekNum/scor
       syncWeekScoresToSchedule(req.body, weekNum, weekType, leagueId, false, false, guildId),
       resolveLeagueChannels(leagueId),
     ]);
-    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId)
+    const canonical = await syncCanonicalGamesFromSchedulePayload(req.body, weekNum, weekType, leagueId, guildId, requestImportJobId(req))
       .catch(err => ({ upserted: 0, h2h: 0, error: String(err) } as any));
     const backfill = await backfillCanonicalGamesFromLegacy(leagueId, guildId)
       .catch(err => ({ gameSchedules: 0, franchiseSchedules: 0, error: String(err) } as any));

@@ -48,6 +48,29 @@ async function rowsOf<T = any>(q: any): Promise<T[]> {
   return ((result as any).rows ?? result) as T[];
 }
 
+const REVIEW_TZ_CODES = ["EST", "CST", "MST", "PST", "AKST", "HST"] as const;
+type ReviewTzCode = typeof REVIEW_TZ_CODES[number];
+function reviewZoneFor(code: ReviewTzCode): string {
+  return ({ EST: "America/New_York", CST: "America/Chicago", MST: "America/Denver", PST: "America/Los_Angeles", AKST: "America/Anchorage", HST: "Pacific/Honolulu" } as Record<ReviewTzCode,string>)[code];
+}
+function normalizeReviewTz(value?: string | null): ReviewTzCode {
+  const raw = String(value ?? "CST").toUpperCase();
+  return (REVIEW_TZ_CODES as readonly string[]).includes(raw) ? raw as ReviewTzCode : "CST";
+}
+function formatReviewTime(value: string | Date | null | undefined, tz: ReviewTzCode = "CST"): string {
+  if (!value) return "Not set";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${new Intl.DateTimeFormat("en-US", { timeZone: reviewZoneFor(tz), weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(date)} ${tz}`;
+}
+function timezoneButtons(kind: ReviewKind, page: number, activeTz: ReviewTzCode): ActionRowBuilder<ButtonBuilder> {
+  const row = new ActionRowBuilder<ButtonBuilder>();
+  for (const tz of REVIEW_TZ_CODES) {
+    row.addComponents(new ButtonBuilder().setCustomId(`gdrev_tz:${kind}:${page}:${tz}`).setLabel(tz).setStyle(tz === activeTz ? ButtonStyle.Primary : ButtonStyle.Secondary));
+  }
+  return row;
+}
+
 async function respondReview(interaction: ButtonInteraction | StringSelectMenuInteraction, payload: any): Promise<void> {
   const safePayload = { ...payload };
   if ((interaction as any).deferred || (interaction as any).replied) {
@@ -276,7 +299,7 @@ export async function renderCommissionerGamedayReview(interaction: ButtonInterac
   }
 }
 
-export async function renderReviewCategory(interaction: StringSelectMenuInteraction | ButtonInteraction, kind: ReviewKind, page = 0) {
+export async function renderReviewCategory(interaction: StringSelectMenuInteraction | ButtonInteraction, kind: ReviewKind, page = 0, tz: ReviewTzCode = "CST") {
   const guildId = interaction.guildId!;
   const pageSize = 5;
   const offset = page * pageSize;
@@ -421,7 +444,7 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const desc = rows.length
-    ? rows.map((r, i) => formatReviewRow(kind, r, offset + i + 1)).join("\n\n").slice(0, 3900)
+    ? rows.map((r, i) => formatReviewRow(kind, r, offset + i + 1, tz)).join("\n\n").slice(0, 3900)
     : "_No items in this category._";
 
   const embed = new EmbedBuilder()
@@ -439,16 +462,20 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
       .addOptions(rows.slice(0, 25).map((r) =>
         new StringSelectMenuOptionBuilder()
           .setLabel((kind === "accepted_schedule" ? `Week ${Number(r.week_index ?? 0) + 1} · ${r.away_team_name ?? "Away"} @ ${r.home_team_name ?? "Home"}` : `#${r.id} · ${kindLabel(kind)}`).slice(0, 100))
-          .setDescription((kind === "accepted_schedule" ? `${r.status ?? "scheduled"} · ${r.scheduled_at ? new Date(r.scheduled_at).toLocaleString() : "No time"}` : (r.reason ?? r.dispute_reason ?? r.status ?? "Review item")).slice(0, 100))
+          .setDescription((kind === "accepted_schedule" ? `${r.status ?? "scheduled"} · ${formatReviewTime(r.scheduled_at, tz)}` : (r.reason ?? r.dispute_reason ?? r.status ?? "Review item")).slice(0, 100))
           .setValue(String(r.id)),
       ));
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select));
   }
 
+  if (["accepted_schedule", "schedule_attempts"].includes(kind)) {
+    components.push(timezoneButtons(kind, page, tz));
+  }
+
   components.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`gdrev_page:${kind}:${page - 1}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
-      new ButtonBuilder().setCustomId(`gdrev_page:${kind}:${page + 1}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+      new ButtonBuilder().setCustomId(`gdrev_page:${kind}:${page - 1}:${tz}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+      new ButtonBuilder().setCustomId(`gdrev_page:${kind}:${page + 1}:${tz}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
       new ButtonBuilder().setCustomId("gdrev_home").setLabel("← Review Home").setStyle(ButtonStyle.Secondary),
     ),
   );
@@ -456,10 +483,10 @@ export async function renderReviewCategory(interaction: StringSelectMenuInteract
   await respondReview(interaction, { embeds: [embed], components });
 }
 
-function formatReviewRow(kind: string, r: any, n: number): string {
+function formatReviewRow(kind: string, r: any, n: number, tz: ReviewTzCode = "CST"): string {
   if (kind === "accepted_schedule") {
     const ts = r.scheduled_at ? Math.floor(new Date(r.scheduled_at).getTime() / 1000) : null;
-    const time = ts ? `<t:${ts}:f> (<t:${ts}:R>)` : `${r.scheduled_at ?? "Unknown"} ${r.scheduled_tz ?? ""}`;
+    const time = r.scheduled_at ? `${formatReviewTime(r.scheduled_at, tz)} · <t:${ts}:R>` : "Unknown";
     const channel = r.channel_id ? `
 Channel: <#${r.channel_id}>` : "";
     return `**${n}. Week ${Number(r.week_index ?? 0) + 1} — ${r.status}**
@@ -470,7 +497,7 @@ Accepted Time: **${time}**${channel}`;
     return `**${n}. Score Dispute #${r.id}**\n<@${r.away_discord_id}> @ <@${r.home_discord_id}>\nScore: **${r.away_team_name} ${r.away_score} — ${r.home_team_name} ${r.home_score}**\nReason: ${r.dispute_reason ?? "_No reason_"}`;
   }
   if (kind === "schedule_attempts") {
-    return `**${n}. Offer #${r.id} — ${r.status}**\n<@${r.away_discord_id}> @ <@${r.home_discord_id}>\nProposed: **${r.proposed_for} ${r.proposed_tz ?? ""}**\nFrom <@${r.proposer_discord_id}> to <@${r.recipient_discord_id}>`;
+    return `**${n}. Offer #${r.id} — ${r.status}**\n<@${r.away_discord_id}> @ <@${r.home_discord_id}>\nProposed: **${formatReviewTime(r.proposed_for, tz)}**\nFrom <@${r.proposer_discord_id}> to <@${r.recipient_discord_id}>`;
   }
   if (kind === "payout_history") {
     return `**${n}. ${String(r.type).toUpperCase()} payout #${r.id}**\n<@${r.discord_id}> — **${r.amount} coins**\nWeek: ${r.week} · Status: ${r.status}`;
@@ -522,7 +549,7 @@ export async function renderReviewDetail(interaction: StringSelectMenuInteractio
   const embed = new EmbedBuilder()
     .setColor(Colors.Gold)
     .setTitle(`🎮 Review ${kindLabel(kind)} #${id}`)
-    .setDescription(formatReviewRow(kind, item, 1));
+    .setDescription(formatReviewRow(kind, item, 1, "CST"));
 
   const row = new ActionRowBuilder<ButtonBuilder>();
 
@@ -721,7 +748,7 @@ export async function handleCommissionerGamedayReviewInteraction(interaction: Bu
 
   if (interaction.isStringSelectMenu()) {
     if (interaction.customId === "gdrev_cat") {
-      await renderReviewCategory(interaction, interaction.values[0] as ReviewKind, 0);
+      await renderReviewCategory(interaction, interaction.values[0] as ReviewKind, 0, "CST");
       return true;
     }
     if (interaction.customId.startsWith("gdrev_item:")) {
@@ -736,9 +763,14 @@ export async function handleCommissionerGamedayReviewInteraction(interaction: Bu
       await renderCommissionerGamedayReview(interaction);
       return true;
     }
+    if (interaction.customId.startsWith("gdrev_tz:")) {
+      const [, , kind, pageRaw, tzRaw] = interaction.customId.split(":");
+      await renderReviewCategory(interaction, kind as ReviewKind, Math.max(0, Number(pageRaw ?? 0)), normalizeReviewTz(tzRaw));
+      return true;
+    }
     if (interaction.customId.startsWith("gdrev_page:")) {
-      const [, , kind, pageRaw] = interaction.customId.split(":");
-      await renderReviewCategory(interaction, kind as ReviewKind, Math.max(0, Number(pageRaw ?? 0)));
+      const [, , kind, pageRaw, tzRaw] = interaction.customId.split(":");
+      await renderReviewCategory(interaction, kind as ReviewKind, Math.max(0, Number(pageRaw ?? 0)), normalizeReviewTz(tzRaw));
       return true;
     }
     if (interaction.customId.startsWith("gdrev_resolve:")) {

@@ -553,6 +553,10 @@ export type WeeklyExportData = {
   schedules:  unknown;
 };
 
+export type WeeklyExportDataPartial = WeeklyExportData & {
+  errors: Record<string, string>;
+};
+
 // Fetch a single export endpoint, returning null on 404/400 so special-teams
 // endpoints that don't exist for a given EA version degrade gracefully.
 async function fetchExportDataSoft(
@@ -691,32 +695,61 @@ export async function probeMcaExportEndpoints(
 }
 
 
+
+function formatFetchError(err: unknown): string {
+  const anyErr = err as any;
+  const status = anyErr?.response?.status ?? anyErr?.status ?? null;
+  const code = anyErr?.errorname ?? anyErr?.name ?? null;
+  const msg = anyErr?.userMessage ?? anyErr?.message ?? String(err);
+  return [code, status ? `HTTP ${status}` : null, msg].filter(Boolean).join(" — ").slice(0, 500);
+}
+
+async function fetchExportDataStage(
+  token: TokenInfo,
+  session: BlazeSession,
+  exportType: string,
+  body: Record<string, unknown>,
+  required: boolean,
+  errors: Record<string, string>,
+  label: string,
+): Promise<unknown> {
+  try {
+    return required
+      ? await fetchExportData(token, session, exportType, body)
+      : await fetchExportDataSoft(token, session, exportType, body);
+  } catch (err) {
+    errors[label] = formatFetchError(err);
+    console.warn(`[ea-client] ${exportType} failed for ${label}: ${errors[label]}`);
+    return null;
+  }
+}
 export async function fetchWeeklyStats(
   token:       TokenInfo,
   eaLeagueId:  number,
   weekIndex:   number,
   stageIndex:  number,
   existingSession?: BlazeSession,
-): Promise<WeeklyExportData> {
+): Promise<WeeklyExportDataPartial> {
   const refreshed = await refreshTokenIfNeeded(token);
   const session   = existingSession ?? await createBlazeSession(refreshed);
   const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
+  const errors: Record<string, string> = {};
 
   const [passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules] = await Promise.all([
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.passing!,        body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.rushing!,        body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.receiving!,      body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.defense!,        body),
-    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.kicking!,    body),
-    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.punting!,    body),
-    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.kickReturn!, body),
-    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.puntReturn!, body),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.teamStats!,      body),
-    fetchExportDataSoft(refreshed, session, EXPORT_ENDPOINTS.standings!,  { leagueId: eaLeagueId }),
-    fetchExportData(refreshed, session, EXPORT_ENDPOINTS.schedules!,      body),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.passing!,        body, true,  errors, "passing"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.rushing!,        body, true,  errors, "rushing"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.receiving!,      body, true,  errors, "receiving"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.defense!,        body, true,  errors, "defense"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.kicking!,        body, false, errors, "kicking"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.punting!,        body, false, errors, "punting"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.kickReturn!,     body, false, errors, "kickReturn"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.puntReturn!,     body, false, errors, "puntReturn"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.teamStats!,      body, true,  errors, "teamStats"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.standings!,      { leagueId: eaLeagueId }, false, errors, "standings"),
+    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.schedules!,      body, false, errors, "schedules"),
   ]);
 
-  return { passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules };
+  return { passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules, errors };
 }
 
 // ── Awards export (season-level, no weekIndex needed) ─────────────────────────

@@ -1,0 +1,12 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.git/
+*.zip
+*.tar
+*.tgz
+exports/
+attached_assets/
+artifacts/mockup-sandbox/
+.DS_Store

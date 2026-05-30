@@ -81,7 +81,7 @@ const ROOT_NODES: MenuNode[] = [
   {
     path: "coaches_office", emoji: "🏈",
     label: "Coaches Office",
-    description: "Rosters, management, schedule, press, cap tools",
+    description: "Rosters, schedule, store, trainers, press, rivalries, cap tools",
     visible: MCA_VISIBLE,
     kind: "branch",
     children: [
@@ -99,10 +99,52 @@ const ROOT_NODES: MenuNode[] = [
       {
         path: "coaches_office.management", emoji: "🧠",
         label: "Management",
-        description: "Schedule, press, rivalries, cap, potential FAs",
+        description: "Schedule, store, trainers, press, rivalries, cap, potential FAs",
         kind: "branch",
         children: [
           { path: "coaches_office.management.schedule", emoji: "📅", label: "Schedule", description: "View the full season schedule", kind: "action", action: "ac_schedule" },
+          {
+            path: "coaches_office.management.store", emoji: "🛒",
+            label: "Store",
+            description: "Legends, custom players, upgrades, training packages, and contracts",
+            visible: ECO_VISIBLE,
+            kind: "branch",
+            children: [
+              {
+                path: "coaches_office.management.store.players", emoji: "⭐",
+                label: "Players",
+                description: "Purchase legends or build custom players",
+                kind: "branch",
+                children: [
+                  { path: "coaches_office.management.store.players.legends", emoji: "⭐", label: "Legends", description: "Purchase legends", kind: "action", action: "ac_legends" },
+                  { path: "coaches_office.management.store.players.custom", emoji: "🧬", label: "Custom Players", description: "Build custom players", kind: "action", action: "ac_custom_players" },
+                ],
+              },
+              {
+                path: "coaches_office.management.store.upgrades", emoji: "⬆️",
+                label: "Upgrades",
+                description: "Dev trait upgrades and age resets",
+                kind: "branch",
+                children: [
+                  { path: "coaches_office.management.store.upgrades.dev", emoji: "⬆️", label: "Dev Trait Upgrade", description: "Upgrade a player's dev trait", kind: "action", action: "ac_buy_devup" },
+                  { path: "coaches_office.management.store.upgrades.age", emoji: "⏳", label: "Age Reset", description: "Reset a player's age", kind: "action", action: "ac_buy_agereset" },
+                ],
+              },
+              { path: "coaches_office.management.store.training", emoji: "📈", label: "Training Packages", description: "Buy one-time training packages", kind: "action", action: "ac_buy_training" },
+              {
+                path: "coaches_office.management.store.contracts", emoji: "📄",
+                label: "Contracts",
+                description: "Contract extensions, salary reductions, and bonus reductions",
+                kind: "branch",
+                children: [
+                  { path: "coaches_office.management.store.contracts.extension", emoji: "📄", label: "Contract Extension", description: "Extend a player's contract", kind: "action", action: "ac_buy_contract_ext" },
+                  { path: "coaches_office.management.store.contracts.salary", emoji: "💸", label: "Salary Reduction", description: "Reduce a player's salary", kind: "action", action: "ac_buy_salary_red" },
+                  { path: "coaches_office.management.store.contracts.bonus", emoji: "💰", label: "Bonus Reduction", description: "Reduce a player's bonus", kind: "action", action: "ac_buy_bonus_red" },
+                ],
+              },
+            ],
+          },
+          { path: "coaches_office.management.trainers", emoji: "🏋️", label: "Hire/Manage Trainers", description: "Hire positional trainers or manage active trainer contracts, focus, and firing", kind: "action", action: "ac_my_trainers" },
           { path: "coaches_office.management.press", emoji: "🎙️", label: "Call Press Conference", description: "Answer interview questions and earn coins", kind: "action", action: "ac_press_open" },
           { path: "coaches_office.management.rivalries", emoji: "⚔️", label: "Rivalries", description: "View your top H2H rivalries", kind: "action", action: "ac_rivalries" },
           { path: "coaches_office.management.cap", emoji: "💼", label: "Cap Manager", description: "Open cap management tools", kind: "action", action: "ac_cap_manager" },
@@ -111,62 +153,7 @@ const ROOT_NODES: MenuNode[] = [
       },
     ],
   },
-
-  {
-    path: "store", emoji: "🛒",
-    label: "Store",
-    description: "Players, upgrades, training, contracts",
-    visible: ECO_VISIBLE,
-    kind: "branch",
-    children: [
-      {
-        path: "store.players", emoji: "🏆",
-        label: "Players",
-        description: "Legends and custom players",
-        kind: "branch",
-        children: [
-          { path: "store.players.legends", emoji: "🏆", label: "Legends", description: "Purchase available legends", visible: (c) => ECO_VISIBLE(c) && !!c.settings.legendsEnabled, kind: "action", action: "ac_buy_legend" },
-          { path: "store.players.customs", emoji: "🎨", label: "Custom Players", description: "Create a custom player", visible: (c) => ECO_VISIBLE(c) && !!c.settings.customSuperstarsEnabled, kind: "action", action: "ac_buy_custom" },
-        ],
-      },
-      {
-        path: "store.upgrades", emoji: "📈",
-        label: "Upgrades",
-        description: "Dev trait and age reset upgrades",
-        kind: "branch",
-        children: [
-          { path: "store.upgrades.dev", emoji: "📈", label: "Dev Trait Upgrade", description: "Upgrade a player's dev trait", visible: (c) => ECO_VISIBLE(c) && !!c.settings.devUpgradesEnabled, kind: "action", action: "ac_buy_devup" },
-          { path: "store.upgrades.age", emoji: "🔄", label: "Age Reset", description: "Reset a player's age", visible: (c) => ECO_VISIBLE(c) && !!c.settings.ageResetsEnabled, kind: "action", action: "ac_buy_agereset" },
-        ],
-      },
-      {
-        path: "store.training", emoji: "🎓",
-        label: "Training",
-        description: "Training packages and positional trainers",
-        kind: "branch",
-        children: [
-          { path: "store.training.packages", emoji: "🎓", label: "Training Packages", description: "Buy Bronze/Silver/Gold attribute boosts", visible: ECO_VISIBLE, kind: "action", action: "ac_buy_training" },
-          { path: "store.training.hire", emoji: "🏋️", label: "Hire Positional Trainer", description: "Hire a weekly trainer for one player", visible: ECO_VISIBLE, kind: "action", action: "ac_hire_trainer" },
-          { path: "store.training.mine", emoji: "📋", label: "My Trainers", description: "View active trainers and recent rolls", visible: ECO_VISIBLE, kind: "action", action: "ac_my_trainers" },
-        ],
-      },
-      {
-        path: "store.contracts", emoji: "📋",
-        label: "Contracts",
-        description: "Extensions, salary reductions, bonus reductions",
-        visible: ECO_VISIBLE,
-        kind: "branch",
-        children: [
-          { path: "store.contracts.extend", emoji: "📋", label: "Contract Extension", description: "Extend a player's contract", visible: (c) => ECO_VISIBLE(c) && !!(c.settings.contractExtensionsEnabled ?? false), kind: "action", action: "ac_buy_contract_ext" },
-          { path: "store.contracts.salary", emoji: "💵", label: "Salary Reduction", description: "Reduce a player's salary", visible: (c) => ECO_VISIBLE(c) && !!(c.settings.salaryReductionsEnabled ?? false), kind: "action", action: "ac_buy_salary_red" },
-          { path: "store.contracts.bonus", emoji: "🎁", label: "Bonus Reduction", description: "Reduce a player's signing bonus", visible: (c) => ECO_VISIBLE(c) && !!(c.settings.bonusReductionsEnabled ?? false), kind: "action", action: "ac_buy_bonus_red" },
-        ],
-      },
-    ],
-  },
-
-  {
-    path: "wallet", emoji: "🏦",
+  { path: "wallet", emoji: "🏦",
     label: "Wallet",
     description: "Balances, wagers, transfers, transactions, purchases",
     visible: ECO_VISIBLE,
@@ -188,6 +175,7 @@ const ROOT_NODES: MenuNode[] = [
     kind: "branch",
     children: [
       { path: "league_center.standings", emoji: "📈", label: "Standings", description: "Current league standings", kind: "action", action: "ac_standings" },
+      { path: "league_center.sos", emoji: "🧱", label: "Strength of Schedule", description: "H2H opponent strength; CPU games excluded", kind: "action", action: "ac_strength_of_schedule" },
       {
         path: "league_center.power_rankings", emoji: "🥇",
         label: "Power Rankings",
@@ -199,6 +187,7 @@ const ROOT_NODES: MenuNode[] = [
           { path: "league_center.power_rankings.global", emoji: "🌐", label: "Global PR", description: "Global cross-server power rankings", kind: "action", action: "ac_globalpr" },
         ],
       },
+      { path: "league_center.competitive_rating", emoji: "🏆", label: "Competitive Rating", description: "Global H2H rating ranked inside this league", kind: "action", action: "ac_competitive_rating" },
       {
         path: "league_center.stats", emoji: "📊",
         label: "Stats",

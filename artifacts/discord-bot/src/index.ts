@@ -1,4 +1,4 @@
-import { Client, Collection, GatewayIntentBits } from "discord.js";
+import { Client, Collection, GatewayIntentBits, Partials } from "discord.js";
 import { createServer } from "http";
 import { getOrCreateActiveSeason, normalizeDefensivePositions, PRIMARY_GUILD_ID } from "./lib/db/db-helpers.js";
 
@@ -19,6 +19,7 @@ import { startSavingsInterestScheduler } from "./lib/scheduling/savings-interest
 import { startGameReminderScheduler }    from "./lib/scheduling/game-reminders.js";
 import { processGamedayReminderTick } from "./lib/gameday/gameday-reminders.js";
 import { startGamedayReconciliationScheduler } from "./lib/gameday/reconcile-imported-results.js";
+import { handleReactionPanelAdd, shouldHandleGamedayReaction, startGamedayPanelSyncScheduler } from "./lib/gameday/reaction-panels/service.js";
 
 // ── Global crash protection ────────────────────────────────────────────────────
 process.on("unhandledRejection", (reason) => {
@@ -44,6 +45,7 @@ if (!isProduction && !devBotEnabled) {
   }).listen(statusPort, () => console.log(`✅ Status server on :${statusPort} (standby — not connected to Discord)`));
 } else {
   const client = new Client({
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
@@ -70,6 +72,43 @@ if (!isProduction && !devBotEnabled) {
       client.on(event.name, (...args) => (event as any).execute(...args));
     }
   }
+
+  client.on("raw", async (packet: any) => {
+    if (packet?.t !== "MESSAGE_REACTION_ADD") return;
+    const data = packet.d;
+    const emojiName = data?.emoji?.name ?? "";
+    if (!data?.message_id || !data?.user_id || !shouldHandleGamedayReaction(data.message_id, data.user_id, emojiName)) return;
+    if (process.env.DEBUG_GAMEDAY_REACTIONS === "true" || process.env.DEBUG_GAMEDAY_REACTIONS === "1") {
+      console.log("[discord-raw] MESSAGE_REACTION_ADD", {
+        guildId: data?.guild_id ?? null,
+        channelId: data?.channel_id ?? null,
+        messageId: data?.message_id ?? null,
+        userId: data?.user_id ?? null,
+        emoji: emojiName,
+      });
+    }
+
+    try {
+      if (!data?.channel_id || !data?.message_id || !data?.user_id) return;
+      const channel = await client.channels.fetch(data.channel_id).catch(() => null);
+      if (!channel?.isTextBased?.()) return;
+      const message = await (channel as any).messages.fetch(data.message_id).catch(() => null);
+      if (!message) return;
+      const user = await client.users.fetch(data.user_id).catch(() => null);
+      if (!user || user.bot) return;
+      const reaction = message.reactions.cache.find((r: any) => (r.emoji?.name ?? "") === emojiName)
+        ?? await message.reactions.resolve(emojiName)?.fetch().catch(() => null);
+      if (!reaction) {
+        if (process.env.DEBUG_GAMEDAY_REACTIONS === "true" || process.env.DEBUG_GAMEDAY_REACTIONS === "1") {
+          console.log("[discord-raw] reaction object not found", { messageId: data.message_id, userId: data.user_id, emoji: emojiName });
+        }
+        return;
+      }
+      await handleReactionPanelAdd(reaction as any, user as any).catch((err) => console.error("[discord-raw] reaction bridge failed:", err));
+    } catch (err: any) {
+      console.error("[discord-raw] MESSAGE_REACTION_ADD bridge error:", err?.message ?? err);
+    }
+  });
 
   createServer((_, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });

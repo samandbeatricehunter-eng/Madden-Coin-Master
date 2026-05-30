@@ -32,7 +32,10 @@ import { getCommOfficeCounts, getGotwUnvotedCount, getGotyStatus } from "./notif
 const COMMISSIONER_ROLE_NAME = "Commissioner";
 
 async function loadContext(interaction: ButtonInteraction | StringSelectMenuInteraction): Promise<MenuCtx> {
-  const gid = interaction.guildId!;
+  if (!interaction.guildId || !interaction.guild) {
+    throw new Error("Missing guild context for loadContext");
+  }
+  const gid = interaction.guildId;
   const uid = interaction.user.id;
   const [settings, season, member, dbAdmin] = await Promise.all([
     getServerSettings(gid),
@@ -68,6 +71,10 @@ async function loadContext(interaction: ButtonInteraction | StringSelectMenuInte
 
 /** Returns true if the interaction was handled. */
 export async function handleMenuSelect(interaction: StringSelectMenuInteraction): Promise<boolean> {
+  if (!interaction.guildId || !interaction.guild) {
+    await interaction.reply({ content: "This menu can only be used inside a server.", ephemeral: true }).catch(() => null);
+    return true;
+  }
   const id = interaction.customId;
   if (id !== "menu_cat" && id !== "menu_admin_cat" && id !== "menu_unlinked_cat") return false;
 
@@ -81,6 +88,18 @@ export async function handleMenuSelect(interaction: StringSelectMenuInteraction)
     const node = findNode(value);
     if (node?.kind === "action") {
       const action = node.action;
+
+      if (action === "ac_competitive_rating") {
+        const { renderCompetitiveRating } = await import("../competitive/competitive-ratings.js");
+        await renderCompetitiveRating(interaction as any, 0);
+        return true;
+      }
+
+      if (action === "ac_strength_of_schedule") {
+        const { renderStrengthOfSchedule } = await import("../competitive/competitive-ratings.js");
+        await renderStrengthOfSchedule(interaction as any, 0);
+        return true;
+      }
 
       if (action === "ac_active_streams") {
         const { renderActiveStreams } = await import("../media/media-room.js");

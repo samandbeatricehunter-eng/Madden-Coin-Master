@@ -8272,7 +8272,7 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
     ));
   const activeTrainerCount = activeTrainerRows.length;
   const ACTIVE_TRAINER_CAP = 2;
-  if (activeTrainerCount >= ACTIVE_TRAINER_CAP) {
+  if (false) {
     await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(Colors.Red).setTitle("🏋️ Hire Positional Trainer")
         .setDescription(`❌ You already have **${ACTIVE_TRAINER_CAP} active trainers**. You can hire another trainer after one of your current trainer contracts expires.`)],
@@ -8312,7 +8312,7 @@ async function handleHireTrainerStart(interaction: ButtonInteraction, sess: Acti
         "Cooldown reduces the hit chance for **2 weeks** after each successful roll.",
         `Per-player season caps: **Speed +3**, **Strength/COD/Accel/Agility +4** (combined with Training Packages).`,
         "",
-        `**Your balance:** ${user.balance.toLocaleString()} coins · **Active trainers:** ${activeTrainerCount}/${ACTIVE_TRAINER_CAP} · **Regular-season weeks left:** ${weeksLeft}`,
+        `**Your balance:** ${user.balance.toLocaleString()} coins · **Active trainers:** ${activeTrainerCount} · **Regular-season weeks left:** ${weeksLeft}`,
       ].join("\n"))],
     components: [row, cancelRow()],
   });
@@ -8623,7 +8623,25 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
     gid,
   );
 
-  await db.insert(positionalTrainersTable).values({
+  const existingTrainerForPlayer = await rowsOf<any>(sql`
+      select id
+      from positional_trainers
+      where guild_id=${interaction.guildId}
+        and owner_discord_id=${interaction.user.id}
+        and player_id=${sess.trainerPlayerId}
+        and status='active'
+      limit 1
+    `);
+    if (existingTrainerForPlayer.length) {
+      await interaction.update({
+        content: "❌ You already have an active trainer assigned to this player. Fire or let that trainer expire before assigning another trainer to the same player.",
+        embeds: [],
+        components: [backToHubRow()],
+      }).catch(() => null);
+      return;
+    }
+
+    await db.insert(positionalTrainersTable).values({
     guildId:        gid,
     ownerDiscordId: interaction.user.id,
     seasonId:       season.id,
@@ -8650,15 +8668,26 @@ async function handleHireTrainerExecute(interaction: ButtonInteraction, sess: Ac
       .setDescription(
         `**${TRAINER_TIERS[sess.trainerTier].label}** trainer hired for **${sess.trainerPlayerName}** (${sess.trainerPlayerPos}) — ${sess.trainerWeeks} weeks, **${q.total.toLocaleString()} coins** deducted.\n\n` +
         `The first roll lands on the next **Advance Week**. You'll be DM'd with each tick's result.\n\n` +
-        `Check progress any time under **My Trainers**.`,
+        `Check progress any time under **Hire/Manage Trainers**.`,
       )],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("📋 My Trainers").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("ac_my_trainers").setLabel("🏋️ Hire/Manage Trainers").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
       ),
     ],
   });
+}
+
+
+function trainerHubRows(hasActiveTrainers: boolean): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Trainer").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ac_trainer_manage").setLabel("Manage Trainer").setStyle(ButtonStyle.Secondary).setDisabled(!hasActiveTrainers),
+      new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
 }
 
 async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSession) {
@@ -8676,14 +8705,9 @@ async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSe
 
   if (trainers.length === 0) {
     await interaction.update({
-      embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
-        .setDescription("You have no active trainers. Hire one from **Hire Positional Trainer** in the Coaches Office.")],
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Trainer").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back").setStyle(ButtonStyle.Secondary),
-        ),
-      ],
+      embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("🏋️ Hire/Manage Trainers")
+        .setDescription("You have no active trainers yet. Use **Hire Trainer** to hire a positional trainer. **Manage Trainer** becomes available once you have at least one active trainer.")],
+      components: trainerHubRows(false),
     });
     return;
   }
@@ -8706,13 +8730,8 @@ async function handleMyTrainers(interaction: ButtonInteraction, _sess: ActionsSe
   }
 
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("📋 My Trainers")
+    embeds: [new EmbedBuilder().setColor(0x8b5cf6).setTitle("🏋️ Hire/Manage Trainers")
       .setDescription(sections.join("\n\n").slice(0, 4000))],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId("ac_hire_trainer").setLabel("🏋️ Hire Another").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("ac_hub").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
-      ),
-    ],
+    components: trainerHubRows(true),
   });
 }
