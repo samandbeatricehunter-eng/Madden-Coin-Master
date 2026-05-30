@@ -70,7 +70,6 @@ import {
   loadEAConnection,
   createBlazeSession,
   fetchWeeklyStats,
-  fetchNewsData,
   fetchLeagueTeamsAndRosters,
   fetchAllWeekSchedules,
   updateStoredToken,
@@ -1520,8 +1519,6 @@ export async function runWeekImport(ctx: {
     ["defense",    "defense"],
     ["kicking",    "kicking"],
     ["punting",    "punting"],
-    ["kickReturn", "kickreturn"],
-    ["puntReturn", "puntreturn"],
   ] as const) {
     const payload = stats[statType as keyof typeof stats];
     if (payload == null) { results.push({ name: statType, ok: true, status: 0, skipped: true }); continue; }
@@ -1576,13 +1573,6 @@ export async function runWeekImport(ctx: {
     results.push({ name: "GOTW schedule repair", ok: false, status: 0 });
   }
 
-  try {
-    const newsData = await fetchNewsData(token, eaLeagueId, blazeSession);
-    if (newsData != null) {
-      const newsRes = await postToApi(`${leagueBase}/news${guildQs}`, newsData, importJobId);
-      results.push({ name: "in-game news", ...newsRes });
-    }
-  } catch { /* non-fatal */ }
 
   // ── Schedule sync ─────────────────────────────────────────────────────────────
   // Import now syncs only the current and upcoming week by default.

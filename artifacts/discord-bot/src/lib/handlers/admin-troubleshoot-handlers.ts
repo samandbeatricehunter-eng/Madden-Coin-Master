@@ -44,6 +44,7 @@ import {
 } from "../franchise/playoff-seeding.js";
 import { getArticleStandings } from "../franchise/gcs-fallback.js";
 import { runScheduleOnlyImport, runMissingDataDiagnostics } from "./league-data-handlers.js";
+import { loadEAConnection, probeMcaExportEndpoints, refreshTokenIfNeeded, updateStoredToken } from "../ea/ea-client.js";
 import { getMilestoneTiers } from "../economy/payout-config.js";
 import { ensureScheduleRow, buildHeaderEmbed, buildHeaderRow } from "./game-scheduling-handlers.js";
 import { nextAdvanceDeadline } from "../discord/timezones.js";
@@ -99,7 +100,10 @@ export function buildTroubleshootEmbed(): EmbedBuilder {
       "Finds every game channel for the active season that is missing its pinned scheduling " +
       "header (Schedule Game / Fair Sim / Force Win buttons). Also corrects channel " +
       "permissions so only the two players, the Commissioner role, and bot-admins can see " +
-      "each channel. Safe to run on channels that already exist — nothing is deleted.",
+      "each channel. Safe to run on channels that already exist — nothing is deleted.\n\n" +
+      "**🧪 Probe Additional EA Endpoints**\n" +
+      "Admin-only EA diagnostic for optional non-production endpoints: kick returns, punt returns, " +
+      "awards, news, draft picks, injuries, depth charts, and transactions. This never runs during normal imports.",
     )
     .setFooter({ text: "All operations are scoped to this server only" })
     .setTimestamp();
@@ -122,6 +126,7 @@ export function buildTroubleshootRows(): ActionRowBuilder<ButtonBuilder>[] {
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ts_repost_sched_headers").setLabel("📌 Re-post Scheduling Headers").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ts_probe_ea_extra").setLabel("🧪 Probe EA Endpoints").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_back").setLabel("← Back to Hub").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ao_hub_close").setLabel("✖ Close").setStyle(ButtonStyle.Danger),
   );
@@ -1053,6 +1058,103 @@ export async function handleTsSchedSel(interaction: StringSelectMenuInteraction)
   });
 }
 
+
+function troubleshootWeekStringToNum(raw: string | null | undefined): number {
+  const v = String(raw ?? "1").trim().toLowerCase();
+  if (/^\d+$/.test(v)) return Math.max(1, Number(v));
+  if (v.includes("wild")) return 19;
+  if (v.includes("div")) return 20;
+  if (v.includes("conf")) return 21;
+  if (v.includes("super")) return 23;
+  return 1;
+}
+
+function summarizeProbePayload(payload: unknown): string {
+  if (payload == null) return "no payload";
+  if (Array.isArray(payload)) return `array(${payload.length})`;
+  if (typeof payload !== "object") return typeof payload;
+  const obj = payload as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  const listKey = keys.find((key) => Array.isArray((obj as any)[key]));
+  if (listKey) return `${listKey}: ${((obj as any)[listKey] as unknown[]).length}`;
+  return keys.length ? keys.slice(0, 4).join(", ") : "object";
+}
+
+export async function handleTsProbeEaExtra(interaction: ButtonInteraction): Promise<void> {
+  if (!(await guardAdmin(interaction))) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId!;
+  const connection = await loadEAConnection(guildId);
+  if (!connection) {
+    await interaction.editReply({ content: "❌ No EA connection found. Use **Start EA Connection** first." });
+    return;
+  }
+
+  const seasonRows = await db
+    .select({ currentWeek: seasonsTable.currentWeek })
+    .from(seasonsTable)
+    .where(and(eq(seasonsTable.guildId, guildId), eq(seasonsTable.isActive, true)))
+    .limit(1);
+
+  const weekNum = troubleshootWeekStringToNum(seasonRows[0]?.currentWeek);
+  const weekIndex = Math.max(0, weekNum - 1);
+  const stageIndex = 1;
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(Colors.Blurple)
+        .setTitle("🧪 EA Diagnostics — Probing Additional Endpoints")
+        .setDescription(
+          "Checking optional non-production endpoints only. This does not write data, trigger payouts, or run normal imports."
+        )
+        .addFields(
+          { name: "League", value: `${connection.leagueName || connection.eaLeagueId} (${connection.eaLeagueId})`, inline: false },
+          { name: "Week", value: `Week ${weekNum}`, inline: true },
+        )
+        .setTimestamp(),
+    ],
+  });
+
+  try {
+    const refreshed = await refreshTokenIfNeeded(connection.token);
+    await updateStoredToken(connection.eaLeagueId, refreshed);
+    const results = await probeMcaExportEndpoints(refreshed, connection.eaLeagueId, weekIndex, stageIndex);
+    const ok = results.filter(r => r.available).length;
+    const lines = results.map((r) => {
+      const status = r.available ? "✅" : "❌";
+      const detail = r.available ? summarizeProbePayload(r.payload) : (r.errorMessage ?? "unavailable");
+      return `${status} **${r.label}** — \`${r.endpointName}\` · ${detail}`.slice(0, 950);
+    });
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(ok > 0 ? Colors.Green : Colors.Orange)
+          .setTitle("🧪 EA Diagnostics — Additional Endpoint Probe Complete")
+          .setDescription(lines.join("\n").slice(0, 3900) || "No endpoints were tested.")
+          .addFields(
+            { name: "Available", value: `${ok}/${results.length}`, inline: true },
+            { name: "Scope", value: "Admin-only diagnostics; excluded from production imports", inline: false },
+          )
+          .setTimestamp(),
+      ],
+    });
+  } catch (err: any) {
+    console.error("[ts_probe_ea_extra]", err);
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Red)
+          .setTitle("❌ EA Endpoint Probe Failed")
+          .setDescription(String(err?.message ?? err).slice(0, 1900))
+          .setTimestamp(),
+      ],
+    });
+  }
+}
 
 export async function handleTsDataDiagnostics(interaction: ButtonInteraction): Promise<void> {
   if (!(await guardAdmin(interaction))) return;

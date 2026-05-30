@@ -473,15 +473,11 @@ const EXPORT_ENDPOINTS: Record<string, string> = {
   defense:    "CareerMode_GetWeeklyDefensiveStatsExport",
   kicking:    "CareerMode_GetWeeklyKickingStatsExport",
   punting:    "CareerMode_GetWeeklyPuntingStatsExport",
-  kickReturn: "CareerMode_GetWeeklyKickReturnStatsExport",
-  puntReturn: "CareerMode_GetWeeklyPuntReturnStatsExport",
   teamStats:  "CareerMode_GetWeeklyTeamStatsExport",
   schedules:  "CareerMode_GetWeeklySchedulesExport",
-  awards:     "CareerMode_GetAwardsExport",
   // League-level (no week/stage params needed)
   leagueTeams: "CareerMode_GetLeagueTeamsExport",
   standings:   "CareerMode_GetStandingsExport",
-  news:        "CareerMode_GetNewsExport",
   // Roster (uses leagueId + teamId + listIndex + returnFreeAgents)
   teamRoster:  "CareerMode_GetTeamRostersExport",
 };
@@ -546,8 +542,6 @@ export type WeeklyExportData = {
   defense:    unknown;
   kicking:    unknown;
   punting:    unknown;
-  kickReturn: unknown;
-  puntReturn: unknown;
   teamStats:  unknown;
   standings:  unknown;
   schedules:  unknown;
@@ -597,60 +591,19 @@ type EndpointCandidate = {
   body: (ctx: { leagueId: number; weekIndex: number; stageIndex: number; teamId?: number; listIndex?: number }) => Record<string, unknown>;
 };
 
-const BASE_ENDPOINT_CANDIDATES: EndpointCandidate[] = [
-  { label: "known_passing", endpointName: "CareerMode_GetWeeklyPassingStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_rushing", endpointName: "CareerMode_GetWeeklyRushingStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_receiving", endpointName: "CareerMode_GetWeeklyReceivingStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_defense", endpointName: "CareerMode_GetWeeklyDefensiveStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_kicking", endpointName: "CareerMode_GetWeeklyKickingStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_punting", endpointName: "CareerMode_GetWeeklyPuntingStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_team_stats", endpointName: "CareerMode_GetWeeklyTeamStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_schedules", endpointName: "CareerMode_GetWeeklySchedulesExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
-  { label: "known_league_teams", endpointName: "CareerMode_GetLeagueTeamsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "known_standings", endpointName: "CareerMode_GetStandingsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "known_awards", endpointName: "CareerMode_GetAwardsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "known_news", endpointName: "CareerMode_GetNewsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "league_info", endpointName: "CareerMode_GetLeagueInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "league_settings", endpointName: "CareerMode_GetLeagueSettingsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "franchise_info", endpointName: "CareerMode_GetFranchiseInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "franchise_details", endpointName: "CareerMode_GetFranchiseDetailsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "season_info", endpointName: "CareerMode_GetSeasonInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_info", endpointName: "CareerMode_GetTeamInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "teams", endpointName: "CareerMode_GetTeamsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "salary_cap", endpointName: "CareerMode_GetSalaryCapExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_salary_cap", endpointName: "CareerMode_GetTeamSalaryCapExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
-  { label: "salary_info", endpointName: "CareerMode_GetSalaryInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_salary_info", endpointName: "CareerMode_GetTeamSalaryInfoExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
-  { label: "cap_info", endpointName: "CareerMode_GetCapInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_cap_info", endpointName: "CareerMode_GetTeamCapInfoExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
-  { label: "cap_room", endpointName: "CareerMode_GetCapRoomExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_financials", endpointName: "CareerMode_GetTeamFinancialsExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
-  { label: "franchise_financials", endpointName: "CareerMode_GetFranchiseFinancialsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "league_financials", endpointName: "CareerMode_GetLeagueFinancialsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "contracts", endpointName: "CareerMode_GetContractsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_contracts", endpointName: "CareerMode_GetTeamContractsExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
-  { label: "player_contracts", endpointName: "CareerMode_GetPlayerContractsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "contract_info", endpointName: "CareerMode_GetContractInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "salary_breakdown", endpointName: "CareerMode_GetSalaryBreakdownExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "dead_money", endpointName: "CareerMode_GetDeadMoneyExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "cap_penalties", endpointName: "CareerMode_GetCapPenaltiesExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "rookie_reserve", endpointName: "CareerMode_GetRookieReserveExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "cap_rollover", endpointName: "CareerMode_GetCapRolloverExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "transactions", endpointName: "CareerMode_GetTransactionsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_roster_team", endpointName: "CareerMode_GetTeamRostersExport", body: c => ({ leagueId: c.leagueId, listIndex: c.listIndex ?? 0, returnFreeAgents: false, teamId: c.teamId ?? 0 }) },
-  { label: "team_roster_free_agents", endpointName: "CareerMode_GetTeamRostersExport", body: c => ({ leagueId: c.leagueId, listIndex: -1, returnFreeAgents: true, teamId: 0 }) },
-  { label: "rosters", endpointName: "CareerMode_GetRostersExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "roster_info", endpointName: "CareerMode_GetRosterInfoExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "players", endpointName: "CareerMode_GetPlayersExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_players", endpointName: "CareerMode_GetTeamPlayersExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
+const ADMIN_ONLY_ENDPOINT_CANDIDATES: EndpointCandidate[] = [
+  // Special teams returns are intentionally excluded from production imports.
+  { label: "kick_returns", endpointName: "CareerMode_GetWeeklyKickReturnStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
+  { label: "punt_returns", endpointName: "CareerMode_GetWeeklyPuntReturnStatsExport", body: c => ({ leagueId: c.leagueId, stageIndex: c.stageIndex, weekIndex: c.weekIndex }) },
+
+  // Non-core league data. Probe only from Commissioner Troubleshoot diagnostics.
+  { label: "awards", endpointName: "CareerMode_GetAwardsExport", body: c => ({ leagueId: c.leagueId }) },
+  { label: "news", endpointName: "CareerMode_GetNewsExport", body: c => ({ leagueId: c.leagueId }) },
   { label: "draft_picks", endpointName: "CareerMode_GetDraftPicksExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "draft_board", endpointName: "CareerMode_GetDraftBoardExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "trade_block", endpointName: "CareerMode_GetTradeBlockExport", body: c => ({ leagueId: c.leagueId }) },
   { label: "injuries", endpointName: "CareerMode_GetInjuriesExport", body: c => ({ leagueId: c.leagueId }) },
   { label: "depth_charts", endpointName: "CareerMode_GetDepthChartsExport", body: c => ({ leagueId: c.leagueId }) },
   { label: "team_depth_chart", endpointName: "CareerMode_GetTeamDepthChartExport", body: c => ({ leagueId: c.leagueId, teamId: c.teamId ?? 0 }) },
-  { label: "power_rankings", endpointName: "CareerMode_GetPowerRankingsExport", body: c => ({ leagueId: c.leagueId }) },
-  { label: "team_overalls", endpointName: "CareerMode_GetTeamOverallsExport", body: c => ({ leagueId: c.leagueId }) },
+  { label: "transactions", endpointName: "CareerMode_GetTransactionsExport", body: c => ({ leagueId: c.leagueId }) },
 ];
 
 export async function probeMcaExportEndpoints(
@@ -666,7 +619,7 @@ export async function probeMcaExportEndpoints(
   const firstTeam = sampleTeams.find(t => Number.isFinite(Number(t.teamId))) ?? { teamId: 0, listIndex: 0 };
   const results: McaEndpointProbeResult[] = [];
 
-  for (const candidate of BASE_ENDPOINT_CANDIDATES) {
+  for (const candidate of ADMIN_ONLY_ENDPOINT_CANDIDATES) {
     const requestBody = candidate.body({
       leagueId: eaLeagueId,
       weekIndex,
@@ -735,55 +688,19 @@ export async function fetchWeeklyStats(
   const body      = { leagueId: eaLeagueId, stageIndex, weekIndex };
   const errors: Record<string, string> = {};
 
-  const [passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules] = await Promise.all([
+  const [passing, rushing, receiving, defense, kicking, punting, teamStats, standings, schedules] = await Promise.all([
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.passing!,        body, true,  errors, "passing"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.rushing!,        body, true,  errors, "rushing"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.receiving!,      body, true,  errors, "receiving"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.defense!,        body, true,  errors, "defense"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.kicking!,        body, false, errors, "kicking"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.punting!,        body, false, errors, "punting"),
-    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.kickReturn!,     body, false, errors, "kickReturn"),
-    fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.puntReturn!,     body, false, errors, "puntReturn"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.teamStats!,      body, true,  errors, "teamStats"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.standings!,      { leagueId: eaLeagueId }, false, errors, "standings"),
     fetchExportDataStage(refreshed, session, EXPORT_ENDPOINTS.schedules!,      body, false, errors, "schedules"),
   ]);
 
-  return { passing, rushing, receiving, defense, kicking, punting, kickReturn, puntReturn, teamStats, standings, schedules, errors };
-}
-
-// ── Awards export (season-level, no weekIndex needed) ─────────────────────────
-export async function fetchAwardsData(
-  token:      TokenInfo,
-  eaLeagueId: number,
-): Promise<unknown> {
-  const refreshed = await refreshTokenIfNeeded(token);
-  const session   = await createBlazeSession(refreshed);
-  return fetchExportData(refreshed, session, EXPORT_ENDPOINTS.awards!, { leagueId: eaLeagueId });
-}
-
-// ── Fetch in-game CFM news (league-level, no week/stage needed) ──────────────
-// EA's news endpoint returns a list of in-game news items (headlines, body text,
-// category). These are the same articles you see in the Franchise news feed.
-// Returns null if the endpoint doesn't exist for this EA version.
-export async function fetchNewsData(
-  token:      TokenInfo,
-  eaLeagueId: number,
-  existingSession?: BlazeSession,
-): Promise<unknown | null> {
-  try {
-    const refreshed = await refreshTokenIfNeeded(token);
-    const session   = existingSession ?? await createBlazeSession(refreshed);
-    return await fetchExportData(refreshed, session, EXPORT_ENDPOINTS.news!, { leagueId: eaLeagueId });
-  } catch (err: any) {
-    // Treat 404 / unknown endpoint gracefully — some Madden versions may not expose this
-    const status = err?.response?.status ?? err?.status ?? 0;
-    if (status === 404 || status === 400) {
-      console.warn(`[ea-client] News endpoint not available (HTTP ${status}) — skipping`);
-      return null;
-    }
-    throw err;
-  }
+  return { passing, rushing, receiving, defense, kicking, punting, teamStats, standings, schedules, errors };
 }
 
 // ── Fetch schedule data for ALL weeks in one Blaze session ────────────────────
